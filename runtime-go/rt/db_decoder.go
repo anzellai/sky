@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"time"
-
-	"github.com/shopspring/decimal"
 )
 
 // DB row decoders (v0.15.45 — Std.Db.Decode) — mirror of
@@ -217,31 +215,13 @@ func DbDec_money(colName any) any {
 		if !ok {
 			return Err[any, any](ErrDecode("missing column: " + col))
 		}
-		idx := -1
-		for i := 0; i < len(s); i++ {
-			if s[i] == ' ' {
-				idx = i
-				break
-			}
-		}
-		if idx <= 0 || idx >= len(s)-1 {
-			return Err[any, any](ErrDecode(
-				"column " + col + ": expected Money 'CODE AMOUNT', got " + s))
-		}
-		code := s[:idx]
-		amountStr := s[idx+1:]
-		// Re-construct Money via the Sky-side constructor shape so
-		// the result is assignment-compatible with user code expecting
-		// a Money ADT.
-		amount, perr := decimal.NewFromString(amountStr)
-		if perr != nil {
-			return Err[any, any](ErrDecode(
-				"column " + col + ": Money amount parse: " + perr.Error()))
-		}
-		currency := sqlCodeToCurrency(code)
-		money := SkyADT{
-			Tag: 0, SkyName: "Money",
-			Fields: []any{decimalBox(amount), currency},
+		// Both text forms Sky writes read back: "USD 12.34" (SqlMoney) and
+		// "12.34 USD" (Money.formatWithCode). The code is read in upper case
+		// and the amount under the strict decimal grammar (no exponent), so a
+		// lower-case code is no longer a `CurrencyRaw "usd"`.
+		money, err := moneyFromText(s)
+		if err != nil {
+			return Err[any, any](ErrDecode("column " + col + ": " + err.Error()))
 		}
 		return Ok[any, any](money)
 	}}

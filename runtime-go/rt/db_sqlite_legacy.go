@@ -273,6 +273,9 @@ func sqliteLegacyText(v any) any {
 // sqliteArgs binds the v0.28 text for each marked argument whose column is
 // TEXT. Without a mark it returns `args` as they are.
 func sqliteArgs(ex dbExecutor, pool *sql.DB, query string, args []any) []any {
+	// A list placeholder takes its values as one JSON parameter first
+	// (db_list_param.go), so every placeholder below has one argument.
+	args = sqliteListArgs(ex, pool, query, args)
 	if pool == nil || !strings.Contains(query, sqliteLegacyMark) {
 		return args
 	}

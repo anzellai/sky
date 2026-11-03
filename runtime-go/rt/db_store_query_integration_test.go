@@ -20,6 +20,7 @@ package rt
 // skip the CREATE and ALTER the wrong table.
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -127,4 +128,96 @@ func TestStoreQueryPostgresB7_MigrateIgnoresOtherSchemas(t *testing.T) {
 // quoted, so PostgreSQL keeps its case and the kernel finds it.
 func TestStoreQueryPostgresJoinGroups_StripsPrefixesAndNullsTheMissingSide(t *testing.T) {
 	assertJoinGroups(t, openStoreQueryPostgres(t, ""), "_pg")
+}
+
+// A Codec.auto Decimal / Money TEXT column under a Codec.decimal /
+// Codec.moneyIn field compared as text on PostgreSQL (v0.29.2 Judge gap):
+// migrate refuses it with the ALTER that converts it, and the ALTER works.
+func TestStoreQueryPostgresLegacyDecimalColumnRefused(t *testing.T) {
+	d := openStoreQueryPostgres(t, "")
+	assertLegacyDecimalColumnRefused(t, d, "legacy_dec_pg",
+		`ALTER TABLE legacy_dec_pg ALTER COLUMN price TYPE NUMERIC USING (CASE WHEN price::text LIKE '{%' THEN ('a Money object is not a decimal: ' || price::text) ELSE trim(both '"' from price::text) END)::numeric`,
+		`ALTER TABLE legacy_dec_pg ALTER COLUMN cost TYPE NUMERIC USING (CASE WHEN cost::text LIKE '{%' THEN (CASE WHEN upper(cost::json->>'currency') = 'GBP' THEN cost::json->>'amount' ELSE 'a Money object that is not in GBP: ' || cost::text END) ELSE trim(both '"' from cost::text) END)::numeric`,
+		"price IS NULL, price")
+}
+
+// A Codec.moneyIn GBP field on a Codec.auto Money column holding a USD row:
+// the conversion fails on that row instead of relabelling it GBP (v0.29.2
+// second Judge, gap 1).
+func TestStoreQueryPostgresLegacyMoneyColumnKeepsItsCurrency(t *testing.T) {
+	assertLegacyMoneyKeepsCurrency(t, openStoreQueryPostgres(t, ""), "legacy_money_pg")
+}
+
+// `user` is reserved on PostgreSQL: migrate refuses it with the reason
+// instead of "syntax error at or near user".
+func TestStoreQueryPostgresReservedColumnNameRefused(t *testing.T) {
+	d := openStoreQueryPostgres(t, "")
+	_, _ = d.conn.Exec("DROP TABLE IF EXISTS kw_users_pg")
+	cs := []any{T2[any, any]{V0: "id", V1: "text"}, T2[any, any]{V0: "user", V1: "text"}}
+	res, ok := AnyTaskRun(Db_autoMigrate(d, "kw_users_pg", cs, "id", []any{})).(SkyResult[any, any])
+	if !ok || res.Tag == 0 {
+		t.Fatalf("a column named user was accepted on PostgreSQL: %v", res)
+	}
+	if msg := errorMessage(res.ErrValue); !strings.Contains(msg, "kw_users_pg.user") || strings.Contains(msg, "syntax error") {
+		t.Fatalf("the Err does not name the column: %s", msg)
+	}
+}
+
+// The PostgreSQL keyword list is measured against the server: every R or T
+// keyword of pg_get_keywords() fails as a column and as a table name, and is
+// listed (Store.sky sqlKeywords or codecReservedPostgres); a listed name that
+// is R or T here fails (v0.29.2 second Judge, gap 5: `system_user`, reserved
+// since PostgreSQL 16, was missing).
+func TestStoreQueryPostgresKeywordListIsMeasured(t *testing.T) {
+	d := openStoreQueryPostgres(t, "")
+	both := storeSqlKeywords(t)
+	rows, err := d.conn.Query(`SELECT word FROM pg_get_keywords() WHERE catcode IN ('R', 'T') ORDER BY word`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var words []string
+	for rows.Next() {
+		var w string
+		if err := rows.Scan(&w); err != nil {
+			t.Fatal(err)
+		}
+		words = append(words, w)
+	}
+	rows.Close()
+	if len(words) < 50 {
+		t.Fatalf("pg_get_keywords() gave %d R/T keywords", len(words))
+	}
+	schema := "kwp_" + strings.ReplaceAll(t.Name(), "/", "_")
+	schema = strings.ToLower(schema)
+	ctx := context.Background()
+	conn, err := d.conn.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = conn.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
+	if _, err := conn.ExecContext(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = conn.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE") }()
+	var problems []string
+	for _, w := range words {
+		_, _ = conn.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
+		_, _ = conn.ExecContext(ctx, "CREATE SCHEMA "+schema)
+		_, _ = conn.ExecContext(ctx, "SET search_path = "+schema)
+		col, tab := keywordFails(func(q string) error { _, e := conn.ExecContext(ctx, q); return e }, w)
+		if !col || !tab {
+			problems = append(problems, w+": R/T keyword that PostgreSQL takes in a position")
+		}
+		if !both[w] && !codecReservedName("pgx", w, false) {
+			problems = append(problems, w+": fails on PostgreSQL and is not listed")
+		}
+	}
+	if len(problems) > 0 {
+		t.Fatalf("the PostgreSQL keyword list does not match the server:\n%s", strings.Join(problems, "\n"))
+	}
+}
+
+func TestStoreQueryPostgresCheckProjectDataMatchesMigrate(t *testing.T) {
+	assertCheckProjectDataMatchesMigrate(t, openStoreQueryPostgres(t, ""), "check_data_pg")
 }

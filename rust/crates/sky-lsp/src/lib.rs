@@ -1937,18 +1937,17 @@ impl Analysis {
             if span.range.1 < lo || span.range.0 > hi {
                 continue;
             }
-            let Some(body) = resolved.bodies.get(&def) else {
+            if !resolved.bodies.contains_key(&def) {
                 continue;
-            };
-            let bt = body_cache
-                .entry(def)
-                .or_insert_with(|| typer.body_types_annotated(def, body));
-            // Render the FULL signature (arrow spine) so an unannotated function
-            // hints as `foo : Int -> Int -> Int`, not the body-root result alone
-            // (bug (b)). For a nullary value `signature == result`, so value-def
-            // hints are unchanged. Fall back to `result` only if absent.
-            if let Some(ty) = bt.signature.clone().or_else(|| bt.result.clone()) {
-                hints.push(type_hint(text, span.range.1, &ty.render_pretty()));
+            }
+            // The SAME type hover shows on the declaration (`def_sig_string`):
+            // the inferred scheme, then the checker's bounded scheme (`add x y =
+            // x + y` is `number -> number -> number`), then the FULL body
+            // signature (the arrow spine, not the body-root result alone, bug
+            // (b)). Before v0.29.2 the hint read the body types only, so it lost
+            // the `number` bound hover showed (`a -> a -> a`).
+            if let Some(ty) = self.def_sig_string(&typer, db, def) {
+                hints.push(type_hint(text, span.range.1, &ty));
             }
         }
 

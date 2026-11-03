@@ -17,6 +17,7 @@ package rt
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -30,8 +31,42 @@ type SkyDecimal = decimal.Decimal
 // (single-constructor `Decimal__Internal Float`). Fields[0] holds
 // the actual decimal — the Float in the Sky source is purely a
 // phantom type-shape so the constructor has a slot.
+//
+// Every Sky Decimal is made here, so this is where the Decimal range is kept
+// (v0.29.2 eighth Judge): a Decimal whose exponent is outside
+// ±decimalExponentMax fails as the classified NumericOverflow. Without the
+// bound `Decimal.mul` of two values with exponent -2000000000 overflowed
+// shopspring's int32 exponent (an unclassified panic reported as a compiler
+// bug), and `Decimal.toString` of `fromMinor 2000000000 1` built a
+// two-billion-character string.
 func decimalBox(d decimal.Decimal) SkyADT {
+	if e := d.Exponent(); e > decimalExponentMax || e < -decimalExponentMax {
+		if d.IsZero() {
+			d = decimal.Zero
+		} else {
+			panic(fmt.Sprintf("rt.Decimal.range: a Decimal with exponent %d is outside the Decimal range (exponent -%d to %d)", e, decimalExponentMax, decimalExponentMax))
+		}
+	}
 	return SkyADT{Tag: 0, SkyName: "Decimal__Internal", Fields: []any{d}}
+}
+
+// decimalExponentMax bounds the exponent of every Decimal (decimalBox) and
+// every `places` argument (decimalPlaces). A Decimal inside the bound has a
+// text of at most about 100,000 digits plus its coefficient, and the sum of
+// two exponents (Decimal.mul) stays far inside shopspring's int32 exponent.
+const decimalExponentMax = 100_000
+
+// decimalPlaces is the `places` argument v of the Decimal or Money operation
+// op as the int32 shopspring takes. A value outside ±decimalExponentMax fails
+// as the classified NumericOverflow (v0.29.2 eighth Judge): it used to be cut
+// to int32, so `Decimal.toMinor 4294967298 Decimal.one` gave 100 and
+// `Decimal.round 4294967296 1.23456` gave 1, a silent wrong answer.
+func decimalPlaces(op string, v any) int32 {
+	n := AsInt(v)
+	if n > decimalExponentMax || n < -decimalExponentMax {
+		panic(fmt.Sprintf("rt.Decimal.range: %s: %d decimal places is outside the range -%d to %d", op, n, decimalExponentMax, decimalExponentMax))
+	}
+	return int32(n)
 }
 
 // decimalUnbox extracts the decimal.Decimal from a Sky `Decimal`
@@ -42,7 +77,7 @@ func decimalUnbox(v any) decimal.Decimal {
 		case decimal.Decimal:
 			return x
 		case string:
-			if d, err := decimal.NewFromString(x); err == nil {
+			if d, err := decimalParseBounded(x); err == nil {
 				return d
 			}
 		case float64:
@@ -57,7 +92,7 @@ func decimalUnbox(v any) decimal.Decimal {
 		return d
 	}
 	if s, ok := v.(string); ok {
-		if d, err := decimal.NewFromString(s); err == nil {
+		if d, err := decimalParseBounded(s); err == nil {
 			return d
 		}
 	}
@@ -72,7 +107,7 @@ func init() {
 			return Err[any, any](ErrDecode("Decimal.fromString: missing arg"))
 		}
 		str := fmt.Sprintf("%v", args[0])
-		d, err := decimal.NewFromString(str)
+		d, err := decimalParseBounded(str)
 		if err != nil {
 			return Err[any, any](ErrDecode("Decimal.fromString: " + err.Error()))
 		}
@@ -90,7 +125,16 @@ func init() {
 		if len(args) < 1 {
 			return decimalBox(decimal.Zero)
 		}
-		return decimalBox(decimal.NewFromFloat(AsFloat(args[0])))
+		f := AsFloat(args[0])
+		// A NaN or an infinite Float (Math.sqrt -1, Math.pow 10 400) has no
+		// decimal value. shopspring panics with an unclassified message; Sky
+		// has no NaN or Infinity shape, so this fails as the classified
+		// DivisionByZero class a Float division with no answer fails as
+		// (v0.29.2 fifth Judge audit), never a silent zero.
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			panic(fmt.Sprintf("rt.Decimal.fromFloat: %v has no decimal value", f))
+		}
+		return decimalBox(decimal.NewFromFloat(f))
 	})
 
 	// fromMinor : Int -> Int -> Decimal — `fromMinor 2 12345` = 123.45
@@ -100,7 +144,7 @@ func init() {
 			return decimalBox(decimal.Zero)
 		}
 		minor := int64(AsInt(args[1]))
-		places := int32(AsInt(args[0]))
+		places := decimalPlaces("Decimal.fromMinor", args[0])
 		return decimalBox(decimal.New(minor, -places))
 	})
 
@@ -131,24 +175,32 @@ func init() {
 		if len(args) < 2 {
 			return ""
 		}
-		return decimalUnbox(args[1]).StringFixed(int32(AsInt(args[0])))
+		return decimalUnbox(args[1]).StringFixed(decimalPlaces("Decimal.toStringFixed", args[0]))
 	})
 
-	// toFloat : Decimal -> Float (LOSSY — display only)
+	// toFloat : Decimal -> Float (LOSSY — display only). A decimal past the
+	// Float range (1e400) has no Float: it fails as the classified
+	// NumericOverflow, never an Infinity (Sky has no Infinity shape).
 	RegisterPure("Decimal_toFloat", func(args []any) any {
 		if len(args) < 1 {
 			return 0.0
 		}
-		v, _ := decimalUnbox(args[0]).Float64()
+		d := decimalUnbox(args[0])
+		v, _ := d.Float64()
+		if math.IsInf(v, 0) {
+			panic("rt.Decimal.toFloat: " + decimalShort(d) + " is outside the Float range")
+		}
 		return v
 	})
 
-	// toInt : Decimal -> Int — truncates fractional part.
+	// toInt : Decimal -> Int — truncates fractional part. A whole part past
+	// the Int range (64 bits) fails as the classified NumericOverflow; it
+	// used to wrap round (1e30 gave 5076944270305263616).
 	RegisterPure("Decimal_toInt", func(args []any) any {
 		if len(args) < 1 {
 			return 0
 		}
-		return int(decimalUnbox(args[0]).IntPart())
+		return decimalIntOrPanic("Decimal.toInt", decimalUnbox(args[0]))
 	})
 
 	// toMinor : Int -> Decimal -> Int — `toMinor 2 (3.14)` = 314.
@@ -157,9 +209,9 @@ func init() {
 		if len(args) < 2 {
 			return 0
 		}
-		places := int32(AsInt(args[0]))
+		places := decimalPlaces("Decimal.toMinor", args[0])
 		shifted := decimalUnbox(args[1]).Shift(places)
-		return int(shifted.IntPart())
+		return decimalIntOrPanic("Decimal.toMinor", shifted)
 	})
 
 	// ── Arithmetic ──────────────────────────────────────────────
@@ -231,7 +283,7 @@ func init() {
 		if len(args) < 2 {
 			return decimalBox(decimal.Zero)
 		}
-		return decimalBox(decimalUnbox(args[1]).RoundBank(int32(AsInt(args[0]))))
+		return decimalBox(decimalUnbox(args[1]).RoundBank(decimalPlaces("Decimal.round", args[0])))
 	})
 
 	// roundHalfUp : Int -> Decimal -> Decimal (4/5 round-up — schools rounding)
@@ -239,7 +291,7 @@ func init() {
 		if len(args) < 2 {
 			return decimalBox(decimal.Zero)
 		}
-		return decimalBox(decimalUnbox(args[1]).Round(int32(AsInt(args[0]))))
+		return decimalBox(decimalUnbox(args[1]).Round(decimalPlaces("Decimal.roundHalfUp", args[0])))
 	})
 
 	// truncate : Int -> Decimal -> Decimal — toward zero
@@ -247,7 +299,7 @@ func init() {
 		if len(args) < 2 {
 			return decimalBox(decimal.Zero)
 		}
-		return decimalBox(decimalUnbox(args[1]).Truncate(int32(AsInt(args[0]))))
+		return decimalBox(decimalUnbox(args[1]).Truncate(decimalPlaces("Decimal.truncate", args[0])))
 	})
 
 	// floor : Decimal -> Decimal — toward -∞
@@ -405,7 +457,7 @@ func init() {
 		}
 		thousandsSep := fmt.Sprintf("%v", args[0])
 		decimalSep := fmt.Sprintf("%v", args[1])
-		places := int32(AsInt(args[2]))
+		places := decimalPlaces("Decimal.formatWith", args[2])
 		d := decimalUnbox(args[3])
 		fixed := d.StringFixed(places)
 		// Split into integer + fractional parts on the literal "."
@@ -438,4 +490,26 @@ func init() {
 		}
 		return out
 	})
+}
+
+// decimalIntOrPanic is the whole part of d as an Int. A whole part outside
+// the 64-bit Int range has no Int: it fails as the classified
+// NumericOverflow, naming the operation and the value, never a wrapped
+// number (v0.29.2 sixth Judge: `Money.toMinor` of 10 ETH gave
+// -8446744073709551616).
+func decimalIntOrPanic(op string, d decimal.Decimal) int {
+	whole := d.Truncate(0).BigInt()
+	if !whole.IsInt64() {
+		panic("rt." + op + ": " + decimalShort(d) + " is outside the Int range (-9223372036854775808 to 9223372036854775807)")
+	}
+	return int(whole.Int64())
+}
+
+// decimalShort is d's text for a message, cut to 60 characters.
+func decimalShort(d decimal.Decimal) string {
+	s := d.String()
+	if len(s) > 60 {
+		return s[:57] + "..."
+	}
+	return s
 }

@@ -210,6 +210,52 @@ pub fn scan_body(
     }
 }
 
+/// The witness argument of every `Codec.auto`-family call in `body`.
+pub fn witness_exprs(body: &Body, sky: &dyn SkyDb) -> Vec<hir::ExprId> {
+    let mut out = Vec::new();
+    for (_, expr) in body.exprs.iter() {
+        let Expr::Call(callee, args) = expr else {
+            continue;
+        };
+        let Some((module, func)) = codec_family(&body.exprs[*callee], sky) else {
+            continue;
+        };
+        if crate::nominal::base(&module) != "Codec" {
+            continue;
+        }
+        if let Some(&w) = witness_arg_index(&func).and_then(|i| args.get(i)) {
+            out.push(w);
+        }
+    }
+    out
+}
+
+/// Does `t` hold a collection (`List` / `Set` / `Maybe` / `Dict` value) whose
+/// element is a type variable of ANY name, at any depth? The lowering view of
+/// a def ignores its annotation, so an element the annotation pins (`cA :
+/// Codec RList` with the witness `{ id = "", v = [] }`) is a variable there,
+/// and lowers to Go `[]any` (see [`pin_witness_types`]).
+pub fn has_var_elem(t: &Ty) -> bool {
+    base::ensure_stack(|| {
+        if let Ty::App(name, args) = t {
+            let elem = match crate::nominal::base(name.as_str()) {
+                "List" | "Set" | "Maybe" if args.len() == 1 => Some(&args[0]),
+                "Dict" if args.len() == 2 => Some(&args[1]),
+                _ => None,
+            };
+            if matches!(elem, Some(Ty::Var(_))) {
+                return true;
+            }
+        }
+        match t {
+            Ty::App(_, args) | Ty::Tuple(args) => args.iter().any(has_var_elem),
+            Ty::Record(fields, _) => fields.iter().any(|(_, ft)| has_var_elem(ft)),
+            Ty::Fun(a, b) => has_var_elem(a) || has_var_elem(b),
+            Ty::Var(_) | Ty::Unit | Ty::Error => false,
+        }
+    })
+}
+
 /// The `[E2009]` diagnostic body for one offending call. Names the container, the
 /// runtime failure it prevents, and why an empty witness list defeats reflection.
 pub fn message(container: &str) -> String {

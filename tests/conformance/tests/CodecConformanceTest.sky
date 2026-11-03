@@ -37,6 +37,7 @@ import Sky.Core.Result as Result
 import Sky.Core.Tuple as Tuple
 import Sky.Core.Json.Encode as Encode
 import Std.Codec as Codec exposing (Codec)
+import Std.Decimal as Decimal exposing (Decimal)
 import Std.Money as Money exposing (Money, Currency(..))
 import Sky.Core.Error as Error exposing (Error, ErrorKind(..), ErrorDetails(..))
 import Sky.Test as Test exposing (Test)
@@ -916,12 +917,138 @@ tests =
                     , Codec.fromJson hookAuto "{\"id\":\"h2\",\"data\":null}"
                         |> Result.map (\h -> Encode.encode 0 h.data)
                     ))
-    , Test.test "auto: a List or Dict of Json.Value cannot be marked by the blank, so reading one is an Err"
+    , Test.test "auto: a List or Dict of Json.Value whose blank holds a JSON value reads each element as JSON (v0.29.2 sixth Judge; it was an Err)"
+        (\_ ->
+            Test.equal
+                ( Ok "{\"id\":\"h1\",\"items\":[1,\"x\",null]}", Ok "{\"id\":\"h1\",\"items\":{\"a\":1}}" )
+                ( Codec.fromJson hooksAuto "{\"id\":\"h1\",\"items\":[1,\"x\",null]}" |> Result.map (Codec.toJson hooksAuto)
+                , Codec.fromJson hookMapAuto "{\"id\":\"h1\",\"items\":{\"a\":1}}" |> Result.map (Codec.toJson hookMapAuto)
+                ))
+    -- ── Codec.value: a raw Json.Value (v0.29.2) ───────────────────────────
+    , Test.test "value: an object field of List Json.Value round-trips exactly"
+        (\_ ->
+            let
+                text = "{\"id\":\"h1\",\"items\":[1,{\"a\":null},\"x\",[true,2.5]]}"
+            in
+                Test.equal (Ok text) (Codec.fromJson hooksObject text |> Result.map (Codec.toJson hooksObject)))
+    , Test.test "value: a Dict String Json.Value round-trips exactly"
+        (\_ ->
+            let
+                text = "{\"id\":\"h1\",\"items\":[[\"a\",{\"n\":1}],[\"b\",null]]}"
+            in
+                Test.equal (Ok text) (Codec.fromJson hookMapObject text |> Result.map (Codec.toJson hookMapObject)))
+    , Test.test "value: autoWith gives a List Json.Value field its codec, so the read Codec.auto refuses works"
+        (\_ ->
+            let
+                text = "{\"id\":\"h1\",\"items\":[1,\"two\"]}"
+            in
+                Test.equal (Ok text) (Codec.fromJson hooksAutoWith text |> Result.map (Codec.toJson hooksAutoWith)))
+    , Test.test "value: its JSON Schema is the open schema, not exact"
+        (\_ -> Test.equal ( "{}", False ) ( Encode.encode 0 (Codec.jsonSchema Codec.value).schema, (Codec.jsonSchema Codec.value).exact ))
+    , Test.test "value: a record field is one JSON text column"
+        (\_ -> Test.equal (Codec.SRecord [ ( "id", Codec.CText ), ( "items", Codec.CBlob ) ]) (Codec.shape hooksObject))
+    -- ── kindToColType (colTypeKind t) == t (v0.29.2, third Judge) ─────────
+    -- An autoWith override's column type goes through its colspec kind and
+    -- back: every ColType a codec gives must come back as itself, a Maybe of
+    -- each included. `decimal|money=GBP` once came back as CBlob.
+    , Test.test "kinds: every ColType an autoWith override gives keeps its type through its kind (CText ... CMoneyIn, CNull of each)"
+        (\_ ->
+            let
+                pairs = List.map (\( want, got ) -> want == got) kindRoundTrips
+            in
+                Test.equal (List.map (\_ -> True) kindRoundTrips) pairs)
+    , Test.test "kinds: the round trip covers every ColType constructor"
+        (\_ ->
+            Test.equal
+                [ "CBlob", "CBool", "CDecimal", "CInt", "CMoneyIn", "CNull", "CReal", "CText" ]
+                (kindRoundTrips |> List.map (\( want, _ ) -> ctName want) |> dedupSorted))
+    -- ── Decimal and Money codecs (v0.29.2) ────────────────────────────────
+    , Test.test "decimal: encodes the canonical string (12.50 is \"12.5\")"
+        (\_ -> Test.equal "\"12.5\"" (Codec.toJson Codec.decimal (dcm "12.50")))
+    , Test.test "decimal: reads a string and an exact JSON number"
+        (\_ ->
+            Test.equal
+                [ Ok "0.1", Ok "7", Ok "-0.000000001" ]
+                (List.map
+                    (\j -> Result.map Decimal.toString (Codec.fromJson Codec.decimal j))
+                    [ "\"0.1\"", "7", "\"-0.000000001\"" ]))
+    , Test.test "decimal: an exponent, NaN, an empty or malformed string and 1001 digits are an Err"
+        (\_ ->
+            Test.equal
+                [ True, True, True, True, True, True, True ]
+                (List.map
+                    (\j -> isErrC (Codec.fromJson Codec.decimal j))
+                    [ "\"1e3\"", "\"1e2000000000\"", "\"NaN\"", "\"\"", "\"1.2.3\"", "true", "\"" ++ String.repeat 1001 "9" ++ "\"" ]))
+    , Test.test "decimal: jsonSchema is a string with the decimal pattern, exact"
+        (\_ ->
+            Test.equal
+                ( "{\"type\":\"string\",\"pattern\":\"^-?[0-9]+(\\\\.[0-9]+)?$\"}", True )
+                (let
+                    js = Codec.jsonSchema Codec.decimal
+                 in
+                    ( Encode.encode 0 js.schema, js.exact )))
+    , Test.test "decimal: a Codec.auto Decimal and Money field have an exact schema"
         (\_ ->
             Test.equal
                 ( True, True )
-                ( failed (Codec.fromJson hooksAuto "{\"id\":\"h1\",\"items\":[1]}")
-                , failed (Codec.fromJson hookMapAuto "{\"id\":\"h1\",\"items\":{\"a\":1}}")
+                ( (Codec.jsonSchema (Codec.auto { qty = Decimal.zero })).exact
+                , (Codec.jsonSchema (Codec.auto { price = Money.zero GBP })).exact
+                ))
+    , Test.test "decimal: toXml writes a Codec.auto Decimal and Money as element text, not JSON"
+        (\_ ->
+            Test.equal
+                "<row><price><amount>12.34</amount><currency>GBP</currency></price><qty>1.5</qty></row>"
+                (Codec.toXml "row" dcmAuto { price = Money.Money (dcm "12.34") GBP, qty = dcm "1.5" }))
+    , Test.test "decimal: fromXml reads the toXml of a Codec.decimal record back"
+        (\_ ->
+            Test.equal
+                (Ok "3.25")
+                (Codec.toXml "row" dcmRecord { qty = dcm "3.25" }
+                    |> Codec.fromXml "row" dcmRecord
+                    |> Result.map (\r -> Decimal.toString r.qty)))
+    , Test.test "moneyIn: a GBP Money is the amount string, and reads back as GBP"
+        (\_ ->
+            Test.equal
+                ( "\"12.34\"", Ok "12.34 GBP" )
+                ( Codec.toJson (Codec.moneyIn GBP) (Money.Money (dcm "12.34") GBP)
+                , Result.map mnyText (Codec.fromJson (Codec.moneyIn GBP) "\"12.34\"")
+                ))
+    , Test.test "moneyIn: reads a Money object in its currency, refuses one in another"
+        (\_ ->
+            Test.equal
+                ( Ok "1.5 GBP", True )
+                ( Result.map mnyText (Codec.fromJson (Codec.moneyIn GBP) "{\"amount\":\"1.5\",\"currency\":\"gbp\"}")
+                , isErrC (Codec.fromJson (Codec.moneyIn GBP) "{\"amount\":\"1.5\",\"currency\":\"USD\"}")
+                ))
+    , Test.test "moneyIn: a Money in another currency encodes as the object, never relabelled"
+        (\_ ->
+            Test.equal
+                "{\"amount\":\"2\",\"currency\":\"USD\"}"
+                (Codec.toJson (Codec.moneyIn GBP) (Money.Money (dcm "2") USD)))
+    , Test.test "moneyObject: round-trips, reads a lower-case code, refuses a missing currency"
+        (\_ ->
+            Test.equal
+                ( Ok "9.99 EUR", Ok "1 GBP", True )
+                ( Codec.toJson Codec.moneyObject (Money.Money (dcm "9.99") EUR)
+                    |> Codec.fromJson Codec.moneyObject
+                    |> Result.map mnyText
+                , Result.map mnyText (Codec.fromJson Codec.moneyObject "{\"amount\":\"1\",\"currency\":\"gbp\"}")
+                , isErrC (Codec.fromJson Codec.moneyObject "{\"amount\":\"1\"}")
+                ))
+    , Test.test "isoCurrency: reads a code in any case, refuses an empty one"
+        (\_ ->
+            Test.equal
+                ( Ok "GBP", "\"EUR\"", True )
+                ( Result.map Money.currencyCode (Codec.fromJson Codec.isoCurrency "\"gbp\"")
+                , Codec.toJson Codec.isoCurrency EUR
+                , isErrC (Codec.fromJson Codec.isoCurrency "\"\"")
+                ))
+    , Test.test "auto Money: a missing currency is an Err, a lower-case code reads"
+        (\_ ->
+            Test.equal
+                ( True, Ok "4 GBP" )
+                ( isErrC (Codec.fromJson dcmMoneyAuto "{\"price\":{\"amount\":\"4\"}}")
+                , Result.map (\r -> mnyText r.price) (Codec.fromJson dcmMoneyAuto "{\"price\":{\"amount\":\"4\",\"currency\":\"gbp\"}}")
                 ))
     ]
 
@@ -945,6 +1072,29 @@ type alias HookMapAuto =
 hookMapAuto : Codec HookMapAuto
 hookMapAuto =
     Codec.auto { id = "", items = Dict.fromList [ ( "a", Encode.null ) ] }
+
+
+-- The same records through Codec.value (v0.29.2): an explicit codec for a
+-- raw Json.Value, so a List or Dict of them reads.
+hooksObject : Codec HooksAuto
+hooksObject =
+    Codec.object HooksAuto
+        |> Codec.field "id" .id Codec.string
+        |> Codec.field "items" .items (Codec.list Codec.value)
+        |> Codec.buildObject
+
+
+hookMapObject : Codec HookMapAuto
+hookMapObject =
+    Codec.object HookMapAuto
+        |> Codec.field "id" .id Codec.string
+        |> Codec.field "items" .items (Codec.dict Codec.string Codec.value)
+        |> Codec.buildObject
+
+
+hooksAutoWith : Codec HooksAuto
+hooksAutoWith =
+    Codec.autoWith [ ( "items", Codec.list Codec.value ) ] { id = "", items = [ Encode.null ] }
 
 
 -- A `Json.Value` field under Codec.auto: the blank's JSON value marks it.
@@ -1018,5 +1168,139 @@ zeroOuter =
         |> Codec.buildObject
 
 
+-- ── Decimal and Money codec helpers (v0.29.2) ──────────────────────────────
+dcm : String -> Decimal
+dcm t =
+    Decimal.fromString t |> Result.withDefault Decimal.zero
+
+
+mnyText : Money -> String
+mnyText m =
+    Decimal.toString (Money.amount m) ++ " " ++ Money.currencyCode (Money.currency m)
+
+
+isErrC : Result e a -> Bool
+isErrC r =
+    case r of
+
+        Ok _ ->
+            False
+
+        Err _ ->
+            True
+
+
+type alias DcmPair =
+    { price : Money, qty : Decimal }
+
+
+dcmAuto : Codec DcmPair
+dcmAuto =
+    Codec.auto { price = Money.zero GBP, qty = Decimal.zero }
+
+
+type alias DcmOne =
+    { qty : Decimal }
+
+
+dcmRecord : Codec DcmOne
+dcmRecord =
+    Codec.object DcmOne
+        |> Codec.field "qty" .qty Codec.decimal
+        |> Codec.buildObject
+
+
+type alias DcmMoney =
+    { price : Money }
+
+
+dcmMoneyAuto : Codec DcmMoney
+dcmMoneyAuto =
+    Codec.auto { price = Money.zero GBP }
+
+
 main =
     Test.runMain tests
+
+
+-- ( the codec's column type, what autoWith gives for that codec as an
+-- override of field "f" ), for every codec of each ColType and its Maybe.
+kindRoundTrips : List ( Codec.ColType, Codec.ColType )
+kindRoundTrips =
+    [ kindRoundTrip Codec.string
+    , kindRoundTrip Codec.int
+    , kindRoundTrip Codec.float
+    , kindRoundTrip Codec.bool
+    , kindRoundTrip Codec.value
+    , kindRoundTrip Codec.decimal
+    , kindRoundTrip (Codec.moneyIn GBP)
+    , kindRoundTrip (Codec.moneyIn JPY)
+    , kindRoundTrip Codec.isoCurrency
+    , kindRoundTrip Codec.moneyObject
+    , kindRoundTrip (Codec.list Codec.decimal)
+    , kindRoundTrip (Codec.maybe Codec.string)
+    , kindRoundTrip (Codec.maybe Codec.int)
+    , kindRoundTrip (Codec.maybe Codec.float)
+    , kindRoundTrip (Codec.maybe Codec.bool)
+    , kindRoundTrip (Codec.maybe Codec.value)
+    , kindRoundTrip (Codec.maybe Codec.decimal)
+    , kindRoundTrip (Codec.maybe (Codec.moneyIn GBP))
+    , kindRoundTrip (Codec.maybe Codec.isoCurrency)
+    , kindRoundTrip (Codec.maybe Codec.moneyObject)
+    , kindRoundTrip (Codec.maybe (Codec.list Codec.decimal))
+    ]
+
+
+kindRoundTrip : Codec b -> ( Codec.ColType, Codec.ColType )
+kindRoundTrip c =
+    let
+        want =
+            case Codec.shape c of
+                Codec.SScalar t ->
+                    t
+
+                _ ->
+                    Codec.CBlob
+
+        got =
+            case Codec.shape (Codec.autoWith [ ( "f", c ) ] { f = 0 }) of
+                Codec.SRecord [ ( "f", t ) ] ->
+                    t
+
+                _ ->
+                    Codec.CText
+    in
+        ( want, got )
+
+
+ctName : Codec.ColType -> String
+ctName ct =
+    case ct of
+        Codec.CText ->
+            "CText"
+
+        Codec.CInt ->
+            "CInt"
+
+        Codec.CReal ->
+            "CReal"
+
+        Codec.CBool ->
+            "CBool"
+
+        Codec.CBlob ->
+            "CBlob"
+
+        Codec.CDecimal ->
+            "CDecimal"
+
+        Codec.CMoneyIn _ ->
+            "CMoneyIn"
+
+        Codec.CNull _ ->
+            "CNull"
+
+
+dedupSorted : List String -> List String
+dedupSorted xs =
+    List.foldl (\x acc -> if List.member x acc then acc else x :: acc) [] xs |> List.sort

@@ -733,12 +733,18 @@ moneyFromText s =
     case String.split " " (String.trim s) of
 
         [ c, amount ] ->
-            case Money.fromString (Money.parseCurrency c) amount of
+            case Money.currencyFromCode c of
 
-                Ok m ->
-                    Just (canonical m)
+                Just cur ->
+                    case Money.fromString cur amount of
 
-                Err _ ->
+                        Ok m ->
+                            Just (canonical m)
+
+                        Err _ ->
+                            Nothing
+
+                Nothing ->
                     Nothing
 
         _ ->
@@ -751,7 +757,14 @@ moneyFromText s =
 canonical : Money -> Money
 canonical m =
     let
-        minor = Money.fromMinor (Money.currency m) (Money.toMinor m)
+        -- Rounded to the minor units as a Decimal: `toMinor` has no Int past
+        -- 64 bits (9.22 ETH), and fails loudly there (v0.29.2).
+        minor =
+            Money.Money
+                (Decimal.round
+                    (Money.minorUnits (Money.currency m))
+                    (Money.amount m))
+                (Money.currency m)
     in
         if Money.eq minor m then
             minor

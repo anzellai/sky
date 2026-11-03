@@ -365,7 +365,12 @@ getBool =
 -- for lossless round-trip via a single TEXT column. For two-column
 -- money storage (`amount NUMERIC, currency CHAR(3)`), decompose at
 -- the call site: `SqlDecimal (Money.amount m), SqlString
--- (Money.currencyCode (Money.currency m))`.
+-- (Money.currencyCode (Money.currency m))`. `Db.Decode.money` reads
+-- `"USD 1234.56"` and the `Money.formatWithCode` form `"1234.56 USD"`.
+--
+-- In a `Std.Db.Store`, a decimal column (`Codec.decimal`,
+-- `Codec.moneyIn`) takes `SqlDecimal` (bound as its canonical text) or
+-- `SqlInt`; `SqlMoney` fits no Store column.
 --
 -- Example with mixed types — the call site sky-sqlgen emits:
 --
@@ -489,7 +494,7 @@ fromMaybeMoney m =
             SqlMoney v
 
         Nothing ->
-            SqlNull (SqlMoney (Money.zero (Money.parseCurrency "USD")))
+            SqlNull (SqlMoney (Money.zero Money.USD))
 
 -- ─── updateFields / insertFields builders ──────────────────────────
 -- | Per-column "what to do" instruction for partial updates.

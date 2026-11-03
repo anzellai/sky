@@ -9,6 +9,7 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+mod db_check;
 mod db_cluster;
 mod db_embed;
 mod db_migrate;
@@ -2995,6 +2996,35 @@ fn references_word(hay: &str, word: &str) -> bool {
     false
 }
 
+/// `t`'s lines re-indented so its leftmost line starts at column `base` and
+/// every other line keeps its column relative to it (the layout is kept).
+fn reindent_arg_text(t: &project::app_entry::ArgText, base: usize) -> String {
+    let lines: Vec<&str> = t.text.lines().collect();
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let left = lines
+        .iter()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| indent(l))
+        .min()
+        .unwrap_or(t.col)
+        .min(t.col);
+    let mut out = Vec::new();
+    for (i, l) in lines.iter().enumerate() {
+        if l.trim().is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let col = if i == 0 { t.col } else { indent(l) };
+        out.push(format!(
+            "{}{}",
+            " ".repeat(base + col - left),
+            l.trim_start()
+        ));
+    }
+    out.join("\n")
+}
+
 /// Capture the boot-setup `let`-prefix of the app's `main`. A real app runs
 /// boot-time server setup before it starts the app:
 ///
@@ -3279,6 +3309,28 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
     // leave the client entry referencing an undefined name. In that case the
     // boot setup is NOT carried (today's behaviour) and a warning is printed, so
     // the drop is never silent.
+    // A `main` that CHAINS its setup before the app
+    // (`setup |> Task.andThen (\_ -> App.run app)`) runs that setup too: it is
+    // carried as the terminal of the same binding. Any other expression around
+    // `App.run` is refused (main_run_chain_setup), never dropped.
+    let run_chain = project::app_entry::main_run_chain(src)?;
+    // A binding that only runs the app (`main = start`, a named continuation
+    // `runIt _ = App.run app`) references the app value the client build
+    // moves: it goes with `main`.
+    for c in &run_chain.carriers {
+        out = remove_top_level_binding(&out, c);
+    }
+    let chain_setup = run_chain.setup;
+    let chain_body = |indent: usize| -> String {
+        match &chain_setup {
+            Some(setup) => format!(
+                "{pad}Task.map (\\_ -> ())\n{pad}    (\n{body}\n{pad}    )\n",
+                pad = " ".repeat(indent),
+                body = reindent_arg_text(setup, indent + 8),
+            ),
+            None => format!("{}Task.succeed ()\n", " ".repeat(indent)),
+        }
+    };
     let boot_setup_binding = match capture_main_boot_setup(src) {
         Some(block) => {
             let names = let_block_bound_names(&block);
@@ -3311,8 +3363,23 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 format!(
                     "spaBootSetup_ : Task Error ()\n\
                      spaBootSetup_ =\n    \
-                     let\n{block}\n    in\n    Task.succeed ()\n\n\n"
+                     let\n{block}\n    in\n{body}\n\n",
+                    body = chain_body(4),
                 )
+            } else if chain_setup.is_some() {
+                // The chained setup may use the `let` names, so it cannot be
+                // carried without them: refuse rather than drop it.
+                return Err(format!(
+                    "the app `main` runs a setup Task before the app, but its `let` binds \
+                     name(s) the app config also references ({names}), so the client build \
+                     cannot carry the setup into the backend. Move that setup into a \
+                     top-level `Task` the config does not depend on.",
+                    names = unsafe_names
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
             } else {
                 eprintln!(
                     "sky build --target <spa>: warning: the app `main`'s boot-setup \
@@ -3328,6 +3395,15 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 );
                 String::new()
             }
+        }
+        None if chain_setup.is_some() => {
+            if !out.contains("import Sky.Core.Task as Task") {
+                out = ensure_import(&out, "import Sky.Core.Task as Task");
+            }
+            format!(
+                "spaBootSetup_ : Task Error ()\nspaBootSetup_ =\n{body}\n\n",
+                body = chain_body(4),
+            )
         }
         None => String::new(),
     };
@@ -3629,6 +3705,13 @@ fn ensure_import(src: &str, import_line: &str) -> String {
 /// entry has a `main` and references exactly one runner, it takes the normal
 /// build path and DCE prunes the other backends (so a `terminal:cli` binary
 /// never links Webview/Spa).
+/// `sky run` on a `Std.App` entry: what to start the built app with.
+struct StdAppRun<'a> {
+    setup: &'a RunSetup,
+    /// `--open`: open the browser at the app's `listening` URL.
+    open: bool,
+}
+
 fn build_std_app(
     repo_root: &Path,
     project_dir: &Path,
@@ -3636,7 +3719,7 @@ fn build_std_app(
     tgt: target::Target,
     embed: bool,
     out_override: Option<&str>,
-    run: bool,
+    run: Option<StdAppRun<'_>>,
     compress_level: precompress::Level,
 ) -> ExitCode {
     let user_module = match entry_module_name(entry_file) {
@@ -3711,7 +3794,7 @@ fn build_std_app(
             if let Err(e) = native_preflight(project_dir, shell, url.as_ref()) {
                 eprintln!(
                     "sky {} --target {}: {e}",
-                    if run { "run" } else { "build" },
+                    if run.is_some() { "run" } else { "build" },
                     tgt.canonical()
                 );
                 return ExitCode::FAILURE;
@@ -3788,9 +3871,16 @@ fn build_std_app(
                     tgt.canonical(),
                     backend.display()
                 );
-                if !run {
+                let Some(run) = run else {
                     return ExitCode::SUCCESS;
-                }
+                };
+                // The same environment a plain `sky run` hands its app: the
+                // embedded cluster's DSN, the profile variables, the `--db-*`
+                // steps. Held until the backend exits.
+                let run_env = match run.setup.start("sky run:") {
+                    Ok(e) => e,
+                    Err(code) => return code,
+                };
                 println!("== running ({}) ==", tgt.canonical());
                 // Bug #6: the generated backend runs from `backend/` (it serves
                 // `../frontend/dist` by a RELATIVE path), so the project's own
@@ -3816,6 +3906,7 @@ fn build_std_app(
                     let mut backend_cmd = Command::new(&backend);
                     backend_cmd.current_dir(od.join("backend"));
                     apply_spa_data_dir(&mut backend_cmd, project_dir);
+                    run_env.apply(&mut backend_cmd);
                     if embed {
                         backend_cmd.arg("--embed");
                     }
@@ -3849,11 +3940,12 @@ fn build_std_app(
                     // its own dir, so run it from there.
                     proc.current_dir(od.join("backend"));
                     apply_spa_data_dir(&mut proc, project_dir);
+                    run_env.apply(&mut proc);
                     if embed {
                         proc.arg("--embed");
                     }
                     proc.args(run_program_args());
-                    match proc.status() {
+                    match status_opening_when_listening(proc, run.open) {
                         Ok(s) if s.success() => ExitCode::SUCCESS,
                         Ok(_) => ExitCode::FAILURE,
                         Err(e) => {
@@ -4003,18 +4095,25 @@ fn build_std_app(
         let _ = std::fs::remove_file(&std_bin);
         let _ = std::fs::copy(&binary, &std_bin);
     }
-    if !run {
+    let Some(run) = run else {
         return ExitCode::SUCCESS;
-    }
+    };
     // `sky run` — exec the freshly built binary, inheriting stdio (a terminal
-    // target needs the real TTY). `--embed` carries through to the process.
+    // target needs the real TTY). `--embed` carries through to the process, and
+    // the app gets the same environment a plain `sky run` hands its app (the
+    // embedded cluster's DSN, the profile variables, the `--db-*` steps).
+    let run_env = match run.setup.start("sky run:") {
+        Ok(e) => e,
+        Err(code) => return code,
+    };
     println!("== running ({}) ==", tgt.canonical());
     let mut proc = Command::new(&binary);
+    run_env.apply(&mut proc);
     if embed {
         proc.arg("--embed");
     }
     proc.args(run_program_args());
-    match proc.status() {
+    match status_opening_when_listening(proc, run.open) {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(_) => ExitCode::FAILURE,
         Err(e) => {
@@ -5381,7 +5480,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             tgt,
             embed,
             out_override.as_deref(),
-            false,
+            None,
             precompress_level,
         );
     }
@@ -11408,6 +11507,159 @@ OPTIONS:\n\
 \x20 --go-jobs <n|auto> | --no-trimpath | --go-build-timeout <secs|15m>   Go build flags\n\
 \x20 -h, --help                   print this help and build nothing";
 
+/// What `sky run` and `sky watch` hand to the app process they start, the same
+/// on EVERY run path: a plain entry, a dispatched `Std.App` entry (`App.run`,
+/// every `--target`) and a Sky.Spa entry (its generated backend).
+///
+/// v0.29.1 regression: the `Std.App` and Sky.Spa paths returned from `cmd_run`
+/// before the embedded-cluster code ran, so a project with `[database]
+/// embedded = true` got no cluster and no DSN there, and its first database
+/// read stopped with "no path given". Each path now takes its environment from
+/// this one place: the configuration is judged by [`RunSetup::prepare`] before
+/// any build, and the cluster is started by [`RunSetup::start`] after the build
+/// succeeds, so a project that does not compile does not cycle a PostgreSQL.
+struct RunSetup {
+    project_dir: PathBuf,
+    /// `[database] embedded = true`, checked against any explicit DSN. False
+    /// under `--embed`: that binary brings up its own cluster at run time.
+    embedded: bool,
+    profile: Option<ProfileOpts>,
+    /// `push` / `migrate` / `seed`, in that order, run before the app starts.
+    db_steps: Vec<&'static str>,
+}
+
+/// The environment the app is started with, and the cluster lease that must
+/// outlive it. Dropping it releases this run's reference on the cluster.
+struct RunEnv {
+    envs: Vec<(String, String)>,
+    _cluster: Option<db_cluster::RunLease>,
+}
+
+impl RunSetup {
+    /// Judge the configuration, before any build. `embed` is the run's
+    /// `--embed` flag: the binary then provisions its own cluster, and a
+    /// supervised one alongside it would be a second cluster on the same data.
+    fn prepare(
+        project_dir: &Path,
+        verb: &str,
+        embed: bool,
+        profile: Option<ProfileOpts>,
+        db_steps: Vec<&'static str>,
+    ) -> Result<RunSetup, String> {
+        let embedded = if embed {
+            false
+        } else {
+            db_cluster::check_run_config(project_dir, verb)?
+        };
+        Ok(RunSetup {
+            project_dir: project_dir.to_path_buf(),
+            embedded,
+            profile,
+            db_steps,
+        })
+    }
+
+    /// Start what the app needs, after a successful build: the embedded
+    /// cluster (its DSN goes into the environment), the `--profile` variables,
+    /// and the `--db-*` steps against the same database the app will use.
+    fn start(&self, banner_prefix: &str) -> Result<RunEnv, ExitCode> {
+        let mut envs: Vec<(String, String)> = Vec::new();
+        let cluster = if self.embedded {
+            match db_cluster::acquire_for_run(&self.project_dir) {
+                Ok(c) => {
+                    println!("{}", c.banner(banner_prefix));
+                    envs.extend(c.envs());
+                    Some(c)
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    return Err(ExitCode::FAILURE);
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(p) = &self.profile {
+            let dir = profile_dir_for(&self.project_dir, p.dir.as_deref())
+                .display()
+                .to_string();
+            envs.push(("SKY_PROFILE_DIR".to_string(), dir.clone()));
+            if let Some(t) = &p.timeout {
+                envs.push(("SKY_PROFILE_TIMEOUT".to_string(), t.clone()));
+            }
+            println!(
+                "Profiling enabled — writing to {dir}/ (cpu.pprof, heap.pprof, goroutines.txt, REPORT.md){}.",
+                p.timeout
+                    .as_ref()
+                    .map(|t| format!("; hang dump after {t}"))
+                    .unwrap_or_default()
+            );
+        }
+        // Each DB step re-invokes this binary's own `sky db <op>` in the project
+        // dir; a failure aborts the run. The steps talk to the SAME database the
+        // app is about to, so they get the cluster's DSN too. Without it they
+        // would fall back to what `sky.toml` declares, which under `embedded =
+        // true` is nothing, and the app would boot onto an unmigrated cluster.
+        for op in &self.db_steps {
+            let exe = match std::env::current_exe() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("sky run --db-{op}: could not locate sky binary: {e}");
+                    return Err(ExitCode::FAILURE);
+                }
+            };
+            let mut step = Command::new(&exe);
+            step.arg("db").arg(op).current_dir(&self.project_dir);
+            if let Some(c) = &cluster {
+                for (k, v) in c.envs() {
+                    step.env(k, v);
+                }
+            }
+            let ok = step.status().map(|s| s.success()).unwrap_or(false);
+            if !ok {
+                eprintln!("sky run --db-{op}: DB step failed — not starting the app.");
+                return Err(ExitCode::FAILURE);
+            }
+        }
+        Ok(RunEnv {
+            envs,
+            _cluster: cluster,
+        })
+    }
+}
+
+/// The ABSOLUTE directory `sky run --profile` writes to. The default is
+/// `<project root>/profile`; an explicit relative `--profile-dir` is read
+/// against the directory `sky` was started in, as a shell path is. It must be
+/// absolute because the app process does not always run in the project root:
+/// a Sky.Spa backend (`--target web:app`, a direct `Spa.app` entry) runs in
+/// its generated `.split/backend` folder, which the next build deletes, and a
+/// dispatched `Std.App` entry runs in the caller's directory. A relative
+/// `SKY_PROFILE_DIR=profile` put the profiles there (v0.29.2 sixth Judge).
+fn profile_dir_for(project_dir: &Path, explicit: Option<&str>) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let absolute = |p: &Path| {
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            cwd.join(p)
+        }
+    };
+    match explicit {
+        Some(d) => absolute(Path::new(d)),
+        None => absolute(project_dir).join("profile"),
+    }
+}
+
+impl RunEnv {
+    /// Put this environment on a command that starts the app.
+    fn apply(&self, cmd: &mut Command) {
+        for (k, v) in &self.envs {
+            cmd.env(k, v);
+        }
+    }
+}
+
 fn cmd_run(args: &[String]) -> ExitCode {
     // `sky run --help` prints help and builds nothing. Only a flag BEFORE `--`
     // counts: `sky run -- --help` passes `--help` to the program.
@@ -11496,6 +11748,27 @@ fn cmd_run(args: &[String]) -> ExitCode {
     // build. Gated on the cheap ".skydeps absent while deps are declared" check,
     // so a project whose deps are already fetched pays no per-run cost.
     maybe_fetch_sky_deps(&repo_root, &project_dir);
+    // What the app process is started with, judged ONCE here for every path
+    // below (Std.App, Sky.Spa, plain), before any build: a project whose
+    // `embedded = true` contradicts an explicit DSN is misconfigured, and making
+    // the user sit through a compile to be told so is a worse way to learn it.
+    // The cluster itself is started after the build (`RunSetup::start`).
+    let embed = args.iter().any(|a| a == "--embed");
+    let db_steps: Vec<&'static str> = [
+        (db_push, "push"),
+        (db_migrate, "migrate"),
+        (db_seed, "seed"),
+    ]
+    .into_iter()
+    .filter_map(|(on, op)| on.then_some(op))
+    .collect();
+    let setup = match RunSetup::prepare(&project_dir, "sky run", embed, profile, db_steps) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
     // Std.App dispatched entry: build the derived per-target entry and run it.
     // `--target` selects the backend (required); the build is the same derived
     // entry `sky build` produces, then the binary is exec'd with the real TTY.
@@ -11527,7 +11800,6 @@ fn cmd_run(args: &[String]) -> ExitCode {
                 None => target::Target::Web,
             },
         };
-        let embed = args.iter().any(|a| a == "--embed");
         return build_std_app(
             &repo_root,
             &project_dir,
@@ -11535,20 +11807,23 @@ fn cmd_run(args: &[String]) -> ExitCode {
             tgt,
             embed,
             out_override.as_deref(),
-            true,
+            Some(StdAppRun {
+                setup: &setup,
+                open,
+            }),
             precompress::Level::Off,
         );
     }
 
     // Sky.Spa entry: auto-split, build both, then run the native BACKEND (it serves
     // the wasm frontend + /_rpc same-origin — one binary). The split builds via
-    // `sky build`, never `sky run`, so this does not recurse; the embedded-cluster /
-    // profile machinery below is for direct Live/Cli/Server apps and is skipped.
+    // `sky build`, never `sky run`, so this does not recurse. The backend gets the
+    // same environment as a plain app (`RunSetup`): the embedded cluster's DSN,
+    // the profile variables and the `--db-*` steps.
     if is_spa_app_entry(file) && !is_generated_split_project(&project_dir) {
         let out_dir = project_dir.join(out_override.as_deref().unwrap_or(".split"));
         // --embed → the backend bundles PostgreSQL; --target → the frontend shell
         // (default web). Both COMPOSE with the split, same as `sky build`.
-        let embed = args.iter().any(|a| a == "--embed");
         let fe_target = args
             .iter()
             .position(|a| a == "--target")
@@ -11576,6 +11851,10 @@ fn cmd_run(args: &[String]) -> ExitCode {
         };
         let backend = od.join("backend");
         let app = backend.join("sky-out").join("app");
+        let run_env = match setup.start("sky run:") {
+            Ok(e) => e,
+            Err(code) => return code,
+        };
         // The generated backend reads PORT (default 8951) — mirror that in the hint,
         // with the same parse the native shells' default address uses.
         let port = app_url::parse_port(std::env::var("PORT").ok().as_deref());
@@ -11590,6 +11869,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         let mut run = Command::new(&app);
         run.current_dir(&backend);
         apply_spa_data_dir(&mut run, &project_dir);
+        run_env.apply(&mut run);
         if embed {
             // An --embed backend bakes PostgreSQL in but still needs `--embed` at
             // RUNTIME to bring its own cluster up (mirrors `./sky-out/app --embed`).
@@ -11607,18 +11887,6 @@ fn cmd_run(args: &[String]) -> ExitCode {
             }
         };
     }
-    // The configuration is judged BEFORE the build: a project whose
-    // `embedded = true` contradicts an explicit DSN is misconfigured, and making
-    // the user sit through a compile to be told so is a worse way to learn it.
-    // The cluster itself is started AFTER, so a project that does not compile
-    // does not cycle a PostgreSQL up and down on every attempt.
-    let embedded = match db_cluster::check_run_config(&project_dir, "sky run") {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("{e}");
-            return ExitCode::FAILURE;
-        }
-    };
     let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
     let opts = BuildOptions {
         repo_root,
@@ -11665,77 +11933,17 @@ fn cmd_run(args: &[String]) -> ExitCode {
     if let Some(note) = &report.cgo_note {
         eprintln!("sky run: go build {note}");
     }
-    let mut envs: Vec<(String, String)> = Vec::new();
-    // The lease lives for the rest of this function — dropping it releases this
-    // run's reference and, if nothing else holds one, stops the cluster.
-    let cluster = if embedded {
-        match db_cluster::acquire_for_run(&project_dir) {
-            Ok(c) => {
-                println!("{}", c.banner("sky run:"));
-                envs.extend(c.envs());
-                Some(c)
-            }
-            Err(e) => {
-                eprintln!("{e}");
-                return ExitCode::FAILURE;
-            }
-        }
-    } else {
-        None
+    // The cluster starts AFTER the build, so a project that does not compile
+    // does not cycle a PostgreSQL up and down on every attempt. `run_env` holds
+    // the lease for the rest of this function: dropping it releases this run's
+    // reference and, if nothing else holds one, stops the cluster.
+    let run_env = match setup.start("sky run:") {
+        Ok(e) => e,
+        Err(code) => return code,
     };
-    if let Some(p) = &profile {
-        // A relative dir resolves against the app's cwd (the project root, where
-        // `run_app` runs it) → profiles land in `<project>/profile/` by default.
-        let dir = p.dir.clone().unwrap_or_else(|| "profile".to_string());
-        envs.push(("SKY_PROFILE_DIR".to_string(), dir.clone()));
-        if let Some(t) = &p.timeout {
-            envs.push(("SKY_PROFILE_TIMEOUT".to_string(), t.clone()));
-        }
-        println!(
-            "Profiling enabled — writing to {dir}/ (cpu.pprof, heap.pprof, goroutines.txt, REPORT.md){}.",
-            p.timeout
-                .as_ref()
-                .map(|t| format!("; hang dump after {t}"))
-                .unwrap_or_default()
-        );
-    }
-    // Run the requested DB steps before serving. Each re-invokes this binary's
-    // own `sky db <op>` in the project dir; a failure aborts the run.
-    for (flag, op) in [
-        (db_push, "push"),
-        (db_migrate, "migrate"),
-        (db_seed, "seed"),
-    ] {
-        if !flag {
-            continue;
-        }
-        let exe = match std::env::current_exe() {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("sky run --db-{op}: could not locate sky binary: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
-        let mut step = Command::new(&exe);
-        step.arg("db").arg(op).current_dir(&project_dir);
-        // The migrate/seed steps talk to the SAME database the app is about to,
-        // so they need the cluster's DSN too. Without this they would fall back
-        // to whatever `sky.toml` declares — which, under `embedded = true`, is
-        // nothing — and the app would boot onto an unmigrated cluster.
-        if let Some(c) = &cluster {
-            for (k, v) in c.envs() {
-                step.env(k, v);
-            }
-        }
-        let ok = step.status().map(|s| s.success()).unwrap_or(false);
-        if !ok {
-            eprintln!("sky run --db-{op}: DB step failed — not starting the app.");
-            return ExitCode::FAILURE;
-        }
-    }
     println!("Build complete, running...");
     let out_dir = project_dir.join(&out_dir_name);
-    match run_app_open(&out_dir, &envs, open) {
+    match run_app_open(&out_dir, &run_env.envs, open) {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1) as u8),
         Err(e) => {
             eprintln!("sky run: could not launch binary: {e}");
@@ -11832,6 +12040,20 @@ fn run_app_open(
     cmd.args(run_program_args());
     for (k, v) in envs {
         cmd.env(k, v);
+    }
+    status_opening_when_listening(cmd, true)
+}
+
+/// Run `cmd` to completion. With `open`, its stdout is teed through this
+/// process and the platform browser opens at the first `listening` line's
+/// port. Without it, stdio is inherited untouched (a terminal app needs the
+/// real TTY).
+fn status_opening_when_listening(
+    mut cmd: Command,
+    open: bool,
+) -> std::io::Result<std::process::ExitStatus> {
+    if !open {
+        return cmd.status();
     }
     // Pipe stdout so we can watch for the listening line; stderr stays inherited.
     cmd.stdout(std::process::Stdio::piped());
@@ -14704,74 +14926,145 @@ fn build_temp_db_entry_checked(
 }
 
 /// `sky db status` (file-based) — list committed `db/migrations/*.json` and mark
-/// each applied (present in the live `_sky_migrations` ledger) or pending, and
-/// flag any pending file that carries quarantined destructive ops. Exits non-zero
-/// when anything is pending — usable as a "is this DB up to date?" deploy gate.
+/// each applied, PENDING or EDITED against the live `_sky_migrations` ledger,
+/// and flag any pending file that carries quarantined destructive ops. The
+/// states come from `Migrate.inspectSchema`, the same ledger check `sky db
+/// check` reports, so the two verbs cannot disagree (an applied file edited
+/// afterwards was "applied" here and EDITED there before v0.29.2). Exits
+/// non-zero when anything is pending or edited — usable as a "is this DB up to
+/// date?" deploy gate.
 fn cmd_db_status(_args: &[String]) -> ExitCode {
-    // Temp entry prints the ledger's applied ids between markers (empty on a
-    // fresh DB with no ledger table yet).
-    let code = r#"module SkyDbStatus exposing (main)
+    let Some((_repo_root, project_dir)) = resolve(Path::new("src/Main.sky")) else {
+        return ExitCode::FAILURE;
+    };
+    let inputs = db_scratch_dir("SkyDbStatusIn");
+    if let Err(e) = std::fs::create_dir_all(&inputs) {
+        eprintln!("sky db status: cannot create scratch dir: {e}");
+        return ExitCode::FAILURE;
+    }
+    let _inputs = DbScratch(inputs.clone());
+    let migrations_path = inputs.join("migrations.json");
+    if let Err(e) = std::fs::write(&migrations_path, db_migration_files_json(&project_dir)) {
+        eprintln!("sky db status: cannot stage migrations: {e}");
+        return ExitCode::FAILURE;
+    }
+    let code = format!(
+        r#"module SkyDbStatus exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
-import Sky.Core.List as List
-import Sky.Core.Dict as Dict
+import Sky.Core.File as File
 import Std.Db as Db
+import Std.Db.Migrate as Migrate
 import Std.Log exposing (println)
 
 
 main : Task Error ()
 main =
-    Db.connect ()
-        |> Task.andThen queryApplied
-        |> Task.andThen printApplied
+    File.readFile {migrations}
+        |> Task.andThen (\migrations -> Db.connect () |> Task.andThen (\conn -> Migrate.inspectSchema conn migrations))
+        |> Task.andThen emit
 
 
-queryApplied : Db -> Task Error (List String)
-queryApplied conn =
-    Db.query conn "SELECT name FROM _sky_migrations ORDER BY name" []
-        |> Task.map (List.map (\row -> Maybe.withDefault "" (Dict.get "name" row)))
-        |> Task.onError (\_ -> Task.succeed [])
-
-
-printApplied : List String -> Task Error ()
-printApplied ids =
+emit : String -> Task Error ()
+emit report =
     let
         _ =
-            println "SKY_APPLIED_BEGIN"
+            println "SKY_INSPECT_BEGIN"
 
         _ =
-            println (String.join "\n" ids)
+            println report
 
         _ =
-            println "SKY_APPLIED_END"
+            println "SKY_INSPECT_END"
     in
     Task.succeed ()
-"#;
+"#,
+        migrations = sky_string_literal(&migrations_path),
+    );
     let Some((bin, project_dir, _scratch)) =
-        build_temp_db_entry("sky db status", "SkyDbStatus", "_skydbstatus.sky", code)
+        build_temp_db_entry("sky db status", "SkyDbStatus", "_skydbstatus.sky", &code)
     else {
         return ExitCode::FAILURE;
     };
-    let output = Command::new(&bin).current_dir(&project_dir).output();
-    let stdout = match output {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+    // Read-only: a SQLite file is opened with mode=ro (a missing one is not
+    // created), a PostgreSQL session refuses writes, and no telemetry table
+    // is written (rt.dbReadOnly).
+    let output = match Command::new(&bin)
+        .current_dir(&project_dir)
+        .env("SKY_READ_ONLY_DB", "status")
+        .output()
+    {
+        Ok(o) => o,
         Err(e) => {
             eprintln!("sky db status: run failed: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let applied: std::collections::HashSet<String> =
-        extract_between(&stdout, "SKY_APPLIED_BEGIN", "SKY_APPLIED_END")
-            .unwrap_or("")
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect();
-
-    // List committed migration files (sorted = chronological).
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let Some(report) = extract_between(&stdout, "SKY_INSPECT_BEGIN", "SKY_INSPECT_END")
+        .and_then(|j| serde_json::from_str::<db_check::Inspect>(j.trim()).ok())
+    else {
+        eprintln!(
+            "sky db status: could not read the migration ledger:\n{}",
+            helper_error_text(&stderr, &stdout)
+        );
+        return ExitCode::FAILURE;
+    };
+    let ledger = &report.ledger;
+    let applied = ledger.count("applied") + ledger.count("restamp");
+    println!("migrations (db/migrations) — {applied} applied:");
     let migrations_dir = project_dir.join("db").join("migrations");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&migrations_dir)
+    let (mut pending, mut edited) = (0, 0);
+    for m in &ledger.migrations {
+        let has_destructive =
+            std::fs::read_to_string(migrations_dir.join(format!("{}.json", m.name)))
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v.get("destructive").cloned())
+                .map(|d| d.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+                .unwrap_or(false);
+        let quarantine = if has_destructive {
+            "  ⚠ has quarantined destructive ops"
+        } else {
+            ""
+        };
+        match m.state.as_str() {
+            "applied" | "restamp" => println!("  ✓ {}  applied{quarantine}", m.name),
+            "edited" => {
+                edited += 1;
+                println!(
+                    "  ✗ {}  EDITED (applied {}, then the file changed: its checksum does not \
+                     match the ledger; restore the file and put the change in a new migration)",
+                    m.name, m.applied_at
+                );
+            }
+            _ => {
+                pending += 1;
+                println!("  ○ {}  PENDING{quarantine}", m.name);
+            }
+        }
+    }
+    if pending == 0 && edited == 0 {
+        println!("\nup to date.");
+        return ExitCode::SUCCESS;
+    }
+    if edited > 0 {
+        println!(
+            "\n{edited} edited — `sky db migrate` refuses an edited applied migration; restore it."
+        );
+    }
+    if pending > 0 {
+        println!("\n{pending} pending — run `sky db migrate`.");
+    }
+    ExitCode::from(1)
+}
+
+/// The committed `db/migrations/*.json` files, sorted by name (= by time), as
+/// the one JSON array `sky db migrate` applies and `Migrate.inspectSchema` judges.
+fn db_migration_files_json(project_dir: &Path) -> String {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(project_dir.join("db").join("migrations"))
         .into_iter()
         .flatten()
         .flatten()
@@ -14779,40 +15072,427 @@ printApplied ids =
         .filter(|p| p.extension().map(|x| x == "json").unwrap_or(false))
         .collect();
     files.sort();
+    let bodies: Vec<String> = files
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    format!("[{}]", bodies.join(","))
+}
 
-    println!("migrations (db/migrations) — {} applied:", applied.len());
-    let mut pending = 0;
-    for p in &files {
-        let id = p
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        let has_destructive = std::fs::read_to_string(p)
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.get("destructive").cloned())
-            .map(|d| d.as_array().map(|a| !a.is_empty()).unwrap_or(false))
-            .unwrap_or(false);
-        let quarantine = if has_destructive {
-            "  ⚠ has quarantined destructive ops"
-        } else {
-            ""
-        };
-        if applied.contains(&id) {
-            println!("  ✓ {id}  applied{quarantine}");
-        } else {
-            pending += 1;
-            println!("  ○ {id}  PENDING{quarantine}");
+/// A path as a Sky string literal.
+fn sky_string_literal(p: &Path) -> String {
+    let s = p.to_string_lossy();
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// The error a `sky db check` helper run reported: its WARN / ERROR log lines
+/// without the timestamp, else all of its stderr, else what it printed.
+fn helper_error_text(stderr: &str, stdout: &str) -> String {
+    let strip_ts = |l: &str| -> String {
+        match l.split_once(' ') {
+            Some((ts, rest)) if ts.len() >= 20 && ts.as_bytes()[4] == b'-' && ts.contains('T') => {
+                rest.to_string()
+            }
+            _ => l.to_string(),
+        }
+    };
+    let lines: Vec<String> = stderr
+        .lines()
+        .map(strip_ts)
+        .filter(|l| l.starts_with("ERROR") || l.starts_with("WARN"))
+        .map(|l| format!("  {l}"))
+        .collect();
+    if !lines.is_empty() {
+        return lines.join("\n");
+    }
+    let err = stderr.trim();
+    if !err.is_empty() {
+        return err.to_string();
+    }
+    stdout.trim().to_string()
+}
+
+const DB_CHECK_USAGE: &str = "usage: sky db check [--sql [--write] | --code]\n\
+    \x20 (none)    compare the live database with the tables the code declares, and the\n\
+    \x20           migration ledger; exit 1 on drift, 2 when the check cannot run\n\
+    \x20 --sql     print the SQL that makes the database match the code (never run)\n\
+    \x20 --write   with --sql: save the safe steps as a migration in db/migrations\n\
+    \x20 --code    print what the code needs to read the database safely";
+
+/// `sky db check [--sql [--write] | --code]` — compare the live database with
+/// the project's `db : Store.Project`, read-only (`db_check.rs`).
+///
+/// One helper binary does both halves: run once, it dumps the target schema
+/// (`Store.dumpSchema db`) and the live catalogue (`Migrate.inspectSchema`); run
+/// again with the safe ops in a file, it renders them for the connection's
+/// dialect (`Migrate.renderMigrations`), so `--sql` prints the SQL the
+/// migration renderer would run, not a second rendering of it.
+fn cmd_db_check(args: &[String]) -> ExitCode {
+    let mut sql = false;
+    let mut code = false;
+    let mut write = false;
+    for a in args {
+        match a.as_str() {
+            "--sql" => sql = true,
+            "--code" => code = true,
+            "--write" => write = true,
+            "-h" | "--help" => {
+                println!("{DB_CHECK_USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("sky db check: unknown argument `{other}`\n{DB_CHECK_USAGE}");
+                return ExitCode::from(2);
+            }
         }
     }
-    if pending == 0 {
-        println!("\nup to date.");
-        ExitCode::SUCCESS
-    } else {
-        println!("\n{pending} pending — run `sky db migrate`.");
-        ExitCode::from(1)
+    if (write && !sql) || (code && sql) {
+        eprintln!(
+            "sky db check: --write goes with --sql, and --code stands alone\n{DB_CHECK_USAGE}"
+        );
+        return ExitCode::from(2);
     }
+    let file = Path::new("src/Main.sky");
+    let Some((_repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::from(2);
+    };
+    let mig_dir = project_dir.join("db").join("migrations");
+    if write && !mig_dir.is_dir() {
+        eprintln!(
+            "sky db check --write: this project has no db/migrations. Run `sky db init` to use \
+             migration files, or apply the SQL from `sky db check --sql` yourself."
+        );
+        return ExitCode::from(2);
+    }
+
+    // Inputs for the helper binary live in a scratch dir of their own.
+    let inputs = db_scratch_dir("SkyDbCheckIn");
+    if let Err(e) = std::fs::create_dir_all(&inputs) {
+        eprintln!("sky db check: cannot create scratch dir: {e}");
+        return ExitCode::from(2);
+    }
+    let _inputs = DbScratch(inputs.clone());
+    let migrations_path = inputs.join("migrations.json");
+    let render_path = inputs.join("render.json");
+    if let Err(e) = std::fs::write(&migrations_path, db_migration_files_json(&project_dir)) {
+        eprintln!("sky db check: cannot stage migrations: {e}");
+        return ExitCode::from(2);
+    }
+    let entry_module = entry_module_name(file).unwrap_or_else(|| "Main".into());
+    let check_code = format!(
+        r#"module SkyDbCheck exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Db as Db
+import Std.Db.Migrate as Migrate
+import Std.Db.Store as Store
+import Std.Log exposing (println)
+import {entry_module} exposing (db)
+
+
+main : Task Error ()
+main =
+    File.readFile {render}
+        |> Task.map Just
+        |> Task.onError (\_ -> Task.succeed Nothing)
+        |> Task.andThen run
+
+
+run : Maybe String -> Task Error ()
+run render =
+    case render of
+        Just ops ->
+            Db.connect ()
+                |> Task.andThen (\conn -> Migrate.renderMigrations conn ops)
+                |> Task.andThen printRendered
+
+        Nothing ->
+            Store.dumpSchema db
+                |> Task.andThen (\_ -> File.readFile {migrations})
+                |> Task.andThen inspect
+
+
+inspect : String -> Task Error ()
+inspect migrations =
+    Db.connect ()
+        |> Task.andThen (\conn -> Migrate.inspectSchema conn migrations |> Task.andThen (\report -> emit "SKY_INSPECT_BEGIN" report "SKY_INSPECT_END") |> Task.andThen (\_ -> Store.checkProjectData conn db) |> Task.andThen (\data -> emit "SKY_DATA_BEGIN" data "SKY_DATA_END"))
+
+
+printRendered : List ( String, String ) -> Task Error ()
+printRendered pairs =
+    emit "SKY_RENDER_BEGIN" (String.join "\n--SKY-STEP--\n" (List.map (\( _, s ) -> s) pairs)) "SKY_RENDER_END"
+
+
+emit : String -> String -> String -> Task Error ()
+emit begin body end =
+    let
+        _ =
+            println begin
+
+        _ =
+            println body
+
+        _ =
+            println end
+    in
+    Task.succeed ()
+"#,
+        render = sky_string_literal(&render_path),
+        migrations = sky_string_literal(&migrations_path),
+    );
+    let Some((bin, project_dir, _scratch)) = build_temp_db_entry(
+        &format!(
+            "sky db check: build failed — does module {entry_module} `exposing (db)` with `db = Store.project [...]`?\nsky db check"
+        ),
+        "SkyDbCheck",
+        "_skydbcheck.sky",
+        &check_code,
+    ) else {
+        return ExitCode::from(2);
+    };
+    // One run of the helper: (succeeded, stdout, stderr). A spawn failure is
+    // reported here and is `None`.
+    let run = || -> Option<(bool, String, String)> {
+        // `sky db check` writes nothing: SKY_READ_ONLY_DB opens a SQLite
+        // file mode=ro (a missing one is refused, not created), makes every
+        // PostgreSQL transaction read-only, and turns telemetry persistence
+        // off (rt.dbReadOnly).
+        match Command::new(&bin)
+            .current_dir(&project_dir)
+            .env("SKY_READ_ONLY_DB", "check")
+            .output()
+        {
+            Ok(o) => Some((
+                o.status.success(),
+                String::from_utf8_lossy(&o.stdout).into_owned(),
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+            )),
+            Err(e) => {
+                eprintln!("sky db check: cannot run the check helper: {e}");
+                None
+            }
+        }
+    };
+    let Some((ran_ok, stdout, stderr)) = run() else {
+        return ExitCode::from(2);
+    };
+    // The helper dumps the code's schema BEFORE it connects. No schema means
+    // the project's `db` itself was refused (a Store builder problem, a bad
+    // table name): no database was read, so the database is not the cause.
+    let target: db_migrate::Schema =
+        match extract_between(&stdout, "SKY_SCHEMA_BEGIN", "SKY_SCHEMA_END")
+            .map(|j| serde_json::from_str(j.trim()))
+        {
+            Some(Ok(s)) => s,
+            Some(Err(e)) => {
+                eprintln!("sky db check: the schema of `db` is not readable: {e}");
+                return ExitCode::from(2);
+            }
+            None => {
+                eprintln!(
+                    "sky db check: the project's `db` was refused before any database was read. \
+                     Fix the code (`sky verify` reports the same problem):\n{}",
+                    helper_error_text(&stderr, &stdout)
+                );
+                return ExitCode::from(2);
+            }
+        };
+    let live: db_check::Inspect =
+        match extract_between(&stdout, "SKY_INSPECT_BEGIN", "SKY_INSPECT_END")
+            .map(|j| serde_json::from_str(j.trim()))
+        {
+            Some(Ok(s)) if ran_ok => s,
+            Some(Err(e)) => {
+                eprintln!("sky db check: bad inspect report: {e}");
+                return ExitCode::from(2);
+            }
+            _ => {
+                eprintln!(
+                    "sky db check: could not read the database (the connection or a catalogue \
+                     query failed). The DSN comes from DATABASE_URL, <PREFIX>_DB_PATH or sky.toml \
+                     [database], as for the app:\n{}",
+                    helper_error_text(&stderr, &stdout)
+                );
+                return ExitCode::from(2);
+            }
+        };
+    // The refusals the app's Store.migrate would give for the data the
+    // tables hold, from the runtime's own check (Store.checkProjectData):
+    // a column type can fit while its rows do not (v0.29.2).
+    let data: Vec<db_check::DataRefusal> =
+        match extract_between(&stdout, "SKY_DATA_BEGIN", "SKY_DATA_END")
+            .map(|j| serde_json::from_str(j.trim()))
+        {
+            Some(Ok(d)) => d,
+            Some(Err(e)) => {
+                eprintln!("sky db check: bad data report: {e}");
+                return ExitCode::from(2);
+            }
+            None => {
+                eprintln!(
+                    "sky db check: could not check the data the tables hold (the check the \
+                     app's Store.migrate runs):\n{}",
+                    helper_error_text(&stderr, &stdout)
+                );
+                return ExitCode::from(2);
+            }
+        };
+    let mut report = db_check::check(&target, &live);
+    db_check::apply_data(&mut report, &data);
+    let drift = if report.drift() {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    };
+
+    if code {
+        print!("{}", db_check::render_code(&report));
+        return drift;
+    }
+    if !sql {
+        print!("{}", db_check::render_report(&report, target.tables.len()));
+        return drift;
+    }
+
+    // --sql: the runtime renders each safe op for the dialect.
+    let ops = report.safe_ops();
+    let mut rendered: Vec<String> = Vec::new();
+    if !ops.is_empty() {
+        let files: Vec<serde_json::Value> = ops
+            .iter()
+            .enumerate()
+            .map(|(i, op)| serde_json::json!({ "id": format!("step_{i}"), "ops": [op] }))
+            .collect();
+        if let Err(e) = std::fs::write(
+            &render_path,
+            serde_json::to_string(&files).unwrap_or_default(),
+        ) {
+            eprintln!("sky db check: cannot stage the steps: {e}");
+            return ExitCode::from(2);
+        }
+        let Some((ok, out, err)) = run() else {
+            return ExitCode::from(2);
+        };
+        let body = extract_between(&out, "SKY_RENDER_BEGIN\n", "\nSKY_RENDER_END");
+        let Some(body) = body.filter(|_| ok) else {
+            eprintln!(
+                "sky db check: could not render the SQL for the database's dialect:\n{}",
+                helper_error_text(&err, &out)
+            );
+            return ExitCode::from(2);
+        };
+        rendered = body.split("\n--SKY-STEP--\n").map(str::to_string).collect();
+    }
+    print!("{}", db_check::render_sql(&report, &rendered));
+
+    if write {
+        let pending = report.ledger.count("pending");
+        let edited = report.ledger.count("edited");
+        if pending > 0 || edited > 0 {
+            eprintln!(
+                "\nsky db check --write: nothing written. {pending} migration(s) are pending and \
+                 {edited} edited: the database is not at the state the committed files describe, \
+                 so a new file would repeat or fight them. Run `sky db migrate` (and restore an \
+                 edited file) first."
+            );
+            return ExitCode::from(2);
+        }
+        // The file takes the live database AND a fresh one the committed
+        // migrations build to the code (`db_check::write_ops`): the snapshot
+        // it rewrites says so.
+        let snapshot_path = project_dir.join("db").join("schema.json");
+        let snapshot: db_migrate::Schema = std::fs::read_to_string(&snapshot_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let file_ops = match db_check::write_ops(&report, &target, &snapshot, &live) {
+            Ok(o) => o,
+            Err(refused) => {
+                eprintln!(
+                    "\nsky db check --write: nothing written. The database is ahead of the \
+                     committed migrations in a way one migration file cannot record for both \
+                     this database and a fresh one:"
+                );
+                for r in &refused {
+                    eprintln!("  - {r}");
+                }
+                eprintln!(
+                    "Add the column in a migration that a fresh database applies (and mark it \
+                     applied here), or remove it from this database, then run the check again."
+                );
+                return ExitCode::from(2);
+            }
+        };
+        let fresh_only = file_ops.len().saturating_sub(ops.len());
+        let ops = file_ops;
+        if ops.is_empty() && report.diff.destructive.is_empty() {
+            println!("\n-- sky db check --write: no safe step to save.");
+            return drift;
+        }
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let id = format!("{ts}_db_check");
+        let d = db_migrate::Diff {
+            ops,
+            destructive: report.diff.destructive.clone(),
+            warnings: Vec::new(),
+        };
+        let path = mig_dir.join(format!("{id}.json"));
+        if let Err(e) = std::fs::write(&path, db_migrate::migration_file_json(&id, &d)) {
+            eprintln!("sky db check --write: cannot write {}: {e}", path.display());
+            return ExitCode::from(2);
+        }
+        // The snapshot follows the file, as `--gen` does, so a later `--gen`
+        // does not write the same steps again.
+        if let Err(e) = std::fs::write(
+            &snapshot_path,
+            serde_json::to_string_pretty(&target).unwrap_or_default(),
+        ) {
+            eprintln!("sky db check --write: cannot write db/schema.json: {e}");
+            return ExitCode::from(2);
+        }
+        let left: Vec<&str> = report
+            .findings
+            .iter()
+            .filter(|f| f.steps.iter().any(|s| !matches!(s, db_check::Step::Op(_))))
+            .map(|f| f.text.as_str())
+            .collect();
+        println!(
+            "\n-- sky db check --write: wrote db/migrations/{id}.json ({} safe step(s){}{}) and updated db/schema.json. `sky db migrate` applies it.",
+            d.ops.len(),
+            if fresh_only > 0 {
+                format!(
+                    ", {fresh_only} of them for a database built from db/migrations (a table or \
+                     index this database already has: IF NOT EXISTS, so they change nothing here)"
+                )
+            } else {
+                String::new()
+            },
+            if d.destructive.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; {} destructive step(s) quarantined in its `destructive` array, inert",
+                    d.destructive.len()
+                )
+            }
+        );
+        if !left.is_empty() {
+            println!(
+                "-- Not in the file (unsafe, or SQL with no dialect-neutral migration op): {}",
+                left.join("; ")
+            );
+        }
+    }
+    drift
 }
 
 /// `sky db seed` — run the entry module's `seed : Db -> Task Error ()` against the
@@ -15398,6 +16078,11 @@ fn cmd_db(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("status") && file_based {
         return cmd_db_status(&args[1..]);
     }
+    // `sky db check [--sql [--write] | --code]` — compare the live database with
+    // the code, read-only.
+    if args.first().map(String::as_str) == Some("check") {
+        return cmd_db_check(&args[1..]);
+    }
     // `sky db seed` — run the entry module's `seed : Db -> Task Error ()`.
     if args.first().map(String::as_str) == Some("seed") {
         return cmd_db_seed(&args[1..]);
@@ -15420,6 +16105,7 @@ fn cmd_db(args: &[String]) -> ExitCode {
         _ => {
             eprintln!(
                 "usage: sky db <status|migrate [--gen [name]]|push|seed|reset [table]|drop [table]|init> [file.sky]\n\
+                 \x20      sky db check [--sql [--write] | --code]  compare the live database with the code\n\
                  \x20      sky db <start|stop [--all]|ps [--all]>    local PostgreSQL cluster\n\
                  \x20      sky db provision --embed                  fetch PostgreSQL into ~/.sky\n\
                  \x20      sky db provision --shared [--service]     one shared cluster for this host\n\
@@ -15467,7 +16153,13 @@ fn cmd_db(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let out_dir = project_dir.join(&out_dir_name);
-    match run_app(&out_dir, &[("SKY_DB_OP".to_string(), op.to_string())]) {
+    // `status` writes nothing: the app runs with its databases read-only
+    // and no telemetry persisted (rt.dbReadOnly), as `sky db check` does.
+    let mut env = vec![("SKY_DB_OP".to_string(), op.to_string())];
+    if op == "status" {
+        env.push(("SKY_READ_ONLY_DB".to_string(), "status".to_string()));
+    }
+    match run_app(&out_dir, &env) {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1) as u8),
         Err(e) => {
             eprintln!("sky db: could not launch binary: {e}");
@@ -15768,6 +16460,19 @@ fn watch_build_and_spawn(
         embed_bundle: None,
         wasm: false,
     };
+    // A dispatched `Std.App` entry (`main = App.run app`) is built the way
+    // `sky run` builds it: the derived per-target entry, for the sky.toml
+    // `[app] target` (else `web`). Building the entry directly would compile
+    // `App.run`'s placeholder body, which is not the web backend.
+    if is_std_app_dispatched_entry(file) {
+        return watch_build_and_spawn_std_app(repo_root, project_dir, file, no_run, app_envs);
+    }
+    // A direct Sky.Spa entry (`Spa.app`) is split and built the way `sky run`
+    // does it, and the generated backend is the process to run (it serves the
+    // wasm frontend + /_rpc). Building the entry directly starts no backend.
+    if is_spa_app_entry(file) && !is_generated_split_project(project_dir) {
+        return watch_build_and_spawn_spa(repo_root, project_dir, file, no_run, app_envs);
+    }
     let report = build_example(&opts);
     for w in &report.warnings {
         eprintln!("[watch] warning: {w}");
@@ -15814,6 +16519,134 @@ fn watch_build_and_spawn(
     }
 }
 
+/// [`watch_build_and_spawn`] for a direct Sky.Spa entry: split it into
+/// `.split/` and build both halves (as `sky run` does), then spawn the
+/// generated backend from its own folder with the watched app's environment
+/// (the embedded cluster's DSN).
+fn watch_build_and_spawn_spa(
+    repo_root: &Path,
+    project_dir: &Path,
+    file: &Path,
+    no_run: bool,
+    app_envs: &[(String, String)],
+) -> Option<std::process::Child> {
+    let out_dir = project_dir.join(".split");
+    let od = match spa_split_and_build(
+        repo_root,
+        project_dir,
+        entry_module_name(file).as_deref(),
+        &out_dir,
+        None,
+        "web",
+        false,
+        true,
+        None,
+        precompress::Level::Off,
+        None,
+        None,
+        None,
+    ) {
+        Ok(od) => od,
+        Err(_) => {
+            eprintln!("[watch] build failed (keeping previous binary)");
+            return None;
+        }
+    };
+    println!("[watch] build ok");
+    if no_run {
+        return None;
+    }
+    let backend = od.join("backend");
+    let bin = backend.join("sky-out").join("app");
+    let mut cmd = Command::new(std::fs::canonicalize(&bin).unwrap_or(bin));
+    cmd.current_dir(&backend);
+    apply_spa_data_dir(&mut cmd, project_dir);
+    for (k, v) in app_envs {
+        cmd.env(k, v);
+    }
+    match cmd.spawn() {
+        Ok(child) => Some(child),
+        Err(e) => {
+            eprintln!("[watch] could not launch the Sky.Spa backend: {e}");
+            None
+        }
+    }
+}
+
+/// [`watch_build_and_spawn`] for a dispatched `Std.App` entry: build the
+/// derived entry for the project's target, then spawn the binary that target
+/// runs (the direct binary from the project folder, or the generated Sky.Spa
+/// backend from its own folder), with the same environment as any watched app.
+fn watch_build_and_spawn_std_app(
+    repo_root: &Path,
+    project_dir: &Path,
+    file: &Path,
+    no_run: bool,
+    app_envs: &[(String, String)],
+) -> Option<std::process::Child> {
+    let tgt = match sky_toml_app_target(project_dir) {
+        Some(t) => match target::Target::parse(&t) {
+            Ok(x) => x,
+            Err(msg) => {
+                eprintln!("[watch] sky.toml [app] target = \"{t}\": {msg}");
+                return None;
+            }
+        },
+        None => target::Target::Web,
+    };
+    let code = build_std_app(
+        repo_root,
+        project_dir,
+        file,
+        tgt,
+        false,
+        None,
+        None,
+        precompress::Level::Off,
+    );
+    if code != ExitCode::SUCCESS {
+        eprintln!("[watch] build failed (keeping previous binary)");
+        return None;
+    }
+    println!("[watch] build ok");
+    if no_run {
+        return None;
+    }
+    let target_root = project_dir
+        .join(".skyapp")
+        .join(tgt.canonical().replace(':', "-"));
+    let (bin, cwd, spa) = match std_app_runner(tgt).1 {
+        StdAppBuild::Spa => {
+            let backend = target_root.join(".split").join("backend");
+            (backend.join("sky-out").join("app"), backend, true)
+        }
+        _ => (
+            target_root.join("sky-out").join("app"),
+            project_dir.to_path_buf(),
+            false,
+        ),
+    };
+    let mut cmd = Command::new(std::fs::canonicalize(&bin).unwrap_or(bin));
+    if spa {
+        // As `sky run --target web:app` does: the backend serves
+        // `../frontend/dist` relative to its folder, and the project's `.env` /
+        // `public/` are staged next to it.
+        stage_project_runtime_into_backend(project_dir, &cwd);
+        apply_spa_data_dir(&mut cmd, project_dir);
+    }
+    cmd.current_dir(&cwd);
+    for (k, v) in app_envs {
+        cmd.env(k, v);
+    }
+    match cmd.spawn() {
+        Ok(child) => Some(child),
+        Err(e) => {
+            eprintln!("[watch] could not launch binary: {e}");
+            None
+        }
+    }
+}
+
 /// True when a changed path is a source file the watcher cares about: a `.sky`
 /// file or `sky.toml`, and not inside a generated / VCS directory.
 fn is_watched_change(path: &Path) -> bool {
@@ -15822,6 +16655,11 @@ fn is_watched_change(path: &Path) -> bool {
             c.as_os_str().to_str(),
             Some("sky-out")
                 | Some("sky-out-rust")
+                // The Std.App derived entry and the Sky.Spa split are staged
+                // copies of the sources: a rebuild writes them, and watching
+                // them would rebuild forever.
+                | Some(".skyapp")
+                | Some(".split")
                 | Some(".skycache")
                 | Some(".skydeps")
                 | Some("dist-newstyle")
@@ -17067,6 +17905,16 @@ fn run_verify_stores(dir: &Path, failed: &mut Vec<&str>) {
                 .map(|s| s.tables.len())
                 .unwrap_or(0);
             println!("  ✓ stores   ({tables} table(s), no Store builder problem)");
+            // A notice the dump names (a Schema.blob column, which push
+            // makes TEXT and Schema.createSchema makes BYTEA) is shown, not a
+            // failure.
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            for notice in stderr
+                .lines()
+                .filter_map(|l| l.split_once("SKY_STORE_NOTICE ").map(|(_, m)| m.trim()))
+            {
+                println!("  ! stores   {notice}");
+            }
         }
         Ok(o) => {
             let mut text = String::from_utf8_lossy(&o.stderr).into_owned();
@@ -19909,6 +20757,10 @@ echo key > "$ks"
             ".vscode/x.sky",
             ".idea/x.sky",
             "project/sky-out/nested/App.sky",
+            // `sky watch` on a Std.App entry stages copies here on every build.
+            ".skyapp/web/src/Main.sky",
+            ".skyapp/web-app/.split/backend/src/Main.sky",
+            ".split/frontend/src/Main.sky",
         ] {
             assert!(!is_watched_change(Path::new(p)), "should exclude {p}");
         }
@@ -19945,6 +20797,27 @@ echo key > "$ks"
         let p2 = p2.unwrap();
         assert_eq!(p2.dir.as_deref(), Some("/tmp/q"));
         assert_eq!(p2.timeout.as_deref(), Some("5s"));
+    }
+
+    /// `sky run --profile` hands the app an ABSOLUTE `SKY_PROFILE_DIR`, so a
+    /// Sky.Spa backend (run in `.split/backend`) and a `Std.App` entry (run in
+    /// the caller's directory) write to the project's `profile/`, not into a
+    /// build folder the next build deletes (v0.29.2 sixth Judge).
+    #[test]
+    fn profile_dir_is_absolute_and_defaults_to_the_project_root() {
+        let cwd = std::env::current_dir().unwrap();
+        let proj = cwd.join("some-project");
+        assert_eq!(profile_dir_for(&proj, None), proj.join("profile"));
+        assert_eq!(
+            profile_dir_for(Path::new("rel-proj"), None),
+            cwd.join("rel-proj").join("profile")
+        );
+        assert!(profile_dir_for(Path::new("."), None).is_absolute());
+        assert_eq!(profile_dir_for(&proj, Some("out")), cwd.join("out"));
+        assert_eq!(
+            profile_dir_for(&proj, Some("/abs/prof")),
+            PathBuf::from("/abs/prof")
+        );
     }
 
     #[test]

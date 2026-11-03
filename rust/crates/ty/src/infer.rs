@@ -116,6 +116,9 @@ pub struct Infer<'a> {
     /// param reflects `f : Int -> Int`, not the body-inferred `number`). Not
     /// set on the M3 accept-parity path, whose behaviour is unchanged.
     expected: Option<Scheme>,
+    /// Lowering only: seed the `expected` annotation's `number` variables as
+    /// `SuperType::NumVar` (see `db::pin_number_vars`).
+    pin_number: bool,
     /// Span of the expression currently under inference — maintained as a stack
     /// discipline by the `infer_expr` wrapper (save on entry, restore on exit).
     /// A unify clash reads this to anchor its `TypeError` at the offending
@@ -205,6 +208,7 @@ impl<'a> Infer<'a> {
             self_def: None,
             use_inferred: false,
             expected: None,
+            pin_number: false,
             cur_span: None,
             ffi_schemes: HashMap::new(),
             poly_locals: HashMap::new(),
@@ -232,6 +236,14 @@ impl<'a> Infer<'a> {
     /// from the annotation (tooling/hover path — see [`Infer::expected`]).
     pub fn with_expected(mut self, scheme: Option<Scheme>) -> Self {
         self.expected = scheme;
+        self
+    }
+
+    /// Lowering only: infer against the `expected` annotation with its
+    /// `number` variables kept generic (`SuperType::NumVar`).
+    pub(crate) fn with_pinned_number_vars(mut self, scheme: Scheme) -> Self {
+        self.expected = Some(scheme);
+        self.pin_number = true;
         self
     }
 
@@ -495,7 +507,13 @@ impl<'a> Infer<'a> {
             let mut sub: HashMap<String, TyVarId> = HashMap::new();
             for name in &scheme.vars {
                 if name.as_str() != "any" {
-                    let fresh = self.fresh_for_name(name.as_str());
+                    let number = SuperType::from_var_name(name.as_str())
+                        .is_some_and(|b| b.has(SuperType::Number));
+                    let fresh = if self.use_inferred && self.pin_number && number {
+                        self.uf.fresh(Content::FlexSuper(SuperType::NumVar))
+                    } else {
+                        self.fresh_for_name(name.as_str())
+                    };
                     sub.insert(name.as_str().to_string(), fresh);
                 }
             }
@@ -546,63 +564,38 @@ impl<'a> Infer<'a> {
             .iter()
             .map(|&p| self.infer_pat_fresh(body, p))
             .collect();
-        // SKOLEMIZE the scheme's RESULT-position quantifiers to RIGID vars; leave
-        // argument-only quantifiers (and `any`) as fresh-per-occurrence flex.
+        // SKOLEMIZE every quantifier of the scheme (except the `any` wildcard,
+        // fresh per occurrence) to a RIGID var.
         //
         // A rigid var BINDS a plain flex (so the body may keep the quantifier
         // genuinely polymorphic — `identity : a -> a`) but CLASHES with a
         // concrete Structure or a different rigid (so a body that PINS the
-        // quantifier to a concrete type is rejected). That closes the exploitable
-        // soundness hole — an over-general RESULT type (audit #5/#6): `f : a ->
-        // a; f n = n + 1` returns `Int` while promising `a`, so a caller relying
-        // on the polymorphic return (`f "hi" : String`) gets an `Int` and panics.
+        // quantifier to a concrete type, or makes two quantifiers one type, is
+        // rejected). Against a bounded flex it is checked by the bound its name
+        // spells (`comparable` against `<`); a missing `Encodable` is inferred
+        // (`rigid_needs`). Together that is the check that the inferred type is
+        // at least as general as the annotation.
         //
-        // We deliberately DO NOT skolemize a quantifier that appears ONLY in
-        // ARGUMENT position. An over-general argument (`init : a -> (Model, Cmd
-        // Msg)` whose body uses `req` as a `Dict`) is a DIFFERENT, milder class:
-        // the full-HM oracle also accepts it (shared leniency) and this checker
-        // historically instantiated every quantifier flexibly — so keeping
-        // argument-only quantifiers flex is exact accept-parity (13-skyshop `init`
-        // is framework-called; the runtime always supplies a real request). The
-        // distinction is principled, not name-keyed: RESULT over-generality is
-        // observable to any caller who trusts the declared return type; ARGUMENT
-        // over-generality only misfires if a caller passes an incompatible
-        // value, which the oracle itself does not reject. We add rejections only
-        // in the result-position class — never a new accept.
-        let result_ty = {
-            let mut cur = &scheme.ty;
-            for _ in 0..param_vars.len() {
-                match cur {
-                    Ty::Fun(_, b) => cur = b,
-                    _ => break,
-                }
-            }
-            cur
-        };
-        let result_vars: std::collections::HashSet<String> = result_ty
-            .free_vars()
-            .into_iter()
-            .map(|n| n.as_str().to_string())
-            .collect();
+        // Before v0.29.2 a quantifier that appeared only in ARGUMENT position
+        // stayed flexible ("accept-parity" with the oracle), so the body could
+        // pin it or merge it, and `coerce : a -> b; coerce x = x` turned a
+        // `String` into an `Int` that `n + 1` then panicked on at run time, and
+        // `show : a -> String; show v = "<" ++ v` printed `<1>` for
+        // `show (Just 1)`. Top-level definitions have no enclosing scope, so no
+        // escape check is needed. Let annotations are checked after the group
+        // is inferred (`check_let_anno_generality`), where a variable joined
+        // to an enclosing annotation's variable of the same name is Elm's
+        // scoped type variable, sound now that the outer one is rigid.
+        // Kernel and FFI signatures have no body and are instantiated fresh at
+        // each call site, so they are not affected.
+        self.uf.rigid_missing.clear();
         let mut sub: HashMap<String, TyVarId> = HashMap::new();
         for name in &scheme.vars {
             if name.as_str() != "any" {
-                let fresh = if result_vars.contains(name.as_str()) {
-                    self.uf.fresh(Content::Rigid(Name::new(name.as_str())))
-                } else {
-                    // An argument-only quantifier stays flexible, carrying the
-                    // bound its name spells (`comparable`), if any.
-                    self.fresh_for_name(name.as_str())
-                };
+                let fresh = self.uf.fresh(Content::Rigid(Name::new(name.as_str())));
                 sub.insert(name.as_str().to_string(), fresh);
             }
         }
-        let arg_only: Vec<(String, TyVarId)> = scheme
-            .vars
-            .iter()
-            .filter(|n| n.as_str() != "any" && !result_vars.contains(n.as_str()))
-            .filter_map(|n| sub.get(n.as_str()).map(|v| (n.as_str().to_string(), *v)))
-            .collect();
         // Peel one arrow per top-level param, seeding EVERY param's declared type
         // (including record-typed params) CLOSED via `ty_to_var` — a param `model
         // : Model` is exactly the closed record the user wrote. Real TEA record
@@ -700,8 +693,28 @@ impl<'a> Infer<'a> {
         // v0.27.0 qualified bounds: decide the deferred obligations, then
         // check that every annotation variable the body bounded says so.
         self.discharge_bounds(true);
+        // One "the annotation is too general" error per variable: a body that
+        // pins `a` meets it at every later use too (`"<" ++ v ++ ">"` unifies
+        // `a` with `String` twice), and the repeats say nothing new.
+        let mut seen_rigid: Vec<String> = Vec::new();
+        let mut i = errs_before;
+        while i < self.errors.len() {
+            let m = &self.errors[i].message;
+            if m.starts_with("the type annotation says `") {
+                if seen_rigid.contains(m) {
+                    self.errors.remove(i);
+                    continue;
+                }
+                seen_rigid.push(m.clone());
+            }
+            i += 1;
+        }
         if self.errors.len() == errs_before {
-            self.check_annotation_bounds(body, root, &arg_only);
+            self.check_annotation_bounds(body, root);
+        } else {
+            // A clearer error came first: the deferred bound refusals of this
+            // definition are dropped with it.
+            self.uf.rigid_missing.clear();
         }
         // C-2: the relaxed value restriction for a top-level CAF, checked
         // against the type callers see (the annotation, its `any` holes filled
@@ -745,6 +758,15 @@ impl<'a> Infer<'a> {
             .into_iter()
             .rev()
             .fold(rv, |acc, pv| self.fun(pv, acc));
+        // v0.29.2: a FUNCTION keeps an unresolved `number` as a bounded
+        // quantifier (`add a b = a + b` exports `number -> number -> number`,
+        // so `add 1.0 2.0` checks and `add "s" "t"` is refused). Reading it
+        // back as `Int` made a Float caller a false rejection once `+` carried
+        // the bound. An expansive CAF still reads `Int` (the value
+        // restriction keeps one type). An integer literal is an `Int` either
+        // way (`SuperType::IntLit`).
+        let concretize_super =
+            concretize_super && body.params.is_empty() && !is_syntactic_value(body, root);
         let ty = self.read_back_scheme(full, concretize_super);
         Some(Scheme::generalize(ty))
     }
@@ -1285,7 +1307,20 @@ impl<'a> Infer<'a> {
             // into a CROSS-MODULE external Float param, e.g. `Css.pct 100` where
             // `pct : Float`). That convenience does not scale; Sky separates the
             // two types uniformly. Float literals are already concrete (below).
-            Expr::Int(_) => self.con("Int", vec![]),
+            //
+            // v0.29.2: on the CHECK path a literal is an `Int` that may also
+            // stand for a rigid `number` annotation variable
+            // (`isPositive : number -> Bool; isPositive x = x > 0`, Elm's
+            // rule). It is `Int` against everything else, so the separation
+            // above holds (`SuperType::IntLit`). The lowering path keeps the
+            // concrete `Int`, so emitted Go does not change.
+            Expr::Int(_) => {
+                if self.use_inferred {
+                    self.con("Int", vec![])
+                } else {
+                    self.uf.fresh(Content::FlexSuper(SuperType::IntLit))
+                }
+            }
             Expr::Float(_) => self.con("Float", vec![]),
             Expr::Str(_) => self.con("String", vec![]),
             Expr::Chr(_) => self.con("Char", vec![]),
@@ -1412,8 +1447,15 @@ impl<'a> Infer<'a> {
             Expr::Var(res) => self.infer_res(res.clone()),
             Expr::Negate(inner) => {
                 let ti = self.infer_expr(body, *inner);
-                let num = self.uf.fresh(Content::FlexSuper(SuperType::Number));
-                self.unify(ti, num);
+                // Like `+ - *`: the `number` bound is check-only. On the
+                // lowering path an unannotated `neg x = -x` used to concretise
+                // the bound to `Int` and lowered `Main_neg(v_0 int) int`, so
+                // `neg 2.5` truncated its argument to `-2` (v0.29.2). The
+                // unconstrained operand lowers to `rt.Negate` (lower.rs).
+                if !self.use_inferred {
+                    let num = self.uf.fresh(Content::FlexSuper(SuperType::Number));
+                    self.unify(ti, num);
+                }
                 ti
             }
             Expr::Lambda { params, body: lb } => {
@@ -1717,36 +1759,34 @@ impl<'a> Infer<'a> {
             let r = self.uf.find(v);
             let message = match self.uf.content(r) {
                 Content::Error => continue,
-                Content::Structure(_) => Some(format!(
-                    "rigid type variable `{}` cannot be unified with a concrete type",
-                    n.as_str()
-                )),
-                Content::Rigid(other) => (other.as_str() != n.as_str()).then(|| {
-                    format!(
-                        "rigid type variable `{}` cannot unify with `{}`",
-                        n.as_str(),
-                        other.as_str()
-                    )
-                }),
+                Content::Structure(_) => {
+                    let shown = self.uf.describe_advice(r);
+                    Some(crate::unify::rigid_concrete_message(n.as_str(), &shown))
+                }
+                Content::Rigid(other) => (other.as_str() != n.as_str())
+                    .then(|| crate::unify::rigid_pair_message(n.as_str(), other.as_str())),
                 Content::FlexSuper(s) => {
                     let have = SuperType::from_var_name(n.as_str()).unwrap_or_default();
-                    let missing = s
-                        .closure()
-                        .minus(have.closure())
-                        .minus(SuperType::GoValue)
-                        .minus(SuperType::Encodable);
-                    (!missing.is_empty())
-                        .then(|| crate::unify::rigid_bound_message(n.as_str(), missing))
+                    if s.has(SuperType::IntLit) && !have.has(SuperType::Number) {
+                        // An integer literal is an `Int` unless it stands for
+                        // a `number` variable.
+                        Some(crate::unify::rigid_concrete_message(n.as_str(), "Int"))
+                    } else {
+                        let missing = s
+                            .minus(SuperType::IntLit)
+                            .closure()
+                            .minus(have.closure())
+                            .minus(SuperType::GoValue)
+                            .minus(SuperType::Encodable);
+                        (!missing.is_empty())
+                            .then(|| crate::unify::rigid_bound_message(n.as_str(), missing))
+                    }
                 }
                 Content::Flex => None,
             };
             let message = message.or_else(|| {
-                seen.insert(r, n.as_str()).map(|first| {
-                    format!(
-                        "rigid type variable `{first}` cannot unify with `{}`",
-                        n.as_str()
-                    )
-                })
+                seen.insert(r, n.as_str())
+                    .map(|first| crate::unify::rigid_pair_message(first, n.as_str()))
             });
             if let Some(message) = message {
                 self.errors.push(TypeError {
@@ -2222,9 +2262,24 @@ impl<'a> Infer<'a> {
             // (lower.rs `both_prim` gate), so an unannotated `add a b = a + b`
             // builds and runs at Int AND Float — closing the false-reject class
             // (`add 1.0 2.0`) the old `FlexSuper(Number)`+concretize model caused.
+            //
+            // v0.29.2: on the CHECK path the operands must be numbers, as in
+            // Elm (`number -> number -> number`). A rigid `a` is refused
+            // ("add the `number` bound"), so `f : a -> a; f x = x + x` no
+            // longer compiles and then panics on `f "s"`; an unannotated
+            // `add a b = a + b` exports `number -> number -> number`, so
+            // `add 1.0 2.0` checks and `add "s" "t"` is refused. The lowering
+            // path keeps the unconstrained form, so emitted Go does not change.
             "+" | "-" | "*" => {
-                self.unify(tl, tr);
-                tl
+                if self.use_inferred {
+                    self.unify(tl, tr);
+                    tl
+                } else {
+                    let n = self.uf.fresh(Content::FlexSuper(SuperType::Number));
+                    self.unify(tl, n);
+                    self.unify(tr, n);
+                    n
+                }
             }
             // division is Float-only (`Float -> Float -> Float`): the oracle
             // rejects integer division via `/` (use `//`). Concrete-Int literals
@@ -2236,15 +2291,21 @@ impl<'a> Infer<'a> {
                 self.unify(tr, f);
                 self.con("Float", vec![])
             }
-            // power `^` kept on the Number super (UNCHANGED) — out of scope for the
-            // literal-model fix. Its codegen (`rt.Pow`, lower.rs) is a separate
-            // pending gap: `rt.Pow` is undefined in the runtime, so `^` fails
-            // `go build` regardless of inference (pre-existing; tracked separately).
+            // power `^`: `number -> number -> number`, the bound check-only like
+            // `+ - *`. On the lowering path a `number` bound concretised to
+            // `Int` for an unannotated `pw b e = b ^ e`, which then lowered with
+            // `int` params and truncated a Float argument (v0.29.2). The
+            // unconstrained operands lower to `rt.Pow`.
             "^" => {
-                let n = self.uf.fresh(Content::FlexSuper(SuperType::Number));
-                self.unify(tl, n);
-                self.unify(tr, n);
-                n
+                if self.use_inferred {
+                    self.unify(tl, tr);
+                    tl
+                } else {
+                    let n = self.uf.fresh(Content::FlexSuper(SuperType::Number));
+                    self.unify(tl, n);
+                    self.unify(tr, n);
+                    n
+                }
             }
             "//" | "%" => {
                 let int = self.con("Int", vec![]);
@@ -2663,6 +2724,11 @@ impl<'a> Infer<'a> {
             // back as concrete `Int` (Solve.hs:1457) on the concretize channel.
             // `Int` (not `App("number")`) so a `Number` bound still admits valid
             // `Int` uses at call sites.
+            // An integer literal nothing resolved is an `Int` (v0.29.2).
+            Content::FlexSuper(b) if b.has(SuperType::IntLit) => Ty::app("Int", vec![]),
+            // An annotation's `number` variable on the lowering path stays the
+            // generic type variable it is (`SuperType::NumVar`).
+            Content::FlexSuper(b) if b.has(SuperType::NumVar) => Ty::var("number"),
             Content::FlexSuper(b) if scheme && concretize_super && b.has(SuperType::Number) => {
                 Ty::app("Int", vec![])
             }
@@ -2793,6 +2859,11 @@ impl<'a> Infer<'a> {
         let node = match self.uf.content(r) {
             Content::Flex => TyNode::Var(Name::new(&format!("t{}", r.0))),
             Content::Rigid(n) => TyNode::Var(n),
+            // An integer literal nothing resolved is an `Int` (v0.29.2).
+            Content::FlexSuper(b) if b.has(SuperType::IntLit) => {
+                TyNode::App(Name::new("Int"), Box::new([]))
+            }
+            Content::FlexSuper(b) if b.has(SuperType::NumVar) => TyNode::Var(Name::new("number")),
             Content::FlexSuper(b) if b.has(SuperType::Number) => {
                 TyNode::App(Name::new("number"), Box::new([]))
             }

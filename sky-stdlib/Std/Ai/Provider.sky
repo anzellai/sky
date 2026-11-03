@@ -70,7 +70,7 @@ never a float, so per-task and per-tenant cost roll-ups are honest.
     provider = Provider.openai (Secret.fromEnv "OPENAI_API_KEY") "gpt-4o-mini"
 
     Provider.chat provider [ Provider.system "You are terse.", Provider.user "Hi" ]
-        |> Task.map (\r -> ( r.content, Provider.cost book r.usage ))
+        |> Task.map (\r -> ( r.content, Provider.cost book r.usage ))  -- Result Error Money
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -1795,13 +1795,31 @@ freePriceBook currency =
 
 
 {-| The money cost of a usage under a price book: tokens/1000 × the per-1k rate,
-input and output summed, in `Std.Money` (exact decimal, never a float).
+input and output summed, in `Std.Money` (exact decimal, never a float). A book
+whose two rates are in different currencies has no single cost: an `Err`
+naming both (`priceBook` always makes a book in one currency).
 -}
-cost : PriceBook -> Usage -> Money
+cost : PriceBook -> Usage -> Result Error Money
 cost book usage =
-    Money.add
-        (per1k usage.promptTokens book.inputPer1k)
-        (per1k usage.completionTokens book.outputPer1k)
+    let
+        inCur = Money.currency book.inputPer1k
+        outCur = Money.currency book.outputPer1k
+    in
+        if Money.eqCurrency inCur outCur then
+            Money.add
+                (per1k usage.promptTokens book.inputPer1k)
+                (per1k usage.completionTokens book.outputPer1k)
+
+        else
+            -- The error names this function, not the `Money.add` inside it
+            -- (v0.29.2 sixth Judge).
+            Err
+                (Error.invalidInput
+                    ("Provider.cost: the price book's input rate is in "
+                        ++ Money.currencyCode inCur
+                        ++ " and its output rate in "
+                        ++ Money.currencyCode outCur
+                        ++ ", so a usage has no single cost; give both rates one currency"))
 
 
 per1k : Int -> Money -> Money

@@ -2820,6 +2820,7 @@ impl<'a> Ctx<'a> {
         };
         let root = self.body.root;
         self.lint_header_dict_lookups();
+        self.lint_store_builder_columns();
         let mut body = param_destructure;
         // When the return type is otherwise `any`, recover it from the body's own
         // lowered actual type. An unannotated def whose body is e.g. a `case`
@@ -3173,7 +3174,8 @@ impl<'a> Ctx<'a> {
         for (slot, go) in &self.device_regs {
             stmts.push(GoStmt::Expr(GoExpr::new(
                 GoExprKind::Ident(format!(
-                    "rt.AiDeviceRegister({slot:?}, func() any {{ return {go}() }})"
+                    "rt.AiDeviceRegister({}, func() any {{ return {go}() }})",
+                    base::go_string_literal(slot)
                 )),
                 GoTy::Unit,
             )));
@@ -4048,6 +4050,15 @@ impl<'a> Ctx<'a> {
             Expr::Negate(inner) => {
                 let x = self.lower_expr(*inner, actual);
                 let ty = x.ty.clone();
+                // A `number` operand that is not a Go `int`/`float64` (an
+                // annotation's `number`, an unconstrained helper param) is a Go
+                // `any`: `0 - x` does not build on it ("mismatched types untyped
+                // int and any", v0.29.2). `rt.Negate` dispatches on the value,
+                // as `negate x` does; the use site narrows the `any` result.
+                if !matches!(ty, GoTy::Bare(Prim::Int) | GoTy::Bare(Prim::Float)) {
+                    let w = self.widen(x);
+                    return call_rt("rt.Negate", vec![w], GoTy::Any);
+                }
                 GoExpr::new(
                     GoExprKind::Binary(
                         GoBin::Sub,
@@ -7963,6 +7974,32 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// Store builder lint (v0.29.2, `store_lint.rs`): a literal column name a
+    /// `Std.Db.Store` builder, `findBy` or a query builder names that the
+    /// store's codec does not have. The stdlib's own bodies are not linted.
+    fn lint_store_builder_columns(&mut self) {
+        if self.cur_module.starts_with("Std.") || self.cur_module.starts_with("Sky.") {
+            return;
+        }
+        struct Defs<'d>(&'d BTreeMap<DefId, DefEntry>);
+        impl crate::store_lint::DefLookup for Defs<'_> {
+            fn lookup(&self, d: DefId) -> Option<(&str, &str, &Body)> {
+                self.0
+                    .get(&d)
+                    .map(|e| (e.module_name.as_str(), e.name.as_str(), &e.body))
+            }
+        }
+        let findings = crate::store_lint::lint(self.body, &Defs(self.defs));
+        for f in findings {
+            let prev = self.cur_span;
+            if let Some(sp) = self.body.expr_span(f.at) {
+                self.cur_span = Some(sp);
+            }
+            self.warn(f.message);
+            self.cur_span = prev;
+        }
+    }
+
     /// Every child expression, for a NON-tail (`inTail = false`) walk. Includes
     /// let-def RHS bodies (a self-call there is non-tail) and `if` conditions.
     /// New AST variants MUST get an arm here — a missing child → a missed
@@ -11001,6 +11038,9 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ("rt.Image_canvasPaste", 6) => twin("rt.Image_canvasPasteT", vec![None; 6], canvas()),
         ("rt.Image_canvasPasteCanvas", 6) => {
             twin("rt.Image_canvasPasteCanvasT", vec![None; 6], canvas())
+        }
+        ("rt.Image_canvasPasteExact", 4) => {
+            twin("rt.Image_canvasPasteExactT", vec![None; 4], canvas())
         }
         ("rt.Image_canvasBlur", 2) => twin("rt.Image_canvasBlurT", vec![None; 2], canvas()),
         ("rt.Image_canvasResize", 4) => twin("rt.Image_canvasResizeT", vec![None; 4], canvas()),

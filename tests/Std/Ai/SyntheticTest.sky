@@ -23,6 +23,7 @@ import Sky.Test as Test exposing (Test, TestResult)
 import Std.Money as Money exposing (Currency(..))
 import Std.Ai.Provider as Provider exposing (Provider, Message)
 import Std.Ai.Eval as Eval
+import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Dataset as Dataset exposing (Instruction)
 import Std.Ai.Dataset.Synthetic as Synthetic exposing (Stop(..))
 import Std.Db as Db exposing (Db)
@@ -335,6 +336,34 @@ tests =
                           , gen.report.stop
                           , Maybe.map Money.toMinor gen.report.cost
                           )))
+    , Test.test
+          "a budget in another currency than its price book is an InvalidSetting before any call"
+          (\_ ->
+              case Task.run
+                       (Synthetic.run
+                           (base |> Synthetic.withTarget 100
+                               |> Synthetic.withCostBudget
+                                      { inputPer1k = Money.fromMinor EUR 100
+                                      , outputPer1k = Money.fromMinor EUR 100
+                                      }
+                                      (Money.fromMinor USD 400))) of
+
+                  Err e ->
+                      case Failure.fromError e of
+
+                          Just (InvalidSetting x) ->
+                              Test.equal
+                                  ( "withCostBudget", True )
+                                  ( x.setting
+                                  , String.contains "USD" x.reason
+                                        && String.contains "EUR" x.reason
+                                  )
+
+                          _ ->
+                              Test.fail (Error.toString e)
+
+                  Ok _ ->
+                      Test.fail "the run was not refused")
     , Test.test
           "answers that are not JSON rows are counted as unparsed"
           (\_ ->

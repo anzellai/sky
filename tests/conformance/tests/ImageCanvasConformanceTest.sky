@@ -155,6 +155,27 @@ ogCard title url =
 tests : List Test
 tests =
     [ Test.test
+          "pasteExact copies semi-transparent pixels byte for byte over an opaque background; paste blends"
+          (\_ ->
+              let
+                  glass = png (Canvas.blank 6 4 (Canvas.rgba 10 200 30 77))
+                  onto paster =
+                      png (paster (Canvas.blank 6 4 (Canvas.rgba 255 0 0 255)))
+              in
+                  Test.equal
+                      ( Ok 0, Ok 24 )
+                      ( Task.run
+                            (Canvas.pixelDiff
+                                0
+                                glass
+                                (onto (Canvas.pasteExact 0 0 glass)))
+                      , Task.run
+                            (Canvas.pixelDiff
+                                0
+                                glass
+                                (onto (Canvas.paste 0 0 Nothing glass)))
+                      ))
+    , Test.test
           "every format writes the canvas size"
           (\_ ->
               Test.equal

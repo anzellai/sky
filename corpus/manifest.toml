@@ -3460,7 +3460,7 @@ witness    = "value"
 axes       = { edge = "nominal", surface = "money" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "$12.34|12.34 USD|$5.00|1234|$3.50|$2.50|-$1.00|$1.00|USD|$|2|T|T|T|T|T|EUR|$0.00|$3.00|$33.34,$33.33,$33.33|10000|$7.00|EUR|2.5|€0.00|$3.00|$20.00|$110.00|$90.00|ZZZ|-1|0|T|T|T|T|T|T|2|€2.00|E"
+stdout     = "$12.34|12.34 USD|$5.00|1234|$3.50|$2.50|-$1.00|$1.00|USD|$|2|T|T|T|T|EUR|$0.00|$3.00|$33.34,$33.33,$33.33|10000|$7.00|EUR|2.5|€0.00|$3.00|$20.00|$110.00|$90.00|ZZZ|-1|0|T|T|T|T|T|T|T|€2.00|E"
 
 [[case]]
 id         = "stdlib_edge/empty-money"
@@ -3473,7 +3473,7 @@ witness    = "value"
 axes       = { edge = "empty", surface = "money" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "$0.00|0|0"
+stdout     = "$0.00"
 
 [[case]]
 id         = "stdlib_edge/boundary-money"
@@ -3499,7 +3499,7 @@ witness    = "value"
 axes       = { edge = "failure", surface = "money" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "E|F|F|ZZZ|2|$1.00|F"
+stdout     = "E|T|T|ZZZ|2|E|E|F|F"
 
 [[case]]
 id         = "stdlib_edge/nominal-csv"

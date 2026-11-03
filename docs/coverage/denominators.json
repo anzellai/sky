@@ -6,14 +6,14 @@
     "non_constructs": 43,
     "syntax_kinds": 122
   },
-  "removals_accounted": 82,
+  "removals_accounted": 94,
   "stdlib": {
     "_source": "api/symbols.json, via project::render_doc_site_export (the `sky doc --export` code path)",
-    "entries": 3234,
+    "entries": 3245,
     "explicit_exposing": {
-      "entries": 3056,
+      "entries": 3067,
       "modules": 132,
-      "unfiltered_entries": 4887
+      "unfiltered_entries": 4975
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
@@ -26,33 +26,33 @@
       "modules": 3
     },
     "modules": 135,
-    "types": 428,
+    "types": 429,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 5065,
-      "hidden_by_exposing": 1831,
-      "types": 592,
-      "values": 4473
+      "entries": 5153,
+      "hidden_by_exposing": 1908,
+      "types": 593,
+      "values": 4560
     },
-    "values": 2806
+    "values": 2816
   },
   "tests": {
     "_note": "a CASE is one `Test.test` leaf. An ASSERTION is one call to Test.{equal,notEqual,ok,err,expectErrorKind,isTrue,isFalse,fail}. `Test.pass` is VACUOUS and excluded from `assertions`; `assertion_calls_incl_pass` is the looser reading, reported so the two are never confused.",
     "conformance": {
-      "assertion_calls_incl_pass": 2036,
-      "assertions": 2029,
+      "assertion_calls_incl_pass": 2149,
+      "assertions": 2143,
       "by_assertion_fn": {
-        "equal": 1579,
-        "err": 136,
+        "equal": 1706,
+        "err": 133,
         "expectErrorKind": 62,
-        "fail": 53,
+        "fail": 43,
         "isFalse": 49,
         "isTrue": 110,
         "notEqual": 24,
         "ok": 16
       },
-      "cases": 2103,
-      "vacuous_pass": 7
+      "cases": 2229,
+      "vacuous_pass": 6
     },
     "examples": {
       "assertion_calls_incl_pass": 226,

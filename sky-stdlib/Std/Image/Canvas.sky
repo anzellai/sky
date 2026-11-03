@@ -45,9 +45,10 @@
 -- The colour moves by at most 2 from alpha 128 up (1 at alpha 254), 4 at
 -- alpha 64, 16 at alpha 16, and more near alpha 0 (at alpha 1 the colour is
 -- lost). A fully opaque pixel (alpha 255) is copied exactly, and a fully
--- transparent pixel (alpha 0) stays fully transparent. There is no paste that
--- copies semi-transparent pixels exactly, so compare such output with
--- `pixelDiff` and a tolerance, not byte for byte.
+-- transparent pixel (alpha 0) stays fully transparent. `pasteExact` copies
+-- pixels exactly: it replaces what is under the image (no blending) and keeps
+-- each colour byte for byte until a later step draws over the pixel. Compare
+-- other output with `pixelDiff` and a tolerance, not byte for byte.
 --
 -- **Where it runs.** On the server (and in a CLI). A Sky.Spa app draws in its
 -- backend.
@@ -72,6 +73,7 @@ module Std.Image.Canvas exposing
     , alphaMask
     , paste
     , pasteCanvas
+    , pasteExact
     , blur
     , Filter(..)
     , resize
@@ -232,6 +234,16 @@ pasteCanvas x y mask source canvas =
 
         Nothing ->
             pasteCanvas_ x y False noMask source canvas
+
+
+-- | Put an image (its bytes) with its top-left corner at `x`, `y` IN PLACE OF
+-- the pixels under it: no blending, so a semi-transparent pixel replaces an
+-- opaque one, and each pixel keeps its exact colour and alpha (a `paste` moves
+-- a semi-transparent colour by up to 2, see "Pixel precision"). A step drawn
+-- over the pixel later still shows. The part outside the canvas is cut off.
+pasteExact : Int -> Int -> String -> Canvas -> Canvas
+pasteExact =
+    Ffi.kernel "Image_canvasPasteExact"
 
 
 -- | Blur the whole canvas: a Gaussian blur of `sigma` pixels (three box

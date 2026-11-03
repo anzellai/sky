@@ -1434,6 +1434,13 @@ impl World {
             ("modBy", fun(int_(), fun(int_(), int_()))),
             ("clamp", fun(int_(), fun(int_(), fun(int_(), int_())))),
             ("compare", fun(cmp(), fun(cmp(), int_()))),
+            // v0.29.2: the arithmetic kernels need a number, as in Elm. With
+            // no scheme `negate "s"` and `abs "s"` checked and then panicked
+            // in `rt.AsInt`. (The oracle-leniency note above predates the
+            // qualified bounds and no longer applies.)
+            ("negate", fun(Ty::var("number"), Ty::var("number"))),
+            ("abs", fun(Ty::var("number"), Ty::var("number"))),
+            ("sqrt", fun(Ty::var("number"), Ty::app("Float", vec![]))),
             ("min", fun(cmp(), fun(cmp(), cmp()))),
             ("max", fun(cmp(), fun(cmp(), cmp()))),
             // v0.27.0: the unannotated `Sky.Core.Basics` bodies. With no scheme
@@ -1959,20 +1966,9 @@ fn record_ctor_scheme(record: &Ty) -> Scheme {
 }
 
 fn substitute(ty: &Ty, sub: &HashMap<String, Ty>) -> Ty {
-    // One level per level of the tree it walks: grow the stack on demand.
-    base::ensure_stack(|| match ty {
-        Ty::Var(n) => sub.get(n.as_str()).cloned().unwrap_or_else(|| ty.clone()),
-        Ty::Fun(a, b) => Ty::Fun(Box::new(substitute(a, sub)), Box::new(substitute(b, sub))),
-        Ty::App(n, args) => Ty::App(n.clone(), args.iter().map(|a| substitute(a, sub)).collect()),
-        Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| substitute(x, sub)).collect()),
-        Ty::Record(fs, ext) => Ty::Record(
-            fs.iter()
-                .map(|(n, t)| (n.clone(), substitute(t, sub)))
-                .collect(),
-            ext.clone(),
-        ),
-        other => other.clone(),
-    })
+    // The shared substitution: it binds a record's row variable too
+    // (`Named { count : Int }` keeps `count`).
+    ty.subst_vars(&|n: &str| sub.get(n).cloned())
 }
 
 fn intern_value(db: &dyn SkyDb, m: ModuleId, name: &str) -> DefId {

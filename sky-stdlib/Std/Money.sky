@@ -1,18 +1,48 @@
 -- | Std.Money — currency-typed Money on `Std.Decimal` (Layer 3 Sky source).
 --
 -- `Money` carries both magnitude and ISO-4217 currency code in one
--- typed value.  Arithmetic is total within a currency; cross-currency
--- operations require explicit `convert` with a rate.
+-- typed value.
+--
+-- **The one rule.** Every operation that combines two Money values by
+-- arithmetic or by order returns a `Result Error _`: `add`, `sub`, `sum`,
+-- `compare`, `lt`, `lte`, `gt` and `gte`. Two different currencies are an
+-- `Err` (kind `InvalidInput`) that names both currencies, never a value and
+-- never a crash. `convert` one side with explicit `Rates` first. The one
+-- exception is equality: `eq` and `neq` are plain `Bool`, because two
+-- amounts in different currencies are simply not equal.
+--
+-- Scaling one Money value stays total: `mul`, `neg`, `abs`, `percentOf`,
+-- `addPercent`, `subPercent`, `allocate` and the predicates `isZero`,
+-- `isPositive` and `isNegative`.
 --
 -- 50+ ISO-4217 codes baked in (USD, EUR, GBP, JPY, AUD, …) plus
--- crypto (BTC, ETH).  `allocate` splits amounts fairly so rounding
--- residue lands deterministically on the first allocator (handles
--- the classic "split $1.00 three ways" problem without losing or
--- inventing cents).
+-- crypto (BTC, ETH), and `CurrencyRaw String` for any other code. A code is
+-- read in upper case: `CurrencyRaw "gbp"` is GBP to every operation and codec.
+-- `allocate` splits amounts fairly so rounding residue lands
+-- deterministically on the first allocator (handles the classic "split
+-- $1.00 three ways" problem without losing or inventing cents).
 --
--- Serialise as `"ISO_CODE AMOUNT"` TEXT for DB / wire — `Std.Db.Sql`
--- ships `SqlMoney` + `Db.Decode.money` for round-trip without manual
--- formatting.
+-- Store it with `Std.Codec`: `Codec.moneyIn GBP` keeps one currency in an
+-- exact decimal column a `Std.Db.Store` can sum and order, and
+-- `Codec.moneyObject` (the JSON `Codec.auto` writes) keeps any currency as
+-- `{"amount": "12.34", "currency": "GBP"}`. Raw SQL binds `SqlMoney` as the
+-- text `"GBP 12.34"`, and `Db.Decode.money` reads it back (it also reads
+-- `"12.34 GBP"`, the `formatWithCode` form).
+--
+-- Common patterns:
+--
+--   -- Tax: 8.875% NYC sales tax on $99.99
+--   subTotal = Money.fromString USD "99.99"
+--   total = Result.andThen (\s -> Money.add s (Money.percentOf taxRate s)) subTotal
+--   Result.map Money.format total       -- Ok "$108.87"
+--
+--   -- Split: $100 invoice across 3 fairly
+--   Money.allocate 3 (Money.fromMajor USD 100)
+--       -- → [$33.34, $33.33, $33.33]
+--
+--   -- Convert: $100 USD → EUR with an explicit rate table
+--   fx = Money.rates [ ( USD, EUR, usdToEur ) ]
+--   Money.convert fx EUR (Money.fromMajor USD 100)   -- → Ok €92.00
 module Std.Money exposing
     ( Money(..)
     , Currency(..)
@@ -20,15 +50,15 @@ module Std.Money exposing
     , fromMajor
     , fromString
     , zero
-    , zeroOf
     , amount
     , currency
     , currencyCode
+    , currencyFromCode
     , add
     , sub
+    , sum
     , mul
     , allocate
-    , sumOf
     , neg
     , abs
     , eq
@@ -38,6 +68,7 @@ module Std.Money exposing
     , gt
     , gte
     , compare
+    , eqCurrency
     , isZero
     , isPositive
     , isNegative
@@ -50,52 +81,17 @@ module Std.Money exposing
     , minorUnits
     , symbol
     , currencyName
-    , knownCurrency
-    , isKnownCode
-    , parseCurrency
-    , setRate
-    , getRate
-    , hasRate
-    , clearRates
+    , Rates
+    , rates
+    , rate
     , convert
     )
 
--- | Std.Money — production-grade currency arithmetic.
---
--- Built on Std.Decimal for exact math, with ISO 4217 minor-unit
--- awareness (JPY rounds to 0 dp, USD to 2 dp, BHD to 3 dp). All
--- arithmetic enforces currency-match.
---
--- Currency is a typed enum of the ~50 most-used codes plus
--- `CurrencyRaw String` for the long tail. Underlying property
--- lookup (minor units, symbol, name) routes through the runtime
--- table; unknown codes fall back to (2 dp, code-as-symbol).
---
--- Pluggable FX rate registry: register rates at startup, use
--- `convert` to apply. The registry is process-local — multi-
--- instance deployments need a shared source for consistency.
---
--- Common patterns:
---
---   -- Tax: 8.875% NYC sales tax on $99.99
---   let subTotal = Money.fromString USD "99.99"
---                      |> Result.withDefault (Money.zero USD)
---       tax = Money.percentOf taxRate subTotal
---       total = Money.add subTotal tax
---   in
---   Money.format total       -- "$108.87"
---
---   -- Split: $100 invoice across 3 fairly
---   Money.allocate 3 (Money.fromMajor USD 100)
---       -- → [$33.34, $33.33, $33.33]
---
---   -- Convert: $100 USD → EUR (rate set at startup)
---   Money.setRate USD EUR (Dec.fromString "0.92" |> okOrZero)
---   Money.convert EUR (Money.fromMajor USD 100)   -- → Ok €92.00
-
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Result as Result
 import Sky.Ffi as Ffi
 import Std.Decimal as Dec exposing (Decimal)
 
@@ -184,18 +180,17 @@ fromString c s =
         Ok d ->
             Ok (Money d c)
 
-        Err e ->
-            Err e
+        Err _ ->
+            -- Name the call the user made, not the Decimal parse under it.
+            Err
+                (Error.decode
+                    ("Money.fromString: \"" ++ String.left 64 s
+                        ++ "\" is not a decimal amount (see Decimal.fromString)"))
 
 
 zero : Currency -> Money
 zero c =
     Money Dec.zero c
-
-
-zeroOf : Money -> Money
-zeroOf m =
-    Money Dec.zero (currency m)
 
 
 -- ─── Accessors ────────────────────────────────────────────────────
@@ -209,6 +204,7 @@ currency (Money _ c) =
     c
 
 
+-- | The code of a currency, in upper case (`CurrencyRaw "gbp"` is `"GBP"`).
 currencyCode : Currency -> String
 currencyCode c =
     case c of
@@ -388,7 +384,10 @@ currencyCode c =
             "USDC"
 
         CurrencyRaw s ->
-            s
+            -- A code is read in upper case everywhere (v0.29.2 sixth Judge):
+            -- `CurrencyRaw "gbp"` is GBP to `eqCurrency`, `add`, `rates` and
+            -- every codec, which read `"gbp"` as GBP.
+            String.toUpper s
 
 
 -- ─── Currency property lookups ────────────────────────────────────
@@ -407,32 +406,45 @@ currencyName c =
     Ffi.callPure "Money_currencyName" [ currencyCode c ]
 
 
--- | Check whether the given ISO 4217 code maps to one of the
--- named Currency variants. Pass a raw code string from external
--- input (form field, JSON payload) and route accordingly.
-isKnownCode : String -> Bool
-isKnownCode code =
-    Ffi.callPure "Money_isKnownCurrency" [ code ]
+-- | The Currency of an ISO 4217 code, or `Nothing` for text that is not a
+-- code. The grammar is the one the strict decoders use (`Codec.moneyObject`,
+-- `Codec.isoCurrency`): 3 to 10 ASCII letters or digits, read in upper case,
+-- with nothing around them. A code Sky names is its variant (`"GBP"` is
+-- `Just GBP`, `"gbp"` too); any other code is `Just (CurrencyRaw code)`;
+-- `""`, `" GBP"` and `"GB P"` are `Nothing`.
+currencyFromCode : String -> Maybe Currency
+currencyFromCode code =
+    let
+        n = String.length code
+    in
+        if n >= 3 && n <= 10 && allCodeChars (String.toList code) then
+            Just (currencyOfCode (String.toUpper code))
+
+        else
+            Nothing
 
 
--- | Currency-typed counterpart: returns False ONLY for
--- `CurrencyRaw _`, True for every named variant (USD, JPY, BTC,
--- …). Use when you already have a Currency value and want to
--- detect the long-tail / unrecognised case.
-knownCurrency : Currency -> Bool
-knownCurrency c =
-    case c of
+allCodeChars : List Char -> Bool
+allCodeChars cs =
+    case cs of
 
-        CurrencyRaw _ ->
-            False
-
-        _ ->
+        [] ->
             True
 
+        c :: rest ->
+            isCodeChar c && allCodeChars rest
 
-parseCurrency : String -> Currency
-parseCurrency code =
-    case String.toUpper (String.trim code) of
+
+-- An ASCII letter or digit (the strict decoders' code grammar).
+isCodeChar : Char -> Bool
+isCodeChar c =
+    (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+
+
+-- The variant of an upper-case code that is already valid.
+currencyOfCode : String -> Currency
+currencyOfCode code =
+    case code of
 
         "USD" ->
             USD
@@ -612,23 +624,63 @@ parseCurrency code =
             CurrencyRaw other
 
 
--- ─── Arithmetic (currency-checked) ────────────────────────────────
-add : Money -> Money -> Money
+-- ─── Arithmetic (one currency) ────────────────────────────────────
+-- | The sum of two Money values. Two currencies are an `Err` naming both
+-- (convert one side first).
+--
+--     Money.add (Money.fromMajor GBP 1) (Money.fromMajor GBP 2)  -- Ok 3.00 GBP
+--     Money.add (Money.fromMajor GBP 1) (Money.fromMajor USD 2)  -- Err
+add : Money -> Money -> Result Error Money
 add a b =
     if eqCurrency (currency a) (currency b) then
-        Money (Dec.add (amount a) (amount b)) (currency a)
+        Ok (Money (Dec.add (amount a) (amount b)) (currency a))
 
     else
-        a
+        Err (mismatch "add" a b)
 
 
-sub : Money -> Money -> Money
+-- | `a` minus `b`. Two currencies are an `Err`, as `add`.
+sub : Money -> Money -> Result Error Money
 sub a b =
     if eqCurrency (currency a) (currency b) then
-        Money (Dec.sub (amount a) (amount b)) (currency a)
+        Ok (Money (Dec.sub (amount a) (amount b)) (currency a))
 
     else
-        a
+        Err (mismatch "sub" a b)
+
+
+-- | The sum of a list of Money values in `c` (`zero c` for an empty list). A
+-- value in any other currency is an `Err` naming both currencies.
+sum : Currency -> List Money -> Result Error Money
+sum c xs =
+    sumHelp xs (zero c)
+
+
+sumHelp : List Money -> Money -> Result Error Money
+sumHelp xs acc =
+    case xs of
+
+        [] ->
+            Ok acc
+
+        first :: rest ->
+            if eqCurrency (currency acc) (currency first) then
+                sumHelp
+                    rest
+                    (Money (Dec.add (amount acc) (amount first)) (currency acc))
+
+            else
+                Err (mismatch "sum" acc first)
+
+
+-- Two currencies in one operation: the `InvalidInput` Err every combining
+-- operation returns.
+mismatch : String -> Money -> Money -> Error
+mismatch verb a b =
+    Error.invalidInput
+        ("Money." ++ verb ++ ": " ++ currencyCode (currency a) ++ " and "
+            ++ currencyCode (currency b)
+            ++ " are different currencies; convert one side first (Money.convert)")
 
 
 -- | Multiply by a scalar (Decimal). Currency carries through.
@@ -649,7 +701,13 @@ abs m =
 
 -- | Allocate a Money value across N parts as evenly as possible,
 -- with any remainder distributed 1 cent at a time to the front.
--- The sum of returned parts equals the input exactly.
+-- The sum of returned parts equals the input exactly. Every part is a
+-- whole number of minor units, except that digits of the amount below the
+-- minor unit (1.005 USD, from `mul`, `percentOf` or `convert`) go to the
+-- first part: `allocate 3` of 1.005 USD is [0.345, 0.33, 0.33] (v0.29.2).
+-- There is no split into no part: `parts` below 1 fails as the classified
+-- `DivisionByZero`, and more than 10000000 parts as `NumericOverflow`
+-- (v0.29.2; `allocate 0` used to answer [], losing the amount).
 --
 --   allocate 3 ($100.00)  → [$33.34, $33.33, $33.33]
 allocate : Int -> Money -> List Money
@@ -666,59 +724,77 @@ allocate parts m =
         List.map (\d -> Money d (currency m)) decimals
 
 
--- | Sum a list of Money values (all should be same currency).
-sumOf : Currency -> List Money -> Money
-sumOf c xs =
-    sumOfHelp xs (zero c)
-
-
-sumOfHelp : List Money -> Money -> Money
-sumOfHelp xs acc =
-    case xs of
-
-        [] ->
-            acc
-
-        first :: rest ->
-            sumOfHelp rest (add acc first)
-
-
 -- ─── Comparison ───────────────────────────────────────────────────
-compare : Money -> Money -> Int
+-- | The order of two amounts in one currency: `-1`, `0` or `1`. Two
+-- currencies have no order: an `Err` naming both. To sort Money values in
+-- one currency, sort by `amount` (`List.sortWith (\a b -> Decimal.compare
+-- (Money.amount a) (Money.amount b))`).
+compare : Money -> Money -> Result Error Int
 compare a b =
-    Dec.compare (amount a) (amount b)
+    if eqCurrency (currency a) (currency b) then
+        Ok (Dec.compare (amount a) (amount b))
+
+    else
+        Err (mismatch "compare" a b)
 
 
+-- | Equal amount AND equal currency. The one combining operation that is
+-- total: two amounts in different currencies are not equal (`False`).
 eq : Money -> Money -> Bool
 eq a b =
     eqCurrency (currency a) (currency b) && Dec.eq (amount a) (amount b)
 
 
+-- | `not (eq a b)`: `True` for two different currencies.
 neq : Money -> Money -> Bool
 neq a b =
     not (eq a b)
 
 
-lt : Money -> Money -> Bool
+-- | `a < b` in one currency; an `Err` for two currencies.
+lt : Money -> Money -> Result Error Bool
 lt a b =
-    Dec.lt (amount a) (amount b)
+    if eqCurrency (currency a) (currency b) then
+        Ok (Dec.lt (amount a) (amount b))
+
+    else
+        Err (mismatch "lt" a b)
 
 
-lte : Money -> Money -> Bool
+-- | `a <= b` in one currency; an `Err` for two currencies.
+lte : Money -> Money -> Result Error Bool
 lte a b =
-    Dec.lte (amount a) (amount b)
+    if eqCurrency (currency a) (currency b) then
+        Ok (Dec.lte (amount a) (amount b))
+
+    else
+        Err (mismatch "lte" a b)
 
 
-gt : Money -> Money -> Bool
+-- | `a > b` in one currency; an `Err` for two currencies.
+gt : Money -> Money -> Result Error Bool
 gt a b =
-    Dec.gt (amount a) (amount b)
+    if eqCurrency (currency a) (currency b) then
+        Ok (Dec.gt (amount a) (amount b))
+
+    else
+        Err (mismatch "gt" a b)
 
 
-gte : Money -> Money -> Bool
+-- | `a >= b` in one currency; an `Err` for two currencies.
+gte : Money -> Money -> Result Error Bool
 gte a b =
-    Dec.gte (amount a) (amount b)
+    if eqCurrency (currency a) (currency b) then
+        Ok (Dec.gte (amount a) (amount b))
+
+    else
+        Err (mismatch "gte" a b)
 
 
+-- | Two currencies are the same when their codes are, in upper case:
+-- `CurrencyRaw "gbp"` is `GBP` (as `currencyFromCode "gbp"` is, and as every
+-- codec reads it). Compare Money with `eq`, not `==`: `==` also compares how
+-- the currency was written (`CurrencyRaw "gbp"` is not the variant `GBP`).
 eqCurrency : Currency -> Currency -> Bool
 eqCurrency a b =
     currencyCode a == currencyCode b
@@ -773,49 +849,127 @@ formatWithCode m =
         [ Ffi.toAny (currencyCode (currency m)), Ffi.toAny (amount m) ]
 
 
--- | Integer-cents representation, for DB persistence.
+-- | The amount in minor units (cents for USD). An amount whose minor units
+-- do not fit a 64-bit Int fails as the classified `NumericOverflow`
+-- (v0.29.2), never a wrapped number: ETH has 18 minor units, so that is from
+-- 9.22 ETH up. To store any amount exactly, use `Codec.moneyIn` or
+-- `Codec.moneyObject` rather than the minor units.
 toMinor : Money -> Int
 toMinor m =
     Dec.toMinor (minorUnits (currency m)) (amount m)
 
-
--- ─── FX rate registry ─────────────────────────────────────────────
-setRate : Currency -> Currency -> Decimal -> Result Error ()
-setRate from to rate =
-    Ffi.callPure
-        "Money_setRate"
-        [ Ffi.toAny (currencyCode from)
-        , Ffi.toAny (currencyCode to)
-        , Ffi.toAny rate
-        ]
+-- ─── Exchange rates ───────────────────────────────────────────────
+-- | A table of exchange rates: a value you build and pass, not a global.
+-- Opaque; make it with `rates`, read it with `rate`, use it with `convert`.
+type Rates
+    = Rates (List ( String, String, Decimal ))
 
 
-getRate : Currency -> Currency -> Result Error Decimal
-getRate from to =
-    Ffi.callPure "Money_getRate" [ currencyCode from, currencyCode to ]
+-- | A rate table from `( from, to, rate )` triples: one unit of `from` is
+-- worth `rate` units of `to`. A rate that is zero or negative is left out
+-- (`convert` then has no rate for that pair). A later triple for the same
+-- pair wins over an earlier one.
+--
+--     fx = Money.rates [ ( USD, EUR, usdToEur ), ( GBP, EUR, gbpToEur ) ]
+rates : List ( Currency, Currency, Decimal ) -> Rates
+rates triples =
+    Rates
+        (List.foldl
+            (\( from, to, r ) acc ->
+                if Dec.isPositive r then
+                    ( currencyCode from, currencyCode to, r ) :: acc
+
+                else
+                    acc)
+            []
+            triples)
 
 
-hasRate : Currency -> Currency -> Bool
-hasRate from to =
-    Ffi.callPure "Money_hasRate" [ currencyCode from, currencyCode to ]
+-- | The rate from one currency to another: `Just 1` for the same currency,
+-- the rate given for the pair, else the inverse of the rate given for the
+-- other direction (`1 / r`, rounded to 16 decimal places when it does not
+-- end sooner), else `Nothing`. `convert` does not multiply by this rounded
+-- inverse: it divides by `r`.
+rate : Currency -> Currency -> Rates -> Maybe Decimal
+rate from to (Rates table) =
+    let
+        f = currencyCode from
+        t = currencyCode to
+    in
+        if f == t then
+            Just Dec.one
+
+        else
+            case findRate f t table of
+
+                Just r ->
+                    Just r
+
+                Nothing ->
+                    case findRate t f table of
+
+                        Just r ->
+                            Result.toMaybe (Dec.div Dec.one r)
+
+                        Nothing ->
+                            Nothing
 
 
-clearRates : () -> Result Error ()
-clearRates _ =
-    Ffi.callPure "Money_clearRates" []
+-- The newest entry for the pair (`rates` keeps the list newest first).
+findRate : String -> String -> List ( String, String, Decimal ) -> Maybe Decimal
+findRate f t table =
+    case table of
+
+        [] ->
+            Nothing
+
+        ( a, b, r ) :: rest ->
+            if a == f && b == t then
+                Just r
+
+            else
+                findRate f t rest
 
 
--- | Convert Money to a target currency using the registered rate.
-convert : Currency -> Money -> Result Error Money
-convert to m =
-    if eqCurrency (currency m) to then
-        Ok m
+-- | Convert Money to `to` with a rate from `fx`. The same currency is
+-- returned unchanged; a pair with no rate is an `Err` naming both currencies.
+--
+-- The rate given for the pair multiplies the amount, which is exact. With
+-- only the rate for the other direction, the amount is DIVIDED by that rate
+-- (never multiplied by a rounded `1 / r`): 3 EUR at USD->EUR 3 is exactly
+-- 1 USD. A quotient with more than 16 decimal places is rounded to 16, half
+-- away from zero (1 EUR at USD->EUR 3 is 0.3333333333333333 USD). Round to
+-- the currency's minor unit yourself when you store or show it.
+convert : Rates -> Currency -> Money -> Result Error Money
+convert (Rates table) to m =
+    let
+        f = currencyCode (currency m)
+        t = currencyCode to
+    in
+        if f == t then
+            Ok m
 
-    else
-        case getRate (currency m) to of
+        else
+            case findRate f t table of
 
-            Ok rate ->
-                Ok (Money (Dec.mul rate (amount m)) to)
+                Just r ->
+                    Ok (Money (Dec.mul r (amount m)) to)
 
-            Err e ->
-                Err e
+                Nothing ->
+                    case findRate t f table of
+
+                        Just r ->
+                            case Dec.div (amount m) r of
+
+                                Ok q ->
+                                    Ok (Money q to)
+
+                                Err e ->
+                                    Err e
+
+                        Nothing ->
+                            Err
+                                (Error.invalidInput
+                                    ("Money.convert: no rate from " ++ f
+                                        ++ " to "
+                                        ++ t))

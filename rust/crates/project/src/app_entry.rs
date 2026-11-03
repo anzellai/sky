@@ -1368,6 +1368,389 @@ pub fn read_app_value(src: &str, needs_args: &dyn Fn(&str) -> bool) -> Result<Ap
     })
 }
 
+// ---- the setup a Task-chained `main` runs before the app -------------------
+
+/// How a `main` reaches `App.run app`, for a client (Sky.Spa) build that
+/// drops `main` and generates the backend's own.
+#[derive(Debug, Clone, Default)]
+pub struct RunChain {
+    /// The setup Task `main` runs before the app (see [`main_run_chain`]).
+    pub setup: Option<ArgText>,
+    /// Top-level bindings that exist only to run the app (`start = setup |>
+    /// Task.andThen (\_ -> App.run app)` reached as `main = start`, or the
+    /// named continuation `runIt _ = App.run app`). The build drops them with
+    /// `main`: they reference the app value, which the client build moves.
+    pub carriers: Vec<String>,
+}
+
+/// Every form of `main` a client (Sky.Spa) build carries, as the refusal
+/// lists them (`main = <form>`). A test parses each one, so the list names
+/// exactly the forms that carry (v0.29.2 seventh Judge: the prefix
+/// `Task.andThen (\_ -> App.run app) setup` carried but was not listed).
+pub const CARRIED_FORMS: &[&str] = &[
+    "setup |> Task.andThen (\\_ -> App.run app)",
+    "Task.andThen (\\_ -> App.run app) setup",
+    "Task.andThen (\\_ -> App.run app) <| setup",
+    "setup |> Task.andThen runIt   (with runIt _ = App.run app)",
+    "start                         (with start = one of the forms above)",
+    "let _ = setup in App.run app   (a failed setup does not stop the app)",
+];
+
+/// The setup Task a `main` runs BEFORE `App.run app` when it chains the two:
+///
+/// ```text
+/// main = setup |> Task.andThen (\_ -> App.run app)
+/// main = Task.andThen (\_ -> App.run app) setup
+/// main = Task.andThen (\_ -> App.run app) <| setup
+/// main = setup |> Task.andThen runIt        -- runIt _ = App.run app
+/// main = start                              -- start = <one of the above>
+/// ```
+///
+/// (each optionally under a `let … in` in `main`, whose bindings the caller
+/// carries itself). A client (Sky.Spa) build drops `main` and generates the
+/// backend's own, so a setup it did not carry would never run on the server.
+///
+/// `setup` is `None` when the body (after any `let`) IS the `App.run` call, or
+/// when no `App.run` is reached from `main`. `Err` for any other expression
+/// around `App.run` (a `case`, an `if`, `Task.map`), and for an `App.run`
+/// reached any other way: the build cannot tell what runs before the app, and
+/// it never drops it silently.
+pub fn main_run_chain(src: &str) -> Result<RunChain, String> {
+    let file = parse(src);
+    let imp = app_import(src);
+    let q = imp.qualifier_or_default();
+    let mut decls: HashMap<String, ast::ValueDecl> = HashMap::new();
+    for d in file.decls() {
+        if let ast::Decl::Value(v) = d {
+            if let Some(n) = v.name() {
+                decls.entry(n.text().to_string()).or_insert(v);
+            }
+        }
+    }
+    let Some(main) = decls.get("main").cloned() else {
+        return Ok(RunChain::default());
+    };
+    let refs = run_refs(src);
+    let refused = || -> String {
+        let forms: String = CARRIED_FORMS
+            .iter()
+            .map(|f| format!("\n    main = {}", f.replace("App.", &format!("{q}."))))
+            .collect();
+        format!(
+            "`main` runs `{q}.run` inside an expression a client (Sky.Spa) build cannot \
+             carry: the build generates the backend's own `main`, so the work `main` does \
+             around the app would never run on the server. Run the setup first and the app \
+             last, in one of these forms:{forms}"
+        )
+    };
+    let mut carriers: Vec<String> = Vec::new();
+    let setup = chain_in(
+        &file,
+        src,
+        &q,
+        &decls,
+        &main,
+        &refs,
+        &mut carriers,
+        true,
+        &refused,
+    )?;
+    // Every `App.run` must sit in `main` or a carrier; a carrier must be used
+    // by `main` (or another carrier) only, since the build drops it.
+    let owner = |pos: usize| -> Option<String> {
+        decls
+            .iter()
+            .find(|(_, v)| {
+                let r = v.syntax().text_range();
+                usize::from(r.start()) <= pos && pos < usize::from(r.end())
+            })
+            .map(|(n, _)| n.clone())
+    };
+    for r in &refs {
+        match owner(r.start) {
+            Some(n) if n == "main" || carriers.contains(&n) => {}
+            Some(_) => return Err(refused()),
+            None => {}
+        }
+    }
+    for c in &carriers {
+        for (n, v) in &decls {
+            if n == "main" || carriers.contains(n) {
+                continue;
+            }
+            if references_ident(&v.syntax().text().to_string(), c) {
+                return Err(format!(
+                    "`{c}` runs `{q}.run`, and `{n}` uses it too. A client (Sky.Spa) build \
+                     drops `main` and the bindings that only run the app, so `{n}` would \
+                     reference a name that is gone. Use `{c}` from `main` only."
+                ));
+            }
+        }
+    }
+    Ok(RunChain {
+        setup: match setup {
+            Some(e) => {
+                let off = content_start(e.syntax());
+                let end = usize::from(e.syntax().text_range().end());
+                let line_start = src[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                Some(ArgText {
+                    text: src[off..end].trim_end().to_string(),
+                    col: off - line_start,
+                })
+            }
+            None => None,
+        },
+        carriers,
+    })
+}
+
+/// [`main_run_chain`]'s setup alone.
+pub fn main_run_chain_setup(src: &str) -> Result<Option<ArgText>, String> {
+    Ok(main_run_chain(src)?.setup)
+}
+
+/// The `App.run …` call inside `decl` (the reference, its parentheses, then
+/// the application `App.run x`, `x |> App.run`, `App.run <| x`), parentheses
+/// stripped. `None` when `decl` has no such call.
+fn run_call_in(file: &ast::SourceFile, decl: &ast::ValueDecl, refs: &[RunRef]) -> Option<Expr> {
+    let range = decl.syntax().text_range();
+    let r = refs
+        .iter()
+        .find(|r| range.contains(syntax::TextSize::from(r.start as u32)))?;
+    let root = file.syntax().clone();
+    let node = root
+        .token_at_offset(syntax::TextSize::from(r.start as u32))
+        .right_biased()
+        .and_then(|t| {
+            t.parent_ancestors()
+                .find(|n| matches!(n.kind(), SyntaxKind::QualRefExpr | SyntaxKind::RefExpr))
+        })?;
+    let mut cur = node;
+    while let Some(p) = cur.parent() {
+        if p.kind() == SyntaxKind::ParenExpr {
+            cur = p;
+        } else {
+            break;
+        }
+    }
+    let call = match cur.parent() {
+        Some(p) if matches!(p.kind(), SyntaxKind::CallExpr | SyntaxKind::BinExpr) => p,
+        _ => return None,
+    };
+    Expr::cast(call).map(strip_parens)
+}
+
+/// The setup `decl`'s body chains before the app (see [`main_run_chain`]).
+/// `is_main` allows the `let … in` prefix the caller carries; a carrier
+/// binding found on the way is pushed to `carriers`.
+#[allow(clippy::too_many_arguments)]
+fn chain_in(
+    file: &ast::SourceFile,
+    src: &str,
+    q: &str,
+    decls: &HashMap<String, ast::ValueDecl>,
+    decl: &ast::ValueDecl,
+    refs: &[RunRef],
+    carriers: &mut Vec<String>,
+    is_main: bool,
+    refused: &dyn Fn() -> String,
+) -> Result<Option<Expr>, String> {
+    let _ = src;
+    let Some(body) = decl.body() else {
+        return Ok(None);
+    };
+    let mut body = strip_parens(body);
+    if let Expr::Let(l) = &body {
+        if !is_main {
+            return Err(refused());
+        }
+        match l.body() {
+            Some(b) => body = strip_parens(b),
+            None => return Ok(None),
+        }
+    }
+    let run_call = run_call_in(file, decl, refs);
+    if let Some(rc) = &run_call {
+        if body.syntax() == rc.syntax() {
+            return Ok(None);
+        }
+    }
+    // A zero-parameter top-level binding that runs the app: `main = start`.
+    let top_ref = |e: &Expr| -> Option<(String, ast::ValueDecl)> {
+        let Expr::Ref(_) = strip_parens(e.clone()) else {
+            return None;
+        };
+        let name = qual_text(&strip_parens(e.clone()));
+        let v = decls.get(&name)?;
+        if name == "main" || carriers.contains(&name) {
+            return None;
+        }
+        reaches_run(file, decls, refs, &name, &mut Vec::new()).then(|| (name, v.clone()))
+    };
+    if run_call.is_none() {
+        if let Some((name, v)) = top_ref(&body) {
+            if v.params().map(|p| p.params().count()).unwrap_or(0) == 0 {
+                carriers.push(name);
+                return chain_in(file, src, q, decls, &v, refs, carriers, false, refused);
+            }
+        }
+    }
+    // The `Sky.Core.Task` qualifiers in scope, and whether `andThen` is bare.
+    let mut task_quals: Vec<String> = Vec::new();
+    let mut bare_and_then = false;
+    for i in file.imports() {
+        if i.name().map(|n| n.text()).as_deref() != Some("Sky.Core.Task") {
+            continue;
+        }
+        task_quals.push("Sky.Core.Task".to_string());
+        if let Some(a) = i.alias() {
+            task_quals.push(a.text().to_string());
+        }
+        if let Some(exp) = i.exposing() {
+            let t = exp.syntax().text().to_string();
+            if t.contains("..") || references_ident(&t, "andThen") {
+                bare_and_then = true;
+            }
+        }
+    }
+    let is_and_then = |e: &Expr| -> bool {
+        let t = qual_text(&strip_parens(e.clone()));
+        match t.rsplit_once('.') {
+            Some((m, n)) => n == "andThen" && task_quals.iter().any(|q| q == m),
+            None => t == "andThen" && bare_and_then,
+        }
+    };
+    // A one-parameter function whose body is the run call `call`, and whose
+    // parameter (a `_`, `()` or unused name) the call does not use.
+    let ignores_param = |params: Option<ast::ParamList>, call: &Expr| -> bool {
+        let Some(pl) = params else {
+            return false;
+        };
+        let params: Vec<ast::Pattern> = pl.params().collect();
+        if params.len() != 1 {
+            return false;
+        }
+        let run_text = call.syntax().text().to_string();
+        params[0]
+            .syntax()
+            .descendants()
+            .all(|d| d.kind() != SyntaxKind::PatVar || !references_ident(&run_text, &node_text(&d)))
+    };
+    // The continuation: `\_ -> App.run app` here, or a named top-level
+    // `runIt _ = App.run app`. Returns the carrier name for the latter.
+    let continuation = |e: &Expr| -> Option<Option<String>> {
+        match strip_parens(e.clone()) {
+            Expr::Lambda(l) => {
+                let rc = run_call.as_ref()?;
+                let b = l.body()?;
+                (strip_parens(b).syntax() == rc.syntax() && ignores_param(l.params(), rc))
+                    .then_some(None)
+            }
+            Expr::Ref(_) => {
+                let name = qual_text(&strip_parens(e.clone()));
+                if name == "main" || carriers.contains(&name) {
+                    return None;
+                }
+                let v = decls.get(&name)?;
+                let rc = run_call_in(file, v, refs)?;
+                let b = strip_parens(v.body()?);
+                (b.syntax() == rc.syntax() && ignores_param(v.params(), &rc)).then_some(Some(name))
+            }
+            _ => None,
+        }
+    };
+    // `Task.andThen k`, as a partial application.
+    let and_then_k = |e: &Expr| -> Option<Option<String>> {
+        let Expr::Call(c) = strip_parens(e.clone()) else {
+            return None;
+        };
+        let parts = c.parts();
+        if parts.len() == 2 && is_and_then(&parts[0]) {
+            continuation(&parts[1])
+        } else {
+            None
+        }
+    };
+    let found: Option<(Expr, Option<String>)> = match &body {
+        Expr::Bin(b) => {
+            let op = b.op().map(|t| t.text().to_string()).unwrap_or_default();
+            match (op.as_str(), b.lhs(), b.rhs()) {
+                ("|>", Some(l), Some(rr)) => and_then_k(&rr).map(|k| (l, k)),
+                ("<|", Some(l), Some(rr)) => and_then_k(&l).map(|k| (rr, k)),
+                _ => None,
+            }
+        }
+        Expr::Call(c) => {
+            let parts = c.parts();
+            if parts.len() == 3 && is_and_then(&parts[0]) {
+                continuation(&parts[1]).map(|k| (parts[2].clone(), k))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    match found {
+        Some((setup, carrier)) => {
+            if let Some(c) = carrier {
+                carriers.push(c);
+            }
+            Ok(Some(setup))
+        }
+        // `main` reaches no `App.run` at all: nothing to carry (the caller's
+        // check of every `App.run` reference refuses one found elsewhere).
+        None if run_call.is_none() => Ok(None),
+        None => Err(refused()),
+    }
+}
+
+/// True when the top-level binding `name` runs the app: its body holds the
+/// `App.run` call, or names a top-level binding that does (`start = setup
+/// |> Task.andThen runIt` with `runIt _ = App.run app`). `seen` stops a cycle.
+fn reaches_run(
+    file: &ast::SourceFile,
+    decls: &HashMap<String, ast::ValueDecl>,
+    refs: &[RunRef],
+    name: &str,
+    seen: &mut Vec<String>,
+) -> bool {
+    if seen.iter().any(|s| s == name) {
+        return false;
+    }
+    seen.push(name.to_string());
+    let Some(v) = decls.get(name) else {
+        return false;
+    };
+    if run_call_in(file, v, refs).is_some() {
+        return true;
+    }
+    let Some(body) = v.body() else {
+        return false;
+    };
+    let text = body.syntax().text().to_string();
+    let mut names: Vec<&String> = decls.keys().filter(|n| n.as_str() != "main").collect();
+    names.sort();
+    names
+        .into_iter()
+        .any(|n| references_ident(&text, n) && reaches_run(file, decls, refs, n, seen))
+}
+
+/// True when `ident` occurs in `hay` as a whole identifier.
+fn references_ident(hay: &str, ident: &str) -> bool {
+    let bytes = hay.as_bytes();
+    let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(ident) {
+        let at = from + rel;
+        let after = at + ident.len();
+        if (at == 0 || !is_id(bytes[at - 1])) && (after >= bytes.len() || !is_id(bytes[after])) {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
+}
+
 // ---- static builder arguments ---------------------------------------------
 
 /// The value of the LAST `builder` step's single argument, evaluated
@@ -1542,6 +1925,67 @@ mod tests {
 
     fn all(_: &str) -> bool {
         true
+    }
+
+    /// `main = start`, `start = setup |> Task.andThen runIt`, `runIt _ =
+    /// App.run app` carries `setup` and drops both bindings (v0.29.2 second
+    /// Judge, gap 3).
+    #[test]
+    fn main_run_chain_follows_a_binding_into_a_named_continuation() {
+        let src = "module Main exposing (main)\n\nimport Std.App as App\nimport Sky.Core.Task as Task\n\n\
+                   setup =\n    Task.succeed ()\n\n\
+                   start =\n    setup |> Task.andThen runIt\n\n\
+                   runIt _ =\n    App.run app\n\n\
+                   main =\n    start\n";
+        let chain = main_run_chain(src).expect("the chain is carried");
+        assert_eq!(chain.setup.map(|s| s.text).as_deref(), Some("setup"));
+        let mut carriers = chain.carriers.clone();
+        carriers.sort();
+        assert_eq!(carriers, vec!["runIt".to_string(), "start".to_string()]);
+    }
+
+    /// Every form the refusal lists is carried, and a form outside the list
+    /// is refused with the list (Judge round 7: the prefix form carried but
+    /// the refusal did not name it).
+    #[test]
+    fn every_form_the_refusal_lists_is_carried() {
+        let pre = "module Main exposing (main)\n\nimport Std.App as App\nimport Sky.Core.Task as Task\n\n\
+                   setup =\n    Task.succeed ()\n\n";
+        for form in CARRIED_FORMS {
+            let (body, extra) = match form.split_once("(with ") {
+                Some((b, w)) => (b.trim(), w.trim_end_matches(')').trim()),
+                None => (form.split("   (").next().unwrap().trim(), ""),
+            };
+            let src = if body == "start" {
+                format!(
+                    "{pre}start =\n    setup |> Task.andThen (\\_ -> App.run app)\n\nmain =\n    start\n"
+                )
+            } else if extra.starts_with("runIt") {
+                format!("{pre}runIt _ =\n    App.run app\n\nmain =\n    {body}\n")
+            } else if body.starts_with("let _") {
+                format!("{pre}main =\n    let\n        _ =\n            setup\n    in\n    App.run app\n")
+            } else {
+                format!("{pre}main =\n    {body}\n")
+            };
+            let chain = main_run_chain(&src)
+                .unwrap_or_else(|e| panic!("the listed form `{form}` is refused:\n{src}\n{e}"));
+            if !body.starts_with("let _") {
+                assert_eq!(
+                    chain.setup.map(|s| s.text).as_deref(),
+                    Some("setup"),
+                    "the listed form `{form}` does not carry its setup:\n{src}"
+                );
+            }
+        }
+        let bad = "module Main exposing (main)\n\nimport Std.App as App\nimport Sky.Core.Task as Task\n\n\
+                   main =\n    App.run app |> Task.map identity\n";
+        let e = main_run_chain(bad).expect_err("Task.map around App.run must be refused");
+        for form in CARRIED_FORMS {
+            assert!(
+                e.contains(&format!("main = {form}")),
+                "`{form}` not listed:\n{e}"
+            );
+        }
     }
 
     #[test]

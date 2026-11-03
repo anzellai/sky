@@ -37,6 +37,17 @@ use std::path::{Path, PathBuf};
 /// A new entry here is a decision, not a formality: prefer a name that does not
 /// collide. The failure message lists the module pairs for each name.
 const EXPECTED_COLLISIONS: &[&str] = &[
+    // v0.29.2: Std.Money.sum replaces sumOf (the user's Money API redesign).
+    // Std.Decimal already exports `sum`; a program that exposes both modules
+    // with `(..)` and uses the bare name gets `[E1012]`. Breaking line in the
+    // v0.29.2 CHANGELOG.
+    "value sum",
+    // v0.29.2: Std.Codec.value, the codec for a raw Json.Value (the name the
+    // request asked for, beside Codec.string / Codec.int). Json.Decode, the
+    // JsonDec kernel and Std.Html.Attributes already export `value`; a program
+    // that exposes Std.Codec and one of them with `(..)` and uses the bare
+    // name gets `[E1012]`. Breaking line in the v0.29.2 CHANGELOG.
+    "value value",
     // v0.28.0 (against v0.27.8). `Std.Ai.Provider` gains `Options`,
     // `defaultOptions` and `embed`, the names the lifecycle design gives them
     // (docs/design/std-ai-lifecycle.md §8.3). `Std.Watch` has its own
@@ -760,4 +771,73 @@ fn e1012_between_two_old_exports_does_not_claim_a_new_name() {
     assert_eq!(msgs.len(), 1, "{:?}", r.diagnostics);
     assert!(!msgs[0].contains("new since"), "{}", msgs[0]);
     assert!(!msgs[0].contains("docs/migration"), "{}", msgs[0]);
+}
+
+#[test]
+fn e1012_names_v0_28_1_for_a_name_new_in_v0_29_0() {
+    // `Sky.Core.Http.header` is new in v0.29.0: the v0.29.1 snapshot has it,
+    // so the newest release that lacked it is still v0.28.1.
+    let html = "module Std.Html exposing (..)\nheader x =\n    x\n";
+    let http = "module Sky.Core.Http exposing (..)\nheader x =\n    x\n";
+    let main = "module Main exposing (main)\n\
+                import Std.Html exposing (..)\n\
+                import Sky.Core.Http exposing (..)\n\n\
+                main =\n    header\n";
+    let r = resolve_main(&[("Std.Html", html), ("Sky.Core.Http", http), ("Main", main)]);
+    let msgs = e1012(&r);
+    assert_eq!(msgs.len(), 1, "{:?}", r.diagnostics);
+    assert!(
+        msgs[0].contains("`Sky.Core.Http.header` is new since Sky v0.28.1"),
+        "{}",
+        msgs[0]
+    );
+    assert!(!msgs[0].contains("v0.29.1"), "{}", msgs[0]);
+}
+
+#[test]
+fn e1012_points_a_v0_29_name_at_the_v0_29_guide() {
+    // v0.29.2: `Std.Codec.value` is new in v0.29.2, so it is new since
+    // v0.29.1 (the newest release that lacked it, and the one users upgrade
+    // from), while `Std.Html.Attributes.value` is old. The message names
+    // v0.29.1 and links docs/migration/v0.29.md, not the v0.28 guide (sixth
+    // Judge: it said v0.28.1, though v0.29.0 and v0.29.1 also lacked it).
+    let attrs = "module Std.Html.Attributes exposing (..)\nvalue x =\n    x\n";
+    let codec = "module Std.Codec exposing (..)\nvalue =\n    1\n";
+    let main = "module Main exposing (main)\n\
+                import Std.Html.Attributes exposing (..)\n\
+                import Std.Codec exposing (..)\n\n\
+                main =\n    value\n";
+    let r = resolve_main(&[
+        ("Std.Html.Attributes", attrs),
+        ("Std.Codec", codec),
+        ("Main", main),
+    ]);
+    let msgs = e1012(&r);
+    assert_eq!(msgs.len(), 1, "{:?}", r.diagnostics);
+    assert!(
+        msgs[0].contains("`Std.Codec.value` is new since Sky v0.29.1"),
+        "{}",
+        msgs[0]
+    );
+    assert!(!msgs[0].contains("v0.27.8"), "{}", msgs[0]);
+    assert!(!msgs[0].contains("v0.28.1"), "{}", msgs[0]);
+    assert!(
+        msgs[0].ends_with("See docs/migration/v0.29.md#new-stdlib-names"),
+        "{}",
+        msgs[0]
+    );
+}
+
+#[test]
+fn e1012_names_the_newest_release_that_lacked_a_v0_29_2_name() {
+    // `Money.sum` and `Codec.value` are new in v0.29.2: the newest release
+    // that lacked them is v0.29.1, not v0.28.1 (v0.29.2 sixth Judge). A
+    // v0.29.0 name (`Sky.Core.Regex.findMatch`) still names v0.28.1.
+    for (module, name) in [("Std.Money", "sum"), ("Std.Codec", "value")] {
+        let snap = hir::stdlib_history::new_since(module, name).expect("a v0.29.2 name");
+        assert_eq!(snap.release, "v0.29.1", "{module}.{name}");
+    }
+    let snap =
+        hir::stdlib_history::new_since("Sky.Core.Regex", "findMatch").expect("a v0.29.0 name");
+    assert_eq!(snap.release, "v0.28.1");
 }

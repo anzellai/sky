@@ -273,7 +273,7 @@ pub const SURFACES: &[Surface] = &[
     sf("path", "Sky.Core.Path"),
     sf("error", "Sky.Core.Error"),
     sf("decimal", "Std.Decimal"),
-    sf("money", "Std.Money"),
+    sf2("money", "Std.Money", &["Sky.Core.Maybe as Maybe"]),
     sf("csv", "Std.Csv"),
     sf("regex", "Sky.Core.Regex"),
     sf2(
@@ -5832,21 +5832,20 @@ fn money_battery(edge: &str) -> Vec<Check> {
             s(&["Money.formatWithCode"], "Money.formatWithCode (Money.fromMinor USD 1234)", "12.34 USD"),
             s(&["Money.format"], "Money.format (Money.fromMajor USD 5)", "$5.00"),
             i(&["Money.toMinor"], "Money.toMinor (Money.fromMinor USD 1234)", 1234),
-            s(&["Money.add"], "Money.format (Money.add (Money.fromMinor USD 100) (Money.fromMinor USD 250))", "$3.50"),
-            s(&["Money.sub"], "Money.format (Money.sub (Money.fromMinor USD 500) (Money.fromMinor USD 250))", "$2.50"),
+            rs(&["Money.add"], "Result.map Money.format (Money.add (Money.fromMinor USD 100) (Money.fromMinor USD 250))", Some("$3.50")),
+            rs(&["Money.sub"], "Result.map Money.format (Money.sub (Money.fromMinor USD 500) (Money.fromMinor USD 250))", Some("$2.50")),
             s(&["Money.neg"], "Money.format (Money.neg (Money.fromMinor USD 100))", "-$1.00"),
             s(&["Money.abs"], "Money.format (Money.abs (Money.fromMinor USD -100))", "$1.00"),
             s(&["Money.currencyCode"], "Money.currencyCode USD", "USD"),
             s(&["Money.symbol"], "Money.symbol USD", "$"),
             i(&["Money.minorUnits"], "Money.minorUnits USD", 2),
             bo(&["Money.eq"], "Money.eq (Money.fromMinor USD 100) (Money.fromMinor USD 100)", true),
-            bo(&["Money.lt"], "Money.lt (Money.fromMinor USD 100) (Money.fromMinor USD 200)", true),
+            bo(&["Money.lt"], "Money.lt (Money.fromMinor USD 100) (Money.fromMinor USD 200) == Ok True", true),
             bo(&["Money.isPositive"], "Money.isPositive (Money.fromMinor USD 1)", true),
-            bo(&["Money.knownCurrency"], "Money.knownCurrency USD", true),
-            bo(&["Money.isKnownCode"], "Money.isKnownCode \"usd\"", true),
-            s(&["Money.parseCurrency"], "Money.currencyCode (Money.parseCurrency \" eur \")", "EUR"),
+            bo(&["Money.currencyFromCode"], "Money.currencyFromCode \"usd\" == Just USD", true),
+            s(&["Money.currencyFromCode"], "Maybe.withDefault \"none\" (Maybe.map Money.currencyCode (Money.currencyFromCode \"eur\"))", "EUR"),
             s(&["Money.zero"], "Money.format (Money.zero USD)", "$0.00"),
-            s(&["Money.sumOf"], "Money.format (Money.sumOf USD [ Money.fromMinor USD 100, Money.fromMinor USD 200 ])", "$3.00"),
+            rs(&["Money.sum"], "Result.map Money.format (Money.sum USD [ Money.fromMinor USD 100, Money.fromMinor USD 200 ])", Some("$3.00")),
             // Allocation must be LOSSLESS: the residue lands at the front and
             // the parts sum back to the whole.
             ls(
@@ -5862,38 +5861,36 @@ fn money_battery(edge: &str) -> Vec<Check> {
             s(&["Money.fromMajor"], "Money.format (Money.fromMajor USD 7)", "$7.00"),
             s(&["Money.currency"], "Money.currencyCode (Money.currency (Money.fromMinor EUR 1))", "EUR"),
             s(&["Money.amount"], "Dec.toString (Money.amount (Money.fromMinor USD 250))", "2.5"),
-            s(&["Money.zeroOf"], "Money.format (Money.zeroOf (Money.fromMinor EUR 500))", "€0.00"),
+            s(&["Money.zero"], "Money.format (Money.zero (Money.currency (Money.fromMinor EUR 500)))", "€0.00"),
             s(&["Money.mul"], "Money.format (Money.mul (Dec.fromInt 3) (Money.fromMinor USD 100))", "$3.00"),
             s(&["Money.percentOf"], "Money.format (Money.percentOf (Dec.fromInt 20) (Money.fromMinor USD 10000))", "$20.00"),
             s(&["Money.addPercent"], "Money.format (Money.addPercent (Dec.fromInt 10) (Money.fromMinor USD 10000))", "$110.00"),
             s(&["Money.subPercent"], "Money.format (Money.subPercent (Dec.fromInt 10) (Money.fromMinor USD 10000))", "$90.00"),
             s(&["Money.currencyName"], "Money.currencyName (CurrencyRaw \"ZZZ\")", "ZZZ"),
-            i(&["Money.compare"], "Money.compare (Money.fromMinor USD 100) (Money.fromMinor USD 200)", -1),
-            i(&["Money.compare"], "Money.compare (Money.fromMinor USD 200) (Money.fromMinor USD 200)", 0),
+            i(&["Money.compare"], "Result.withDefault 99 (Money.compare (Money.fromMinor USD 100) (Money.fromMinor USD 200))", -1),
+            i(&["Money.compare"], "Result.withDefault 99 (Money.compare (Money.fromMinor USD 200) (Money.fromMinor USD 200))", 0),
             bo(&["Money.neq"], "Money.neq (Money.fromMinor USD 100) (Money.fromMinor USD 200)", true),
-            bo(&["Money.gt"], "Money.gt (Money.fromMinor USD 200) (Money.fromMinor USD 100)", true),
-            bo(&["Money.gte"], "Money.gte (Money.fromMinor USD 200) (Money.fromMinor USD 200)", true),
-            bo(&["Money.lte"], "Money.lte (Money.fromMinor USD 200) (Money.fromMinor USD 200)", true),
+            bo(&["Money.gt"], "Money.gt (Money.fromMinor USD 200) (Money.fromMinor USD 100) == Ok True", true),
+            bo(&["Money.gte"], "Money.gte (Money.fromMinor USD 200) (Money.fromMinor USD 200) == Ok True", true),
+            bo(&["Money.lte"], "Money.lte (Money.fromMinor USD 200) (Money.fromMinor USD 200) == Ok True", true),
             bo(&["Money.isNegative"], "Money.isNegative (Money.fromMinor USD -1)", true),
-            // The FX registry. `setRate` auto-registers the inverse, so a
-            // round-trip through both directions must return the original.
-            // These touch process-global state, which is safe here because
-            // every corpus case is its own program.
-            bo(&["Money.hasRate"], "Money.hasRate USD USD", true),
-            rs(
-                &["Money.setRate", "Money.getRate"],
-                "Result.andThen (\\_ -> Result.map Dec.toString (Money.getRate USD EUR)) (Money.setRate USD EUR (Dec.fromInt 2))",
-                Some("2"),
+            // Exchange rates are an explicit `Rates` value (v0.29.2): the
+            // inverse of a given rate is read from the same table, and a
+            // pair with no rate is an Err.
+            bo(&["Money.rate", "Money.rates"], "Maybe.map Dec.toString (Money.rate USD USD (Money.rates [])) == Just \"1\"", true),
+            bo(
+                &["Money.rate", "Money.rates"],
+                "Maybe.map Dec.toString (Money.rate EUR USD (Money.rates [ ( USD, EUR, Dec.fromInt 2 ) ])) == Just \"0.5\"",
+                true,
             ),
             rs(
-                &["Money.setRate", "Money.convert"],
-                "Result.andThen (\\_ -> Result.map Money.format (Money.convert EUR (Money.fromMinor USD 100))) (Money.setRate USD EUR (Dec.fromInt 2))",
+                &["Money.convert", "Money.rates"],
+                "Result.map Money.format (Money.convert (Money.rates [ ( USD, EUR, Dec.fromInt 2 ) ]) EUR (Money.fromMinor USD 100))",
                 Some("€2.00"),
             ),
-            // `clearRates` really clears: the rate registered above is gone.
             rs(
-                &["Money.clearRates"],
-                "Result.andThen (\\_ -> Result.andThen (\\_ -> Result.map Dec.toString (Money.getRate USD EUR)) (Money.clearRates ())) (Money.setRate USD EUR (Dec.fromInt 2))",
+                &["Money.convert"],
+                "Result.map Money.format (Money.convert (Money.rates []) EUR (Money.fromMinor USD 100))",
                 None,
             ),
         ],
@@ -5922,28 +5919,30 @@ fn money_battery(edge: &str) -> Vec<Check> {
             bo(&["Money.isPositive"], "Money.isPositive (Money.zero USD)", false),
         ],
         "empty" => vec![
-            s(&["Money.sumOf"], "Money.format (Money.sumOf USD emptyMoneys)", "$0.00"),
-            // `allocate` with a non-positive part count is the empty list, not
-            // a divide-by-zero.
-            ln(&["Money.allocate"], "Money.allocate 0 (Money.fromMinor USD 100)", 0),
-            ln(&["Money.allocate"], "Money.allocate -1 (Money.fromMinor USD 100)", 0),
+            rs(&["Money.sum"], "Result.map Money.format (Money.sum USD emptyMoneys)", Some("$0.00")),
         ],
         "failure" => vec![
             rs(&["Money.fromString"], "Result.map Money.format (Money.fromString USD \"abc\")", None),
-            bo(&["Money.knownCurrency"], "Money.knownCurrency (CurrencyRaw \"ZZZ\")", false),
-            bo(&["Money.isKnownCode"], "Money.isKnownCode \"ZZZ\"", false),
+            bo(&["Money.currencyFromCode"], "Money.currencyFromCode \"ZZZ\" == Just (CurrencyRaw \"ZZZ\")", true),
+            bo(&["Money.currencyFromCode"], "Money.currencyFromCode \" ZZ\" == Nothing", true),
             // An unknown code still formats rather than crashing, and its
             // symbol falls back to the code.
             s(&["Money.symbol"], "Money.symbol (CurrencyRaw \"ZZZ\")", "ZZZ"),
             i(&["Money.minorUnits"], "Money.minorUnits (CurrencyRaw \"ZZZ\")", 2),
-            // Currency mismatch on `add` is SILENT and returns the left
-            // operand. That is a sharp edge, it is what the module does, and
-            // pinning it is how a future change to it becomes visible.
-            s(
+            // Two currencies have no sum and no order. `Money.add` used to
+            // return the left operand in silence; since v0.29.2 every
+            // combining operation is a Result, an Err for two currencies.
+            rs(
                 &["Money.add"],
-                "Money.format (Money.add (Money.fromMinor USD 100) (Money.fromMinor EUR 100))",
-                "$1.00",
+                "Result.map Money.format (Money.add (Money.fromMinor USD 100) (Money.fromMinor EUR 100))",
+                None,
             ),
+            rs(
+                &["Money.sum"],
+                "Result.map Money.format (Money.sum USD [ Money.fromMinor EUR 100 ])",
+                None,
+            ),
+            bo(&["Money.lt"], "Money.lt (Money.fromMinor USD 100) (Money.fromMinor EUR 200) == Ok True", false),
             bo(
                 &["Money.eq"],
                 "Money.eq (Money.fromMinor USD 100) (Money.fromMinor EUR 100)",

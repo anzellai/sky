@@ -74,8 +74,7 @@ invoiceSplitCheck _ =
         parts = List.map Money.toMinor splitMoney
         total = sumInts parts
         exact =
-            total == whole
-                && Money.eq (Money.sumOf book splitMoney) (money whole)
+            total == whole && Money.sum book splitMoney == Ok (money whole)
     in
         { whole = whole, parts = parts, total = total, exact = exact }
 

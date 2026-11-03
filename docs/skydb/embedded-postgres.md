@@ -17,10 +17,12 @@
 Sky's data story has a seam in it. `Std.Db` is dialect-safe across SQLite and
 Postgres, which means every feature must be designed twice and the differences
 must be papered over. That tax is not theoretical — it has already produced two
-defects that reached users: `Codec.auto` cannot encode `Money`/`Decimal` at all,
-and there is no `NUMERIC`/`DECIMAL` DDL kind anywhere, while `Std.Money` on
-`Std.Decimal` is `AGENTS.md`'s pinned currency default. A currency type that
-cannot round-trip through the pinned store is the seam showing.
+defects that reached users: `Codec.auto` could not encode `Money`/`Decimal`
+(fixed in v0.23.0, as JSON text), and there was no `NUMERIC`/`DECIMAL` DDL kind
+until v0.29.2 (`Codec.decimal` / `Codec.moneyIn`: `NUMERIC` on PostgreSQL,
+`TEXT` holding the canonical decimal on SQLite, ordered and summed exactly by
+a collation and an aggregate Sky registers, which raw SQL against SQLite does
+not see). The seam is smaller, not gone.
 
 The fix is not to delete SQLite. It is to make **running the same engine in
 development that you run in production** the easy path, so the dialect gap stops
@@ -796,6 +798,16 @@ database-per-app is the shared-cluster problem and belongs to P6.
 The `--db-push` / `--db-migrate` / `--db-seed` steps run against the same DSN.
 They are separate `sky db …` processes, so the variable is passed to each of
 them explicitly — without that the app would boot onto an unmigrated cluster.
+
+Every `sky run` path starts the app with this same environment: a plain entry,
+a `Std.App` entry (`main = App.run app`, any `--target`) and a Sky.Spa entry
+(its generated backend). One place in the CLI (`RunSetup` in `main.rs`) checks
+the configuration before the build, then starts the cluster, sets the DSN, the
+`--profile` variables and runs the `--db-*` steps after it. Before v0.29.2 the
+`Std.App` and Sky.Spa paths skipped it, so the app stopped with "no path given".
+`sky watch` builds a `Std.App` entry for its `[app] target` (else `web`) and
+hands the spawned app the same DSN. `sky run --embed` on a `Std.App` or Sky.Spa
+entry starts no supervised cluster: that binary brings up its own.
 
 ### The reference count
 

@@ -97,6 +97,10 @@ type migColumn struct {
 	// flag, Store.defaultWith & co.): the table must have it, and nothing
 	// creates, adds or drops it. Never in a migration file.
 	External bool `json:"-"`
+	// Currency is the ISO code of a Codec.moneyIn column (the `money=` flag,
+	// Codec.CMoneyIn), "" for any other column. Only the conversion of a
+	// legacy JSON column reads it; it never changes a statement.
+	Currency string `json:"-"`
 }
 
 // migOp is one op of a migration file. A `"v"` key, which an earlier v0.29
@@ -202,6 +206,7 @@ func codecColspecMigColumn(name, rawKind, pk string) migColumn {
 		Autoinc: codecColIsAutoInc(rawKind), Unique: unique,
 		Default: migDefaultOf(defKind, defVal), Zero: codecColZero(rawKind),
 		External: codecColIsExternal(rawKind),
+		Currency: codecColCurrency(rawKind),
 	}
 }
 
@@ -217,6 +222,10 @@ func migZeroDefault(kind string) *migDefault {
 		return &migDefault{Int: &z}
 	case "text":
 		z := ""
+		return &migDefault{Text: &z}
+	case "decimal":
+		// '0' suits both NUMERIC and the SQLite TEXT column.
+		z := "0"
 		return &migDefault{Text: &z}
 	case "bool":
 		f := false
@@ -328,14 +337,14 @@ func migDefaultFits(table string, c migColumn) error {
 	base, _ := codecSplitKind(c.Type)
 	intLike := base == "int" || base == "bigint" || base == "timestamp"
 	textLike := base == "text" || base == "blob" || base == "json"
-	known := intLike || textLike || base == "real" || base == "bool"
+	known := intLike || textLike || base == "real" || base == "bool" || base == "decimal"
 	if !known {
 		return nil
 	}
 	ok := true
 	switch migDefKind(d) {
 	case "int":
-		ok = intLike || base == "real"
+		ok = intLike || base == "real" || base == "decimal"
 	case "float":
 		ok = base == "real"
 	case "bool":
@@ -343,6 +352,12 @@ func migDefaultFits(table string, c migColumn) error {
 	case "now":
 		ok = intLike || base == "text"
 	case "text":
+		if base == "decimal" {
+			if _, err := decimalParseStrict(*d.Text); err != nil {
+				return fmt.Errorf("column %s.%s is a decimal, and its default %q is not a decimal", table, c.Name, *d.Text)
+			}
+			return nil
+		}
 		ok = textLike
 		if ok && base != "text" && !json.Valid([]byte(*d.Text)) {
 			return fmt.Errorf("column %s.%s is JSON, and its default %q is not JSON", table, c.Name, *d.Text)

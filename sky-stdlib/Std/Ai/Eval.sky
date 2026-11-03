@@ -615,6 +615,64 @@ type alias TraceTo =
     }
 
 
+-- A price book prices a call in one currency: two rates in different
+-- currencies have no single cost, so the run is refused before the first
+-- call, as an InvalidSetting naming both.
+-- `setup`, after a check that refuses the run before any call.
+checkedSetup : Result Error () -> Db -> Task Error ()
+checkedSetup check db =
+    case check of
+
+        Ok _ ->
+            setup db
+
+        Err e ->
+            Task.fail e
+
+
+oneCurrencyBooks : Maybe PriceBook -> Maybe PriceBook -> Result Error ()
+oneCurrencyBooks book judgeBook =
+    case ( mixedBook book, mixedBook judgeBook ) of
+
+        ( Just reason, _ ) ->
+            Err
+                (Failure.toError
+                    (InvalidSetting
+                        { setting = "withPriceBook", reason = reason }))
+
+        ( _, Just reason ) ->
+            Err
+                (Failure.toError
+                    (InvalidSetting
+                        { setting = "withJudgePriceBook", reason = reason }))
+
+        _ ->
+            Ok ()
+
+
+mixedBook : Maybe PriceBook -> Maybe String
+mixedBook book =
+    case book of
+
+        Just b ->
+            let
+                i = Money.currencyCode (Money.currency b.inputPer1k)
+                o = Money.currencyCode (Money.currency b.outputPer1k)
+            in
+                if i == o then
+                    Nothing
+
+                else
+                    Just
+                        ("the input rate is in " ++ i
+                            ++ " and the output rate in "
+                            ++ o
+                            ++ "; give the price book one currency")
+
+        Nothing ->
+            Nothing
+
+
 -- | `run`, naming the candidate (a model, an adapter, a registry version
 -- such as `Registry.label v`) in the report.
 runAs : String -> Db -> Provider -> Suite input -> Task Error Report
@@ -623,7 +681,7 @@ runAs candidate db p (Suite s) =
         j = judgeFor (Suite s)
         rubric = List.any (\c -> hasRubric c.expect) s.cases
     in
-        setup db
+        checkedSetup (oneCurrencyBooks s.priceBook s.judgePriceBook) db
             |> Task.andThen
                    (\_ ->
                        if rubric then
@@ -849,27 +907,38 @@ traceWith ctx book kind write =
             Task.succeed ()
 
 
+-- A price book whose two rates are in different currencies cannot price the
+-- call: the case fails with that `Err` (Provider.cost), it never crashes.
 okResult : Maybe PriceBook -> CaseInfo -> Int -> Output -> Int -> ( List ( String, Float ), Score ) -> CaseResult
 okResult priceBook c sample out latency ( parts, sc ) =
-    { id = c.id
-    , sample = sample
-    , tags = c.tags
-    , passed = sc.passed
-    , score = sc.value
-    , scores = parts
-    , reason = sc.reason
-    , output = out.content
-    , latencyMs = latency
-    , cost =
-        case priceBook of
+    let
+        ( cost, failure, priced ) =
+            case priceBook of
 
-            Just book ->
-                Just (Provider.cost book out.usage)
+                Just book ->
+                    case Provider.cost book out.usage of
 
-            Nothing ->
-                Nothing
-    , error = Nothing
-    }
+                        Ok m ->
+                            ( Just m, Nothing, True )
+
+                        Err e ->
+                            ( Nothing, Just (Error.toString e), False )
+
+                Nothing ->
+                    ( Nothing, Nothing, True )
+    in
+        { id = c.id
+        , sample = sample
+        , tags = c.tags
+        , passed = sc.passed && priced
+        , score = sc.value
+        , scores = parts
+        , reason = sc.reason
+        , output = out.content
+        , latencyMs = latency
+        , cost = cost
+        , error = failure
+        }
 
 
 errResult : CaseInfo -> Int -> Int -> Error -> CaseResult
@@ -1145,6 +1214,13 @@ colDecoder col =
 
         Codec.CBlob ->
             JsonD.map (\_ -> ()) JsonD.value
+
+        -- A decimal (Codec.decimal, Codec.moneyIn) is a JSON string, read as text.
+        Codec.CDecimal ->
+            colDecoder Codec.CText
+
+        Codec.CMoneyIn _ ->
+            colDecoder Codec.CText
 
         Codec.CNull inner ->
             JsonD.oneOf [ jsonNull, colDecoder inner ]
@@ -1945,12 +2021,18 @@ moneyDecoder =
             case String.split " " (String.trim text) of
 
                 [ c, amount ] ->
-                    case Money.fromString (Money.parseCurrency c) amount of
+                    case Money.currencyFromCode c of
 
-                        Ok m ->
-                            JsonD.succeed m
+                        Just cur ->
+                            case Money.fromString cur amount of
 
-                        Err _ ->
+                                Ok m ->
+                                    JsonD.succeed m
+
+                                Err _ ->
+                                    JsonD.fail ("not an amount: " ++ text)
+
+                        Nothing ->
                             JsonD.fail ("not an amount: " ++ text)
 
                 _ ->
@@ -2628,13 +2710,24 @@ gateFailures (Thresholds t) cmp =
             case ( r.costBudget, r.meanCost ) of
 
                 ( Just budget, Just m ) ->
-                    if Money.gt m budget then
-                        [ "mean cost " ++ moneyText m ++ " is over the budget "
-                              ++ moneyText budget
-                        ]
+                    case Money.gt m budget of
 
-                    else
-                        []
+                        Ok True ->
+                            [ "mean cost " ++ moneyText m
+                                  ++ " is over the budget "
+                                  ++ moneyText budget
+                            ]
+
+                        Ok False ->
+                            []
+
+                        Err _ ->
+                            [ "the cost budget is in "
+                                  ++ Money.currencyCode (Money.currency budget)
+                                  ++ " and the suite's costs are in "
+                                  ++ Money.currencyCode (Money.currency m)
+                                  ++ "; give withCostBudget and withPriceBook one currency"
+                            ]
 
                 ( Just budget, Nothing ) ->
                     [ "the suite has a cost budget (" ++ moneyText budget
@@ -2873,18 +2966,21 @@ meanMoney ms =
             Nothing
 
         first :: _ ->
-            let
-                total = List.foldl Money.add (Money.zeroOf first) ms
-            in
-                case Decimal.div
-                         (Money.amount total)
-                         (Decimal.fromInt (List.length ms)) of
+            case Money.sum (Money.currency first) ms of
 
-                    Ok d ->
-                        Just (Money.Money d (Money.currency first))
+                Ok total ->
+                    case Decimal.div
+                             (Money.amount total)
+                             (Decimal.fromInt (List.length ms)) of
 
-                    Err _ ->
-                        Nothing
+                        Ok d ->
+                            Just (Money.Money d (Money.currency first))
+
+                        Err _ ->
+                            Nothing
+
+                Err _ ->
+                    Nothing
 
 
 uniqueSorted : List String -> List String

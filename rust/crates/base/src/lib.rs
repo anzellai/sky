@@ -55,6 +55,46 @@ pub fn ensure_stack<R>(f: impl FnOnce() -> R) -> R {
     stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, f)
 }
 
+/// The text of a Go interpreted string literal for `s`, without the quotes.
+///
+/// Every Sky text that reaches emitted Go source as a string literal goes
+/// through here: a Sky string literal, and every name the build writes into
+/// a generated Go file. A Go source file is UTF-8, and the Go lexer refuses a
+/// NUL (U+0000) and a byte order mark (U+FEFF) anywhere in it but at the start
+/// ("invalid BOM in the middle of the file"), so both are escaped, as are the
+/// characters an interpreted literal cannot hold (`"`, `\`, a newline), every
+/// other C0 and C1 control and DEL (so the source stays readable). Every other
+/// code point is written as itself, so ordinary Unicode text is unchanged.
+/// Before v0.29.2 (eighth Judge) a U+FEFF in a Sky string type-checked and
+/// then failed `go build`.
+///
+/// Rust's `{:?}` is NOT a Go literal: it writes `\u{feff}`, which Go refuses.
+pub fn go_escape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {
+                out.push_str(&format!("\\x{:02x}", c as u32))
+            }
+            c if ('\u{80}'..='\u{9f}').contains(&c) || c == '\u{feff}' => {
+                out.push_str(&format!("\\u{:04x}", c as u32))
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `s` as a quoted Go interpreted string literal (see [`go_escape_string`]).
+pub fn go_string_literal(s: &str) -> String {
+    format!("\"{}\"", go_escape_string(s))
+}
+
 /// Declares a transparent `u32` newtype id: Copy, cheap, `==`-comparable (L3).
 macro_rules! id_newtype {
     ($(#[$m:meta])* $name:ident) => {
@@ -200,5 +240,58 @@ mod tests {
             msg.starts_with("internal compiler error (please report): impossible state 42 ["),
             "unexpected bug! message: {msg}"
         );
+    }
+
+    /// Every Unicode scalar value: the literal holds no character the Go
+    /// lexer refuses (NUL, U+FEFF, a newline) or a bare control, and reading
+    /// its escapes back gives the input. The Go compiler leg of the same
+    /// sweep is `rust/crates/sky/tests/go_string_literal_flow.rs`.
+    #[test]
+    fn go_escape_string_round_trips_every_scalar_value() {
+        let all: String = (0u32..=0x10FFFF).filter_map(char::from_u32).collect();
+        let lit = go_escape_string(&all);
+        for c in lit.chars() {
+            assert!(
+                c != '\0' && c != '\u{feff}' && c != '\n' && !c.is_control(),
+                "the literal holds U+{:04X} unescaped",
+                c as u32
+            );
+        }
+        assert_eq!(unescape_go(&lit), all);
+        assert_eq!(
+            go_string_literal("a\u{feff}\0\"\\"),
+            "\"a\\ufeff\\x00\\\"\\\\\""
+        );
+        // Ordinary text is written as itself.
+        assert_eq!(
+            go_escape_string("héllo, 世界 \u{2028} 🎉"),
+            "héllo, 世界 \u{2028} 🎉"
+        );
+    }
+
+    /// The Go interpreted-literal escapes `go_escape_string` writes.
+    fn unescape_go(s: &str) -> String {
+        let mut out = String::new();
+        let mut it = s.chars();
+        while let Some(c) = it.next() {
+            if c != '\\' {
+                out.push(c);
+                continue;
+            }
+            match it.next().unwrap() {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                '"' => out.push('"'),
+                '\\' => out.push('\\'),
+                k @ ('x' | 'u') => {
+                    let n = if k == 'x' { 2 } else { 4 };
+                    let hex: String = it.by_ref().take(n).collect();
+                    out.push(char::from_u32(u32::from_str_radix(&hex, 16).unwrap()).unwrap());
+                }
+                other => panic!("unexpected escape \\{other}"),
+            }
+        }
+        out
     }
 }

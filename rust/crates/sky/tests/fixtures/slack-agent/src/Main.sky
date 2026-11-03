@@ -136,7 +136,7 @@ botBody ctx mention =
                                           ctx
                                           Codec.string
                                           "trace"
-                                          (Trace.record
+                                          (recordTrace
                                               (Durable.conn ctx)
                                               (Trace.forResponse
                                                   (Durable.runId ctx)
@@ -149,6 +149,18 @@ botBody ctx mention =
                                                      { reply = answer
                                                      , posted = posted
                                                      })))
+
+
+-- Record a priced trace row, or fail with the Err of a book in two currencies.
+recordTrace : Db -> Result Error Trace.Trace -> Task Error ()
+recordTrace db trace =
+    case trace of
+
+        Ok t ->
+            Trace.record db t
+
+        Err e ->
+            Task.fail e
 
 
 outcomeSummary : Policy.Outcome String -> String

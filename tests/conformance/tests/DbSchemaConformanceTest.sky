@@ -318,8 +318,8 @@ tests =
         (\_ -> Test.equal (expectEncoded "seen_at" "" "int?") (encoded (Schema.timestamp "seen_at")))
     , Test.test "toProject maps json down to base \"blob\""
         (\_ -> Test.equal (expectEncoded "meta" "" "blob?") (encoded (Schema.json "meta")))
-    , Test.test "toProject encodes blob as base \"blob\""
-        (\_ -> Test.equal (expectEncoded "payload" "" "blob?") (encoded (Schema.blob "payload")))
+    , Test.test "toProject encodes blob as base \"blob\" with the bin flag (v0.29.2: declared binary)"
+        (\_ -> Test.equal (expectEncoded "payload" "" "blob?|bin") (encoded (Schema.blob "payload")))
     , Test.test "toProject encodes bool as base \"bool\""
         (\_ -> Test.equal (expectEncoded "active" "" "bool?") (encoded (Schema.bool "active")))
     , Test.test "toProject encodes real as base \"real\""

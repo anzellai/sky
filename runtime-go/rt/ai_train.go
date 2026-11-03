@@ -1418,19 +1418,22 @@ func aiTargetDims(target string, s aiTrainShape) (int, int, bool) {
 const aiTrainCloudFile = "cloud.json"
 
 type aiTrainCloud struct {
-	Backend    string `json:"backend"`
-	Job        string `json:"job"`
-	State      string `json:"state"`
-	Attempt    int    `json:"attempt"`
-	Staging    string `json:"staging"`
-	RunKey     string `json:"runKey"`
-	Project    string `json:"project"`
-	Region     string `json:"region"`
-	Machine    string `json:"machine"`
-	Spent      string `json:"spent"`
-	Budget     string `json:"budget"`
-	UpdatedMs  int64  `json:"updatedMs"`
-	SpentMinor int    `json:"spentMinor"`
+	Backend   string `json:"backend"`
+	Job       string `json:"job"`
+	State     string `json:"state"`
+	Attempt   int    `json:"attempt"`
+	Staging   string `json:"staging"`
+	RunKey    string `json:"runKey"`
+	Project   string `json:"project"`
+	Region    string `json:"region"`
+	Machine   string `json:"machine"`
+	Spent     string `json:"spent"`
+	Budget    string `json:"budget"`
+	UpdatedMs int64  `json:"updatedMs"`
+	// cloud.json also carries `spentMinor`, the spend in the budget
+	// currency's minor units. Train.sky writes it as a decimal string (an
+	// ETH spend from 9.22 ETH up has no 64-bit Int); the runtime does not
+	// read it, and `spent` is the same amount for display.
 }
 
 func aiTrainReadCloud(runDir string) aiTrainCloud {

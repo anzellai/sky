@@ -737,7 +737,6 @@ fn render_source(src: &str) -> String {
                     types.push(union_signature(&d, with_ctors.as_ref()));
                 }
             }
-            _ => {}
         }
     }
 
@@ -877,7 +876,6 @@ fn module_symbols_with(src: &str, apply_exposing: bool) -> Vec<DocSym> {
                     note(n, &mut order, &mut seen);
                 }
             }
-            _ => {}
         }
     }
 

@@ -279,14 +279,14 @@ fn inlay_hint_unannotated_function_shows_full_arrow() {
     let a = analysis_with(UNANNOTATED_SRC);
     // `add x y = x + y` (line 14): the WHOLE arrow, not the body-root `number`.
     let add = inlay_label(&a, 14);
-    // `add x y = x + y` is fully polymorphic `a -> a -> a` now that Sky separates
-    // Int/Float and `+` is unconstrained (was the over-constrained `number -> …`
-    // before the Int/Float separation — `+` accepts any single type, e.g.
-    // `add "s" "t"`). Hover/inlay render internal vars as clean `a`, `b`, …
-    // (`render_pretty`).
+    // `add x y = x + y` is `number -> number -> number` (v0.29.2: on the check
+    // path `+` needs a number, as in Elm, so `add "s" "t"` is refused). The hint
+    // shows the SAME type as hover on the declaration (`def_sig_string`); before
+    // v0.29.2 it read the lowerer's body types and showed `a -> a -> a` while
+    // hover showed the bound.
     assert_eq!(
         add.as_deref(),
-        Some(" : a -> a -> a"),
+        Some(" : number -> number -> number"),
         "unannotated 2-arg fn must hint its full arrow, not the body result; got {add:?}"
     );
     // Regression guard: the old bug rendered the body-root type only (` : a`).
@@ -306,10 +306,10 @@ fn hover_unannotated_function_shows_full_arrow() {
     let a = analysis_with(UNANNOTATED_SRC);
     // On the `add` DECLARATION name (line 14) — full arrow.
     let add_decl = hover_md(&a, 14, 1);
-    // Poly `a -> a -> a` (see the inlay test) — `+` is unconstrained now that
-    // Int and Float are fully separate.
+    // `number -> number -> number` (see the inlay test): `+` needs a number on
+    // the check path, and hover and the inlay hint show the same type.
     assert!(
-        add_decl.contains("a -> a -> a"),
+        add_decl.contains("number -> number -> number"),
         "hover on unannotated decl shows full arrow; got {add_decl:?}"
     );
     // On the `bump` declaration name (line 16) — concrete `Int -> Int`.

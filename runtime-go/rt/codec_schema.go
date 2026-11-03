@@ -71,6 +71,15 @@ func codecSchemaTyped(t reflect.Type, declared string, snake bool, depth int) co
 			}
 			return codecSchema{json: `{"type":"string","enum":[` + strings.Join(quoted, ",") + `]}`, exact: true}
 		}
+		// Std.Decimal and Std.Money are erased to rt.SkyADT, so only the
+		// declared type names them: a zero SkyADT has no name for
+		// codecSchemaType to read, and their schema was the open `{}`.
+		switch declared {
+		case "Std_Decimal_Decimal":
+			return codecDecimalSchema()
+		case "Std_Money_Money":
+			return codecMoneySchema()
+		}
 		if inner, ok := strings.CutPrefix(declared, "rt.SkyMaybe["); ok && isSkyMaybeType(t) {
 			if jv, ok := t.FieldByName("JustValue"); ok {
 				s := codecSchemaTyped(jv.Type, strings.TrimSuffix(inner, "]"), snake, depth+1)
@@ -124,9 +133,9 @@ func codecSchemaType(t reflect.Type, snake bool, depth int) codecSchema {
 		if name, _, _, ok := unwrapADTShape(reflect.Zero(t).Interface()); ok {
 			switch name {
 			case "Decimal__Internal":
-				return codecSchemaOf("string")
+				return codecDecimalSchema()
 			case "Money":
-				return codecObjectSchema([]string{"amount", "currency"}, []codecSchema{codecSchemaOf("string"), codecSchemaOf("string")})
+				return codecMoneySchema()
 			}
 			return codecOpenSchema
 		}
@@ -185,4 +194,19 @@ func Codec_autoSchema(snakeArg, witness any) any {
 	}
 	b.WriteString(`]}`)
 	return b.String()
+}
+
+// codecDecimalSchema is the schema of a Decimal: a string under the strict
+// grammar decimalParseStrict reads (decimal_strict.go).
+func codecDecimalSchema() codecSchema {
+	return codecSchema{json: `{"type":"string","pattern":` + codecJSONString(decimalStrictPattern) + `}`, exact: true}
+}
+
+// codecMoneySchema is the schema of a Money: `{"amount","currency"}`, both
+// required.
+func codecMoneySchema() codecSchema {
+	return codecObjectSchema(
+		[]string{"amount", "currency"},
+		[]codecSchema{codecDecimalSchema(), {json: `{"type":"string","pattern":"^[A-Za-z0-9]{3,10}$"}`, exact: true}},
+	)
 }

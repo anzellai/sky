@@ -86,6 +86,21 @@
         {"kind": "addColumn", "table": "orders", "column": "email", "type": "text", "nullable": true},
         {"kind": "addIndex", "table": "orders", "name": "ux_orders_ce8ccf41", "indexColumns": ["email"], "unique": true}
       ]
+    },
+    {
+      "colspec": ["total", "decimal"],
+      "schema": {"name": "total", "kind": "decimal", "nullable": false},
+      "ops": [{"kind": "addColumn", "table": "orders", "column": "total", "type": "decimal", "nullable": false, "default": {"text": "0"}}]
+    },
+    {
+      "colspec": ["tip", "decimal?"],
+      "schema": {"name": "tip", "kind": "decimal", "nullable": true},
+      "ops": [{"kind": "addColumn", "table": "orders", "column": "tip", "type": "decimal", "nullable": true}]
+    },
+    {
+      "colspec": ["fee", "decimal|dtext=1.5"],
+      "schema": {"name": "fee", "kind": "decimal", "nullable": false, "default": {"text": "1.5"}},
+      "ops": [{"kind": "addColumn", "table": "orders", "column": "fee", "type": "decimal", "nullable": false, "default": {"text": "1.5"}}]
     }
   ]
 }

@@ -655,7 +655,13 @@ parseMoney text =
     case String.split " " (String.trim text) of
 
         [ c, amount ] ->
-            Result.toMaybe (Money.fromString (Money.parseCurrency c) amount)
+            case Money.currencyFromCode c of
+
+                Just cur ->
+                    Result.toMaybe (Money.fromString cur amount)
+
+                Nothing ->
+                    Nothing
 
         _ ->
             Nothing

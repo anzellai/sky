@@ -2,6 +2,7 @@ module Page.Product exposing (viewProduct)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
+import Sky.Core.Dict exposing (Dict)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Html exposing (..)
@@ -286,7 +287,7 @@ parseQty fallback s =
     Maybe.withDefault fallback (String.toInt s)
 
 
-viewAddToCart : Model -> a -> Int -> Html Msg
+viewAddToCart : Model -> Dict String String -> Int -> Html Msg
 viewAddToCart model product stock =
     let
         lang = model.lang

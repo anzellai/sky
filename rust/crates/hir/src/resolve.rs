@@ -558,6 +558,9 @@ struct Resolver<'a> {
     /// A Go FFI package imported with `exposing (..)` — bare unresolved names
     /// are attributed to it (class-b), not a resolver gap.
     foreign_open: Option<String>,
+    /// Modules imported with `exposing (..)`: a bare name a release removed
+    /// from one of them names its replacement (`removed_name_hint`).
+    open_modules: Vec<String>,
 
     /// Provenance for every unqualified binding, parallel to `vars` / `ctors`
     /// (doc 05 §6b). Written by `bind_var` / `bind_ctor`, consumed once by
@@ -625,6 +628,7 @@ impl<'a> Resolver<'a> {
             qual_types: HashMap::new(),
             import_aliases: HashMap::new(),
             kernel_open: Vec::new(),
+            open_modules: Vec::new(),
             foreign_open: None,
             var_origins: HashMap::new(),
             ctor_origins: HashMap::new(),
@@ -1214,11 +1218,25 @@ impl<'a> Resolver<'a> {
         let why_new = if new_cands.is_empty() {
             String::new()
         } else {
-            let prev = crate::stdlib_history::PREVIOUS_RELEASE;
-            let new_in: Vec<String> = new_cands
-                .iter()
-                .map(|(m, _)| format!("`{m}.{name}`"))
-                .collect();
+            // Group the new exports by the release they are new since (the
+            // newest snapshot that lacked them), oldest first.
+            let mut groups: Vec<(&'static crate::stdlib_history::Snapshot, Vec<String>)> =
+                Vec::new();
+            for (m, _) in &new_cands {
+                let Some(snap) = crate::stdlib_history::import_member_new_since(m, name) else {
+                    continue;
+                };
+                let text = format!("`{m}.{name}`");
+                match groups.iter_mut().find(|(s, _)| s.release == snap.release) {
+                    Some((_, v)) => v.push(text),
+                    None => groups.push((snap, vec![text])),
+                }
+            }
+            groups.sort_by_key(|(s, _)| {
+                crate::stdlib_history::SNAPSHOTS
+                    .iter()
+                    .position(|x| x.release == s.release)
+            });
             // The one-line fixes that keep the meaning the name had before the
             // upgrade: qualify it, or import it by name from the module that
             // already exported it (an `exposing (name)` import outranks an
@@ -1236,17 +1254,34 @@ impl<'a> Resolver<'a> {
                 }
                 _ => String::new(),
             };
-            format!(
-                " {} {} new since Sky {prev}, so a program that compiled with {prev} can meet \
-                 this error with no change of its own.{keep}",
-                join_and(&new_in),
-                if new_in.len() == 1 { "is" } else { "are" },
-            )
+            let said: Vec<String> = groups
+                .iter()
+                .map(|(snap, new_in)| {
+                    let prev = snap.release;
+                    format!(
+                        " {} {} new since Sky {prev}, so a program that compiled with {prev} can \
+                         meet this error with no change of its own.",
+                        join_and(new_in),
+                        if new_in.len() == 1 { "is" } else { "are" },
+                    )
+                })
+                .collect();
+            format!("{}{keep}", said.concat())
         };
-        let see = if new_cands.is_empty() {
-            String::new()
-        } else {
-            " See docs/migration/v0.28.md#new-stdlib-names".to_string()
+        let see = {
+            let mut links: Vec<&str> = Vec::new();
+            for (m, _) in &new_cands {
+                if let Some(s) = crate::stdlib_history::import_member_new_since(m, name) {
+                    if !links.contains(&s.migration) {
+                        links.push(s.migration);
+                    }
+                }
+            }
+            if links.is_empty() {
+                String::new()
+            } else {
+                format!(" See {}", links.join(" and "))
+            }
         };
         let mut diag = Diagnostic::error(
             "E1012",
@@ -1770,6 +1805,9 @@ impl<'a> Resolver<'a> {
         span: Option<Span>,
     ) {
         if c.all {
+            if !self.open_modules.iter().any(|m| m == module_name) {
+                self.open_modules.push(module_name.to_string());
+            }
             let values: Vec<(String, DefId)> = exports
                 .values
                 .iter()
@@ -1822,7 +1860,13 @@ impl<'a> Resolver<'a> {
                                      `{v}` in its `exposing` clause, but does not define it."
                                 )
                             } else {
-                                format!("module `{module_name}` does not expose `{v}`")
+                                match crate::stdlib_history::removed_name_hint(&module_name, v) {
+                                    Some(h) => format!(
+                                        "module `{module_name}` does not expose `{v}`: it was \
+                                         removed, {h}."
+                                    ),
+                                    None => format!("module `{module_name}` does not expose `{v}`"),
+                                }
                             };
                             let mut diag = Diagnostic::error("E1011", msg);
                             if let Some(sp) = span {
@@ -3601,7 +3645,14 @@ impl<'a> Resolver<'a> {
                 name: Name::new(name),
             };
         }
-        self.track_class_a(None, name, RefKind::Value, "undefined name", span);
+        // A name a release removed from a module imported `exposing (..)`
+        // (`import Std.Money exposing (..)` then `setRate`): name the
+        // replacement, as the qualified and explicit forms do.
+        let removed = self.open_modules.iter().find_map(|m| {
+            crate::stdlib_history::removed_name_hint(m, name)
+                .map(|h| format!("name was removed from `{m}`: {h}"))
+        });
+        self.track_class_a_detail(None, name, RefKind::Value, "undefined name", span, removed);
         Res::Error
     }
 
@@ -3707,12 +3758,15 @@ impl<'a> Resolver<'a> {
                     );
                     Res::Error
                 } else {
-                    self.track_class_a(
+                    let dep_name = self.db.module_name(dep).to_string();
+                    self.track_class_a_detail(
                         Some(qual.to_string()),
                         name,
                         RefKind::Value,
                         "name not exported by module",
                         span,
+                        crate::stdlib_history::removed_name_hint(&dep_name, name)
+                            .map(|h| format!("name was removed from `{dep_name}`: {h}")),
                     );
                     Res::Error
                 }

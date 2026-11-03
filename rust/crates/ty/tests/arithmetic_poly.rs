@@ -11,6 +11,11 @@
 //! After the fix `+ - *` unify their operands with no super (result = operand
 //! type; poly helpers lower via rt.Add/Sub/Mul) and `/` forces Float. This test
 //! locks both the fixed accepts AND that genuine misuse still clashes.
+//!
+//! v0.29.2: on the CHECK path `+ - *` carry the `number` bound again, and an
+//! unannotated FUNCTION keeps it as a quantifier (`number -> number -> number`)
+//! instead of reading it back as `Int`, so the Float caller still checks and a
+//! String caller is refused. The lowering path is unchanged.
 
 use hir::SourceDb;
 use std::path::{Path, PathBuf};
@@ -108,14 +113,14 @@ fn div_helper_at_float_accepts() {
 }
 
 #[test]
-fn add_helper_polymorphic_over_string_accepts() {
-    // The oracle's `+` is unconstrained `a -> a -> a`; keep parity (don't
-    // re-introduce a Number gate that would reject this).
+fn add_helper_over_string_rejects() {
+    // v0.29.2: `+` needs a number (Elm's `number -> number -> number`). The
+    // oracle's unconstrained `a -> a -> a` let `add "s" "t"` compile and then
+    // panic in `rt.AsInt` at run time, so that parity was unsound.
     let src = format!("{HDR}add x y =\n    x + y\n\nb =\n    add \"s\" \"t\"\n");
-    assert_eq!(
-        type_errors(&repo_root(), &src),
-        0,
-        "DIVERGENCE — `add \"s\" \"t\"` must accept (oracle's `+` is a→a→a)"
+    assert!(
+        type_errors(&repo_root(), &src) > 0,
+        "SOUNDNESS — `add \"s\" \"t\"` must be refused (`+` needs a number)"
     );
 }
 

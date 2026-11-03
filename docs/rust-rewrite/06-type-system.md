@@ -470,7 +470,14 @@ per-query budget naturally smaller than the old whole-module one.
 - **Flex ↔ Structure/Alias** guard with `occurs` before merging
   (`Unify.hs:192-223`) — infinite-type rejection.
 - **Rigid** unifies only with Flex or Error (`Unify.hs:263-267`) — a user-annotated
-  rigid var never silently unifies with a concrete type.
+  rigid var never silently unifies with a concrete type. The annotation gate
+  (`infer_def_against`, `ty/src/infer.rs`) skolemises EVERY quantifier of a
+  top-level annotation except `any` (since v0.29.2; before, an argument-only
+  quantifier stayed flex and could be pinned, so `coerce : a -> b` was
+  accepted). A rigid against a bounded flex whose bound its name does not
+  spell is refused at the end of the definition (`UnionFind::rigid_missing`),
+  so a later clash with a type gives the clearer message. Let annotations are
+  checked after the group (`check_let_anno_generality`).
 - **`FlexSuper`** (`Number`/`Comparable`/`Appendable`/`CompAppend`) matched via
   `superMatches`/`combineSuper` (`Unify.hs:529-554`) — keep the `isSkyCore` home
   guard so `(5).field` is still rejected.

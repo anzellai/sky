@@ -74,12 +74,26 @@ users =
 
 **`Codec.auto blank`** reflection-derives the codec from a zero-value witness:
 scalars → typed columns, `Maybe` → nullable, list / nested-record → JSON TEXT
-blob, nullary enum → readable name. A data-carrying custom type is not
-derivable: reading it is an `Err`. Give that field a `taggedUnion` codec through
-`Codec.autoWith [ ( "shape", shapeCodec ) ] blank`. Columns + JSON keys are
+blob, nullary enum → readable name, a custom type with data → a tagged object
+(`{"tag":"Circle","v0":2.5}`, read back by each variant's payload types, v0.29.2).
+A variant carrying a `Decimal`, `Money`, `Currency`, `Json.Value` or a type
+variable cannot be read back: the field is a builder problem and
+`Store.fromCodec` refuses the store. Give that field a `taggedUnion` codec
+through `Codec.autoWith [ ( "shape", shapeCodec ) ] blank`. Two fields that
+become one column or key (`aB` and `a_b`), at the top or in any record the field
+holds (a nested record, a List, Maybe or Dict of records, a variant's payload),
+are a builder problem too. So is a `Json.Value` slot whose blank holds no JSON
+value (`items = []` for a `List Json.Value`, `more = Nothing` for a `Maybe
+Json.Value`): put one in (`[ Json.Encode.null ]`, `Just Json.Encode.null`) or
+give the field `Codec.value` through `Codec.autoWith`. A `Just` written as null
+(`Just Nothing` of a `Maybe (Maybe a)`, `Just Json.Encode.null`) is refused by a
+write wherever the `Maybe` is (a List, a record, a Dict value, a variant's
+payload): it would read back as `Nothing`. Columns + JSON keys are
 **snake_case** by default (`priceMinor` → `price_minor`); **`Codec.autoCamel`**
 keeps camelCase; **`Codec.autoWith [ ("active", intBool) ] blank`** overrides one
-field's codec (a Bool stored 0/1, a custom enum) while auto-deriving the rest; a
+field's codec (a Bool stored 0/1, a custom enum) while auto-deriving the rest
+(a key is the column, `"price_list"`, or the record field, `"priceList"`; a key
+that is neither makes `Store.fromCodec` refuse the store, naming the keys); a
 fully custom mapping uses `Codec.object`/`Codec.field "col" .field`.
 
 ### Schema / DDL builders
@@ -98,6 +112,7 @@ column (a typo fails fast with the column list):
 | `Store.index [ "customer_id", "created_at" ]` | `CREATE INDEX` named `ix_<table>_<h>` |
 | `Store.uniqueOn [ "customer_id", "code" ]` | a unique index, `ux_<table>_<h>`; every column must be required (NULLs never conflict) |
 | `Store.uniqueWhere [ "slug" ] (Store.neq "slug" (SqlString ""))` | a partial unique index; the condition is written as constants (`eq`/`neq`/`gt`/…, `isNull`/`notNull`, `inList`, `eqCol`…, `and_`/`or_`/`not_`) |
+| `Store.indexNamed "orders_customer" [ "customer_id" ]` / `Store.uniqueOnNamed "acct_code" [ "tenant_id", "code" ]` | `index` / `uniqueOn` under a name you give: for a table whose index already exists under its own name (`sky db check --code` writes them when it adopts a table, v0.29.2) |
 | `Store.defaultWith "id" (\_ -> SqlValue)` | **app-side** computed default at insert (e.g. a UUID PK via the unit-arg `Task.run` idiom) |
 | `Store.generated [ "id", "created_at" ]` | columns `insert`/`update` OMIT so the DB fills them, added to the ones `serial` and the other builders marked |
 
@@ -182,9 +197,24 @@ refuse a store whose builders recorded a problem (for example an unknown column
 in `unique`, `index` or `uniqueOn`), naming the column, before any DDL. So
 does the `stores` step of `sky verify`, when the entry module exposes `db`.
 
+`sky check` (and `sky build`) warns first, at compile time (v0.29.2): a literal
+column name given to a Store builder (`primaryKey`, `serial`, `unique`,
+`index`, `uniqueOn`, `uniqueWhere`), to `Store.findBy`, or to `orderAsc` /
+`orderDesc` / a `where_` condition on a `Store.query` chain, that the store's
+codec does not have. The warning lists the columns and a did-you-mean. It
+speaks only when the source shows the columns (a `Codec.auto` / `autoCamel` /
+`autoWith` over a record literal, or a `Codec.object` chain of literal names,
+through top-level definitions). A name the chain declares outside the codec
+(`defaultWith`, `defaultNow`, `touchOnUpdate`, the `default*` builders,
+`generated`) is a column. Those builders take any column the table has, so
+they warn only for a name that is a codec column spelled with another case or
+`_` (`"Created_At"` for `created_at`).
+
 ### Writes
 
-`insert` · **`insertMany`** (one multi-row INSERT — bulk / time-series) · `update`
+`insert` · **`insertMany`** (multi-row INSERTs in one transaction, split at the
+engine's bound-parameter limit, so any number of rows is all-or-nothing — bulk /
+time-series) · `update`
 (by PK, whole record) · `updateWhere` (by `Cond`, whole record) · **`setFields`**
 (PATCH by PK — `SET` only the named columns) · **`updateFields`** (PATCH by
 `Cond`) · **`adjust`** (atomic `SET col = col + delta` for counters/stock) ·
@@ -298,10 +328,130 @@ dialects, is checked before any statement:
 | real (`Float`) | `SqlFloat` (finite) or `SqlInt` |
 | bool (`Bool`) | `SqlBool` |
 | JSON (a list, record or custom type field) | `SqlString` holding JSON |
+| decimal (`Codec.decimal`, `Codec.moneyIn`) | `SqlDecimal` or `SqlInt` (a condition also takes `SqlString` decimal text, so `findBy "12.30"` matches 12.3) |
 
-`SqlBytes`, `SqlTime`, `SqlDecimal` and `SqlMoney` fit no Store column (bind
-the text, `SqlString (Decimal.toString d)`), and NaN and Infinity fit none
-(SQLite stores NaN as NULL).
+`SqlBytes`, `SqlTime`, `SqlDecimal` and `SqlMoney` fit no other Store column
+(bind the text, `SqlString (Decimal.toString d)`). A decimal column refuses
+`SqlFloat` (not exact: bind `SqlDecimal (Decimal.fromFloat f)`) and `SqlMoney`
+(its currency would be dropped). NaN and Infinity fit none (SQLite stores NaN
+as NULL).
+
+**Decimal columns (v0.29.2).** `Codec.decimal` and `Codec.moneyIn GBP` give a
+`decimal` column: plain `NUMERIC` on PostgreSQL (never `NUMERIC(p,s)`, which
+rounds on insert), and `TEXT` holding the canonical decimal (`12.5`) on SQLite,
+where NUMERIC affinity would turn `0.1` into a REAL. The values are exact on
+both:
+
+- On SQLite the Store reads the column through the `sky_decimal` collation in a
+  comparison, an `orderAsc` / `orderDesc` and `minAs` / `maxAs`, and sums it with
+  the `sky_decimal_sum` aggregate (`0.1 + 0.2` is `0.3`). Sky registers both in
+  every SQLite connection it opens. `Store.toSql` shows `COLLATE sky_decimal`,
+  which the `sqlite3` shell does not know, and a range condition with the
+  collation cannot use a plain index. Raw SQL against the column sees text.
+- On PostgreSQL the column is native `NUMERIC`; `sumAs` casts to `NUMERIC`.
+- `Store.defaultDecimal "price" d` gives a `DEFAULT`, `defaultInt` fits too, and
+  a required decimal column added to a table with rows defaults to `'0'`.
+- `adjust`, `addExcluded`, `keepMin` / `keepMax` and the text matches (`like`,
+  `contains`) refuse a decimal column before any statement.
+- `Codec.moneyIn GBP` stores one currency. A Money in another currency is
+  refused before the statement, never converted or relabelled. The code is
+  read as `Money.currencyFromCode` reads it (v0.29.2): 3 to 10 ASCII letters
+  or digits in upper case, so `Codec.moneyIn USDT`, `USDC`, `BTC` and a
+  `CurrencyRaw` code keep their currency, and `Codec.moneyIn (CurrencyRaw
+  "gbp")` is `Codec.moneyIn GBP`. A code that is not a currency code is a
+  `Store.fromCodec` builder problem.
+- A `Codec.auto` Decimal or Money field keeps its v0.23 JSON-text column in
+  v0.29 (`"12.34"`, `{"amount":"12.34","currency":"GBP"}`), so no existing
+  table changes.
+- **Moving such a field to `Codec.decimal` or `Codec.moneyIn`: convert the
+  column first, then switch the codec.** A JSON-text column compares as text
+  (`"10"` sorts before `"9.5"`), and new writes (`20`) would mix with the old
+  spelling (`"9.5"`). So `Store.migrate` and `Store.pushProject` refuse a
+  decimal field on such a column, naming `table.column` and the statement
+  that converts it, and change nothing (`migrate` never alters a column).
+  `sky db check` runs the same check (`Store.checkProjectData`, v0.29.2), so
+  it reports the same column as drift with the same text, on SQLite too, where
+  the column type alone fits. A write never stores a JSON value its codec does
+  not read back, in a JSON column or a scalar one (a `Codec.list (Codec.moneyIn
+  GBP)` holding a USD Money, a `Codec.enum` value not in its pairs, a computed
+  Decimal over 1000 characters, a NaN or infinite Float are refused, by every
+  write verb, naming the verb and the column). Only the partial fields are
+  checked (`Codec.writeChecks`, derived from the codec tree), on the encoded
+  value in memory, so a store of plain fields pays nothing for the check. The conversion never drops a
+  currency: for `Codec.moneyIn GBP` only a Money in GBP becomes its amount,
+  and for `Codec.decimal` no Money object converts.
+
+  On PostgreSQL (NULL stays NULL; drop a `DEFAULT` first and set it again
+  after), a `Codec.decimal` field (a quoted or bare decimal converts, a Money
+  object makes the statement fail):
+
+  ```sql
+  ALTER TABLE items ALTER COLUMN price TYPE NUMERIC
+    USING (CASE WHEN price::text LIKE '{%'
+                THEN ('a Money object is not a decimal: ' || price::text)
+                ELSE trim(both '"' from price::text) END)::numeric
+  ```
+
+  A `Codec.moneyIn GBP` field: first check that this query returns no rows
+  (each row it returns is a Money in another currency, or with no currency;
+  change or move it, it is never relabelled GBP):
+
+  ```sql
+  SELECT cost FROM items
+    WHERE cost::text LIKE '{%'
+      AND upper(cost::json->>'currency') IS DISTINCT FROM 'GBP'
+  ```
+
+  then convert (a Money in another currency, or with no currency, makes it
+  fail):
+
+  ```sql
+  ALTER TABLE items ALTER COLUMN cost TYPE NUMERIC
+    USING (CASE WHEN cost::text LIKE '{%'
+                THEN (CASE WHEN upper(cost::json->>'currency') = 'GBP'
+                           THEN cost::json->>'amount'
+                           ELSE 'a Money object that is not in GBP: ' || cost::text END)
+                ELSE trim(both '"' from cost::text) END)::numeric
+  ```
+
+  On SQLite the column stays `TEXT`; the rows are rewritten to the canonical
+  text (the refusal applies while any row still holds the quoted or object
+  spelling). A `Codec.decimal` field:
+
+  ```sql
+  UPDATE items SET price = substr(price, 2, length(price) - 2)
+    WHERE price LIKE '"%"'
+  ```
+
+  A `Codec.moneyIn GBP` field, after the same check (`SELECT cost FROM items
+  WHERE cost LIKE '{%' AND upper(json_extract(cost, '$.currency')) IS NOT
+  'GBP'`); a row in another currency is left as it is, and the store refuses
+  the column again until it is gone:
+
+  ```sql
+  UPDATE items SET cost = CASE WHEN cost LIKE '{%'
+      THEN (CASE json_type(cost, '$.amount')
+              WHEN 'text' THEN json_extract(cost, '$.amount')
+              ELSE cost -> '$.amount' END)
+      ELSE substr(cost, 2, length(cost) - 2) END
+    WHERE cost LIKE '"%"'
+       OR (cost LIKE '{%' AND upper(json_extract(cost, '$.currency')) = 'GBP')
+  ```
+
+  A column of Money objects has no conversion to `Codec.decimal`: it would
+  drop each row's currency, so the refusal gives none. Read it with
+  `Codec.moneyIn <Currency>` (every row in one currency) or
+  `Codec.moneyObject` (a JSON column that keeps each row's currency).
+
+  A JSON-number amount (`{"amount":0.12345678901234567891,...}`) is copied as
+  its JSON text, so it keeps every digit (v0.29.2; `json_extract` alone gives a
+  REAL, which rounds it). A value the store does not read as a decimal (a REAL,
+  `1e3`) makes `Store.migrate` refuse the column, naming the values.
+
+  Put the statement in a migration file (`sky db migrate`), then change the
+  field to `Codec.autoWith [ ( "price", Codec.decimal ) ] blank`. A read
+  without `migrate` still reads a legacy `"12.34"` value, but only the
+  converted column orders and compares by value.
 
 - **A written value** (`updateFields`, `setFields`, `setValue`, `setWhen`,
   `otherwise`, `const`, a `defaultWith` result) is also checked against the
@@ -351,12 +501,31 @@ Store.query users
 
 Leaves (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`like`/`isNull`/`notNull`/`inList "col" v`)
 combine with `and_`/`or_`/`not_`; multiple `where_` clauses AND together (so OR /
-nesting is first-class). `Store.sqlOf codec value` filters by a **typed** value
+nesting is first-class). `Store.noCond` is the condition every row meets (the
+same as `and_ []`), for a verb that takes a `Cond` when the code means every row. `Store.sqlOf codec value` filters by a **typed** value
 (enum / `Money` / `Time` / a `Codec.map` wrapper) via its codec. Whole-table /
 single-row shortcuts: `all` / `findBy` (its text is read as the column's
 kind: `Store.findBy conn notes "id" "42"` on an `Int` key). `Store.toSql conn q` returns the SQL text
 (with `?`) and the parameters a query renders on that connection's dialect, or
 the `Err` it would fail with.
+
+`inList` takes a list of any length. Up to 1,000 values it renders
+`col IN (?, ?, …)`, one parameter per value. A longer list has one
+placeholder, marked with its count (`col = ANY(?/*sky-list:N*/)` on
+PostgreSQL, `col IN (SELECT +value FROM json_each(?/*sky-list:N*/))` on
+SQLite), and the runtime binds its N values as one parameter, so the list is
+not stopped by the engine's limit on the parameters of one statement (SQLite
+32,766, PostgreSQL 65,535). Both forms match the same rows, under `not_` too,
+and the SQL and parameters `toSql` returns run unchanged through `Db.query`.
+On PostgreSQL an `Int` compared with a column names it in its placeholder
+(`?/*sky-int:table|col*/`, and `?/*sky-list:N:int:table|col*/` for a long
+list, v0.29.2). The runtime reads the column's type from the catalogue (once
+per pool and table) and casts the value to `BIGINT` on an `INTEGER` or
+`SMALLINT` column, so a value outside the column's range matches nothing, as
+SQL compares an integer with a wider one, instead of failing with "out of
+range"; the column's index is still used. Every other column (the Store's own
+`BIGINT`, a `NUMERIC`, a `TEXT` column an `Int` field reads) compares the
+value uncast, as before.
 
 **Every name is checked before any statement runs.** A column argument is a
 codec column (the record field or its snake name) or a `jsonText` reference. A
@@ -368,9 +537,15 @@ it is logged at ERROR level once per table and problem, shown in the Sky
 Console, and counted in the metric `sky_store_problems_total{table}`. An
 unknown column in a query condition, an order, a set or a conflict rule is an
 `Err` that is loud the same way. `findBy` and `delete` follow the same rule. A negative `limit` or `offset`
-is an `Err`; `offset` without `limit` works on both dialects. There is no
-reserved-word list: a column named `order` or `user` stays a driver error on the
-dialect that refuses it. **Never build a column argument from user input:** a
+is an `Err`; `offset` without `limit` works on both dialects. A table or column
+name that is an SQL keyword on both SQLite and PostgreSQL (`order`, `select`)
+is a builder problem (v0.29.2): `Store.fromCodec` refuses the store, so
+`Store.migrate` and every verb are an `Err` naming the column, before any
+statement. A name only one engine reserves (`user` on PostgreSQL, `index` on
+SQLite) is refused by `Store.create` and `Store.migrate` on that engine, naming
+the column; nothing is created. The Store writes names unquoted, so give such a
+field another column name (`Codec.field "sort_order" .order Codec.int` in a
+`Codec.object`, or rename the field). **Never build a column argument from user input:** a
 `jsonText` reference can read any key of a JSON column.
 
 **Text matching.** `like` uses its pattern as given: `%` and `_` are wildcards,
@@ -439,7 +614,7 @@ Store.query invoices
 | `countAs "field"` | `COUNT(*)` | `Int` |
 | `countIfAs "field" cond` | rows of the group that match `cond` (0 when none) | `Int` |
 | `countDistinctAs "field" "col"` | `COUNT(DISTINCT col)` | `Int` |
-| `sumAs "field" "col"` | the sum of an `Int` / `Float` column, 0 when empty | the column's kind |
+| `sumAs "field" "col"` | the sum of an `Int` / `Float` column, or of a decimal column (`Codec.decimal`, `Codec.moneyIn`) exactly on both engines; 0 when empty | the column's kind |
 | `minAs` / `maxAs "field" "col"` | the smallest / largest value (not a `Bool` column) | the column's kind; `Maybe` when the column is nullable or there is no `groupBy` |
 
 `having` and the order terms after `aggregate` name result fields. Without
@@ -565,7 +740,7 @@ Store.query customers
 inner store's codec. `inQuery` / `notInQuery` compare an outer column with it
 (the two of one kind). `exists` / `notExists` take a store, the `correlate inner
 outer` pairs that tie it to the outer row (`correlateAll` for several), and a
-condition on the inner store (`Store.and_ []` for none). They work in `where_`,
+condition on the inner store (`Store.noCond` for none). They work in `where_`,
 in a join, and in the writes that take a `Cond` (`deleteWhere`, `updateWhere`,
 `updateFields`, `adjust`). The inner query is `sq1` (`sq2` inside it), and it
 takes `where_`, `orderAsc` / `orderDesc`, `limit` and `offset` only (a `limit`
@@ -650,7 +825,7 @@ AUTOINCREMENT` on SQLite, `BIGSERIAL PRIMARY KEY` on Postgres).
 **Type mapping** — each backend's natural column type, with dev==prod
 consistency at the *decoded-value* level (via `Std.Db.Decode`): `bool` →
 `BOOLEAN` on Postgres / `INTEGER` 0/1 on SQLite (a `SqlBool` param binds to
-both, and `Decode.bool` reads both back to a Sky `Bool`); `bigint`/`timestamp`
+both, and `Decode.bool` reads both back to a Sky `Bool`); `int`/`bigint`/`timestamp`
 → `BIGINT` on Postgres / `INTEGER` on SQLite (the overflow-safe one — both read
 as int64); `real`→`DOUBLE PRECISION`, `blob`→`BYTEA` on Postgres; `json`→`TEXT`
 on both. `createTable` is idempotent (`CREATE TABLE / INDEX IF NOT EXISTS`);
@@ -680,8 +855,48 @@ the `withIndex` / `withUniqueIndex` indexes (with their own names) carry
 through, so `sky db push` creates the columns and missing indexes and
 `migrate --gen` diffs them (`addIndex` / `dropIndex`). A column added to an
 existing table follows the `Store.migrate` rule above. `defaultNow` on a
-`timestamp` / `bigInt` / `int` column is epoch milliseconds. Ints widen to
-`BIGINT` under the codec pipeline (safe; no millis overflow).
+`timestamp` / `bigInt` / `int` column is epoch milliseconds.
+
+**One column type on both paths (v0.29.2).** `Schema.int` is 64-bit, like a
+Sky `Int`: `createSchema` / `createTable` and `pushProject (toProject …)` (and
+`sky db push` / `migrate`) all create `BIGINT` on Postgres. Before v0.29.2
+`createSchema` made a 4-byte `INTEGER` and `pushProject` a `BIGINT`, so a
+fresh database differed with the path that made it. BIGINT is the size of a
+Sky `Int` (a Go `int64`): an `INTEGER` column fails with "integer out of range"
+for any value above 2,147,483,647 (epoch milliseconds, large ids, money in
+minor units). Neither path alters a column that exists, and `migrate --gen`
+proposes no change for it: a table made by an older `createSchema` keeps
+`INTEGER`. `Store.migrate` and `pushProject` treat it as a match, and log a
+one-time WARN that names the column, says it holds only 32-bit values and
+gives the statement that widens it (`ALTER TABLE orders ALTER COLUMN day
+TYPE BIGINT`); widening is your choice. SQL that needs a 4-byte integer casts
+(`DATE '1970-01-01' + day::int`).
+
+**`Schema.blob` has two types, and the difference is loud (v0.29.2).**
+`createSchema` makes a `Schema.blob` column binary (`BYTEA` on Postgres,
+`BLOB` on SQLite). `toProject` (`sky db push`, `Store.pushProject`) makes the
+same column `TEXT` holding JSON, because a `Std.Db.Store` reads and writes a
+JSON field (a list, a record, a custom type, a `Json.Value`, `Schema.json`)
+as text. Both types are kept, so:
+
+- `Store.migrate` and `Store.pushProject` refuse a Store JSON field whose
+  column the table has as `BYTEA` / `BLOB` (an `Err` naming `table.column`):
+  PostgreSQL would read the JSON's escapes into the bytes and every row would
+  be misread. The column is not changed. Fix it once with
+  `ALTER TABLE t ALTER COLUMN c TYPE TEXT USING convert_from(c, 'UTF8')` on
+  Postgres (on SQLite copy the table into one with a `TEXT` column), and
+  declare the column `Schema.json`; or keep binary data out of the Store and
+  read it with `Db.query`.
+- A `Schema.blob` column that the table has as `TEXT`, or that `push` is
+  about to create as `TEXT`, is named once at WARN: binary bytes written to it
+  with `Db.exec` fail on Postgres. A `Schema.blob` column on `BYTEA` / `BLOB`
+  is a match.
+- `sky verify`'s stores step names every `Schema.blob` column of `db`
+  (`! stores   Std.Db.Schema: column files.data is declared Schema.blob …`).
+  It is a notice, not a failure.
+
+Use `Schema.json` for JSON, and `Schema.blob` only for a table you create with
+`createSchema` and read with `Db.query`.
 
 > **Naming tip.** `Schema.text` collides with `Std.Html`/`Std.Ui`'s `text` if
 > both are exposed unqualified. In a module that already does
@@ -1224,6 +1439,37 @@ of crash-looping the app.
 There is no `sky db migrate <file>`: migrations are an ordered,
 checksum-tracked set — `migrate` always means "apply every pending
 one, in order."
+
+### Checking a live database against the code — `sky db check`
+
+`sky db status` compares the migration files with the ledger. `sky db
+check` compares the database itself with the code: every table of `db :
+Store.Project` (stores, and the `Std.Db.Schema` tables `Schema.toProject`
+adds) against the live tables, columns, types, `NOT NULL`, defaults,
+`UNIQUE` (column and multi-column constraints), primary keys, serial keys
+and indexes (partial and unique ones included; an index a Store cannot
+declare, such as an expression index, is a notice). It
+also reports each `db/migrations` file as applied, pending or edited. It
+reads only, on any DSN the app would use, PostgreSQL or SQLite (it opens
+the database read-only and writes no telemetry; a missing SQLite file is
+refused, not created), and it exits 1 on drift:
+
+```bash
+sky db check                 # plain-words report; exit 1 on drift
+sky db check --sql           # the SQL that makes the database match the code, not run
+sky db check --sql --write   # save the safe steps as a migration file
+sky db check --code          # what the code needs to read the database safely
+```
+
+It reads the live schema with `Std.Db.Migrate.inspectSchema` and compares it
+through the same diff as `sky db migrate --gen`, so the two never
+disagree about a missing table, column or index or a type change. In
+`--sql`, a step that cannot lose data is plain SQL; a type change, a
+`NOT NULL` on a column that can hold `NULL`, and any drop are commented
+out with the reason. A PostgreSQL `INTEGER` column for an `Int` is
+accepted with a notice and a commented `ALTER … TYPE BIGINT`. `--code`
+prints a record type alias, a `Codec` and a `Store` for each table the
+code has no Store for. See [`sky db check`](../tooling/cli.md#sky-db-check--does-the-live-database-match-the-code).
 
 ## See also
 

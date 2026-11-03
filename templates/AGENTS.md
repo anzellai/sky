@@ -9,7 +9,9 @@ surface at check time. No runtime panics from well-typed code, no nil leakage,
 no silent numeric coercion.
 
 Type annotations are load-bearing: `f : String -> Int -> Result Error Profile`
-rejects a body that would infer wider. Inline records aren't allowed in
+rejects a body that would infer wider. A type variable in an annotation means
+"any type the caller picks": `show : a -> String` whose body uses its argument
+as a `String` is refused, so write the concrete type the body needs. Inline records aren't allowed in
 signatures — give any record in a signature a `type alias`.
 
 ## The full API lives in `sky doc` — not here
@@ -137,12 +139,12 @@ desktop only; a `web:app` build refuses it) and put it behind sign-in.
 | Auth | `Std.Auth` — bcrypt + HS256 JWT cookies. `Auth.login` / `Auth.register` return `Task Error Int` (the user id). Never `fmt`-print a secret. |
 | Password forms | `Ui.form [Ui.onSubmit DoSignIn]` with a typed record arg. Never per-keystroke `onInput` on a password field. |
 | Third-party JS widgets | A widget island: `Ui.island { name, id, props } attrs` (or `Html.island`) is an element the widget owns (the server never patches inside it). Register the widget from a same-origin file loaded with `<script defer>` (`window.Sky.island "name" { mount(el, props, send), update(props), command(name, payload), destroy() }`, no inline script). Decode its events with `Ui.onIslandEvent type decoder toMsg`; send it commands with `Cmd.toIsland id name payload`. Keep what matters in the model and pass it back in `props`: a remount starts from `props`. |
-| DB | Records → `Std.Db.Store` + `Std.Codec` (one codec drives JSON **and** dialect-safe DB). SQLite for prototypes, PostgreSQL for multi-instance. Schema via committed file migrations (`sky db migrate --gen`). See **Database** below for the layer choice + the `sky doc` API source of truth. |
+| DB | Records → `Std.Db.Store` + `Std.Codec` (one codec drives JSON **and** dialect-safe DB). SQLite for prototypes, PostgreSQL for multi-instance. Schema via committed file migrations (`sky db migrate --gen`). `sky check` warns about a Store column name the codec does not have; a column named with an SQL keyword (`order`) is refused (map it with `Codec.field "sort_order" .order Codec.int`). See **Database** below for the layer choice + the `sky doc` API source of truth. |
 | Serialization | `Std.Codec` — **the portable default** for turning a record into JSON and back. ONE codec (`Codec.auto blank`) gives you `Codec.toJson` / `Codec.fromJson` AND, if you persist it, the dialect-safe DB mapping — from a single definition, with no drift between your JSON and DB shapes. Same codec works on every backend (Sky.Live / Http.Server / Cli). Reach for raw `Sky.Core.Json.Encode` / `Sky.Core.Json.Decode` only for a JSON shape a codec can't express — a custom/legacy wire format, or decoding third-party JSON you don't own (there, a hand-written `Decoder` + `Decode.decodeString` is right). |
-| Money / decimals | `Std.Money` on `Std.Decimal`. Never raw `Float` for currency. |
+| Money / decimals | `Std.Money` on `Std.Decimal`. Never raw `Float` for currency. Store one currency with `Codec.moneyIn GBP` (an exact decimal column a Store sums and orders), an amount with `Codec.decimal`, any currency with `Codec.moneyObject`. `Money.add` / `sub` / `sum` / `compare` / `lt`… return `Result Error _` (an `Err` for two currencies); rates are an explicit `Money.rates` value for `Money.convert`. |
 | XML / ZIP | `Std.Xml` (`parse`, safe by default: no DOCTYPE, bounded) + `Std.Xml.Decode` (`Json.Decode` style, by local name) + `Std.Xml.Encode` (`element` / `text`, `encode` total, `encodeStrict` refuses); `Codec.toXml` / `Codec.fromXml` reuse a codec. `Std.Zip` (`read` / `readEntry` / `list` / `write`) refuses unsafe names, encrypted entries and zip bombs. Server side; failures are `InvalidInput` in the domain `"xml"` / `"zip"`. See `sky doc Std.Xml` / `sky doc Std.Zip`. |
 | Excel / Word files | `Std.Office.Xlsx` (`read` → sheets of `Cell`, `write` of `SheetSpec`s with styled cells, formulas written with no cached value and computed on open by LibreOffice, the tested reader) and `Std.Office.Docx` (`read` / `write` of `Block`s: headings, paragraphs, list items, tables, links; `toText`). Bounded by `Limits`, no macros or embedded objects, unsafe links refused. Server side; failures are `InvalidInput` in the domain `"office"`. See `sky doc Std.Office.Xlsx` / `sky doc Std.Office.Docx`. |
-| Images | `Std.Image` (`resizeToFit` / `thumbnail` / `crop` / `trim` / `toAlpha` as `Jpeg q`, `Png`, `Gif`, `WebpLossless` or `Preserve`; an animated GIF keeps every frame; `frames`, `reduceFrames`) and `Std.Image.Canvas` (shapes, masks, pasted images, blur, resize and text drawn on the server, then `encode`). Decoding refuses images over 100 megapixels and GIFs over 1,000 frames before it decodes (`InvalidInput`, domain `"image"`). Server side. See `sky doc Std.Image` / `sky doc Std.Image.Canvas`. |
+| Images | `Std.Image` (`resizeToFit` / `thumbnail` / `crop` / `trim` / `toAlpha` as `Jpeg q`, `Png`, `Gif`, `WebpLossless` or `Preserve`; an animated GIF keeps every frame; `frames`, `reduceFrames`) and `Std.Image.Canvas` (shapes, masks, pasted images, blur, resize and text drawn on the server, then `encode`; `pasteExact` copies pixels byte for byte). Decoding refuses images over 100 megapixels and GIFs over 1,000 frames before it decodes (`InvalidInput`, domain `"image"`). Server side. See `sky doc Std.Image` / `sky doc Std.Image.Canvas`. |
 | Encryption / signatures | `Crypto.xchachaSeal` / `xchachaOpen` (seal is a `Task`: it draws a random nonce). Only when a protocol fixes the nonce: `Crypto.chacha20Poly1305Seal` / `xchacha20Poly1305Seal` (caller nonce, pure; never reuse a nonce under one key). Keys are 32-byte `Secret`s (`Crypto.keyFromPasswordStrong { iterations, salt }` from a password, at least 600 000 iterations and a 16-byte salt, or `Kdf.derive` from `Std.Crypto.Kdf`). Ed25519 `Std.Crypto.Sign`, X25519 `Std.Crypto.Kx`, Noise IK sessions `Std.Crypto.Noise`, pairing codes `Std.Crypto.Cpace` (experimental: awaiting external review, not for production data yet), QR codes `Std.Qr`. Secret keys are opaque and never `String`. |
 | Child processes / file watching | `Process.run` for a one-shot command (`Process.runCommand` with `withStdin` for text on stdin and a separate exit code, stdout and stderr; a non-zero exit is a result); `Process.spawn` (builder: `withArgs`, `withEnv`, `withCwd`, `withPty`) for a long-running child, read with `readFrom` (Task) or the `Process.events` Sub, not both. `close` ends the child's whole tree. A handle belongs to the Sky.Live session that opened it: open it in the session that uses it. `Std.Watch` for file changes (`next` Task or `changes` Sub; `Overflow` means rescan). |
 | Concurrency | `Cmd.batch` / `Task.parallel`; **`Task.parallelN limit tasks`** for bounded fan-out under load (`parallel` is unbounded); in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. Shared state between concurrent Tasks: `Std.Sync` (`Ref` with atomic `update` / `compareAndSwap`, `Mutex` + `withLock`, a bounded `Queue` with `push` / `pop` / `popWithin`); pure code needs none of it. Keep a client-supplied path inside a directory with `File.resolveWithin root path`. |
@@ -291,7 +293,9 @@ both, since `query`/`migrate` overlap; qualified is the intended usage.
 
 `Codec.auto blank` derives the codec from a **zero-value witness** record:
 scalars → columns, `Maybe` → nullable, `List`/nested-record → JSON blob, nullary
-enums → readable names. **Data-carrying ADTs** need an explicit codec — build one
+enums → readable names, a custom type with plain payloads → a tagged object.
+A variant carrying a `Decimal`, `Money`, `Json.Value` or a type variable is a
+builder problem (`Codec.problems`): such a field needs an explicit codec — build one
 with `Codec.object`/`Codec.field`/`Codec.buildObject` (records; `Codec.inline
 .part partFields` writes an embedded record's fields flat, beside the outer
 record's own, with no nested object) or `Codec.taggedUnion`/`Codec.var0..3`
@@ -303,6 +307,9 @@ record's own, with no nested object) or `Codec.taggedUnion`/`Codec.var0..3`
 sky db init                    # scaffold db/migrations/ + db/schema.json
 sky db migrate --gen add_stock # diff types vs snapshot → a committed migration file
 sky db status                  # ✓ applied / ○ pending vs the live ledger
+sky db check                   # live DB vs the code: tables, columns, types, NULL, defaults, indexes + the ledger (read-only; exit 1 on drift)
+sky db check --sql [--write]   # the SQL to match the code (unsafe steps commented); --write saves the safe ones as a migration
+sky db check --code            # columns the code lacks or reads as another type; record + Codec + Store stubs for unknown tables
 sky db migrate                 # apply committed migrations (dialect-correct, once each)
 sky db seed                    # run the entry module's  seed : Db -> Task Error ()
 sky db reset [table]           # empty data (all declared tables, or one); keeps schema + ledger — prompts / --yes
@@ -318,9 +325,10 @@ store: `Store.index [ "customer_id", "created_at" ]`, `Store.uniqueOn [ "code" ]
 
 ### Running PostgreSQL in development
 
-`Std.Db` is dialect-safe across SQLite and Postgres, but the gap is real —
-`Codec.auto` cannot encode `Money`/`Decimal`, and there is no `NUMERIC` DDL
-kind. If production is Postgres, develop on Postgres.
+`Std.Db` is dialect-safe across SQLite and Postgres, but the gap is real — an
+exact decimal (`Codec.decimal`, `Codec.moneyIn`) is `NUMERIC` on Postgres and
+`TEXT` with a Sky collation on SQLite. If production is Postgres, develop on
+Postgres.
 
 ```bash
 sky db start | stop | ps       # a per-project cluster on a unix socket
@@ -901,3 +909,7 @@ sign-in) if you run more than one replica. Key per-session data by
 
 When a signature or module is unclear, run `sky doc <Module>` — it is complete
 and current. This file is not.
+
+Decimal places and computed exponents range from -100000 to 100000. Values
+outside this range fail as `NumericOverflow`. `Money.allocate` takes 1 to
+10000000 parts. Fewer parts fail as `DivisionByZero`, more as `NumericOverflow`.

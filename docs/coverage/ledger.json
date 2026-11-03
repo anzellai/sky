@@ -166,7 +166,7 @@
       "tier": "T1"
     },
     "ai-train-exactly-once": {
-      "expected_assertions": 17,
+      "expected_assertions": 18,
       "falsifier_mutation": "ai-train-exactly-once.ignore-the-intent",
       "falsifier_proven": true,
       "summary": "a Vertex launch whose journal row was lost attaches to its job: one create, never two",
@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2097,
+      "expected_assertions": 2271,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -764,7 +764,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 1300,
+      "expected_assertions": 1304,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -816,7 +816,7 @@
       "tier": "T1"
     },
     "store-query-postgres": {
-      "expected_assertions": 275,
+      "expected_assertions": 402,
       "falsifier_mutation": "store-query-postgres.drop-rows-err",
       "falsifier_proven": true,
       "summary": "Std.Db.Store query path (aggregates, select, latestPer, text match, jsonText) on PostgreSQL",
@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3234,
+    "stdlib_entries": 3245,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -1021,12 +1021,12 @@
     "units_by_role": {
       "Conformance": 1,
       "Example": 70,
-      "FlowTest": 61,
+      "FlowTest": 62,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 150
+    "units_total": 151
   },
   "surfaces": [
     {
@@ -6706,6 +6706,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -7500,6 +7505,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -8073,6 +8083,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -8622,6 +8637,11 @@
           },
           {
             "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -9436,6 +9456,11 @@
           },
           {
             "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -12735,6 +12760,11 @@
             "strength": 4
           },
           {
+            "by": "e2e:scripts/ai-device-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -12816,6 +12846,16 @@
           },
           {
             "by": "examples/75-ai-everywhere (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:ai_device_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:ai_device_native_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -14115,6 +14155,11 @@
           },
           {
             "by": "flow:ai_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -15548,6 +15593,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:resolve_opaque_ctor_exposing_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -15909,6 +15959,11 @@
           },
           {
             "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -19248,10 +19303,9 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 11,
+          "count": 10,
           "symbols": [
             "Cookie",
-            "Route",
             "Server",
             "bytes",
             "delete",
@@ -19529,10 +19583,9 @@
           ]
         },
         "Std.Ai.Trace": {
-          "count": 4,
+          "count": 3,
           "symbols": [
             "Ledger",
-            "Trace",
             "recordToolCall",
             "tracedChatStream"
           ]
@@ -19662,9 +19715,8 @@
           ]
         },
         "Std.Codec": {
-          "count": 3,
+          "count": 2,
           "symbols": [
-            "ColType",
             "JsonSchema",
             "Variant"
           ]
@@ -19811,8 +19863,9 @@
           ]
         },
         "Std.Db.Migrate": {
-          "count": 2,
+          "count": 3,
           "symbols": [
+            "inspectSchema",
             "migrateOps",
             "renderMigrations"
           ]
@@ -19825,7 +19878,7 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 8,
+          "count": 11,
           "symbols": [
             "Agg",
             "Correlate",
@@ -19833,8 +19886,11 @@
             "JoinOn",
             "Otherwise",
             "SetExpr",
+            "checkProjectData",
             "countDistinctAs",
-            "orderRightDesc"
+            "indexNamed",
+            "orderRightDesc",
+            "uniqueOnNamed"
           ]
         },
         "Std.Db.Table": {
@@ -19857,20 +19913,17 @@
           ]
         },
         "Std.Decimal": {
-          "count": 12,
+          "count": 9,
           "symbols": [
             "formatWith",
             "fromFloat",
             "gt",
-            "gte",
             "lt",
             "lte",
             "max",
             "min",
             "neq",
-            "one",
-            "oneHundred",
-            "toStringFixed"
+            "oneHundred"
           ]
         },
         "Std.Durable": {
@@ -20077,15 +20130,9 @@
           ]
         },
         "Std.Money": {
-          "count": 7,
+          "count": 1,
           "symbols": [
-            "compare",
-            "currencyName",
-            "gt",
-            "gte",
-            "lt",
-            "neq",
-            "zeroOf"
+            "currencyName"
           ]
         },
         "Std.Native": {
@@ -20431,8 +20478,8 @@
           ]
         }
       },
-      "count": 875,
-      "pct_of_denominator": 27.1
+      "count": 867,
+      "pct_of_denominator": 26.7
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -20693,11 +20740,10 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 12,
+          "count": 11,
           "symbols": [
             "Cookie",
             "Handler",
-            "Route",
             "Server",
             "bytes",
             "delete",
@@ -20993,10 +21039,9 @@
           ]
         },
         "Std.Ai.Trace": {
-          "count": 4,
+          "count": 3,
           "symbols": [
             "Ledger",
-            "Trace",
             "recordToolCall",
             "tracedChatStream"
           ]
@@ -21133,9 +21178,8 @@
           ]
         },
         "Std.Codec": {
-          "count": 3,
+          "count": 2,
           "symbols": [
-            "ColType",
             "JsonSchema",
             "Variant"
           ]
@@ -21292,8 +21336,9 @@
           ]
         },
         "Std.Db.Migrate": {
-          "count": 2,
+          "count": 3,
           "symbols": [
+            "inspectSchema",
             "migrateOps",
             "renderMigrations"
           ]
@@ -21306,7 +21351,7 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 8,
+          "count": 11,
           "symbols": [
             "Agg",
             "Correlate",
@@ -21314,8 +21359,11 @@
             "JoinOn",
             "Otherwise",
             "SetExpr",
+            "checkProjectData",
             "countDistinctAs",
-            "orderRightDesc"
+            "indexNamed",
+            "orderRightDesc",
+            "uniqueOnNamed"
           ]
         },
         "Std.Db.Table": {
@@ -21338,20 +21386,17 @@
           ]
         },
         "Std.Decimal": {
-          "count": 12,
+          "count": 9,
           "symbols": [
             "formatWith",
             "fromFloat",
             "gt",
-            "gte",
             "lt",
             "lte",
             "max",
             "min",
             "neq",
-            "one",
-            "oneHundred",
-            "toStringFixed"
+            "oneHundred"
           ]
         },
         "Std.Durable": {
@@ -21606,15 +21651,9 @@
           ]
         },
         "Std.Money": {
-          "count": 7,
+          "count": 1,
           "symbols": [
-            "compare",
-            "currencyName",
-            "gt",
-            "gte",
-            "lt",
-            "neq",
-            "zeroOf"
+            "currencyName"
           ]
         },
         "Std.Native": {
@@ -21987,8 +22026,8 @@
           ]
         }
       },
-      "count": 990,
-      "pct_of_denominator": 30.6
+      "count": 982,
+      "pct_of_denominator": 30.3
     }
   },
   "units": [
@@ -22127,10 +22166,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/ai-device-e2e.sh",
-      "modules_imported": 13,
+      "modules_imported": 14,
       "path": "scripts/ai-device-e2e.sh",
-      "refs_generous": 46,
-      "refs_qualified": 41,
+      "refs_generous": 48,
+      "refs_qualified": 42,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -23238,8 +23277,8 @@
       "id": "examples/66-slack-agent",
       "modules_imported": 16,
       "path": "examples/66-slack-agent",
-      "refs_generous": 62,
-      "refs_qualified": 53,
+      "refs_generous": 63,
+      "refs_qualified": 54,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
@@ -23395,8 +23434,8 @@
       "id": "flow:ai_cloud_train_flow",
       "modules_imported": 22,
       "path": "rust/crates/sky/tests/ai_cloud_train_flow.rs",
-      "refs_generous": 110,
-      "refs_qualified": 105,
+      "refs_generous": 113,
+      "refs_qualified": 108,
       "role": "FlowTest",
       "sky_files": 3,
       "sky_toml_sections": []
@@ -23405,10 +23444,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:ai_device_flow",
-      "modules_imported": 13,
+      "modules_imported": 14,
       "path": "rust/crates/sky/tests/ai_device_flow.rs",
-      "refs_generous": 46,
-      "refs_qualified": 41,
+      "refs_generous": 48,
+      "refs_qualified": 42,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -23417,10 +23456,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:ai_device_native_flow",
-      "modules_imported": 13,
+      "modules_imported": 14,
       "path": "rust/crates/sky/tests/ai_device_native_flow.rs",
-      "refs_generous": 46,
-      "refs_qualified": 41,
+      "refs_generous": 48,
+      "refs_qualified": 42,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -23479,8 +23518,8 @@
       "id": "flow:ai_serve_flow",
       "modules_imported": 27,
       "path": "rust/crates/sky/tests/ai_serve_flow.rs",
-      "refs_generous": 131,
-      "refs_qualified": 123,
+      "refs_generous": 134,
+      "refs_qualified": 126,
       "role": "FlowTest",
       "sky_files": 4,
       "sky_toml_sections": []
@@ -23503,8 +23542,8 @@
       "id": "flow:ai_trace_flow",
       "modules_imported": 9,
       "path": "rust/crates/sky/tests/ai_trace_flow.rs",
-      "refs_generous": 22,
-      "refs_qualified": 20,
+      "refs_generous": 23,
+      "refs_qualified": 21,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -23776,6 +23815,18 @@
     {
       "db_drivers": [],
       "gate": null,
+      "id": "flow:numeric_overflow_flow",
+      "modules_imported": 8,
+      "path": "rust/crates/sky/tests/numeric_overflow_flow.rs",
+      "refs_generous": 27,
+      "refs_qualified": 24,
+      "role": "FlowTest",
+      "sky_files": 1,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
       "id": "flow:process_watch_tea_flow",
       "modules_imported": 9,
       "path": "rust/crates/sky/tests/process_watch_tea_flow.rs",
@@ -23803,8 +23854,8 @@
       "id": "flow:slack_agent_flow",
       "modules_imported": 16,
       "path": "rust/crates/sky/tests/slack_agent_flow.rs",
-      "refs_generous": 54,
-      "refs_qualified": 47,
+      "refs_generous": 55,
+      "refs_qualified": 48,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -23971,8 +24022,8 @@
       "id": "tests/Std",
       "modules_imported": 52,
       "path": "tests/Std",
-      "refs_generous": 703,
-      "refs_qualified": 677,
+      "refs_generous": 704,
+      "refs_qualified": 678,
       "role": "SkySuite",
       "sky_files": 25,
       "sky_toml_sections": []
@@ -23983,8 +24034,8 @@
       "id": "tests/conformance",
       "modules_imported": 67,
       "path": "tests/conformance",
-      "refs_generous": 1028,
-      "refs_qualified": 1001,
+      "refs_generous": 1050,
+      "refs_qualified": 1023,
       "role": "Conformance",
       "sky_files": 59,
       "sky_toml_sections": []

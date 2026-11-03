@@ -749,7 +749,7 @@ pub fn write_go(out_dir: &Path, slots: &[String]) -> Result<(), String> {
     }
     let list = slots
         .iter()
-        .map(|s| format!("{s:?}"))
+        .map(|s| base::go_string_literal(s))
         .collect::<Vec<_>>()
         .join(", ");
     let go = format!(

@@ -88,9 +88,14 @@ func TestSchemaDialectMapping(t *testing.T) {
 		if !strings.Contains(q, "slug TEXT NOT NULL UNIQUE") {
 			t.Errorf("slug modifiers wrong:\n%s", q)
 		}
-		if !strings.Contains(q, "price_minor INTEGER NOT NULL DEFAULT 0") {
-			t.Errorf("int default wrong:\n%s", q)
-		}
+	}
+	// Schema.int: INTEGER (8 bytes) on SQLite, BIGINT on PostgreSQL — the
+	// type Store.pushProject (Schema.toProject) gives it (v0.29.2).
+	if !strings.Contains(sq, "price_minor INTEGER NOT NULL DEFAULT 0") {
+		t.Errorf("sqlite int default wrong:\n%s", sq)
+	}
+	if !strings.Contains(pq, "price_minor BIGINT NOT NULL DEFAULT 0") {
+		t.Errorf("pg int should be BIGINT:\n%s", pq)
 	}
 
 	// index (same on both)

@@ -1,0 +1,111 @@
+module Main exposing (main)
+
+-- v0.29.2 seventh Judge: Decimal.toInt / toMinor / toFloat and Money.toMinor
+-- past the Int or Float range went through Ffi.callPure, whose recover turned
+-- the kernel's NumericOverflow panic into an Err, and rt.AsInt / rt.AsFloat
+-- then recursed on that Err until a `fatal error: stack overflow` ended the
+-- whole process. The flow test (tests/numeric_overflow_flow.rs) runs each case
+-- as a CLI (FLOW_CASE=<case>: exit 1 and the classified NumericOverflow) and
+-- as a server route (a 500, and the server still answers /ok).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Sky.Http.Server as Server
+import Std.Decimal as Decimal exposing (Decimal)
+import Std.Log exposing (println)
+import Std.Money as Money exposing (Currency(..))
+
+
+port : Int
+port =
+    System.getenvOr "FLOW_PORT" "18942" |> String.toInt
+        |> Maybe.withDefault 18942
+
+
+d : String -> Decimal
+d s =
+    Result.withDefault Decimal.zero (Decimal.fromString s)
+
+
+-- Each case's text. The argument keeps the work inside the call, so it runs
+-- per request, never once as a memoised value.
+caseText : String -> String
+caseText which =
+    case which of
+
+        "toint" ->
+            String.fromInt (Decimal.toInt (d "1e30"))
+
+        "tominor" ->
+            String.fromInt (Decimal.toMinor 18 (d "10"))
+
+        "money" ->
+            String.fromInt (Money.toMinor (Money.fromMajor ETH 10))
+
+        "tofloat" ->
+            String.fromFloat (Decimal.toFloat (d "1e400"))
+
+        "places" ->
+            String.fromInt (Decimal.toMinor 4294967298 Decimal.one)
+
+        "fromminor" ->
+            Decimal.toString (Decimal.fromMinor 4294967298 12345)
+
+        "fixed" ->
+            Decimal.toStringFixed 2000000000 Decimal.one
+
+        "exponent" ->
+            let
+                tiny = Decimal.fromMinor 100000 1
+            in
+                Decimal.toString (Decimal.mul tiny tiny)
+
+        "parts" ->
+            String.fromInt
+                (List.length
+                    (Money.allocate 9223372036854775807 (Money.fromMajor USD 1)))
+
+        "noparts" ->
+            String.fromInt
+                (List.length (Money.allocate 0 (Money.fromMajor USD 1)))
+
+        "kernelpanic" ->
+            Decimal.toString (d "1.5")
+
+        _ ->
+            String.fromInt (Money.toMinor (Money.fromMajor ETH 9))
+
+
+route : String -> Server.Route
+route which =
+    Server.get
+        ("/" ++ which)
+        (\_ -> Task.succeed which |> Task.map (\w -> Server.text (caseText w)))
+
+
+main =
+    case System.getenvOr "FLOW_CASE" "" of
+
+        "" ->
+            Server.listen
+                port
+                (List.map
+                    route
+                    [ "ok"
+                    , "toint"
+                    , "tominor"
+                    , "money"
+                    , "tofloat"
+                    , "places"
+                    , "fromminor"
+                    , "fixed"
+                    , "exponent"
+                    , "parts"
+                    , "noparts"
+                    ])
+
+        which ->
+            println (which ++ ": " ++ caseText which)

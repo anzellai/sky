@@ -39,7 +39,14 @@ class El {
   getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; }
   hasAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k); }
   removeAttribute(k) { delete this.attrs[k]; }
+  querySelectorAll(selector) {
+    const match = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(selector);
+    if (!match) throw new Error(`Unsupported headless selector: ${selector}`);
+    return this.children.flatMap(child => walk(child, node =>
+      node.hasAttribute(match[1]) && (match[2] === undefined || node.getAttribute(match[1]) === match[2])));
+  }
   addEventListener(e, f) { (this.listeners[e] = this.listeners[e] || []).push(f); }
+  removeEventListener(e, f) { this.listeners[e] = (this.listeners[e] || []).filter(listener => listener !== f); }
   appendChild(c) { c.parent = this; this.children.push(c); return c; }
   set innerHTML(v) { if (v === '') { this.children.forEach(c => (c.parent = null)); this.children = []; } }
   get innerHTML() { return ''; }
@@ -61,13 +68,15 @@ class El {
     return (h.split('#')[0].split('?')[0]) || '/';
   }
   contains(node) { if (node === this) return true; return this.children.some(c => c.contains && c.contains(node)); }
-  remove() { if (this.parent) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); } }
+  remove() { if (this.parent) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); this.parent = null; } }
   click(opts = {}) {
     const ev = {
       target: this, currentTarget: this, type: 'click',
       button: opts.button || 0,
       metaKey: !!opts.metaKey, ctrlKey: !!opts.ctrlKey, shiftKey: !!opts.shiftKey, altKey: !!opts.altKey,
       defaultPrevented: false, preventDefault() { this.defaultPrevented = true; },
+      composedPath() { const path = []; for (let node = this.target; node; node = node.parentNode) path.push(node); path.push(globalThis.document); return path; },
+      composedPath() { const path = []; for (let node = this.target; node; node = node.parentNode) path.push(node); path.push(globalThis.document); return path; },
     };
     (this.listeners['click'] || []).forEach(f => f.call(this, ev));
     LISTENERS.click.forEach(f => f.call(globalThis.document, ev));
@@ -89,13 +98,16 @@ function makeDom() {
     body: root,
     addEventListener: (e, f) => { (LISTENERS[e] = LISTENERS[e] || []).push(f); },
   };
-  globalThis.location = { origin: 'http://localhost', pathname: '/' };
-  globalThis.history = {
-    pushState: (s, t, url) => {
-      let u = String(url).replace(/^https?:\/\/[^/]+/, '');
-      globalThis.location.pathname = (u.split('#')[0].split('?')[0]) || '/';
-    },
+  globalThis.location = { origin: 'http://localhost', pathname: '/', search: '', hash: '' };
+  const setLocation = url => {
+    const next = new URL(String(url), globalThis.location.origin);
+    Object.assign(globalThis.location, { pathname: next.pathname, search: next.search, hash: next.hash });
   };
+  globalThis.history = {
+    pushState: (s, t, url) => setLocation(url),
+    replaceState: (s, t, url) => setLocation(url),
+  };
+  globalThis.scrollTo = () => {};
   globalThis.addEventListener = (e, f) => { (LISTENERS[e] = LISTENERS[e] || []).push(f); };
 }
 
@@ -105,7 +117,14 @@ const titleEls = () => walk(root, n => n.getAttribute && /^title-/.test(n.getAtt
 const titles = () => titleEls().map(e => e.textContent);
 const idOfTitle = (title) => { const e = titleEls().find(e => e.textContent === title); return e ? Number(e.getAttribute('id').replace('title-', '')) : null; };
 const settle = async () => { for (let i = 0; i < 60; i++) await new Promise(r => setTimeout(r, 5)); };
-const fireInput = (el, v) => { el.value = v; (el.listeners['input'] || []).forEach(f => f.call(el, { target: el, currentTarget: el, type: 'input' })); };
+const fireInput = (el, v) => {
+  el.value = v;
+  const ev = {
+    target: el, currentTarget: el, type: 'input',
+    composedPath() { const path = []; for (let node = this.target; node; node = node.parentNode) path.push(node); path.push(globalThis.document); return path; },
+  };
+  (el.listeners['input'] || []).forEach(f => f.call(el, ev));
+};
 const popTo = async (p) => { globalThis.location.pathname = p; LISTENERS.popstate.forEach(f => f()); await settle(); };
 
 // backend truth, read directly (independent of the DOM)
@@ -135,7 +154,10 @@ async function runInstance() {
   // ── 2. ADD round-trips + persists ───────────────────────────────────────
   fireInput(byId('new-input'), uniq);
   const beforeAdd = fetchCount;
-  byId('add-btn').click();
+  const addButton = byId('add-btn');
+  check('add: headless DOM has a click handler', !!addButton && (addButton.listeners.click || []).length > 0,
+    `listeners=${JSON.stringify(addButton && Object.keys(addButton.listeners))} sky-id=${addButton && addButton.getAttribute('sky-id')}`);
+  addButton.click();
   await settle();
   check('add: POST fired (fetchCount grew)', fetchCount > beforeAdd, `+${fetchCount - beforeAdd}`);
   check('add: new todo rendered in the DOM', titles().includes(uniq), `titles=${JSON.stringify(titles())}`);

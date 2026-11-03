@@ -7847,16 +7847,18 @@ fn web_app_boot_setup_runs_in_backend_main_not_frontend() {
         back.contains("setupThing"),
         "backend must carry the boot-setup effect `setupThing`:\n{back}"
     );
-    // The backend `main` forces `spaBootSetup_`, and it appears BEFORE the
-    // `Server.listen` call (so setup runs first).
-    let boot_at = back.find("_ =\n            spaBootSetup_");
+    // The backend `main` runs `spaBootSetup_` as its first boot task, and it
+    // appears BEFORE the `Server.listen` call (so setup runs first). It is a
+    // task in the boot sequence, not a `_ =` let forcing, so a failed setup
+    // stops start-up (v0.29.2 sixth Judge).
+    let boot_at = back.find("Task.sequence [ spaBootSetup_,");
     // v0.27.0: `main` listens through `spaListen_` after its boot tasks.
     let listen_at = back
         .find("main =")
         .and_then(|m| back[m..].find("spaListen_").map(|i| m + i));
     assert!(
         boot_at.is_some(),
-        "backend `main` must force `spaBootSetup_` in a `let … in Server.listen`:\n{back}"
+        "backend `main` must run `spaBootSetup_` first in its boot sequence:\n{back}"
     );
     match (boot_at, listen_at) {
         (Some(b), Some(l)) => assert!(
@@ -7904,6 +7906,626 @@ fn web_app_boot_setup_runs_in_backend_main_not_frontend() {
         "frontend wasm must be staged:\n{log}"
     );
 
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// BOOT-SETUP on a fully client-local app (v0.29.2). With no server branch the
+/// split builds a static-only backend, which copied none of the app's decls
+/// and so dropped the `spaBootSetup_` binding in silence: a schema creation or
+/// a seed in `main` never ran under `--target web:app`. The backend now keeps
+/// the boot setup and forces it before it listens, whatever `update` does.
+#[test]
+fn web_app_boot_setup_runs_in_backend_main_when_update_is_client_local() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app(
+        "boot-local",
+        r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Log exposing (println)
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    { count : Int }
+
+
+type Msg
+    = Increment
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.button [] { onPress = Just Increment, label = Ui.text "inc" }
+
+
+app =
+    App.app { init = init, update = update, view = view, subscriptions = \_ -> Sub.none }
+        |> App.withNotFound ()
+
+
+main =
+    let
+        _ =
+            println "BOOT-SETUP-RAN"
+    in
+    App.run app
+"#,
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    assert!(
+        back.contains("spaBootSetup_ =") && back.contains("BOOT-SETUP-RAN"),
+        "a client-local app's backend must carry the boot setup:\n{back}"
+    );
+    // The first boot task, so a failed setup stops start-up (v0.29.2 sixth
+    // Judge).
+    let boot_at = back.find("Task.sequence [ spaBootSetup_,");
+    let listen_at = back
+        .find("main =")
+        .and_then(|m| back[m..].find("spaListen_").map(|i| m + i));
+    match (boot_at, listen_at) {
+        (Some(b), Some(l)) => assert!(b < l, "boot setup must run before listen:\n{back}"),
+        _ => panic!("backend `main` must run `spaBootSetup_` first, then listen:\n{back}"),
+    }
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        !front.contains("spaBootSetup_") && !front.contains("BOOT-SETUP-RAN"),
+        "the boot setup must stay out of the wasm frontend:\n{front}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(
+            output.status.success(),
+            "a client-local app with a boot setup must build under web:app:\n{log}"
+        );
+        // And it runs: the built backend prints the setup's line before it
+        // listens. Port 0 asks for a free port. It stops as soon as the line shows.
+        let backend = proj.join(".skyapp/web-app/.split/backend");
+        let mut child = Command::new(backend.join("sky-out/app"))
+            .current_dir(&backend)
+            .env("PORT", "0")
+            .env("SKY_LIVE_PORT", "0")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the backend");
+        let mut out = child.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = [0u8; 4096];
+            let mut seen = String::new();
+            while let Ok(n) = out.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                seen.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if seen.contains("BOOT-SETUP-RAN") {
+                    let _ = tx.send(seen.clone());
+                    return;
+                }
+            }
+            let _ = tx.send(seen);
+        });
+        let seen = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_default();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(
+            seen.contains("BOOT-SETUP-RAN"),
+            "the backend never ran the boot setup:\n{seen}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A `Std.App` entry with `update` client-local and the given `main`.
+fn chained_main_app(main_src: &str) -> String {
+    format!(
+        r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Log exposing (println)
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    {{ count : Int }}
+
+
+type Msg
+    = Increment
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( {{ count = 0 }}, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( {{ model | count = model.count + 1 }}, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.button [] {{ onPress = Just Increment, label = Ui.text "inc" }}
+
+
+app =
+    App.app {{ init = init, update = update, view = view, subscriptions = \_ -> Sub.none }}
+        |> App.withNotFound ()
+
+
+{main_src}"#
+    )
+}
+
+/// BOOT-SETUP through a Task chain (v0.29.2). `main` written as
+/// `setup |> Task.andThen (\_ -> App.run app)` lost its setup under
+/// `--target web:app`: the synthesis carried only a `let _ = …` prefix, so the
+/// chained setup (a schema, a seed) never ran on the server, in silence. The
+/// chain's setup is now carried into `spaBootSetup_` with the `let` prefix,
+/// and the built backend runs both, in order, before it listens.
+#[test]
+fn web_app_chained_main_setup_runs_in_backend() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app(
+        "boot-chain",
+        &chained_main_app(
+            r#"main =
+    let
+        _ =
+            println "BOOT-LET-RAN"
+    in
+    println "BOOT-CHAIN-RAN"
+        |> Task.andThen (\_ -> println "BOOT-CHAIN-TWO")
+        |> Task.andThen (\_ -> App.run app)
+"#,
+        ),
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    assert!(
+        back.contains("BOOT-LET-RAN")
+            && back.contains("BOOT-CHAIN-RAN")
+            && back.contains("BOOT-CHAIN-TWO"),
+        "the backend must carry the let prefix AND the chained setup:\n{back}"
+    );
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        !front.contains("BOOT-CHAIN-RAN"),
+        "the chained setup must stay out of the wasm frontend:\n{front}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(
+            output.status.success(),
+            "a chained-main app must build under web:app:\n{log}"
+        );
+        let backend = proj.join(".skyapp/web-app/.split/backend");
+        let mut child = Command::new(backend.join("sky-out/app"))
+            .current_dir(&backend)
+            .env("PORT", "0")
+            .env("SKY_LIVE_PORT", "0")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the backend");
+        let mut out = child.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = [0u8; 4096];
+            let mut seen = String::new();
+            while let Ok(n) = out.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                seen.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if seen.contains("BOOT-CHAIN-TWO") {
+                    let _ = tx.send(seen.clone());
+                    return;
+                }
+            }
+            let _ = tx.send(seen);
+        });
+        let seen = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_default();
+        let _ = child.kill();
+        let _ = child.wait();
+        let (a, b, c) = (
+            seen.find("BOOT-LET-RAN"),
+            seen.find("BOOT-CHAIN-RAN"),
+            seen.find("BOOT-CHAIN-TWO"),
+        );
+        assert!(
+            matches!((a, b, c), (Some(a), Some(b), Some(c)) if a < b && b < c),
+            "the backend must run the let prefix, then the chain, in order:\n{seen}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A FAILED chained setup stops the `web:app` backend (v0.29.2 sixth Judge).
+/// `main = setup |> Task.andThen (\_ -> App.run app)` with a setup that fails
+/// exits 1 with the error on `--target web` and never listens. Under
+/// `--target web:app` the backend forced the carried setup with
+/// `let _ = spaBootSetup_`, which drops an `Err`: it logged nothing, listened
+/// and served `GET /` 200 on a database whose schema step had failed. The
+/// carried setup now runs first in the backend's boot sequence, where an Err
+/// stops start-up: the backend exits non-zero, logs the error and never
+/// prints its `listening` line.
+#[test]
+fn web_app_failed_chained_setup_stops_the_backend() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let src = chained_main_app(
+        r#"main =
+    println "BOOT-SETUP-RAN"
+        |> Task.andThen (\_ -> Task.fail (Error.io "BOOT-SETUP-FAILED"))
+        |> Task.andThen (\_ -> App.run app)
+"#,
+    )
+    .replace(
+        "import Sky.Core.Task as Task\n",
+        "import Sky.Core.Task as Task\nimport Sky.Core.Error as Error\n",
+    );
+    let proj = scratch_std_app("boot-chain-fails", &src);
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    // The setup is a boot TASK (whose Err stops start-up), never a `_ =` let
+    // forcing (which drops it).
+    assert!(
+        !back.contains("_ =\n            spaBootSetup_"),
+        "the backend must not force the setup with `let _ =`, which drops its Err:\n{back}"
+    );
+    assert!(
+        back.contains("Task.sequence [ spaBootSetup_,"),
+        "the setup must run first in the boot sequence:\n{back}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "the app must build under web:app:\n{log}"
+    );
+    let backend = proj.join(".skyapp/web-app/.split/backend");
+    let mut child = Command::new(backend.join("sky-out/app"))
+        .current_dir(&backend)
+        .env("PORT", "0")
+        .env("SKY_LIVE_PORT", "0")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start the backend");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut out = child.stdout.take().unwrap();
+    let mut err = child.stderr.take().unwrap();
+    let tx2 = tx.clone();
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        let _ = tx.send(s);
+    });
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut s = String::new();
+        let _ = err.read_to_string(&mut s);
+        let _ = tx2.send(s);
+    });
+    // The backend must EXIT by itself. A backend that listens never closes
+    // its pipes, so the deadline is the failure.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status = loop {
+        if let Some(s) = child.try_wait().expect("poll the backend") {
+            break Some(s);
+        }
+        if std::time::Instant::now() > deadline {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    if status.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let mut seen = String::new();
+    for _ in 0..2 {
+        seen.push_str(
+            &rx.recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap_or_default(),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+    let status = status.unwrap_or_else(|| {
+        panic!("the backend kept running after its setup failed (it must exit):\n{seen}")
+    });
+    assert!(
+        !status.success(),
+        "a failed setup must stop the backend with a non-zero exit:\n{seen}"
+    );
+    assert!(
+        seen.contains("BOOT-SETUP-RAN") && seen.contains("BOOT-SETUP-FAILED"),
+        "the backend must run the setup and log its error:\n{seen}"
+    );
+    assert!(
+        !seen.contains("listening"),
+        "the backend must never listen after a failed setup:\n{seen}"
+    );
+}
+
+/// Build `main_src` under `--target web:app`, assert the backend carries the
+/// setup `marker` and the frontend does not, and (with Go) that the built
+/// backend prints `marker` when it starts.
+fn assert_web_app_carries_setup(name: &str, main_src: &str, marker: &str) {
+    let proj = scratch_std_app(name, &chained_main_app(main_src));
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !log.contains("defect in Sky") && !log.contains("Undefined name"),
+        "the build must not fail with an internal error:\n{log}"
+    );
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    assert!(
+        back.contains(marker),
+        "the backend must carry the setup:\n{back}"
+    );
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        !front.contains(marker),
+        "the setup must stay out of the wasm frontend:\n{front}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(
+            output.status.success(),
+            "the app must build under web:app:\n{log}"
+        );
+        let backend = proj.join(".skyapp/web-app/.split/backend");
+        let mut child = Command::new(backend.join("sky-out/app"))
+            .current_dir(&backend)
+            .env("PORT", "0")
+            .env("SKY_LIVE_PORT", "0")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the backend");
+        let mut out = child.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let want = marker.to_string();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = [0u8; 4096];
+            let mut seen = String::new();
+            while let Ok(n) = out.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                seen.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if seen.contains(&want) {
+                    break;
+                }
+            }
+            let _ = tx.send(seen);
+        });
+        let seen = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_default();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(
+            seen.contains(marker),
+            "the backend never ran the setup:\n{seen}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// `App.run` reached outside `main` (v0.29.2 Judge gap): `main = start` with
+/// `start = setup |> Task.andThen (\_ -> App.run app)` failed with "Undefined
+/// name: app … this is a defect in Sky". The zero-parameter binding is now
+/// followed, its setup carried, and the binding dropped with `main`.
+#[test]
+fn web_app_main_through_a_zero_arg_binding_carries_its_setup() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    assert_web_app_carries_setup(
+        "boot-start",
+        r#"setup =
+    println "BOOT-START-RAN"
+
+
+main =
+    start
+
+
+start =
+    setup |> Task.andThen (\_ -> App.run app)
+"#,
+        "BOOT-START-RAN",
+    );
+}
+
+/// The named continuation: `main = setup |> Task.andThen runIt` with
+/// `runIt _ = App.run app` failed the same way. It now carries `setup`.
+#[test]
+fn web_app_main_with_a_named_continuation_carries_its_setup() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    assert_web_app_carries_setup(
+        "boot-runit",
+        r#"runIt _ =
+    App.run app
+
+
+main =
+    println "BOOT-RUNIT-RAN" |> Task.andThen runIt
+"#,
+        "BOOT-RUNIT-RAN",
+    );
+}
+
+/// The two forms together (v0.29.2 second Judge, gap 3): `main = start`
+/// with `start = setup |> Task.andThen runIt` and `runIt _ = App.run app` was
+/// refused, although the refusal lists `main = start` over either form.
+#[test]
+fn web_app_main_through_a_binding_with_a_named_continuation_carries_its_setup() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    assert_web_app_carries_setup(
+        "boot-start-runit",
+        r#"setup =
+    println "BOOT-START-RUNIT-RAN"
+
+
+start =
+    setup |> Task.andThen runIt
+
+
+runIt _ =
+    App.run app
+
+
+main =
+    start
+"#,
+        "BOOT-START-RUNIT-RAN",
+    );
+}
+
+/// An `App.run` reached any other way (here a helper that `main` does not
+/// use as a continuation) is refused with the forms that carry, never the
+/// internal "defect in Sky" error.
+#[test]
+fn web_app_run_outside_a_carried_form_is_refused_clearly() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app(
+        "boot-other",
+        &chained_main_app(
+            r#"runIt n =
+    App.run app |> Task.map (\_ -> n)
+
+
+main =
+    println "X" |> Task.andThen (\_ -> runIt 1)
+"#,
+        ),
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success(), "the build must fail:\n{log}");
+    assert!(
+        !log.contains("defect in Sky") && log.contains("Task.andThen runIt"),
+        "the refusal must name the forms that carry:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A `main` whose `App.run` sits inside an expression the build cannot split
+/// (here a `Task.map` around it) is REFUSED under `--target web:app`, naming
+/// the forms that carry, never built with the surrounding work dropped.
+#[test]
+fn web_app_uncarriable_main_around_run_is_refused() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app(
+        "boot-refuse",
+        &chained_main_app(
+            r#"main =
+    println "BOOT-SETUP"
+        |> Task.andThen (\_ -> App.run app |> Task.map (\_ -> ()))
+"#,
+        ),
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !output.status.success(),
+        "an uncarriable main must fail the web:app build:\n{log}"
+    );
+    assert!(
+        log.contains("Task.andThen (\\_ -> App.run app)"),
+        "the refusal must name the form that carries:\n{log}"
+    );
     let _ = std::fs::remove_dir_all(&proj);
 }
 
@@ -12344,4 +12966,56 @@ fn spa_hold_free_table_reaches_the_client() {
         "RunSearch and SaveNote write server data: both hold:\n{frontend}"
     );
     let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// `sky watch` on a direct Sky.Spa entry (`Spa.app`) started no backend
+/// (v0.29.2 second Judge, gap 4): it built the entry as a plain program. It
+/// now splits it as `sky run` does and runs the generated backend, which
+/// serves the wasm frontend.
+#[test]
+fn watch_on_a_spa_entry_splits_and_runs_the_backend() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        clientonly_fixture_entry()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap(),
+        &proj,
+    );
+    let port = free_port();
+    let log_path = proj.join("watch.log");
+    let mut watch = ChildGroup::spawn(
+        Command::new(SKY)
+            .args(["watch", "src/Main.sky"])
+            .current_dir(&proj)
+            .env("PORT", port.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&log_path).unwrap())
+            .stderr(std::fs::File::create(proj.join("watch.err")).unwrap()),
+    )
+    .expect("start sky watch");
+    let up = wait_for_spa_backend(&log_path, 1200);
+    let page = if up {
+        curl_body_p(port, "/").unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let _ = watch.stop();
+    let log = format!(
+        "{}\n{}",
+        std::fs::read_to_string(&log_path).unwrap_or_default(),
+        std::fs::read_to_string(proj.join("watch.err")).unwrap_or_default()
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(up, "sky watch never started the Sky.Spa backend:\n{log}");
+    assert!(
+        page.contains(".wasm") || page.contains("spa-boot"),
+        "the backend does not serve the wasm frontend:\n{page}\n{log}"
+    );
 }

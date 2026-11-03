@@ -96,6 +96,7 @@ tests =
                           ( ( a.backend, a.steps, a.method )
                           , ( p.status, c.state, c.machine )
                           , ( Money.lte c.spent c.budget
+                                  |> Result.withDefault False
                             , Money.toMinor c.budget
                             )
                           )

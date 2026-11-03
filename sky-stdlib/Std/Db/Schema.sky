@@ -116,7 +116,14 @@ text n =
     newColumn n "text"
 
 
--- | 32-bit integer (INTEGER on both). Use `bigInt` for large / millisecond values.
+-- | Integer, 64-bit like a Sky `Int`: INTEGER on SQLite (8 bytes there),
+-- BIGINT on PostgreSQL. Since v0.29.2 `createSchema` and `pushProject
+-- (toProject …)` both create BIGINT on PostgreSQL; before, `createSchema`
+-- made a 4-byte INTEGER. Neither path alters a column, so a table that
+-- exists keeps the type it was made with; `Store.migrate` / `pushProject`
+-- log a one-time notice for such a column with the `ALTER TABLE … TYPE
+-- BIGINT` that widens it. SQL that needs a 4-byte integer
+-- (`DATE '1970-01-01' + day`) casts: `day::int`. Same as `bigInt`.
 int : String -> Column
 int n =
     newColumn n "int"
@@ -154,7 +161,12 @@ timestamp n =
     newColumn n "timestamp"
 
 
--- | Binary — BLOB on SQLite, BYTEA on Postgres.
+-- | Binary — BLOB on SQLite, BYTEA on Postgres, through `createSchema`.
+-- Through `toProject` (`sky db push`, `Store.pushProject`) the same column is
+-- TEXT holding JSON: the two paths give two types, and a migrate or push
+-- names the difference once. A `Std.Db.Store` JSON field (a list, record,
+-- custom type or `Json.Value`) on a BYTEA / BLOB column is refused, naming
+-- the column and the fix. Use `json` for JSON. See docs/skydb/overview.md.
 blob : String -> Column
 blob n =
     newColumn n "blob"
@@ -433,9 +445,19 @@ pkOf cols =
             ""
 
 
+-- A Schema.blob column carries the `bin` flag: it is declared binary, so a
+-- Store migrate or push does not refuse it on a BYTEA / BLOB column (a Store
+-- JSON field there is refused), and names once that push makes it TEXT.
 storeColOf : Column -> ( String, String )
 storeColOf c =
-    ( c.name, storeKindBase c ++ storeKindFlags c )
+    ( c.name
+    , storeKindBase c ++ storeKindFlags c
+          ++ (if c.kind == "blob" then
+                 "|bin"
+
+             else
+                 "")
+    )
 
 
 storeKindBase : Column -> String

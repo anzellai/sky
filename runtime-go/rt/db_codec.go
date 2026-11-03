@@ -13,10 +13,15 @@
 package rt
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -158,6 +163,8 @@ func codecColKindToSchema(kind string) string {
 		return "real"
 	case "bool":
 		return "bool"
+	case "decimal":
+		return "decimal"
 	default: // text, blob
 		return "text"
 	}
@@ -382,6 +389,9 @@ func Db_createCols(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 			return Err[any, any](ErrInvalidInput("Store.create: " + err.Error()))
 		}
 		own, ext := codecSplitExternal(colspecArg)
+		if err := codecReservedNameError(d.driver, table, own); err != nil {
+			return Err[any, any](ErrInvalidInput("Store.create: " + err.Error()))
+		}
 		if len(ext) > 0 {
 			if !codecValidIdent(table) {
 				return Err[any, any](ErrInvalidInput("Store.create: invalid table name"))
@@ -621,6 +631,9 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 		// An external column (Store.defaultWith & co. on a column the codec
 		// does not carry) is checked, never created or added.
 		colspecArg, ext := codecSplitExternal(colspecArg)
+		if err := codecReservedNameError(d.driver, table, colspecArg); err != nil {
+			return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
+		}
 		if err := codecCheckExternal(d.driver, table, current, ext); err != nil {
 			return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
 		}
@@ -644,7 +657,12 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 			return nil
 		}
 		if len(current) == 0 {
-			// table absent → create it, with its indexes
+			// table absent → create it, with its indexes. A Schema.blob
+			// column is made TEXT here (the Store JSON column), while
+			// Schema.createSchema makes it binary: named once.
+			for _, n := range codecBinaryColumnNotices(d.driver, table, colspecArg, map[string]string{}) {
+				codecWarnOnce(n)
+			}
 			stmts := schemaRenderTable(d.driver, codecColspecSchemaMap(table, colspecArg, AsString(pkArg)))
 			for _, ix := range indexes {
 				stmts = append(stmts, ix.ddl(table))
@@ -655,6 +673,29 @@ func Db_autoMigrate(connArg, tableArg, colspecArg, pkArg, indexesArg any) any {
 				}
 			}
 			return Ok[any, any](applied)
+		}
+		// An Int column an older Schema.createSchema made as INTEGER is a
+		// match (never altered), and gets a one-time notice: it holds only
+		// 32-bit values. Widening stays the operator's choice.
+		types, typesErr := codecTableColumnTypes(d, table)
+		if d.driver == "pgx" && typesErr == nil {
+			for _, n := range codecNarrowIntNotices(table, colspecArg, types) {
+				codecWarnOnce(n)
+			}
+		}
+		// A JSON column the table has as binary (Schema.blob through
+		// Schema.createSchema) would be misread: refused, naming the fix.
+		// A decimal field (Codec.decimal, Codec.moneyIn) on a column a
+		// Codec.auto field made (JSON text) would compare as text and mix
+		// two spellings: refused, naming the conversion. `sky db check`
+		// runs the same function (Db_checkProjectData).
+		if typesErr == nil {
+			if err := codecStoreDataRefusal(d, table, colspecArg, types); err != nil {
+				return Err[any, any](ErrInvalidInput("Store.migrate: " + err.Error()))
+			}
+			for _, n := range codecBinaryColumnNotices(d.driver, table, colspecArg, types) {
+				codecWarnOnce(n)
+			}
 		}
 		// existing → add any missing columns
 		pk := AsString(pkArg)
@@ -760,6 +801,15 @@ func rawToSqlArg(raw any, kind, col string) (any, error) {
 			return float64(n), nil
 		}
 		if f, ok := jsonDecodeFloat(raw); ok {
+			// A NaN or an infinite Float (Math.sqrt -1, Math.pow 10 400) is
+			// refused, never written: SQLite stores NaN as NULL (a NOT NULL
+			// error, or a NULL a required field cannot read) and keeps an
+			// Infinity, PostgreSQL keeps both, and every later read of the
+			// table then failed (JSON has no such number). A JSON column
+			// refuses one already (v0.29.2 fifth Judge).
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				return nil, fmt.Errorf("column %q is a Float, and the value is %v, which no read of the column takes back (Sky has no NaN or Infinity)", col, f)
+			}
 			return f, nil
 		}
 		return refuse()
@@ -768,6 +818,20 @@ func rawToSqlArg(raw any, kind, col string) (any, error) {
 			return b, nil
 		}
 		return refuse()
+	case "decimal":
+		// The canonical text on both drivers (pgx sends a string as text,
+		// PostgreSQL reads it into NUMERIC; SQLite keeps it in a TEXT
+		// column). A Float is not exact, and a Money object here is a
+		// Codec.moneyIn value in another currency: both are refused.
+		if _, isObj := jsonObjectMap(raw); isObj {
+			return nil, fmt.Errorf("column %q is a decimal, and the codec encoded %s: a Money in another currency than the column's Codec.moneyIn is never written as this column's",
+				col, codecShortJSON(raw))
+		}
+		d, err := decimalFromJSONRaw(raw)
+		if err != nil {
+			return nil, fmt.Errorf("column %q is a decimal: %v", col, err)
+		}
+		return decimalCanonical(d), nil
 	default: // text
 		if s, ok := raw.(string); ok {
 			return s, nil
@@ -1043,10 +1107,79 @@ func Db_execObjectMany(connArg, tableArg, colspecArg, objsArg, extrasArg any) an
 		if len(cols) == 0 {
 			return Ok[any, any](0)
 		}
-		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
-			AsString(tableArg), strings.Join(cols, ", "), strings.Join(rowPh, ", "))
-		return AnyTaskRun(Db_exec(connArg, sql, params))
+		head := fmt.Sprintf("INSERT INTO %s (%s) VALUES ", AsString(tableArg), strings.Join(cols, ", "))
+		perStmt := dbRowsPerStatement(driver, len(cols))
+		if len(rowPh) <= perStmt {
+			return AnyTaskRun(Db_exec(connArg, head+strings.Join(rowPh, ", "), params))
+		}
+		// More bound parameters than the engine takes in one statement
+		// (SQLite 32766, PostgreSQL 65535): one INSERT per chunk, all in one
+		// transaction, so the insert stays all-or-nothing (v0.29.2 fourth
+		// Judge, gap 4: 10,000 rows of 4 columns failed with "too many SQL
+		// variables").
+		return dbInTransaction(connArg, "Store.insertMany", func(ex any) any {
+			total := 0
+			for from := 0; from < len(rowPh); from += perStmt {
+				to := min(from+perStmt, len(rowPh))
+				res := AnyTaskRun(Db_exec(ex, head+strings.Join(rowPh[from:to], ", "),
+					params[from*len(cols):to*len(cols)]))
+				r, ok := res.(SkyResult[any, any])
+				if !ok || r.Tag != 0 {
+					return res
+				}
+				total += AsInt(r.OkValue)
+			}
+			return Ok[any, any](total)
+		})
 	}
+}
+
+// dbMaxBoundParams is the most bound parameters one statement takes: SQLite's
+// SQLITE_MAX_VARIABLE_NUMBER (32766 since SQLite 3.32) and PostgreSQL's wire
+// limit (a 16-bit count, 65535).
+func dbMaxBoundParams(driver string) int {
+	if driver == "pgx" {
+		return 65535
+	}
+	return 32766
+}
+
+// dbRowsPerStatement is how many rows of `cols` bound columns one multi-row
+// statement holds within dbMaxBoundParams (at least one).
+func dbRowsPerStatement(driver string, cols int) int {
+	if cols <= 0 {
+		return 1
+	}
+	return max(1, dbMaxBoundParams(driver)/cols)
+}
+
+// dbInTransaction runs `body` with a Db whose statements share one
+// transaction: the caller's own (inside Db.withTransaction, whose commit or
+// rollback decides), else a new one, committed when `body` is Ok and rolled
+// back otherwise.
+func dbInTransaction(connArg any, verb string, body func(ex any) any) any {
+	d, ok := connArg.(*SkyDb)
+	if !ok {
+		return Err[any, any](ErrInvalidInput(verb + ": not a Db"))
+	}
+	if d.tx != nil {
+		return body(d)
+	}
+	tx, err := d.conn.BeginTx(context.Background(), d.txCfg.Opts)
+	if err != nil {
+		return Err[any, any](ErrIo(verb + ": tx begin: " + err.Error()))
+	}
+	txDb := &SkyDb{conn: d.conn, name: d.name, driver: d.driver, tx: tx}
+	res := body(txDb)
+	if r, ok := res.(SkyResult[any, any]); !ok || r.Tag != 0 {
+		_ = tx.Rollback()
+		dbColumnCacheReset(d.conn)
+		return res
+	}
+	if err := tx.Commit(); err != nil {
+		return Err[any, any](ErrIo(verb + ": tx commit: " + err.Error()))
+	}
+	return res
 }
 
 // codecInsertColumns lists the INSERT columns and values of one record. A
@@ -1136,9 +1269,26 @@ func rowValToJsonRaw(raw any, present bool, kind, col string) (any, error) {
 			return false, nil
 		}
 	case "blob":
-		var v any
-		if json.Unmarshal([]byte(s), &v) == nil {
+		// Parsed as a decoder reads JSON text (numbers kept as their exact
+		// text, json.Number): json.Unmarshal made every number a float64, so
+		// an Int past 2^53 in a JSON column read back as another Int, and
+		// 9223372036854775807 as a float out of Int range, which made the
+		// whole table unreadable (v0.29.2 fifth Judge, found by the
+		// generative codec test).
+		if v, err := jsonParseDocument(s); err == nil {
 			return v, nil
+		}
+	case "decimal":
+		// PostgreSQL NUMERIC text ("12.30"), the canonical text Sky writes
+		// on SQLite ("12.3"), and the JSON spelling a v0.23-v0.29.1
+		// Codec.auto blob column holds ("\"12.3\""), all as the canonical
+		// JSON string a Decimal decoder reads.
+		t := s
+		if len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' {
+			t = t[1 : len(t)-1]
+		}
+		if d, err := decimalParseStrict(t); err == nil {
+			return decimalCanonical(d), nil
 		}
 	default: // text
 		return s, nil
@@ -1158,6 +1308,8 @@ func codecKindNoun(kind string) string {
 		return "a Bool"
 	case "blob":
 		return "JSON"
+	case "decimal":
+		return "a Decimal"
 	}
 	return "text"
 }
@@ -1298,6 +1450,9 @@ type jcol struct {
 	// External marks a column the table has and the codec does not carry
 	// (Store.defaultWith & co.): `--gen` never adds or drops it.
 	External bool `json:"external,omitempty"`
+	// Currency is the ISO code of a Codec.moneyIn column: `sky db check`
+	// names it in the conversion of a legacy JSON column.
+	Currency string `json:"currency,omitempty"`
 }
 
 // codecDumpColumn is the schema-dump form of one colspec entry.
@@ -1306,7 +1461,7 @@ func codecDumpColumn(name, rawKind string) jcol {
 	return jcol{
 		Name: mc.Name, Kind: mc.Type, Nullable: mc.Nullable,
 		Autoinc: mc.Autoinc, Unique: mc.Unique, Default: mc.Default, Zero: mc.Zero,
-		External: mc.External,
+		External: mc.External, Currency: mc.Currency,
 	}
 }
 
@@ -1325,9 +1480,11 @@ func Db_dumpProject(tablesArg any) any {
 			Columns []jcol       `json:"columns"`
 			Indexes []storeIndex `json:"indexes,omitempty"`
 		}
+		// An empty slice, never nil: a project with no tables (`Store.project
+		// []`) dumps `"tables":[]`, not `null` (v0.29.2).
 		out := struct {
 			Tables []jtable `json:"tables"`
-		}{}
+		}{Tables: []jtable{}}
 		for _, t := range AsList(tablesArg) {
 			jt := jtable{
 				Name: fmt.Sprintf("%v", fieldOrNil(t, "Name")),
@@ -1336,6 +1493,11 @@ func Db_dumpProject(tablesArg any) any {
 			for _, c := range AsList(fieldOrNil(t, "Cols")) {
 				tup := AsTuple2(c)
 				jt.Columns = append(jt.Columns, codecDumpColumn(AsString(tup.V0), AsString(tup.V1)))
+			}
+			// A Schema.blob column has two types (TEXT through push, BYTEA
+			// through createSchema): `sky verify` shows this line.
+			for _, n := range codecBinaryColumnNotices("", jt.Name, fieldOrNil(t, "Cols"), map[string]string{}) {
+				fmt.Fprintln(os.Stderr, "SKY_STORE_NOTICE "+n)
 			}
 			ixs, err := codecStoreIndexes(jt.Name, fieldOrNil(t, "Indexes"))
 			if err != nil {
@@ -1535,4 +1697,580 @@ func Db_writeReturningObjects(connArg, sqlArg, paramsArg, groupsArg any) any {
 		}
 		return AnyTaskRun(Db_queryObjectGroups(connArg, sqlArg, paramsArg, groupsArg))
 	}
+}
+
+// codecNarrowIntNotices names each Int (codec kind `int`) column of `table`
+// that PostgreSQL holds as a 4-byte `integer` (or `smallint`). Before v0.29.2
+// Schema.createSchema made `Schema.int` an INTEGER, while Store.pushProject
+// (Schema.toProject) and Store.migrate make BIGINT. The column is a match
+// (migrate never alters a column), but a Sky Int above 2,147,483,647 fails
+// there with "integer out of range", so the notice gives the statement that
+// widens it. `types` is codecTableColumnTypes.
+func codecNarrowIntNotices(table string, colspecArg any, types map[string]string) []string {
+	var out []string
+	cols, _ := codecSplitExternal(colspecArg)
+	for _, cs := range AsList(cols) {
+		t := AsTuple2(cs)
+		name := AsString(t.V0)
+		base, _ := codecSplitKind(AsString(t.V1))
+		if base != "int" || !codecValidIdent(name) {
+			continue
+		}
+		typ := strings.ToLower(types[strings.ToLower(name)])
+		if typ != "integer" && typ != "smallint" {
+			continue
+		}
+		// A SMALLINT holds 16-bit values, an INTEGER 32-bit ones (v0.29.2:
+		// the notice said "at most 2147483647" for a SMALLINT too).
+		holds, kind := "32-bit values (at most 2147483647)", "integer"
+		if typ == "smallint" {
+			holds, kind = "16-bit values (at most 32767)", "smallint"
+		}
+		out = append(out, fmt.Sprintf(
+			"Std.Db.Store: column %s.%s is %s on PostgreSQL and holds only %s, "+
+				"while a Sky Int is 64-bit and a new column is BIGINT; a larger value fails with \"%s out of range\". "+
+				"It is not changed. To widen it: ALTER TABLE %s ALTER COLUMN %s TYPE BIGINT",
+			table, name, strings.ToUpper(typ), holds, kind, table, name))
+	}
+	return out
+}
+
+// codecColIsBin reports whether a colspec kind carries the `bin` flag that
+// Schema.toProject sets on a Schema.blob column: a column declared binary.
+func codecColIsBin(kind string) bool {
+	for _, f := range codecColFlags(kind) {
+		if f == "bin" {
+			return true
+		}
+	}
+	return false
+}
+
+// codecColumnType is the declared type of `name` in a codecTableColumnTypes
+// map (PostgreSQL keys are folded to lower case; SQLite names compare in any
+// case), or "" when the table does not have it.
+func codecColumnType(driver string, types map[string]string, name string) string {
+	if t, ok := types[name]; ok {
+		return t
+	}
+	for k, t := range types {
+		if strings.EqualFold(k, name) {
+			return t
+		}
+	}
+	return ""
+}
+
+// codecIsBinaryType reports whether a declared column type holds bytes:
+// BYTEA on PostgreSQL, BLOB on SQLite.
+func codecIsBinaryType(typ string) bool {
+	t := strings.ToUpper(strings.TrimSpace(typ))
+	return t == "BYTEA" || t == "BLOB"
+}
+
+// codecBinaryColumnError refuses a Store JSON column (kind `blob` without the
+// `bin` flag: a list, record, custom type or Json.Value field, or a
+// Schema.json column) that the table has as binary. Schema.blob makes BYTEA
+// (BLOB on SQLite) through Schema.createSchema, and the Store writes JSON text
+// and reads text back: PostgreSQL would read its escapes into the bytes and
+// every row would be misread. The column is never altered.
+func codecBinaryColumnError(driver, table string, colspecArg any, types map[string]string) error {
+	cols, _ := codecSplitExternal(colspecArg)
+	for _, cs := range AsList(cols) {
+		t := AsTuple2(cs)
+		name, kind := AsString(t.V0), AsString(t.V1)
+		base, _ := codecSplitKind(kind)
+		if base != "blob" || codecColIsBin(kind) {
+			continue
+		}
+		typ := codecColumnType(driver, types, name)
+		if !codecIsBinaryType(typ) {
+			continue
+		}
+		fix := "ALTER TABLE " + table + " ALTER COLUMN " + name + " TYPE TEXT USING convert_from(" + name + ", 'UTF8')"
+		if driver != "pgx" {
+			fix = "copy the table into one where " + name + " is TEXT (SQLite cannot change a column type)"
+		}
+		return fmt.Errorf("column %s.%s is %s (binary data, as Schema.blob makes it through Schema.createSchema), "+
+			"and this store reads and writes it as JSON text (a list, record, custom type or Json.Value field). "+
+			"It would misread every row, so the store is refused and the column is not changed. "+
+			"Declare it Schema.json (TEXT) and fix the table once: %s. Or keep binary data out of the store and read it with Db.query",
+			table, name, strings.ToUpper(typ), fix)
+	}
+	return nil
+}
+
+// Names that fail unquoted as a column or table name on one engine only
+// (checked against SQLite and PostgreSQL, v0.29.2). The Store writes names
+// unquoted: quoting would make PostgreSQL keep the case of a camelCase column
+// that existing tables hold folded. A keyword of both engines is a Store
+// builder problem (Std.Db.Store isSqlKeyword); these are refused by migrate
+// and create on the engine that rejects them, with the reason, instead of a
+// syntax error at the first statement.
+//
+// The lists are measured, not copied: db_codec_keywords_test.go runs the
+// Store's statements with every SQLite keyword as a column and as a table name
+// (and, in the integration test, every PostgreSQL R/T keyword of
+// pg_get_keywords()), and fails when a name that fails is missing or a listed
+// name works. rust/crates/sky/src/db_check.rs holds the same lists.
+var codecReservedSqlite = map[string]bool{
+	"add": true, "alter": true, "autoincrement": true, "between": true, "commit": true,
+	"delete": true, "drop": true, "escape": true, "exists": true, "index": true,
+	"insert": true, "nothing": true, "set": true, "transaction": true, "update": true,
+	"values": true,
+}
+
+// codecReservedSqliteColumn fails on SQLite as a column name only (a table
+// may have it); codecReservedSqliteTable as a table name only.
+var codecReservedSqliteColumn = map[string]bool{"raise": true}
+
+var codecReservedSqliteTable = map[string]bool{"if": true}
+
+var codecReservedPostgres = map[string]bool{
+	"analyse": true, "analyze": true, "any": true, "array": true, "asc": true,
+	"asymmetric": true, "both": true, "column": true, "current_catalog": true,
+	"current_role": true, "current_user": true, "desc": true, "do": true, "end": true,
+	"false": true, "fetch": true, "for": true, "grant": true, "initially": true,
+	"lateral": true, "leading": true, "localtime": true, "localtimestamp": true,
+	"offset": true, "only": true, "placing": true, "session_user": true, "some": true,
+	"symmetric": true, "system_user": true, "trailing": true, "true": true, "user": true,
+	"variadic": true, "window": true, "with": true, "authorization": true, "binary": true,
+	"collation": true, "concurrently": true, "cross": true, "current_schema": true,
+	"freeze": true, "full": true, "ilike": true, "inner": true, "left": true, "like": true,
+	"natural": true, "outer": true, "overlaps": true, "right": true, "similar": true,
+	"tablesample": true, "verbose": true,
+}
+
+// codecReservedName reports whether `name` fails unquoted on the driver's
+// engine only, as a table name (`table`) or as a column name.
+func codecReservedName(driver, name string, table bool) bool {
+	n := strings.ToLower(name)
+	if driver == "pgx" {
+		return codecReservedPostgres[n]
+	}
+	if table {
+		return codecReservedSqlite[n] || codecReservedSqliteTable[n]
+	}
+	return codecReservedSqlite[n] || codecReservedSqliteColumn[n]
+}
+
+func codecEngineName(driver string) string {
+	if driver == "pgx" {
+		return "PostgreSQL"
+	}
+	return "SQLite"
+}
+
+// codecReservedNameError refuses a table or column name the engine reserves.
+func codecReservedNameError(driver, table string, cols any) error {
+	advice := "The Store writes names unquoted (quoting would change how PostgreSQL folds an existing camelCase column), " +
+		"so give it another column name: Codec.field \"sort_order\" .order Codec.int in a Codec.object, or rename the field"
+	if codecReservedName(driver, table, true) {
+		return fmt.Errorf("table name %q is an SQL keyword on %s, so every statement on it fails. %s",
+			table, codecEngineName(driver), advice)
+	}
+	for _, cs := range AsList(cols) {
+		name := AsString(AsTuple2(cs).V0)
+		if codecReservedName(driver, name, false) {
+			return fmt.Errorf("column %s.%s is an SQL keyword on %s, so every statement on it fails. %s",
+				table, name, codecEngineName(driver), advice)
+		}
+	}
+	return nil
+}
+
+// codecIsNumericType reports whether a PostgreSQL column type holds a decimal
+// natively (NUMERIC, DECIMAL, with or without a precision).
+func codecIsNumericType(typ string) bool {
+	t := strings.ToLower(strings.TrimSpace(typ))
+	if i := strings.IndexByte(t, '('); i >= 0 {
+		t = strings.TrimSpace(t[:i])
+	}
+	return t == "numeric" || t == "decimal"
+}
+
+// codecColCurrency is the currency of a Codec.moneyIn column (the
+// `money=GBP` flag Codec.CMoneyIn writes), or "" for any other column. The
+// code grammar is Money.currencyFromCode's, read in upper case: 3 to 10
+// ASCII letters or digits (GBP, USDT, USDC, a CurrencyRaw code). Nothing else
+// is read, because the code is written into SQL text. It once read only
+// [A-Z]{3}, so a USDT column was taken for a Codec.decimal one and lost its
+// currency (v0.29.2 fourth Judge).
+func codecColCurrency(kind string) string {
+	for _, f := range codecColFlags(kind) {
+		if c, ok := strings.CutPrefix(f, "money="); ok && codecIsCurrencyCode(c) {
+			return c
+		}
+	}
+	return ""
+}
+
+func codecIsCurrencyCode(c string) bool {
+	if len(c) < 3 || len(c) > 10 {
+		return false
+	}
+	for _, r := range c {
+		if (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// codecLegacyMoneyCheck is the query that lists the rows a conversion to a
+// Codec.moneyIn `currency` column must not take: a Money object in another
+// currency (or with no currency). It is run first; it must return no rows.
+func codecLegacyMoneyCheck(driver, table, col, currency string) string {
+	if driver == "pgx" {
+		return "SELECT " + col + " FROM " + table + " WHERE " + col + "::text LIKE '{%' AND upper(" + col +
+			"::json->>'currency') IS DISTINCT FROM '" + currency + "'"
+	}
+	return "SELECT " + col + " FROM " + table + " WHERE " + col + " LIKE '{%' AND upper(json_extract(" + col +
+		", '$.currency')) IS NOT '" + currency + "'"
+}
+
+// codecLegacyDecimalFix is the conversion of a column a Codec.auto Decimal or
+// Money field made (JSON text: `"9.5"`, `{"amount":"9.5","currency":"GBP"}`)
+// into the column a decimal field reads. NULL stays NULL, and a bare number
+// is kept.
+//
+// The currency is never dropped. With `currency` set (a Codec.moneyIn
+// field), only a Money object in that currency becomes its amount: on
+// PostgreSQL any other Money object makes the statement fail (its USING
+// value is text that is not a number, naming the currency), and on SQLite
+// the UPDATE leaves it as it is, so the store refuses the column again. With
+// `currency` empty (Codec.decimal), no Money object is converted at all: on
+// PostgreSQL one makes the statement fail, on SQLite it is left.
+func codecLegacyDecimalFix(driver, table, col, currency string) string {
+	if driver == "pgx" {
+		obj := "('a Money object is not a decimal: ' || " + col + "::text)"
+		if currency != "" {
+			obj = "(CASE WHEN upper(" + col + "::json->>'currency') = '" + currency + "' THEN " + col +
+				"::json->>'amount' ELSE 'a Money object that is not in " + currency + ": ' || " + col + "::text END)"
+		}
+		return "ALTER TABLE " + table + " ALTER COLUMN " + col + " TYPE NUMERIC USING (CASE WHEN " + col +
+			"::text LIKE '{%' THEN " + obj + " ELSE trim(both '\"' from " + col + "::text) END)::numeric"
+	}
+	if currency == "" {
+		return "UPDATE " + table + " SET " + col + " = substr(" + col + ", 2, length(" + col + ") - 2) WHERE " +
+			col + " LIKE '\"%\"'"
+	}
+	// The amount is read as text: a JSON string through json_extract, a JSON
+	// number as its own JSON text (`->`), never json_extract's REAL, which
+	// rounds 0.12345678901234567891 and writes 1.2345678901234568e+22
+	// (v0.29.2 sixth Judge).
+	return "UPDATE " + table + " SET " + col + " = CASE WHEN " + col + " LIKE '{%' THEN (CASE json_type(" + col +
+		", '$.amount') WHEN 'text' THEN json_extract(" + col + ", '$.amount') ELSE " + col + " -> '$.amount' END) ELSE substr(" + col + ", 2, length(" + col + ") - 2) END WHERE " + col +
+		" LIKE '\"%\"' OR (" + col + " LIKE '{%' AND upper(json_extract(" + col + ", '$.currency')) = '" + currency + "')"
+}
+
+// codecLegacyDecimalAdvice is the refusal's last sentence: what to run, or
+// why there is nothing to run. `currencies` lists the currencies of the Money
+// objects the column holds (sorted; "?" for an object with none), and
+// `hasMoney` says whether it holds any.
+func codecLegacyDecimalAdvice(driver, table, col, currency string, hasMoney bool, currencies []string) (advice, check, fix string) {
+	if currency == "" {
+		if hasMoney {
+			return fmt.Sprintf("The column holds Money objects (%s), and a Codec.decimal field reads only the amount: "+
+				"converting it would drop each row's currency, so no conversion is given. "+
+				"Read the column with Codec.moneyIn <Currency> when every row is in one currency, "+
+				"or with Codec.moneyObject (a JSON column) to keep the currency of each row",
+				strings.Join(currencies, ", ")), "", ""
+		}
+		left := "a Money object makes it fail, because Codec.decimal would drop its currency"
+		if driver != "pgx" {
+			left = "a Money object is left as it is, because Codec.decimal would drop its currency, and the store refuses the column again"
+		}
+		fix = codecLegacyDecimalFix(driver, table, col, "")
+		return "Convert it once (NULL stays NULL; " + left + "): " + fix, "", fix
+	}
+	var foreign []string
+	for _, c := range currencies {
+		if c != currency {
+			foreign = append(foreign, c)
+		}
+	}
+	lead := ""
+	if len(foreign) > 0 {
+		lead = fmt.Sprintf("The column holds Money in %s, and the field is Codec.moneyIn %s: those rows are never relabelled as %s. "+
+			"Change or move them first. ", strings.Join(foreign, ", "), currency, currency)
+	}
+	// What the conversion does with a Money object it must not take: the
+	// PostgreSQL ALTER fails on it (its USING value is not a number), the
+	// SQLite UPDATE skips it (its WHERE takes only this currency), so the
+	// row stays and the next migrate refuses the column again.
+	other := "a Money object in another currency, or with no currency, makes it fail"
+	if driver != "pgx" {
+		other = "a Money object in another currency, or with no currency, is left as it is, and the store refuses the column again"
+	}
+	check = codecLegacyMoneyCheck(driver, table, col, currency)
+	fix = codecLegacyDecimalFix(driver, table, col, currency)
+	return lead + "First check that this query returns no rows (a Money object in another currency than " + currency + ", or with no currency): " +
+		check + ". Then convert it once (NULL stays NULL; " + other + "): " + fix, check, fix
+}
+
+// codecLegacyMoneyCurrencies lists the currencies of the Money objects a
+// legacy column holds (upper case, sorted; "?" for an object with no
+// currency), and whether it holds any.
+func codecLegacyMoneyCurrencies(d *SkyDb, table, col string) (bool, []string, error) {
+	q := "SELECT DISTINCT upper(json_extract(" + col + ", '$.currency')) AS cur FROM " + table + " WHERE " + col + " LIKE '{%'"
+	if d.driver == "pgx" {
+		q = "SELECT DISTINCT upper(" + col + "::json->>'currency') AS cur FROM " + table + " WHERE " + col + "::text LIKE '{%'"
+	}
+	resp := AnyTaskRun(dbQueryRows(d, q, []any{}))
+	r, ok := resp.(SkyResult[any, any])
+	if !ok || r.Tag != 0 {
+		return false, nil, fmt.Errorf("could not read column %s.%s to check the currencies it holds", table, col)
+	}
+	rows := AsList(r.OkValue)
+	var out []string
+	for _, row := range rows {
+		c := "?"
+		if m, ok := dbRowAsMap(row); ok {
+			if s, present := dbCellText(m["cur"]); present && s != "" {
+				c = s
+			}
+		}
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return len(rows) > 0, out, nil
+}
+
+// codecColumnRefusal is a column Store.migrate refuses for the data it
+// holds, with the SQL its message names: `check` lists the rows a
+// conversion must not take, `fix` converts the column ("" when there is no
+// conversion to give).
+type codecColumnRefusal struct {
+	table, col, msg, check, fix string
+}
+
+func (e codecColumnRefusal) Error() string { return e.msg }
+
+// codecStoreDataRefusal is every check Store.migrate makes on the columns a
+// table already has before it changes anything: a JSON field on a binary
+// column, and a decimal field on a column holding Codec.auto JSON text. It
+// only reads. Db_autoMigrate and Db_checkProjectData (`sky db check`) both
+// call it, so the two cannot disagree on a database.
+func codecStoreDataRefusal(d *SkyDb, table string, colspecArg any, types map[string]string) error {
+	if err := codecBinaryColumnError(d.driver, table, colspecArg, types); err != nil {
+		return err
+	}
+	return codecLegacyDecimalColumnError(d, table, colspecArg, types)
+}
+
+// Db_checkProjectData : Db -> List Table -> Task Error String. For each
+// table of a Store.Project that exists, the refusal Store.migrate would give
+// for the data its columns hold (codecStoreDataRefusal), as a JSON array of
+// {table, column, message, check, sql}. Read-only: `sky db check` runs it
+// with SKY_READ_ONLY_DB=1.
+func Db_checkProjectData(connArg, tablesArg any) any {
+	return func() any {
+		d, ok := connArg.(*SkyDb)
+		if !ok {
+			return Err[any, any](ErrInvalidInput("Store.checkProjectData: not a Db"))
+		}
+		type finding struct {
+			Table   string `json:"table"`
+			Column  string `json:"column"`
+			Message string `json:"message"`
+			Check   string `json:"check,omitempty"`
+			SQL     string `json:"sql,omitempty"`
+		}
+		out := []finding{}
+		for _, t := range AsList(tablesArg) {
+			table := fmt.Sprintf("%v", fieldOrNil(t, "Name"))
+			if !codecValidIdent(table) {
+				continue
+			}
+			types, err := codecTableColumnTypes(d, table)
+			if err != nil {
+				return Err[any, any](ErrIo("Store.checkProjectData: " + err.Error()))
+			}
+			if len(types) == 0 {
+				continue // a missing table: migrate creates it
+			}
+			err = codecStoreDataRefusal(d, table, fieldOrNil(t, "Cols"), types)
+			if err == nil {
+				continue
+			}
+			f := finding{Table: table, Message: "Store.migrate: " + err.Error()}
+			if r, ok := err.(codecColumnRefusal); ok {
+				f.Column, f.Check, f.SQL = r.col, r.check, r.fix
+			}
+			out = append(out, f)
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			return Err[any, any](ErrIo("Store.checkProjectData: " + err.Error()))
+		}
+		return Ok[any, any](string(b))
+	}
+}
+
+// dbCellText is the text of a query cell, and false for SQL NULL: nil, or
+// the Nothing a query row holds for NULL (printed with %v it read
+// `{1 <nil>}`, which a refusal once showed as a currency).
+func dbCellText(v any) (string, bool) {
+	switch m := v.(type) {
+	case nil:
+		return "", false
+	case SkyMaybe[any]:
+		if m.Tag != 0 {
+			return "", false
+		}
+		return dbCellText(m.JustValue)
+	case SkyMaybe[string]:
+		if m.Tag != 0 {
+			return "", false
+		}
+		return m.JustValue, true
+	}
+	return dbRawToString(v), true
+}
+
+// codecLegacyDecimalColumnError refuses a decimal field (Codec.decimal,
+// Codec.moneyIn) on a column that still holds the JSON text a Codec.auto
+// Decimal or Money field writes. On PostgreSQL that is any column that is not
+// NUMERIC: TEXT compares `"10"` before `"9.5"`, so orderAsc and gt give wrong
+// rows, and new writes (`20`) mix with the old spelling (`"9.5"`). On SQLite
+// the column is TEXT either way, so a row holding the quoted or object
+// spelling is the sign: the Store reads a quoted decimal, but a unique index
+// sees `"9.5"` and `9.5` as two values, and a Money object does not read as a
+// decimal. The column is never changed; the error names the statement that
+// converts it.
+func codecLegacyDecimalColumnError(d *SkyDb, table string, colspecArg any, types map[string]string) error {
+	cols, _ := codecSplitExternal(colspecArg)
+	for _, cs := range AsList(cols) {
+		t := AsTuple2(cs)
+		name, kind := AsString(t.V0), AsString(t.V1)
+		base, _ := codecSplitKind(kind)
+		if base != "decimal" || !codecValidIdent(name) {
+			continue
+		}
+		typ := codecColumnType(d.driver, types, name)
+		if typ == "" {
+			continue // a missing column: migrate adds it as NUMERIC / TEXT
+		}
+		currency := codecColCurrency(kind)
+		field := "Codec.decimal"
+		if currency != "" {
+			field = "Codec.moneyIn " + currency
+		}
+		if d.driver == "pgx" {
+			if codecIsNumericType(typ) {
+				continue
+			}
+			hasMoney, currencies, err := codecLegacyMoneyCurrencies(d, table, name)
+			if err != nil {
+				return err
+			}
+			advice, check, fix := codecLegacyDecimalAdvice(d.driver, table, name, currency, hasMoney, currencies)
+			return codecColumnRefusal{table: table, col: name, check: check, fix: fix, msg: fmt.Sprintf(
+				"column %s.%s is %s, and the store reads it as a decimal (%s). "+
+					"A %s column compares as text (\"10\" before \"9.5\"), so orderAsc, gt and the other comparisons would give wrong rows, "+
+					"and new values would be written in another spelling than the old ones. The store is refused and the column is not changed. "+
+					"Drop a DEFAULT before a conversion and set it again after. %s",
+				table, name, strings.ToUpper(typ), field, strings.ToUpper(typ), advice)}
+		}
+		if !sqliteTextAffinity(typ) {
+			continue
+		}
+		probe := "SELECT 1 FROM " + table + " WHERE " + name + " LIKE '\"%' OR " + name + " LIKE '{%' LIMIT 1"
+		resp := AnyTaskRun(dbQueryRows(d, probe, []any{}))
+		r, ok := resp.(SkyResult[any, any])
+		if !ok || r.Tag != 0 {
+			return fmt.Errorf("could not read column %s.%s to check that it holds decimals", table, name)
+		}
+		if len(AsList(r.OkValue)) == 0 {
+			// No JSON text. A value stored another way that the store does
+			// not read as a decimal (a REAL, `1.2e22`) would make every read
+			// of the table fail, so it is refused here too, naming the
+			// values (v0.29.2 sixth Judge).
+			if err := codecSqliteUnreadableDecimals(d, table, name, field); err != nil {
+				return err
+			}
+			continue
+		}
+		hasMoney, currencies, err := codecLegacyMoneyCurrencies(d, table, name)
+		if err != nil {
+			return err
+		}
+		advice, check, fix := codecLegacyDecimalAdvice(d.driver, table, name, currency, hasMoney, currencies)
+		return codecColumnRefusal{table: table, col: name, check: check, fix: fix, msg: fmt.Sprintf(
+			"column %s.%s holds the JSON text a Codec.auto Decimal or Money field writes (\"9.5\", {\"amount\":...}), "+
+				"and the store reads it as a decimal (%s), which writes 9.5. "+
+				"The two spellings would mix in one column, so the store is refused and the column is not changed. %s",
+			table, name, field, advice)}
+	}
+	return nil
+}
+
+// codecBinaryColumnNotices names a Schema.blob column (the `bin` flag) that is,
+// or is about to be, TEXT: sky db push and Store.pushProject make a
+// Schema.blob column TEXT holding JSON, while Schema.createSchema makes it
+// BYTEA (BLOB on SQLite). The two paths give two types (kept, v0.29.2), so the
+// difference is said once. `types` empty means the table is being created.
+func codecBinaryColumnNotices(driver, table string, colspecArg any, types map[string]string) []string {
+	var out []string
+	cols, _ := codecSplitExternal(colspecArg)
+	for _, cs := range AsList(cols) {
+		t := AsTuple2(cs)
+		name, kind := AsString(t.V0), AsString(t.V1)
+		if !codecColIsBin(kind) {
+			continue
+		}
+		typ := codecColumnType(driver, types, name)
+		if codecIsBinaryType(typ) {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			"Std.Db.Schema: column %s.%s is declared Schema.blob (binary), and sky db push / Store.pushProject "+
+				"make it TEXT holding JSON, while Schema.createSchema makes it BYTEA (BLOB on SQLite). "+
+				"Binary bytes written to the TEXT column fail on PostgreSQL. Use Schema.json for JSON, "+
+				"or create this table with Schema.createSchema only (docs/skydb/overview.md, \"Schema.blob\")",
+			table, name))
+	}
+	return out
+}
+
+// codecNoticeSeen keeps each one-time Store notice logged once per process.
+var codecNoticeSeen sync.Map
+
+// codecWarnOnce logs a Store notice at WARN level the first time it is seen.
+func codecWarnOnce(msg string) {
+	if _, seen := codecNoticeSeen.LoadOrStore(msg, true); !seen {
+		rtWarn(msg)
+	}
+}
+
+// codecSqliteUnreadableDecimals refuses a SQLite decimal column that holds a
+// value the store's decimal reader refuses: a REAL (`1.2345678901234568e+22`,
+// what json_extract made of a large JSON number) or text that is not plain
+// decimal digits (`1e3`). It lists up to three of them.
+func codecSqliteUnreadableDecimals(d *SkyDb, table, col, field string) error {
+	q := "SELECT CAST(" + col + " AS TEXT) AS v FROM " + table + " WHERE " + col + " IS NOT NULL AND (typeof(" + col +
+		") NOT IN ('text', 'integer') OR CAST(" + col + " AS TEXT) GLOB '*[^0-9.-]*' OR CAST(" + col + " AS TEXT) = '') LIMIT 3"
+	resp := AnyTaskRun(dbQueryRows(d, q, []any{}))
+	r, ok := resp.(SkyResult[any, any])
+	if !ok || r.Tag != 0 {
+		return fmt.Errorf("could not read column %s.%s to check that it holds decimals", table, col)
+	}
+	rows := AsList(r.OkValue)
+	if len(rows) == 0 {
+		return nil
+	}
+	var vals []string
+	for _, row := range rows {
+		if m, ok := dbRowAsMap(row); ok {
+			if s, present := dbCellText(m["v"]); present {
+				vals = append(vals, strictShortText(s))
+			}
+		}
+	}
+	return codecColumnRefusal{table: table, col: col, msg: fmt.Sprintf(
+		"column %s.%s holds values the store does not read as a decimal (%s): %s. "+
+			"Every read of the table would fail on them, so the store is refused and the column is not changed. "+
+			"Set each to its decimal text (digits, an optional '-' and '.', no exponent), then migrate again",
+		table, col, field, strings.Join(vals, ", "))}
 }

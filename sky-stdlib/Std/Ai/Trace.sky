@@ -85,21 +85,30 @@ type alias Trace =
 
 {-| Build a trace row from a chat response and a price book: the token counts come
 from the response's usage, the cost from `Provider.cost`, the output is the
-assistant text.
+assistant text. A book whose two rates are in different currencies is an `Err`
+(`Provider.cost`).
+
+    Trace.forResponse runId model book response
+        |> Task.fromResult
+        |> Task.andThen (Trace.record db)
 -}
-forResponse : String -> String -> Provider.PriceBook -> Provider.ChatResponse -> Trace
+forResponse : String -> String -> Provider.PriceBook -> Provider.ChatResponse -> Result Error Trace
 forResponse runId model book response =
-    let
-        money = Provider.cost book response.usage
-    in
-        { runId = runId
-        , model = model
-        , promptTokens = response.usage.promptTokens
-        , completionTokens = response.usage.completionTokens
-        , costMinor = Decimal.toString (Money.amount money)
-        , currency = Money.currencyCode (Money.currency money)
-        , output = response.content
-        }
+    case Provider.cost book response.usage of
+
+        Ok money ->
+            Ok
+                { runId = runId
+                , model = model
+                , promptTokens = response.usage.promptTokens
+                , completionTokens = response.usage.completionTokens
+                , costMinor = Decimal.toString (Money.amount money)
+                , currency = Money.currencyCode (Money.currency money)
+                , output = response.content
+                }
+
+        Err e ->
+            Err e
 
 
 -- ── Tables ──────────────────────────────────────────────────────────
@@ -262,10 +271,10 @@ recordCall db e m =
     case m.result of
 
         Ok r ->
-            insertRow db e (callRow e m.facts r.usage r.content)
+            insertCall db e (callRow e m.facts r.usage r.content)
 
         Err _ ->
-            insertRow db e (callRow e m.facts noUsage "")
+            insertCall db e (callRow e m.facts noUsage "")
 
 
 {-| Record a measured native tool call (`Provider.measureTools`). -}
@@ -274,10 +283,22 @@ recordToolCall db e m =
     case m.result of
 
         Ok r ->
-            insertRow db e (callRow e m.facts r.usage r.content)
+            insertCall db e (callRow e m.facts r.usage r.content)
 
         Err _ ->
-            insertRow db e (callRow e m.facts noUsage "")
+            insertCall db e (callRow e m.facts noUsage "")
+
+
+-- Write a call row, or fail with the Err of a book that cannot price it.
+insertCall : Db -> Ledger -> Result Error RowIn -> Task Error ()
+insertCall db e r =
+    case r of
+
+        Ok row ->
+            insertRow db e row
+
+        Err err ->
+            Task.fail err
 
 
 noUsage : Provider.Usage
@@ -285,22 +306,33 @@ noUsage =
     { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
 
 
-callRow : Ledger -> Provider.CallFacts -> Provider.Usage -> String -> RowIn
+-- A book whose two rates are in different currencies prices nothing: the row
+-- is not written and the call's record is that `Err` (Provider.cost).
+callRow : Ledger -> Provider.CallFacts -> Provider.Usage -> String -> Result Error RowIn
 callRow e facts usage output =
-    { model = facts.adapter
-    , promptTokens = usage.promptTokens
-    , completionTokens = usage.completionTokens
-    , cost =
+    let
+        row c =
+            { model = facts.adapter
+            , promptTokens = usage.promptTokens
+            , completionTokens = usage.completionTokens
+            , cost = c
+            , output = output
+            , facts = Just facts
+            }
+    in
         case e.book of
 
             Just book ->
-                Just (Provider.cost book usage)
+                case Provider.cost book usage of
+
+                    Ok m ->
+                        Ok (row (Just m))
+
+                    Err err ->
+                        Err err
 
             Nothing ->
-                Nothing
-    , output = output
-    , facts = Just facts
-    }
+                Ok (row Nothing)
 
 
 {-| Record a cost that is not a model call: a training run's spend, for

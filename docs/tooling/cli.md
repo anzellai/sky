@@ -443,7 +443,7 @@ writes a `profile/` directory next to your project on stop:
 
 Options:
 
-- `--profile-dir <dir>` — where to write (default `profile/`, relative to the project root).
+- `--profile-dir <dir>` — where to write (default `profile/` in the project root; a relative `<dir>` is read against the directory you ran `sky` in). The app gets an absolute path, so a Sky.Spa backend (which runs in its build folder) and a `Std.App` entry write there too.
 - `--profile-timeout <dur>` — if the app hasn't exited after `<dur>` (e.g. `30s`, `2m`), dump profiles with a hang verdict and exit. **Opt-in** — leave it off for a server (which "hangs" by design); it still profiles until you Ctrl-C it.
 
 ```sh
@@ -582,8 +582,13 @@ halves compile can report the same warning once per half.
 File-watch-driven hot rebuild + restart. Watched scope is a strict
 allowlist: `sky.toml` + the entry-point's directory (recursive `.sky`
 walk) + `tests/` at the project root if present. Generated dirs
-(`sky-out/`, `.skycache/`, `.skydeps/`, `node_modules/`, `.git/`) are
-excluded.
+(`sky-out/`, `.skycache/`, `.skydeps/`, `.skyapp/`, `.split/`,
+`node_modules/`, `.git/`) are excluded.
+
+A `Std.App` entry (`main = App.run app`) is built for the sky.toml `[app]
+target`, else `web`, as `sky run` builds it. With `[database] embedded = true`
+the spawned app gets the embedded cluster's DSN on every restart, on every
+target.
 
 ```bash
 sky watch                           # entry: src/Main.sky
@@ -1021,6 +1026,21 @@ usable directly in a deploy pipeline: `SKY_DB_OP=migrate ./sky-out/app`.
 
 - `sky db status` exits **non-zero on drift** (an applied migration
   whose SQL was edited) — use it as a CI schema-drift gate.
+- `sky db status` runs the app with its databases **read-only**
+  (`SKY_READ_ONLY_DB=status`, v0.29.2), so it writes nothing. The app's `main`
+  runs up to `Db.migrate`, which prints the report and exits. A write
+  *before* `Db.migrate` (a boot log row, a `CREATE TABLE IF NOT EXISTS`)
+  therefore fails with "attempt to write a readonly database" (SQLite) or
+  "cannot execute … in a read-only transaction" (PostgreSQL), and the error
+  says so and names this mode. Move that write after `Db.migrate`, or use
+  file migrations (`sky db init`): with `db/migrations`, `sky db status`
+  reads the files and the ledger and does not run `main`. An app with no
+  `Db.migrate` (one that migrates with `Store.migrate`, which creates and
+  alters tables) has no migration status to report, and its first write
+  fails the same way: compare it with `sky db check`, which reads the
+  code's `Store.project` and runs no app code. A read-only
+  SQLite connection keeps `busy_timeout`, so it waits for a writer instead
+  of failing with "database is locked".
 - `sky db migrate` exits non-zero if a migration fails — run it as a
   pre-cutover deploy step so a bad migration blocks the rollout.
 - There is no `migrate <singlefile>`: migrations are an ordered,
@@ -1039,7 +1059,7 @@ sky db init                      # scaffold db/migrations/ + db/schema.json (onc
 sky db migrate --gen init        # first migration: CREATE TABLE for every store
 # …add a field to a record, then:
 sky db migrate --gen add_stock   # → addColumn (required cols: NOT NULL DEFAULT <declared or zero>)
-sky db status                    # ✓ applied / ○ pending per committed file vs the ledger
+sky db status                    # ✓ applied / ○ pending / ✗ EDITED per committed file vs the ledger
 sky db migrate                   # apply the committed db/migrations/*.json to the live DB
 sky db seed                      # run the entry module's seed : Db -> Task Error ()
 ```
@@ -1061,9 +1081,125 @@ re-stamped once with its ops checksum (one log line per file). See
 `docs/migration/v0.29.md`.
 
 `sky db status` compares the committed files against the live `_sky_migrations`
-ledger and **exits non-zero while anything is pending** — a ready-made "is this
-DB up to date?" deploy gate. `sky db seed` runs the `seed` binding your entry
+ledger, with the checksum check `sky db migrate` and `sky db check` use, and
+**exits non-zero while anything is pending or edited** (an applied file changed
+afterwards is EDITED) — a ready-made "is this DB up to date?" deploy gate. `sky db seed` runs the `seed` binding your entry
 module exposes (`module Main exposing (main, db, seed)`), against the live DB.
+
+### `sky db check` — does the live database match the code?
+
+```bash
+sky db check                 # report; exit 0 when it matches, 1 on drift, 2 when it cannot run
+sky db check --sql           # print the SQL that makes the database match the code (never run)
+sky db check --sql --write   # also save the safe steps as a migration in db/migrations
+sky db check --code          # what the code needs to read the database safely
+```
+
+`sky db check` reads the live database and changes nothing. It connects the way
+the app does (`DATABASE_URL`, `<PREFIX>_DB_PATH`, `SKY_DB_PATH` or `sky.toml
+[database]`), so it works on a local cluster, a CI database or a remote one, on
+PostgreSQL and SQLite. Its helper runs with `SKY_READ_ONLY_DB=check`: a SQLite file
+is opened read-only, whatever `mode` its DSN gives (`mode=ro` and the
+`query_only` PRAGMA replace it; a missing file is refused with exit 2, never
+created, for a plain path and a `file:` URI alike; a plain path keeps its own
+`?` parameters, as the app opens it). A database in WAL mode (the mode
+`Db.connect` sets) creates no `-wal` or `-shm` file: with no `-wal` file beside
+it, no process has it open and every committed page is in the main file, so it
+is read with `immutable=1`; with one, a live process holds pages the main file
+does not have yet, and the check reads through the `-wal` and `-shm` that are
+there. So the check works in a directory it cannot write, and sees a running
+app's committed rows. A `-wal` file with no `-shm` file beside it (a backup
+that copied the database and its `-wal` only) is refused with exit 2: SQLite
+reads a `-wal` only through the `-shm` index, which a read-only open would
+have to create. The message names the fix: fold the `-wal` into the database
+once (`sqlite3 x.db 'PRAGMA wal_checkpoint(TRUNCATE)'`, with no app running),
+or copy the `-shm` file with it. Every PostgreSQL transaction is read-only, and no
+telemetry table is written.
+`sky db status` runs the same way. It compares every table of the project's `db :
+Store.Project` (the `Std.Db.Store` stores, and the `Std.Db.Schema` tables that
+`Schema.toProject` adds) with the database: tables, columns, types, `NOT NULL`,
+defaults, the serial key, `UNIQUE`, and indexes with their columns, uniqueness
+and partial-index predicate. It also reports the migration ledger: each
+`db/migrations` file is applied, pending or **edited** (its checksum changed
+after it was applied), by the same rule `sky db migrate` uses. It exits 1 on any
+difference and on a pending or edited migration, so it is a CI and pre-deploy
+gate.
+
+The comparison is the `sky db migrate --gen` diff. The live database is read
+into the same model as `db/schema.json`, so `check` and `--gen` find the same
+missing tables, columns and indexes and the same type changes. `check` also sees
+what only a live database holds (`NOT NULL`, defaults, `UNIQUE`, the serial
+key). The tables the Sky runtime keeps (`sky_*`, `_sky_*`, `analytics_events`,
+`telemetry_*`) are not the app's, and are never reported.
+
+`check` compares the primary key too: a composite key, a key on another column
+than the Store's, or no key is a difference, with what it means for
+`Store.update`, `Store.upsert` and `Store.delete` (v0.29.2). A UNIQUE
+constraint over several columns (`UNIQUE (tenant, name)`) is the index it is,
+matched to a declared `Store.uniqueOn` by its columns whatever the database
+named it; one the code does not declare is a difference that names the
+constraint. An index whose column list does not describe it (an expression
+column, a collation or operator class of its own, a DESC column, INCLUDE
+columns, another index method such as `hash`, an exclusion constraint) is
+something no Store declares: `check` gives a notice for it, leaves it as it is,
+and says so in the report ("matches what the code declares; N notice(s)"). Under
+a name the code also declares, it is a difference.
+
+`check` also runs the data check the app's `Store.migrate` runs before it
+changes a table (`Store.checkProjectData`, the same runtime function), so the
+two never disagree. A column type can fit while its rows do not: a SQLite
+`TEXT` column that holds the JSON a `Codec.auto` Money field wrote fits a
+`Codec.moneyIn GBP` field by type, and `Store.migrate` refuses it. `check`
+reports such a table as drift with `Store.migrate`'s own text, and `--sql`
+gives the check query and the conversion it names, commented out. On
+PostgreSQL the refusal replaces the type finding for that column. An `Int` column that
+PostgreSQL holds as `INTEGER` (an older `Schema.createSchema` made it) is
+accepted, with a notice: a Sky Int is 64-bit, and a value above 2147483647 fails
+there.
+
+`--sql` prints each step under a comment that names the difference. A step that
+loses nothing is plain SQL, rendered by the same renderer as `sky db migrate`
+(create a table, add a column, add an index). A step that loses data or can fail
+on existing rows is commented out, with the reason: a type change, `NOT NULL` on
+a column that can hold `NULL`, a dropped column, table or index, and on SQLite
+any change that needs a table rebuild. The `INTEGER` → `BIGINT` widening is a
+commented step with its notice. `--write` saves the safe steps as a normal
+migration file (`db/migrations/<time>_db_check.json`, the same format and the
+same ops `--gen` writes), puts a dropped column or table in its inert
+`destructive` array, and updates `db/schema.json` as `--gen` does. Because
+`db/schema.json` then records the code as what the migrations build, the file
+also carries the steps `--gen` writes against the old `db/schema.json` when the
+database is ahead of it (a table adopted from `--code`): its CREATE TABLE and
+CREATE INDEX are `IF NOT EXISTS`, change nothing on this database, and build
+the table on a fresh one. A column the database has and no migration adds is
+refused (an ADD COLUMN would fail here), and nothing is written. It refuses
+while a migration is pending or edited, and in a project with no
+`db/migrations` (run `sky db init` first).
+
+`--code` lists, for the tables the code declares, the columns the code has no
+field for (and whether an insert then fails), the columns a field reads as
+another type, and the nullable columns a required field reads. For each table
+the code declares nothing for, it prints a Sky record type alias, a `Codec`
+(one `Codec.field` per column, `Codec.decimal` for a PostgreSQL `NUMERIC`
+column) and a `Store` with a `Store.default…` builder for each column default,
+a `Store.unique` for each single-column UNIQUE constraint or index, a
+`Store.uniqueOn` for each multi-column UNIQUE constraint, and a
+`Store.indexNamed` / `Store.uniqueOnNamed` for each other index under its live
+name (v0.29.2), ready to copy into a module. An index the Store cannot declare
+(a partial index, a unique index over a nullable column, or one over a column
+the stub has no field for) is a comment in the stub, and `sky db check` reports
+it until you declare it or drop it. An index whose column list does not
+describe it (an expression, a collation, …) is a comment too, and `check` gives
+a notice for it. A table with a composite primary key gets a stub that is all
+comment: a Store's key is one column. A project with no tables yet
+(`db = Store.project []`) is checked as one (v0.29.2). Each field has the type `sky db check` accepts for
+its column, so an adopted stub passes the check: a date, time, UUID or JSON
+column is a `String` (on SQLite as well, where such a type has NUMERIC
+affinity), as is any PostgreSQL type that is not a number, a boolean or binary
+data (`timestamptz`, `uuid`, `jsonb`, `interval`, an array). A default no Store
+builder declares (an expression such as `gen_random_uuid()`) is a comment in
+the stub. `sky db check` never edits your code, never runs SQL, and never
+writes a file without `--write`.
 
 ### `sky db push` — no-migration-files dev sync
 

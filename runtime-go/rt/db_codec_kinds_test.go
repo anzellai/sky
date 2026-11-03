@@ -7,7 +7,9 @@ package rt
 // which a `Codec.maybe` decoder reads as Nothing.
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -84,7 +86,7 @@ func TestRowValToJsonRawReadsEveryLegacyShapeAndRefusesTheRest(t *testing.T) {
 		{int64(0), "bool", false},
 		{true, "bool", true}, // PostgreSQL
 		{"f", "bool", false},
-		{"[1,2]", "blob", []any{float64(1), float64(2)}},
+		{"[1,2]", "blob", []any{json.Number("1"), json.Number("2")}}, // exact (fifth Judge)
 		{"anything", "text", "anything"},
 		{nil, "int", nil}, // SQL NULL stays null
 	}
@@ -159,5 +161,39 @@ func TestRenderAddColumnRefusesADefaultOfTheWrongKind(t *testing.T) {
 		if _, err := renderAddColumn("sqlite", "t", c, "2026-01-01 00:00:00", 0); err != nil {
 			t.Errorf("%s %s with default %s: unexpected error %v", c.Name, c.Type, migDefKind(c.Default), err)
 		}
+	}
+}
+
+// A NaN or an infinite Float in a Float column was written: SQLite stores
+// NaN as NULL and keeps an Infinity, PostgreSQL keeps both, and every later
+// read of the table failed ("json: unsupported value: NaN"). The write now
+// refuses it, naming the column (v0.29.2 fifth Judge).
+func TestRawToSqlArgRefusesANonFiniteFloat(t *testing.T) {
+	for _, f := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		if _, err := rawToSqlArg(f, "real", "price"); err == nil || !strings.Contains(err.Error(), `"price"`) {
+			t.Errorf("rawToSqlArg(%v, real) = %v, want an error naming the column", f, err)
+		}
+	}
+	for _, f := range []float64{0, -0.5, math.MaxFloat64, math.SmallestNonzeroFloat64} {
+		if v, err := rawToSqlArg(f, "real", "price"); err != nil || v != f {
+			t.Errorf("rawToSqlArg(%v, real) = %v, %v", f, v, err)
+		}
+	}
+}
+
+// A JSON column read its numbers through json.Unmarshal, as float64: an Int
+// past 2^53 inside a Codec.list Codec.int column read back as another Int,
+// and 9223372036854775807 as a float out of Int range, so the whole table
+// was unreadable. The column is now parsed as a decoder reads JSON text, with
+// each number kept exact (v0.29.2 fifth Judge, found by the generative codec
+// test).
+func TestRowValToJsonRawKeepsJsonNumbersExact(t *testing.T) {
+	v, err := rowValToJsonRaw("[9223372036854775807,9007199254740993,-9223372036854775808,0.1]", true, "blob", "col")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(v)
+	if string(b) != "[9223372036854775807,9007199254740993,-9223372036854775808,0.1]" {
+		t.Fatalf("read back %s", b)
 	}
 }

@@ -28,6 +28,18 @@ import Std.Time as Stime
 import Sky.Test as Test exposing (Test)
 
 
+-- A Money result formatted, or a failure naming the Err.
+formatted : Result Error Money -> String -> Test.TestResult
+formatted r want =
+    case r of
+
+        Ok m ->
+            Test.equal want (Money.format m)
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
 main =
     Test.runMain tests
 
@@ -967,7 +979,7 @@ moneySuite =
                       a = Money.fromMajor Money.USD 10
                       b = Money.fromMajor Money.USD 5
                   in
-                      Test.equal "$15.00" (Money.format (Money.add a b)))
+                      formatted (Money.add a b) "$15.00")
         , Test.test
               "percentOf 10% of $100 = $10"
               (\_ ->
@@ -984,9 +996,9 @@ moneySuite =
                   let
                       parts =
                           Money.allocate 3 (Money.fromMajor Money.USD 100)
-                      total = Money.sumOf Money.USD parts
+                      total = Money.sum Money.USD parts
                   in
-                      Test.equal "$100.00" (Money.format total))
+                      formatted total "$100.00")
         , Test.test
               "allocate $100 over 3 yields 3 parts"
               (\_ ->
@@ -1001,17 +1013,24 @@ moneySuite =
               "symbol lookup EUR"
               (\_ -> Test.equal "€" (Money.symbol Money.EUR))
         , Test.test
-              "knownCurrency USD ctor is True"
-              (\_ -> Test.isTrue (Money.knownCurrency Money.USD))
+              "add across two currencies is an Err"
+              (\_ ->
+                  Test.err
+                      (Money.add
+                          (Money.fromMajor Money.USD 1)
+                          (Money.fromMajor Money.EUR 1)))
         , Test.test
-              "knownCurrency (CurrencyRaw \"XYZ\") is False"
-              (\_ -> Test.isFalse (Money.knownCurrency (Money.CurrencyRaw "XYZ")))
+              "currencyFromCode \"XYZ\" is CurrencyRaw \"XYZ\""
+              (\_ ->
+                  Test.equal
+                      (Just (Money.CurrencyRaw "XYZ"))
+                      (Money.currencyFromCode "XYZ"))
         , Test.test
-              "isKnownCode \"USD\" (raw-string check)"
-              (\_ -> Test.isTrue (Money.isKnownCode "USD"))
+              "currencyFromCode \"USD\" is USD"
+              (\_ -> Test.equal (Just Money.USD) (Money.currencyFromCode "USD"))
         , Test.test
-              "isKnownCode \"XYZ\" rejects unknown code"
-              (\_ -> Test.isFalse (Money.isKnownCode "XYZ"))
+              "currencyFromCode \"U S\" is Nothing"
+              (\_ -> Test.equal Nothing (Money.currencyFromCode "U S"))
         , Test.test
               "currencyCode JPY"
               (\_ -> Test.equal "JPY" (Money.currencyCode Money.JPY))

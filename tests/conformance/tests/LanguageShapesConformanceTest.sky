@@ -21,6 +21,7 @@ import Sky.Core.Error as Error
 import Sky.Core.Json.Decode as Decode
 import Sky.Core.List as List
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
 import Sky.Core.Task as Task
 import Sky.Test as Test exposing (Test)
 import Std.App as App
@@ -179,6 +180,30 @@ letShapes =
             , String.fromInt (size [ 1, 2 ] + size [ "d" ])
             ]
 
+-- v0.29.2 (Judge round 8): an extensible-record alias applied to a record
+-- kept the alias's row variable and dropped the argument's fields, so this
+-- correct program was refused under rigid rows.
+type alias Named r =
+    { r | name : String }
+
+type alias Model =
+    Named { count : Int }
+
+
+namedInit : Model
+namedInit =
+    { name = "a", count = 2 }
+
+
+namedLabel : Model -> String
+namedLabel m =
+    m.name ++ String.fromInt m.count
+
+
+namedBump : Named { count : Int } -> Named { count : Int }
+namedBump m =
+    { m | count = m.count + 1 }
+
 
 tests : List Test
 tests =
@@ -237,6 +262,12 @@ tests =
     , Test.test
           "Module.value.field on a Bool field"
           (\_ -> Test.equal True App.webDefaults.csrf)
+    , Test.test
+          "an extensible-record alias applied to a record keeps its fields"
+          (\_ ->
+              Test.equal
+                  "a2a3"
+                  (namedLabel namedInit ++ namedLabel (namedBump namedInit)))
     ]
 
 

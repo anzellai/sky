@@ -1725,6 +1725,12 @@ colText c =
         Codec.CBlob ->
             "blob"
 
+        Codec.CDecimal ->
+            "decimal"
+
+        Codec.CMoneyIn _ ->
+            "decimal"
+
         Codec.CNull inner ->
             colText inner ++ "?"
 

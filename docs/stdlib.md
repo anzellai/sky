@@ -624,7 +624,7 @@ For money, billing, tax, invoices — anything where exact fractional value matt
 
 | Surface | Signature |
 |---|---|
-| `fromString` / `fromInt` / `fromFloat` | `... -> Result Error Decimal` / `Int -> Decimal` / `Float -> Decimal` |
+| `fromString` / `fromInt` / `fromFloat` | `... -> Result Error Decimal` / `Int -> Decimal` / `Float -> Decimal` (`fromString` takes an exponent, `"1.5e3"`; text over 1000 characters, or a decimal over 1000 characters written out (`"1e1500"`), is an `Err`, the bound a decimal column and `Codec.decimal` read back; `fromFloat` of a NaN or an infinite Float fails as the classified `DivisionByZero`) |
 | `fromMinor places minor` | `Int -> Int -> Decimal` (cents → dollars: `fromMinor 2 12345` → `123.45`) |
 | `zero` / `one` / `oneHundred` | `Decimal` constants |
 | `add` / `sub` / `mul` | `Decimal -> Decimal -> Decimal` |
@@ -636,7 +636,7 @@ For money, billing, tax, invoices — anything where exact fractional value matt
 | `min` / `max` | `Decimal -> Decimal -> Decimal` |
 | `isZero` / `isPositive` / `isNegative` | `Decimal -> Bool` |
 | `percentOf` / `addPercent` / `subPercent` | `Decimal -> Decimal -> Decimal` (pct as Decimal: `Dec.fromInt 10` = 10%) |
-| `toString` / `toStringFixed n` / `toFloat` / `toInt` / `toMinor n` | `Decimal -> String` (etc.) |
+| `toString` / `toStringFixed n` / `toFloat` / `toInt` / `toMinor n` | `Decimal -> String` (etc.). `toInt` and `toMinor` past the 64-bit Int range, and `toFloat` past the Float range, fail as the classified `NumericOverflow` (v0.29.2), never a wrapped number or an infinite Float |
 | `formatWith` | `{thousands, decimal, places} -> Decimal -> String` (US/EU/FR conventions) |
 | `sum` | `List Decimal -> Decimal` |
 
@@ -646,29 +646,35 @@ For money, billing, tax, invoices — anything where exact fractional value matt
 import Std.Money as Money exposing (Money, Currency)
 ```
 
-ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed enum of 50+ codes (USD, EUR, GBP, JPY, CHF, AUD, CAD, …, BTC, ETH, USDT, USDC) plus `CurrencyRaw String` for the long tail. All arithmetic enforces currency match.
+ISO 4217 minor-unit awareness (JPY=0dp, USD=2dp, BHD=3dp). `Currency` is a typed enum of 50+ codes (USD, EUR, GBP, JPY, CHF, AUD, CAD, …, BTC, ETH, USDT, USDC) plus `CurrencyRaw String` for the long tail.
+
+**The one rule (v0.29.2).** Every operation that combines two Money values by arithmetic or by order returns `Result Error _`: `add`, `sub`, `sum`, `compare`, `lt`, `lte`, `gt`, `gte`. Two different currencies are an `Err` (kind `InvalidInput`) that names both currencies. The one exception is equality: `eq` / `neq` are plain `Bool`, because two amounts in different currencies are not equal. Scaling one value stays total.
 
 | Surface | Signature |
 |---|---|
 | `fromMajor c n` / `fromMinor c n` / `fromString c s` | `Currency -> ... -> Money` (string is `Result Error Money`) |
-| `zero c` / `zeroOf c` | `Currency -> Money` |
+| `zero c` | `Currency -> Money` (for the zero of `m`'s currency: `zero (currency m)`) |
 | `amount` / `currency` / `currencyCode` | `Money -> Decimal` / `Currency` / `String` |
-| `add` / `sub` | `Money -> Money -> Money` (currency-matched; no-op on mismatch) |
+| `add` / `sub` | `Money -> Money -> Result Error Money` (`Err` for two currencies) |
+| `sum c xs` | `Currency -> List Money -> Result Error Money` (`Ok (zero c)` for `[]`) |
+| `compare` | `Money -> Money -> Result Error Int` |
+| `lt` / `lte` / `gt` / `gte` | `Money -> Money -> Result Error Bool` |
+| `eq` / `neq` | `Money -> Money -> Bool` (total; `False` / `True` across currencies) |
+| `eqCurrency` | `Currency -> Currency -> Bool` |
 | `mul scalar m` | `Decimal -> Money -> Money` |
 | `neg` / `abs` | `Money -> Money` |
-| `allocate parts m` | `Int -> Money -> List Money` (fair split — `$100/3 → [$33.34, $33.33, $33.33]`, sum-preserving) |
-| `sumOf c xs` | `Currency -> List Money -> Money` |
-| `eq` / `neq` / `lt` / `lte` / `gt` / `gte` / `compare` | `Money -> Money -> Bool` (Int for compare) |
+| `allocate parts m` | `Int -> Money -> List Money` (fair split — `$100/3 → [$33.34, $33.33, $33.33]`, sum-preserving: every part is whole minor units except that the digits below the minor unit go to the first part, `1.005 USD / 3 → [0.345, 0.33, 0.33]`). Parts below 1 fail as `DivisionByZero`, and above 10000000 as `NumericOverflow` |
 | `isZero` / `isPositive` / `isNegative` | `Money -> Bool` |
 | `percentOf` / `addPercent` / `subPercent` | `Decimal -> Money -> Money` |
-| `format` / `formatWithCode` | `Money -> String` (`"$108.88"` / `"USD 108.88"`) |
-| `toMinor` | `Money -> Int` |
+| `format` / `formatWithCode` | `Money -> String` (`"$108.88"` / `"108.88 USD"`) |
+| `toMinor` | `Money -> Int` (minor units past the 64-bit Int range, such as 9.22 ETH and up, fail as the classified `NumericOverflow`; store such amounts with `Codec.moneyIn`) |
 | `minorUnits` / `symbol` / `currencyName` | `Currency -> ...` |
-| `knownCurrency` | `Currency -> Bool` (False only for `CurrencyRaw _`) |
-| `isKnownCode` | `String -> Bool` (raw ISO code predicate — use for form input) |
-| `parseCurrency` | `String -> Currency` (falls back to `CurrencyRaw` on unknown) |
-| `setRate from to rate` / `getRate` / `hasRate` / `clearRates` | FX rate registry (process-local) |
-| `convert to m` | `Currency -> Money -> Result Error Money` |
+| `currencyFromCode` | `String -> Maybe Currency` (3 to 10 ASCII letters or digits, read in upper case; `CurrencyRaw` for a code Sky does not name; `Nothing` for anything else) |
+| `Rates` / `rates triples` | an explicit exchange-rate table: `List ( Currency, Currency, Decimal ) -> Rates` (a rate at or below zero is left out) |
+| `rate from to fx` | `Currency -> Currency -> Rates -> Maybe Decimal` (`Just 1` for one currency; the inverse of the other direction when only that is given) |
+| `convert fx to m` | `Rates -> Currency -> Money -> Result Error Money` (`Err` naming both currencies when there is no rate). The pair's own rate multiplies the amount; with only the other direction's rate `r`, the amount is divided by `r` (3 EUR at USD->EUR 3 is exactly 1 USD), rounded to 16 decimal places only when the quotient does not end sooner, half away from zero |
+
+There is no global rate table: build `Rates` where the rates come from (config, a feed) and pass it where you convert. A Sky.Spa client and the server see the same value.
 
 ### `Std.Time` — IANA-zone helpers complementing kernel `Time`
 
@@ -1379,17 +1385,33 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
 
 - **`Std.Codec`** — `Codec.auto blank` reflection-derives from a zero-value witness
   (scalars → columns, `Maybe` → nullable, list/nested record → JSON blob, nullary
-  enum → readable name); a data-carrying custom type is not derivable (reading it is
-  an `Err`), so give that field a `taggedUnion` codec through `Codec.autoWith`; **snake_case** columns/keys by default (`Codec.autoCamel` keeps
-  camelCase). A `Json.Value` field carries any JSON when the blank gives it a JSON
-  value (`data = Json.Encode.null`; `Just Json.Encode.null` for a `Maybe Json.Value`).
-  The blank cannot mark the elements of a `List Json.Value` or a
-  `Dict String Json.Value` field, so reading one is a loud `Err`. Make the field one
-  `Json.Value` that holds the whole array or object, and read its parts with
-  `Json.Decode`.
+  enum → readable name, custom type with data → `{"tag":…,"v0":…}` read back by
+  each variant's payload types, v0.29.2); a variant carrying a `Decimal`, `Money`,
+  `Currency`, `Json.Value` or a type variable cannot be read back, so the field is
+  a builder problem (`Codec.problems`, refused by `Store.fromCodec`): give it a
+  `taggedUnion` codec through `Codec.autoWith`; **snake_case** columns/keys by default (`Codec.autoCamel` keeps
+  camelCase; two fields that become one key, in the record or in any record it holds, are a builder problem). A `Json.Value` field carries any JSON when the blank gives it a JSON
+  value (`data = Json.Encode.null`; `Just Json.Encode.null` for a `Maybe Json.Value`;
+  a first element for a `List Json.Value` or `Dict String Json.Value`, v0.29.2),
+  or give the field its codec (`Codec.autoWith [ ( "items", Codec.list Codec.value ) ] blank`).
+  A `Json.Value` slot the blank gives no JSON value (`items = []`, `Dict.empty`, `more = Nothing`,
+  at any depth) is a builder problem: a value written there could not be read back.
+  A `Just` written as null (`Just Nothing`, `Just Json.Encode.null`) is refused by a
+  `Std.Db.Store` write, wherever the `Maybe` is (a List, a record, a Dict value, a
+  variant's payload): it would read back as `Nothing`.
   **`Codec.autoWith [ ("active", intBool) ] blank`** overrides specific
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
-  format) — no full hand-written codec for a one-field tweak. `toJson` / `fromJson`
+  format) — no full hand-written codec for a one-field tweak. A key is the
+  column or the record field (`"price_list"` or `"priceList"`, v0.29.2); a key
+  that is neither is listed by `Codec.problems`, fails the decoder and makes
+  `Store.fromCodec` refuse the store. **Decimal and
+  Money (v0.29.2):** `Codec.decimal` (the canonical string `"12.5"`, a strict
+  grammar with no exponent and at most 1000 characters) and `Codec.moneyIn GBP`
+  (one currency, the amount as a decimal string) map to an exact decimal column
+  (`NUMERIC` on Postgres, `TEXT` on SQLite, ordered, compared and summed exactly
+  by the Store); `Codec.moneyObject` is `{"amount","currency"}` in a JSON column;
+  `Codec.isoCurrency` is the code string. A `Codec.auto` Decimal or Money field
+  keeps its JSON-text column. `toJson` / `fromJson`
   / `fromJsonSafe`; explicit `object`/`field`/`taggedUnion`/`enum` for full control.
   `Codec.inline .inner innerFields` adds an embedded record's object builder
   (`ObjectCodec r r`) to an outer one with its keys written flat beside the
@@ -1422,19 +1444,39 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   JSON object that its field's codec does not read, with the reason (the
   field's own decoder, or, for `Codec.auto`, the blank record with that
   value in the field); the Store uses it to name the column a row fails on.
+  `Codec.writeChecks codec` (v0.29.2) lists the fields of a record codec that
+  are partial (their encoder can write a value their own reader refuses), with
+  the in-memory check the Store runs on each write: that field's own reader.
+  Partiality is derived from the codec tree, so a container of a partial codec
+  is partial at any depth. The partial leaves are `Codec.decimal`,
+  `Codec.moneyIn` and `Codec.moneyObject` (a computed Decimal written out
+  longer than the 1000 characters a reader takes; another currency for
+  `moneyIn`), `Codec.isoCurrency` (a `CurrencyRaw` code a reader refuses),
+  `Codec.enum` (a value not in its pairs), `Codec.taggedUnion` (its encoder is
+  your function) and a `Codec.auto` field whose type holds a Decimal or a
+  Money. A record of plain fields has none. An enum value not in its pairs is
+  written by `toJson` as `{"notInEnum": "<Constructor>"}`, which every reader
+  refuses, never as `""`. `Codec.problems codec` lists what is wrong with the
+  codec as built (an `autoWith` key that names no field, two keys naming one
+  column, one enum name for two values, one union tag for two variants, one
+  object key for two fields, a `moneyIn` code that is not a code).
   `Codec.maybe c` reads only JSON `null` as `Nothing` (v0.29): any other
   value must decode as `c`, at any depth, so a `"x"` in a `Maybe Int` field
   or a bad element of a `List (Maybe a)` is an `Err` naming where it failed,
   never a silent `Nothing`. A `Codec.object` field must be present, a
   `Maybe` included (`null` for `Nothing`).
   `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
-  `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
+  `[key, value]` pairs, so any comparable key round-trips. `Codec.value`
+  (v0.29.2) is a raw `Json.Value`, as it is both ways (a JSON text column, the
+  open schema `{}`): `Codec.list Codec.value` carries a `List Json.Value`
+  field whatever the blank holds (`Codec.auto` reads one only when its blank
+  holds a JSON value, see above). `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type
   that holds a function, a `Secret`, a key or a runtime handle has no codec and
   is refused at compile time. Pure Sky.
 - **`Std.Db.Store`** — `fromCodec |> primaryKey`/`serial`/`unique`/`defaultNow`/
   `touchOnUpdate`/`defaultText`/`defaultInt`/`defaultBool`/`defaultFloat`/`defaultWith`/
-  `generated` and the indexes `index`/`uniqueOn`/`uniqueWhere` (schema); `create` /
+  `generated` and the indexes `index`/`uniqueOn`/`uniqueWhere` (`indexNamed`/`uniqueOnNamed` keep an existing index's name, v0.29.2) (schema); `create` /
   `migrate` (one rule with `sky db migrate --gen`: a `Maybe` field is nullable, any
   other field `NOT NULL DEFAULT` its declared default else zero, an existing column
   is never altered), `insert`/`insertMany`/`update`/
@@ -1795,6 +1837,7 @@ card name photo =
 | `rect`, `roundedRect`, `ellipse`, `arc`, `line` | anti-aliased shapes; a `Paint` is `Fill colour` or `Stroke width colour` (an outline inside the box) |
 | `roundedMask`, `ellipseMask`, `alphaMask` | shapes a pasted image shows through |
 | `paste x y mask bytes`, `pasteCanvas x y mask canvas` | draw an image or another canvas over what is there |
+| `pasteExact x y bytes` | put an image's pixels in place of the canvas's, with no blending, each colour byte for byte (v0.29.2) |
 | `blur sigma`, `resize filter w h` | Gaussian blur (three box passes); `Nearest` / `Bilinear` / `CatmullRom` / `Lanczos` |
 | `loadFont path index`, `fontFromBytes bytes index`, `defaultFont` | TrueType / OpenType fonts (a `.ttc` by index); Go Regular built in |
 | `text style x y string`, `measure font size string` | text with (x, y) at the left and the top of the ascent; its size in pixels |
@@ -1819,8 +1862,11 @@ can come out of `encode` with its colour channels moved, even where nothing is
 drawn over it. The alpha is exact. The colour moves by at most 2 from alpha 128 up
 (1 at alpha 254), 4 at alpha 64, 16 at alpha 16, and more near alpha 0 (at
 alpha 1 the colour is lost). A fully opaque pixel is copied exactly, and a fully
-transparent pixel stays fully transparent. No paste copies semi-transparent
-pixels exactly, so a test compares such output with `pixelDiff` and a tolerance.
+transparent pixel stays fully transparent. `pasteExact` (v0.29.2) copies
+pixels exactly: it replaces what is under the image (no blending) and keeps
+each colour byte for byte, also at alpha 0, until a later step draws over the
+pixel. Output made only of `blank`, opaque shapes and `pasteExact` can be
+compared byte for byte; anything else with `pixelDiff` and a tolerance.
 
 ### `Std.Xml` — safe XML parsing (with `Std.Xml.Decode` and `Std.Xml.Encode`)
 

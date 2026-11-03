@@ -57,26 +57,100 @@ func canvasColour(op string, packed int64) (color.NRGBA, any) {
 	return color.NRGBA{uint8(packed >> 24), uint8(packed >> 16), uint8(packed >> 8), uint8(packed)}, nil
 }
 
+// canvasExactLayer keeps the exact (non-premultiplied) colour of the pixels a
+// pasteExact step wrote. The raster stores premultiplied 8-bit RGBA, which
+// loses the colour of a semi-transparent pixel, so the colour is kept here as
+// well. A kept pixel is used at encode only while the raster still holds the
+// premultiplied form of it: a later step that drew over the pixel changed
+// that value, and then the raster's pixel is the answer. (A step that writes
+// the same premultiplied value back leaves a colour that premultiplies to
+// it, so either answer is a faithful one.) A resize drops the layer.
+type canvasExactLayer struct {
+	patches []canvasExactPatch
+}
+
+// canvasExactPatch is one pasteExact step: the exact colours of the pixels it
+// wrote, over the part of the canvas it covered. Only the pasted pixels are
+// kept, so the layer costs the size of the pasted images, not of the canvas.
+type canvasExactPatch struct {
+	px *image.NRGBA
+}
+
+// paste writes src with its top-left at (x, y) into dst and the layer,
+// replacing what is there (no blending), clipped to the canvas.
+func (l *canvasExactLayer) paste(dst *image.RGBA, src image.Image, x, y int) *canvasExactLayer {
+	if l == nil {
+		l = &canvasExactLayer{}
+	}
+	b := src.Bounds()
+	r := image.Rect(x, y, x+b.Dx(), y+b.Dy()).Intersect(dst.Rect)
+	if r.Empty() {
+		return l
+	}
+	patch := image.NewNRGBA(r)
+	for py := r.Min.Y; py < r.Max.Y; py++ {
+		for px := r.Min.X; px < r.Max.X; px++ {
+			c := color.NRGBAModel.Convert(src.At(b.Min.X+px-x, b.Min.Y+py-y)).(color.NRGBA)
+			dst.SetRGBA(px, py, color.RGBAModel.Convert(c).(color.RGBA))
+			patch.SetNRGBA(px, py, c)
+		}
+	}
+	l.patches = append(l.patches, canvasExactPatch{px: patch})
+	return l
+}
+
+// apply returns the image to encode: dst itself when no pixel was pasted
+// exactly, else its non-premultiplied copy with each kept pixel's exact
+// colour where the raster still holds it (a later patch over an earlier one
+// wins).
+func (l *canvasExactLayer) apply(dst *image.RGBA) image.Image {
+	if l == nil || len(l.patches) == 0 {
+		return dst
+	}
+	out := image.NewNRGBA(dst.Rect)
+	draw.Draw(out, dst.Rect, dst, dst.Rect.Min, draw.Src)
+	for _, p := range l.patches {
+		r := p.px.Rect
+		for py := r.Min.Y; py < r.Max.Y; py++ {
+			for px := r.Min.X; px < r.Max.X; px++ {
+				c := p.px.NRGBAAt(px, py)
+				if dst.RGBAAt(px, py) == color.RGBAModel.Convert(c).(color.RGBA) {
+					out.SetNRGBA(px, py, c)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // canvasRender replays the list that ends at top.
 func canvasRender(op string, top *canvasNode, nesting int) (*image.RGBA, any) {
+	dst, _, bad := canvasRenderExact(op, top, nesting)
+	return dst, bad
+}
+
+// canvasRenderExact replays the list that ends at top, with the exact colours
+// of the pixels pasteExact wrote (nil when it wrote none).
+func canvasRenderExact(op string, top *canvasNode, nesting int) (*image.RGBA, *canvasExactLayer, any) {
 	if nesting > canvasMaxNesting {
-		return nil, Err[any, any](ErrInvalidInput(op + ": pasteCanvas is nested too deep"))
+		return nil, nil, Err[any, any](ErrInvalidInput(op + ": pasteCanvas is nested too deep"))
 	}
 	ops := make([]*canvasNode, top.depth+1)
 	for n := top; n != nil; n = n.prev {
 		ops[n.depth] = n
 	}
 	var dst *image.RGBA
+	var exact *canvasExactLayer
 	for _, n := range ops {
 		var bad any
 		switch n.kind {
 		case canvasOpBlank:
 			col, e := canvasColour(op, n.colour)
 			if e != nil {
-				return nil, e
+				return nil, nil, e
 			}
 			if e := canvasCheckSize(op, n.ints[0], n.ints[1]); e != nil {
-				return nil, e
+				return nil, nil, e
 			}
 			dst = image.NewRGBA(image.Rect(0, 0, n.ints[0], n.ints[1]))
 			if col.A != 0 {
@@ -85,11 +159,11 @@ func canvasRender(op string, top *canvasNode, nesting int) (*image.RGBA, any) {
 		case canvasOpFromImage:
 			src, _, e := imageDecodeLimited(op, n.bytes)
 			if e != nil {
-				return nil, e
+				return nil, nil, e
 			}
 			b := src.Bounds()
 			if e := canvasCheckSize(op, b.Dx(), b.Dy()); e != nil {
-				return nil, e
+				return nil, nil, e
 			}
 			dst = image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
 			draw.Draw(dst, dst.Rect, src, b.Min, draw.Src)
@@ -98,34 +172,41 @@ func canvasRender(op string, top *canvasNode, nesting int) (*image.RGBA, any) {
 		case canvasOpPaste:
 			src, _, e := imageDecodeLimited(op, n.bytes)
 			if e != nil {
-				return nil, e
+				return nil, nil, e
 			}
 			bad = canvasPasteImage(op, dst, src, n)
 		case canvasOpPasteCanvas:
 			src, e := canvasRender(op, n.src, nesting+1)
 			if e != nil {
-				return nil, e
+				return nil, nil, e
 			}
 			bad = canvasPasteImage(op, dst, src, n)
+		case canvasOpPasteExact:
+			src, _, e := imageDecodeLimited(op, n.bytes)
+			if e != nil {
+				return nil, nil, e
+			}
+			exact = exact.paste(dst, src, n.ints[0], n.ints[1])
 		case canvasOpBlur:
 			canvasBlur(dst, n.floats[0])
 		case canvasOpResize:
 			if e := canvasCheckSize(op, n.ints[0], n.ints[1]); e != nil {
-				return nil, e
+				return nil, nil, e
 			}
 			dst = canvasResize(dst, n.ints[2], n.ints[0], n.ints[1])
+			exact = nil
 		case canvasOpText:
 			col, e := canvasColour(op, n.colour)
 			if e != nil {
-				return nil, e
+				return nil, nil, e
 			}
 			canvasDrawText(dst, n.font, n.floats[0], col, n.ints[0], n.ints[1], n.text)
 		}
 		if bad != nil {
-			return nil, bad
+			return nil, nil, bad
 		}
 	}
-	return dst, nil
+	return dst, exact, nil
 }
 
 // --- paths -------------------------------------------------------------------

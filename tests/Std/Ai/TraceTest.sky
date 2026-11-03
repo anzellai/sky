@@ -53,10 +53,18 @@ book c =
             Provider.freePriceBook c
 
 
+-- The amount a book prices the test usage at (zero for a book in two
+-- currencies, which Provider.cost refuses).
+costOf : Provider.PriceBook -> Decimal.Decimal
+costOf b =
+    Provider.cost b usage |> Result.map Money.amount
+        |> Result.withDefault Decimal.zero
+
+
 -- The exact cost of one answered call in the test book.
 oneCall : String
 oneCall =
-    Decimal.toString (Money.amount (Provider.cost (book USD) usage))
+    Decimal.toString (costOf (book USD))
 
 
 fresh : Task Error Db
@@ -276,7 +284,7 @@ lifecycleTotals ( s, lines ) =
               [ ( "USD"
                 , Decimal.toString
                       (Decimal.add
-                          (Money.amount (Provider.cost (book USD) usage))
+                          (costOf (book USD))
                           (Money.amount (Money.fromMajor USD 3)))
                 )
               ]
@@ -375,7 +383,7 @@ legacyKept ( found, total ) =
                               (Result.withDefault
                                   Decimal.zero
                                   (Decimal.fromString "0.5"))
-                              (Money.amount (Provider.cost (book USD) usage))))
+                              (costOf (book USD))))
                       total
                 ]
 
@@ -513,6 +521,32 @@ agentTraced ( found, n ) =
 tests : List Test
 tests =
     [ Test.test
+          "a price book in two currencies has no cost: Provider.cost is an Err, not a crash"
+          (\_ ->
+              case Provider.cost
+                       { inputPer1k = Money.fromMinor USD 1
+                       , outputPer1k = Money.fromMinor EUR 1
+                       }
+                       usage of
+
+                  Err e ->
+                      -- It names Provider.cost, never the Money.add inside it
+                      -- (v0.29.2 sixth Judge).
+                      if String.startsWith
+                          "InvalidInput: Provider.cost: "
+                          (Error.toString e)
+                          && String.contains "USD" (Error.toString e)
+                          && String.contains "EUR" (Error.toString e)
+                          && not
+                                 (String.contains "Money.add" (Error.toString e)) then
+                          Test.pass
+
+                      else
+                          Test.fail (Error.toString e)
+
+                  Ok _ ->
+                      Test.fail "a mixed book was priced")
+    , Test.test
           "a call through Trace.tracedChat is a row with its facts"
           (\_ -> expectOk aCallRecordsItsFacts callRows)
     , Test.test

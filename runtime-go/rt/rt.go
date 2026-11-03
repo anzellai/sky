@@ -1763,6 +1763,10 @@ func AsTuple2(v any) SkyTuple2 {
 	if t, ok := v.(SkyTuple2); ok {
 		return t
 	}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsTuple2(u)
+	}
+	failOnValuelessContainer("a tuple", v)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Ptr {
 		if rv.IsNil() {
@@ -1781,6 +1785,10 @@ func AsTuple3(v any) SkyTuple3 {
 	if t, ok := v.(SkyTuple3); ok {
 		return t
 	}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsTuple3(u)
+	}
+	failOnValuelessContainer("a tuple", v)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Ptr {
 		if rv.IsNil() {
@@ -1821,6 +1829,10 @@ func AsTuple2T[A any, B any](v any) T2[A, B] {
 	if t, ok := v.(SkyTuple2); ok {
 		return T2[A, B]{V0: Coerce[A](t.V0), V1: Coerce[B](t.V1)}
 	}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsTuple2T[A, B](u)
+	}
+	failOnValuelessContainer("a tuple", v)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Ptr {
 		if rv.IsNil() {
@@ -1845,6 +1857,10 @@ func AsTuple3T[A any, B any, C any](v any) T3[A, B, C] {
 	if t, ok := v.(SkyTuple3); ok {
 		return T3[A, B, C]{V0: Coerce[A](t.V0), V1: Coerce[B](t.V1), V2: Coerce[C](t.V2)}
 	}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsTuple3T[A, B, C](u)
+	}
+	failOnValuelessContainer("a tuple", v)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Ptr {
 		if rv.IsNil() {
@@ -2290,7 +2306,9 @@ func AsString(v any) string {
 	if bs, ok := v.([]byte); ok {
 		return string(bs)
 	}
-	v = derefPointer(unwrapAny(v))
+	v = unwrapAny(v)
+	failOnValuelessContainer("a String", v)
+	v = derefPointer(v)
 	if s, ok := v.(string); ok {
 		return s
 	}
@@ -2483,11 +2501,10 @@ func AsList(v any) []any {
 	// Sky-source modules that route list returns through
 	// Ffi.callPure (Money.allocate, …) where runWithRecover's
 	// auto-Ok-wrap parks the slice inside a SkyResult.
-	if isSkyContainer(v) {
-		if u := unwrapAny(v); u != nil {
-			return AsList(u)
-		}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsList(u)
 	}
+	failOnValuelessContainer("a List", v)
 	return nil
 }
 
@@ -2507,11 +2524,10 @@ func AsListAny(v any) []any {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Slice {
 		// Result/Maybe unwrap, then retry.
-		if isSkyContainer(v) {
-			if u := unwrapAny(v); u != nil {
-				return AsListAny(u)
-			}
+		if u, ok := unwrapSkyContainer(v); ok {
+			return AsListAny(u)
 		}
+		failOnValuelessContainer("a List", v)
 		return nil
 	}
 	n := rv.Len()
@@ -2541,6 +2557,10 @@ func AsMapAny(v any) map[string]any {
 	if v == nil {
 		return nil
 	}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsMapAny(u)
+	}
+	failOnValuelessContainer("a Dict", v)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
 		return nil
@@ -2637,11 +2657,10 @@ func AsListT[T any](v any) []T {
 	// `Ffi.callPure` (`Money.allocate`, …) where `runWithRecover`'s
 	// auto-`Ok`-wrap parks the slice inside a `SkyResult`. Without this,
 	// `AsListT[any](Ok([...]))` returned empty and the map produced `[]`.
-	if isSkyContainer(v) {
-		if u := unwrapAny(v); u != nil {
-			return AsListT[T](u)
-		}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsListT[T](u)
 	}
+	failOnValuelessContainer("a List", v)
 	return nil
 }
 
@@ -2670,7 +2689,7 @@ func AsMapT[V any](v any) SkyDict[V] {
 			src = asSkyDict(v)
 		case rv.Kind() == reflect.Map && rv.IsNil():
 			return SkyDict[V]{}
-		case isSkyContainer(v):
+		case isUnwrappableSkyContainer(v):
 			return AsMapT[V](unwrapAny(v))
 		default:
 			// Not a Dict at all: a Go map with a non-string key (map[int]string
@@ -2742,11 +2761,10 @@ func AsInt(v any) int {
 	// Result/Maybe unwrap fallback (mirrors AsString). Only attempt
 	// on Sky container structs to avoid panicking on uncomparable
 	// types (e.g. slices, maps, funcs).
-	if isSkyContainer(v) {
-		if u := unwrapAny(v); u != nil {
-			return AsInt(u)
-		}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsInt(u)
 	}
+	failOnValuelessContainer("an Int", v)
 	// A named int (a Sky union whose constructors take no arguments,
 	// `type Main_Color int`) is an Int by kind.
 	if rv := reflect.ValueOf(v); rv.IsValid() && rv.CanInt() {
@@ -2806,11 +2824,10 @@ func AsFloat(v any) float64 {
 	case int32:
 		return float64(n)
 	}
-	if isSkyContainer(v) {
-		if u := unwrapAny(v); u != nil {
-			return AsFloat(u)
-		}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsFloat(u)
 	}
+	failOnValuelessContainer("a Float", v)
 	// REACHABLE-FROM-SKY: same shape as AsInt — classified `TypeMismatch`
 	// at the top-level recover.
 	panic(fmt.Sprintf("rt.AsFloat: expected numeric value, got %T (%v)", v, v))
@@ -2862,11 +2879,10 @@ func AsRune(v any) rune {
 		}
 		return 0
 	}
-	if isSkyContainer(v) {
-		if u := unwrapAny(v); u != nil {
-			return AsRune(u)
-		}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsRune(u)
 	}
+	failOnValuelessContainer("a Char", v)
 	return 0
 }
 
@@ -2875,11 +2891,10 @@ func AsBool(v any) bool {
 	if b, ok := v.(bool); ok {
 		return b
 	}
-	if isSkyContainer(v) {
-		if u := unwrapAny(v); u != nil {
-			return AsBool(u)
-		}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsBool(u)
 	}
+	failOnValuelessContainer("a Bool", v)
 	// REACHABLE-FROM-SKY: heterogeneous slice / untyped FFI return.
 	// Classified `TypeMismatch` at the top-level recover.
 	panic(fmt.Sprintf("rt.AsBool: expected bool, got %T (%v)", v, v))
@@ -3031,6 +3046,9 @@ func deepEq(a, b any) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
+	if eq, handled := eqValueType(a, b); handled {
+		return eq
+	}
 	if x, ok := a.(SkyArray); ok {
 		if y, ok := b.(SkyArray); ok {
 			return arraysEqual(x.t, y.t)
@@ -3052,6 +3070,15 @@ func deepEq(a, b any) bool {
 	}
 	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
 	if ra.Kind() != rb.Kind() {
+		// Cross-kind numbers: a Go int meets a Go float64 only through a
+		// `number` value, and both are the same Sky number. An integer literal
+		// in a `number` slot is emitted as a Go `int` (the function body
+		// cannot know the caller's instantiation), so `zero : number ->
+		// number; zero _ = 0` returns `int(0)` to a Float caller. Comparing
+		// the two Go values answered False for `zero 2.5 == 0.0` (v0.29.2).
+		if eq, ok := numEqCrossKind(ra, rb); ok {
+			return eq
+		}
 		// Cross-kind: when one side is a string and the other is a
 		// numeric/bool, stringify the non-string side. DB drivers
 		// return int64 for SQLite integers but Sky code compares
@@ -3291,10 +3318,8 @@ func isNumeric(v any) bool {
 	// `AsInt` / `AsFloat` unwrap a Result/Maybe container before giving up, so
 	// this must too — otherwise `cmpSafe` would answer "cannot order" for a pair
 	// the old code ordered fine.
-	if isSkyContainer(v) {
-		if u := unwrapAny(v); u != nil {
-			return isNumeric(u)
-		}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return isNumeric(u)
 	}
 	return false
 }
@@ -4387,12 +4412,21 @@ func invokeFfi(name string, args []any, pureOnly bool) any {
 func runWithRecover(name string, args []any, fn func([]any) any) (result any) {
 	defer func() {
 		if r := recover(); r != nil {
+			if isLoudByDesignPanic(r) {
+				// A kernel that fails LOUDLY on purpose (Decimal.toInt past
+				// the Int range, a division by zero, a value with no JSON
+				// form) keeps its classified panic. Turning it into an `Err`
+				// handed a bare-typed caller (`toInt : Decimal -> Int`) a
+				// Result where it expected an Int: a silent wrong value, or,
+				// before unwrapSkyContainer, an unrecoverable stack overflow.
+				panic(r)
+			}
 			result = Err[any, any](ErrFfi(fmt.Sprintf("Ffi %q panicked: %v", name, r)))
 		}
 	}()
 	raw := fn(args)
 	// Handlers that already return a Sky Result (Decimal.fromString,
-	// Money.setRate, Time.inZone, …) shouldn't get double-wrapped —
+	// Time.inZone, …) shouldn't get double-wrapped —
 	// detect via SkyResult type-assertion and pass through. Plain
 	// return values (htmlRender → String) get the existing Ok-wrap.
 	if _, ok := raw.(SkyResult[any, any]); ok {
@@ -4698,7 +4732,7 @@ func makeErrorT(kindTag int, kindName, msg string) skyErrorAdt {
 
 // Public Sky-shaped error builders. Used by the FFI runtime to
 // produce structured Error values instead of raw strings.
-func ErrIo(msg string) any      { return makeError(0, "Io", msg) }
+func ErrIo(msg string) any      { return makeError(0, "Io", withReadOnlyDbHint(msg)) }
 func ErrNetwork(msg string) any { return makeError(1, "Network", msg) }
 func ErrFfi(msg string) any     { return makeError(2, "Ffi", msg) }
 func ErrDecode(msg string) any  { return makeError(3, "Decode", msg) }
@@ -6122,7 +6156,13 @@ func Dict_union(a any, b any) any {
 // Math operations
 // ═══════════════════════════════════════════════════════════
 
+// Math_abs backs both `Math.abs : Int -> Int` and `Basics.abs : number ->
+// number`. A Float keeps its fraction: `abs -2.5` is 2.5, never the 2 that
+// AsInt's truncation gave before v0.29.2.
 func Math_abs(n any) any {
+	if isFloatish(n) {
+		return math.Abs(AsFloat(n))
+	}
 	x := AsInt(n)
 	if x < 0 {
 		return -x
@@ -6340,7 +6380,7 @@ func coerceHead(v any, z any) (any, coerceStep) {
 	}
 	// Unit (`struct{}`) is the zero-information type — coercing ANY value to it
 	// is trivially valid, there is nothing to narrow. In particular a
-	// `Result Error ()` FFI return (e.g. `Std.Money.setRate`) lowers through
+	// `Result Error ()` FFI return (e.g. a `Result Error ()` kernel) lowers through
 	// ResultCoerceOk to `Coerce[struct{}](okPayload)`, and that payload is `nil`
 	// (Unit carries no value) — so without this the Unit case would panic on
 	// well-typed Sky code. Return the unit value.
@@ -6699,6 +6739,34 @@ func unwrapAny(v any) any {
 		return justF.Interface()
 	}
 	return v
+}
+
+// unwrapSkyContainer is the one-step unwrap the As* narrowing helpers use: it
+// returns the payload of an `Ok` or a `Just` (through unwrapAny) and true, and
+// returns false for every other value, an `Err` and a `Nothing` included.
+//
+// The helpers used to test `isSkyContainer(v)` and then recurse on
+// `unwrapAny(v)`, but unwrapAny hands an `Err` or a `Nothing` back unchanged,
+// so `AsInt(Err …)` called itself until the Go stack ran out: a `fatal error:
+// stack overflow`, which no recover catches, so one bad value ended the whole
+// process (v0.29.2 seventh Judge: `Decimal.toInt` of 1e30 through
+// `Ffi.callPure`). With this, a container that holds no value falls through to
+// the helper's own answer for a value of the wrong shape (a classified panic
+// for AsInt / AsFloat / AsBool).
+func unwrapSkyContainer(v any) (any, bool) {
+	if !isUnwrappableSkyContainer(v) {
+		return nil, false
+	}
+	return unwrapAny(v), true
+}
+
+// isUnwrappableSkyContainer is true for an `Ok` or a `Just`: a Sky Result or
+// Maybe that holds a value.
+func isUnwrappableSkyContainer(v any) bool {
+	if !isSkyContainer(v) {
+		return false
+	}
+	return reflect.ValueOf(v).FieldByName("Tag").Int() == 0
 }
 
 // unwrapResultOk is the legacy name — delegates to unwrapAny.

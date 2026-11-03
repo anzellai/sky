@@ -751,21 +751,11 @@ fn narrow_call(to: &GoTy, inner: &str) -> String {
 }
 
 /// Port of `Builder.escapeGo` (doc 08 §4): Go strings are UTF-8; printable
-/// Unicode passes through, C0 controls escape.
+/// Unicode passes through, controls, NUL and U+FEFF escape
+/// ([`base::go_escape_string`], the one rule for every Go literal the build
+/// writes).
 fn escape_go(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
-            '\r' => out.push_str("\\r"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\x{:02x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
+    base::go_escape_string(s)
 }
 
 #[cfg(test)]

@@ -66,17 +66,47 @@ func pgArgs(args []any) []any {
 	return out
 }
 
-// pgArgExecutor is a dbExecutor on pgx that binds its arguments with pgArg.
-type pgArgExecutor struct{ inner dbExecutor }
+// pgArgExecutor is a dbExecutor on pgx that binds its arguments with pgArg,
+// a marked list parameter as an array (db_list_param.go), and casts a marked
+// Int placeholder to BIGINT on an INTEGER or SMALLINT column
+// (db_pgx_int_cast.go). It clears the column-type cache after a schema
+// statement, and after a marked statement fails with an error a stale entry
+// can cause.
+type pgArgExecutor struct {
+	inner dbExecutor
+	pool  *sql.DB
+}
+
+func (e pgArgExecutor) prepare(query string, args []any) (string, []any, bool) {
+	q, marked := pgIntCastQuery(e.inner, e.pool, query)
+	return q, pgArgs(pgListArgs(query, args)), marked
+}
+
+func (e pgArgExecutor) after(query string, marked bool, err error) {
+	if sqliteIsSchemaStatement(query) || (marked && pgIntStaleErr(err)) {
+		pgIntCacheReset(e.pool)
+	}
+}
 
 func (e pgArgExecutor) Exec(query string, args ...any) (sql.Result, error) {
-	return e.inner.Exec(query, pgArgs(args)...)
+	q, a, marked := e.prepare(query, args)
+	res, err := e.inner.Exec(q, a...)
+	e.after(query, marked, err)
+	return res, err
 }
 
 func (e pgArgExecutor) Query(query string, args ...any) (*sql.Rows, error) {
-	return e.inner.Query(query, pgArgs(args)...)
+	q, a, marked := e.prepare(query, args)
+	rows, err := e.inner.Query(q, a...)
+	e.after(query, marked, err)
+	return rows, err
 }
 
 func (e pgArgExecutor) QueryRow(query string, args ...any) *sql.Row {
-	return e.inner.QueryRow(query, pgArgs(args)...)
+	q, a, marked := e.prepare(query, args)
+	row := e.inner.QueryRow(q, a...)
+	if marked {
+		e.after(query, marked, row.Err())
+	}
+	return row
 }

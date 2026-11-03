@@ -123,22 +123,22 @@ main =
                    Trace.setup db
                        |> Task.andThen
                               (\_ ->
-                                  Trace.record
-                                      db
-                                      (Trace.forResponse
-                                          "run-1"
-                                          "gpt-4o-mini"
-                                          book
-                                          (response 1000 1000)))
+                                  Trace.forResponse
+                                      "run-1"
+                                      "gpt-4o-mini"
+                                      book
+                                      (response 1000 1000)
+                                      |> Task.fromResult
+                                      |> Task.andThen (Trace.record db))
                        |> Task.andThen
                               (\_ ->
-                                  Trace.record
-                                      db
-                                      (Trace.forResponse
-                                          "run-1"
-                                          "gpt-4o-mini"
-                                          book
-                                          (response 2000 0)))
+                                  Trace.forResponse
+                                      "run-1"
+                                      "gpt-4o-mini"
+                                      book
+                                      (response 2000 0)
+                                      |> Task.fromResult
+                                      |> Task.andThen (Trace.record db))
                        |> Task.andThen (\_ -> Trace.spanCount db "run-1")
                        |> Task.andThen
                               (\spans ->

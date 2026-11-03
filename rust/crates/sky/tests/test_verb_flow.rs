@@ -505,6 +505,49 @@ fn verify_reports_a_store_builder_problem() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A `Schema.blob` column has two types (v0.29.2, kept): `sky db push` /
+/// `Store.pushProject` make it TEXT holding JSON, `Schema.createSchema` makes
+/// it BYTEA. `sky verify`'s stores step names it (a notice, not a failure).
+#[test]
+fn verify_names_a_schema_blob_column() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("verifyblob");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"blobs\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        "module Main exposing (db, main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Db.Schema as Schema\n\
+         import Std.Db.Store as Store\n\
+         import Std.Log exposing (println)\n\n\n\
+         db : Store.Project\n\
+         db =\n    Schema.toProject\n        [ Schema.table \"files\" [ Schema.primaryKey (Schema.text \"id\"), Schema.blob \"data\" ] ]\n\n\n\
+         main =\n    println \"ok\"\n",
+    )
+    .unwrap();
+    let fmt = Command::new(SKY)
+        .args(["fmt", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("spawn sky fmt");
+    assert!(fmt.status.success(), "{fmt:?}");
+    let (code, out) = run_verify(&dir);
+    assert_eq!(code, 0, "a notice does not fail verify:\n{out}");
+    assert!(out.contains("✓ stores   (1 table(s)"), "{out}");
+    assert!(
+        out.contains("! stores   Std.Db.Schema: column files.data is declared Schema.blob"),
+        "the two types are named:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `sky verify`'s stores step skips with a note only when `db` is not a
 /// `Store.Project` (the type error is in the step's own entry). Any other
 /// failure of the scratch build fails the step with the build error. Before,

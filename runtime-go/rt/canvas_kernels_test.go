@@ -490,3 +490,58 @@ func TestCanvas_PastePixelPrecisionIsAsDocumented(t *testing.T) {
 		}
 	}
 }
+
+// Canvas.pasteExact (v0.29.2) moves pixels exactly: no blending, and a
+// semi-transparent pixel's colour is kept byte for byte (paste moves it by up
+// to 2 from alpha 128 up, more below). It replaces what is under it, even an
+// opaque background, and a step drawn over it afterwards still shows.
+func TestCanvas_PasteExactMovesPixelsExactly(t *testing.T) {
+	alphas := []int{0, 1, 16, 64, 128, 200, 254, 255}
+	src := image.NewNRGBA(image.Rect(0, 0, 256, len(alphas)))
+	for y, a := range alphas {
+		for x := 0; x < 256; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{uint8(x), uint8(255 - x), uint8(x / 2), uint8(a)})
+		}
+	}
+	bytesSrc := encPNG(t, src)
+	for _, bg := range []int{pack(0, 0, 0, 0), pack(255, 0, 0, 255)} {
+		c := Image_canvasBlank(260, len(alphas)+2, bg)
+		c = Image_canvasPasteExact(2, 1, bytesSrc, c)
+		img := canvasPNG(t, c)
+		for y := range alphas {
+			for x := 0; x < 256; x++ {
+				if got, want := nrgbaAt(img, x+2, y+1), src.NRGBAAt(x, y); got != want {
+					t.Fatalf("background %08x: pixel (%d,%d) = %v, want %v exactly", bg, x, y, got, want)
+				}
+			}
+		}
+		// Outside the pasted rectangle the background is untouched.
+		if got := nrgbaAt(img, 0, 0); bg != 0 && got != (color.NRGBA{255, 0, 0, 255}) {
+			t.Fatalf("background %08x: (0,0) = %v", bg, got)
+		}
+	}
+	// A rect drawn over part of the paste replaces those pixels.
+	c := Image_canvasBlank(256, len(alphas), pack(0, 0, 0, 0))
+	c = Image_canvasPasteExact(0, 0, bytesSrc, c)
+	c = Image_canvasRect(0, 0, 10, len(alphas), 0, pack(0, 0, 255, 255), c)
+	img := canvasPNG(t, c)
+	if got := nrgbaAt(img, 5, 4); got != (color.NRGBA{0, 0, 255, 255}) {
+		t.Fatalf("a rect over the paste: (5,4) = %v, want opaque blue", got)
+	}
+	if got, want := nrgbaAt(img, 100, 4), src.NRGBAAt(100, 4); got != want {
+		t.Fatalf("outside the rect: (100,4) = %v, want %v", got, want)
+	}
+	// Pasted partly off the canvas: the part inside is exact, nothing panics.
+	c = Image_canvasBlank(4, 4, pack(0, 0, 0, 0))
+	c = Image_canvasPasteExact(-250, -2, bytesSrc, c)
+	img = canvasPNG(t, c)
+	if got, want := nrgbaAt(img, 0, 0), src.NRGBAAt(250, 2); got != want {
+		t.Fatalf("clipped paste: (0,0) = %v, want %v", got, want)
+	}
+	// The typed twin draws the same.
+	a := okBytes(t, forceImageTask(t, Image_canvasEncode("png", 0, Image_canvasPasteExact(0, 0, bytesSrc, c))))
+	b := okBytes(t, forceImageTask(t, Image_canvasEncode("png", 0, Image_canvasPasteExactT(0, 0, bytesSrc, c))))
+	if !bytes.Equal(a, b) {
+		t.Fatalf("pasteExact: the typed twin draws something else")
+	}
+}

@@ -195,3 +195,52 @@ fn accepts_flat_record_witness() {
          main =\n    println \"hi\"\n",
     );
 }
+
+/// The LOWERING view of an annotated `Codec.auto` def with an empty witness
+/// pins the element from the annotation (v0.29.2 sixth Judge). The checker
+/// passed `[E2009]` on `cA : Codec RList = Codec.auto { id = "", v = [] }`
+/// because its annotated inference knew `List Int`, but the lowering view
+/// infers without the annotation: the witness lowered to
+/// `struct{ Id string; V []any }` and every read failed with "cannot decode
+/// kind interface". The witness subtree now takes the annotated types.
+#[test]
+fn an_annotated_empty_witness_is_concrete_in_the_lowering_view() {
+    use hir::SkyDb;
+    let src = module(
+        "type alias RList =\n    { id : String, v : List Int }\n\n\n\
+         type alias RDict =\n    { id : String, v : Dict.Dict String Int }\n\n\n\
+         cA : Codec RList\ncA =\n    Codec.auto { id = \"\", v = [] }\n\n\n\
+         cB : Codec RDict\ncB =\n    Codec.auto { id = \"\", v = Dict.empty }\n\n\n\
+         main =\n    println \"x\"\n",
+    )
+    .replace(
+        "import Std.Log exposing (println)",
+        "import Std.Log exposing (println)\nimport Sky.Core.Dict as Dict",
+    );
+    let mut db = SourceDb::new();
+    for (name, parse) in rc::load_stdlib(&repo_root()) {
+        db.add_module(&name, parse);
+    }
+    let mid = db.add_module("Main", syntax::parse(&src, base::FileId(0)));
+    assert_eq!(ty::check_modules(&db, &[mid]).type_errors, 0);
+    let world = ty::World::build(&db);
+    let resolved = db.resolve(mid);
+    let mut checked = 0;
+    for td in &resolved.top_defs {
+        let name = td.name.as_str();
+        if name != "cA" && name != "cB" {
+            continue;
+        }
+        let body = &resolved.bodies[&td.def];
+        let bt = ty::compute_body_types(&world, &db, mid, td.def);
+        for w in ty::codec_elem::witness_exprs(body, &db) {
+            let t = bt.expr(w).expect("the witness has a type");
+            assert!(
+                !ty::codec_elem::has_var_elem(&t),
+                "{name}: the lowering type of the witness still has a variable element: {t:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 2, "both witnesses were checked ({checked})");
+}

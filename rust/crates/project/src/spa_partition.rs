@@ -363,10 +363,9 @@ const MIXED_KERNELS: &[(&str, &[&str])] = &[
             "encodeWithDelimiter",
         ],
     ),
-    // `Std.Money`: formatting and allocation are pure. The FX-rate table
-    // (`setRate`, `getRate`, `hasRate`, `clearRates`, and `convert` through
-    // `getRate`) is process state the server registers at startup; the client
-    // would read an empty table of its own.
+    // `Std.Money`: formatting and allocation are pure. Exchange rates are an
+    // explicit `Money.Rates` value (v0.29.2), so no Money kernel holds
+    // process state.
     (
         "Money",
         &[
@@ -374,7 +373,6 @@ const MIXED_KERNELS: &[(&str, &[&str])] = &[
             "currencyName",
             "format",
             "formatWithCode",
-            "isKnownCurrency",
             "minorUnits",
             "symbol",
         ],
@@ -824,7 +822,7 @@ fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
                     // symbol string's prefix (`Db_`, `Http_`, `System_`, …).
                     // `Ffi.callPure "<Symbol>" [ args ]` / `Ffi.call` name a
                     // runtime symbol the same way; before v0.27.0 they were not
-                    // read, so `Money.getRate` (process state) ran in the client.
+                    // read, so a process-state kernel ran in the client.
                     if m == "Ffi"
                         && matches!(func.as_str(), "kernel" | "callPure" | "call" | "callTask")
                     {
@@ -1438,20 +1436,8 @@ fn ctor_head_text(src: &str, start: usize, first_arg: usize) -> Option<String> {
 
 /// Replace each type variable of `t` by its binding in `sub`.
 fn subst_ty(t: &ty::Ty, sub: &HashMap<String, ty::Ty>) -> ty::Ty {
-    // One level per level of the tree it walks: grow the stack on demand.
-    base::ensure_stack(|| match t {
-        ty::Ty::Var(n) => sub.get(n.as_str()).cloned().unwrap_or_else(|| t.clone()),
-        ty::Ty::Fun(a, b) => ty::Ty::Fun(Box::new(subst_ty(a, sub)), Box::new(subst_ty(b, sub))),
-        ty::Ty::App(n, xs) => ty::Ty::App(n.clone(), xs.iter().map(|x| subst_ty(x, sub)).collect()),
-        ty::Ty::Record(fs, ext) => ty::Ty::Record(
-            fs.iter()
-                .map(|(n, x)| (n.clone(), subst_ty(x, sub)))
-                .collect(),
-            ext.clone(),
-        ),
-        ty::Ty::Tuple(xs) => ty::Ty::Tuple(xs.iter().map(|x| subst_ty(x, sub)).collect()),
-        ty::Ty::Unit | ty::Ty::Error => t.clone(),
-    })
+    // The shared substitution: it binds a record's row variable too.
+    t.subst_vars(&|n: &str| sub.get(n).cloned())
 }
 
 /// The declared argument types of the constructor `ctor`, instantiated at the
@@ -8263,16 +8249,12 @@ mod tests {
         }
         for sym in [
             "Csv_parseStreamFromFile",
-            "Money_setRate",
-            "Money_getRate",
             "Config_loadFromFile",
             "Config_apply",
             "Table_insert",
             "Schema_createTable",
             "Cache_get",
             "Std_App_livePort",
-            "Money_hasRate",
-            "Money_clearRates",
             "Time_now",
             "Time_sleep",
             // v0.29.0: Std.Xml (parse, the accessors, Encode) and Std.Zip

@@ -106,12 +106,10 @@ func emitClassifiedPanicLog(tag, context, prefix string, r any, stack []byte) {
 // recognise — still produces a structured-log line with the raw
 // message, so users can grep.
 func classifyPanic(msg string) (kind, hint string) {
+	if kind, hint := loudPanicClass(msg); kind != "" {
+		return kind, hint
+	}
 	switch {
-	case strings.Contains(msg, "rt.IntDiv: integer division by zero"),
-		strings.Contains(msg, "rt.Rem: modulo by zero"),
-		strings.Contains(msg, "rt.Div: division by zero"):
-		return "DivisionByZero",
-			"Integer or float division by zero. Guard the divisor with `if d == 0 then Err … else Ok (n // d)` before the operation."
 	case strings.Contains(msg, "rt.AsInt: expected numeric"),
 		strings.Contains(msg, "rt.AsFloat: expected numeric"),
 		strings.Contains(msg, "rt.AsBool: expected bool"),
@@ -135,15 +133,9 @@ func classifyPanic(msg string) (kind, hint string) {
 		strings.Contains(msg, "runtime error: nil"):
 		return "NilDereference",
 			"Tried to use a nil FFI value as if it were initialised. Most Go FFI bindings return `*T` — check for nil before using."
-	case strings.Contains(msg, "Codec.auto: cannot encode"):
-		return "JsonEncodeFailure",
-			"Codec.auto was given a value with no JSON form: a function, a Secret, a key, a crypto state or a runtime handle (Process, WebSocket, Cache, ...). Keep it out of records you save or send, or write the field's codec by hand."
 	case strings.Contains(msg, "Go FFI: "):
 		return "FfiConversion",
 			"A Go FFI value could not be converted to the shape the other side needs (an integer out of range, a Go value of another type, a byte array of the wrong length), in a callback Go ran outside the binding call. Give the callback an `error` result in Go, or check the value before it crosses. See docs/migration/v0.27.md#ffi-integer-range."
-	case strings.Contains(msg, "rt.JsonEnc_encode: cannot encode"):
-		return "JsonEncodeFailure",
-			"Json.Encode.encode was given a value JSON cannot represent: a NaN or infinite Float (`Math.nan`, `Math.inf`, `Math.sqrt` of a negative number, a Float overflow). JSON has no such number. Check the Float (`Math.isNaN`) before you encode it."
 	case strings.Contains(msg, "sky.Unreachable"),
 		strings.Contains(msg, "Ffi.kernel"):
 		return "CompilerBug",

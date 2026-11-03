@@ -4,7 +4,6 @@ package rt
 // Phase 2.4.
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -46,15 +45,6 @@ func TestMoney_Symbol(t *testing.T) {
 		if got := invokeMoney(t, "Money_symbol", code); got != want {
 			t.Errorf("%s symbol: want %q got %q", code, want, got)
 		}
-	}
-}
-
-func TestMoney_IsKnownCurrency(t *testing.T) {
-	if invokeMoney(t, "Money_isKnownCurrency", "USD") != true {
-		t.Fatal("USD should be known")
-	}
-	if invokeMoney(t, "Money_isKnownCurrency", "XYZ") != false {
-		t.Fatal("XYZ should not be known")
 	}
 }
 
@@ -117,72 +107,6 @@ func TestMoney_Allocate_ExactSplit(t *testing.T) {
 		if !decimalUnbox(p).Equal(decimal.NewFromInt(3)) {
 			t.Errorf("part %d: want 3 got %v", i, decimalUnbox(p))
 		}
-	}
-}
-
-func TestMoney_FXRoundTrip(t *testing.T) {
-	// Start clean
-	invokeMoney(t, "Money_clearRates")
-
-	// Setting a rate auto-registers the inverse.
-	rate := decimalBox(decimal.NewFromFloat(0.92))
-	r := invokeMoney(t, "Money_setRate", "USD", "EUR", rate)
-	if sr, ok := r.(SkyResult[any, any]); !ok || sr.Tag != 0 {
-		t.Fatalf("setRate failed: %v", r)
-	}
-
-	// Forward rate
-	got := invokeMoney(t, "Money_getRate", "USD", "EUR")
-	sr := got.(SkyResult[any, any])
-	if sr.Tag != 0 {
-		t.Fatalf("getRate USD→EUR failed: %v", sr.ErrValue)
-	}
-	if !decimalUnbox(sr.OkValue).Equal(decimal.NewFromFloat(0.92)) {
-		t.Fatalf("USD→EUR rate: want 0.92 got %v", decimalUnbox(sr.OkValue))
-	}
-
-	// Inverse auto-registered
-	inv := invokeMoney(t, "Money_getRate", "EUR", "USD")
-	sr2 := inv.(SkyResult[any, any])
-	if sr2.Tag != 0 {
-		t.Fatalf("inverse not registered")
-	}
-	// 1/0.92 ≈ 1.0869565...
-	gotInv := decimalUnbox(sr2.OkValue)
-	expected, _ := decimal.NewFromString("1.08695652173913")
-	diff := gotInv.Sub(expected).Abs()
-	if diff.GreaterThan(decimal.NewFromFloat(0.0001)) {
-		t.Fatalf("inverse rate: want ~1.0869 got %v (diff %v)", gotInv, diff)
-	}
-
-	// hasRate
-	if invokeMoney(t, "Money_hasRate", "USD", "EUR") != true {
-		t.Fatal("hasRate USD→EUR")
-	}
-	if invokeMoney(t, "Money_hasRate", "USD", "GBP") != false {
-		t.Fatal("hasRate USD→GBP should be false (unregistered)")
-	}
-
-	// Same currency always has rate of 1
-	same := invokeMoney(t, "Money_getRate", "USD", "USD")
-	sr3 := same.(SkyResult[any, any])
-	if sr3.Tag != 0 || !decimalUnbox(sr3.OkValue).Equal(decimal.NewFromInt(1)) {
-		t.Fatalf("USD→USD rate not 1")
-	}
-
-	invokeMoney(t, "Money_clearRates")
-}
-
-func TestMoney_SetRate_ZeroRejected(t *testing.T) {
-	zero := decimalBox(decimal.Zero)
-	r := invokeMoney(t, "Money_setRate", "USD", "EUR", zero)
-	sr, ok := r.(SkyResult[any, any])
-	if !ok || sr.Tag != 1 {
-		t.Fatalf("setRate(0) should Err: %v", r)
-	}
-	msg := extractErrString(sr.ErrValue)
-	if !strings.Contains(msg, "positive") {
-		t.Fatalf("Err message should mention 'positive', got: %v", msg)
 	}
 }
 
