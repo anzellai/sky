@@ -4327,7 +4327,9 @@ impl<'a> Ctx<'a> {
                         return self.freeze_closure_context(function, *body);
                     }
                 }
-                let slot = if matches!(expected, GoTy::Func(_, _)) {
+                let slot = if matches!(expected, GoTy::Func(_, _))
+                    && !closure::slot_loses_lambda_types(actual, expected, params.len())
+                {
                     expected
                 } else {
                     actual
@@ -7256,7 +7258,8 @@ impl<'a> Ctx<'a> {
                     return None;
                 }
                 let want_cb = GoTy::Func(vec![a.clone(), b.clone()], Box::new(b.clone()));
-                if self.probe_goty(args[0]) != want_cb
+                if closure::split_function_type(&self.probe_goty(args[0]), 2)
+                    != Some((vec![a.clone(), b.clone()], b.clone()))
                     || !self.callback_reaches_slot(args[0], &[a.clone(), b.clone()], &b)
                 {
                     return None;

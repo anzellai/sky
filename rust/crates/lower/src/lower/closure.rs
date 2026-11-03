@@ -2,6 +2,21 @@
 use super::*;
 use ty::numeric::NumericBinder;
 
+/// An erased callback slot must not erase concrete information from the
+/// lambda's body. Adapt at the boundary, after lowering the typed body.
+pub(super) fn slot_loses_lambda_types(actual: &GoTy, slot: &GoTy, count: usize) -> bool {
+    let Some((args, result)) = split_function_type(actual, count) else {
+        return false;
+    };
+    let Some((slots, ret)) = split_function_type(slot, count) else {
+        return false;
+    };
+    args.iter()
+        .zip(&slots)
+        .any(|(a, s)| *a != GoTy::Any && *s == GoTy::Any)
+        || (result != GoTy::Any && ret == GoTy::Any)
+}
+
 /// Consume a proven function spine without discarding its remaining stages.
 pub(super) fn split_function_type(ty: &GoTy, count: usize) -> Option<(Vec<GoTy>, GoTy)> {
     let mut current = ty.clone();

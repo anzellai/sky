@@ -23,6 +23,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - Inferred bounds follow forward function references through the full helper
   chain. Mutually recursive unannotated functions share their types before
   generalisation, so invalid infinite recursive types are rejected.
+- Typed callback bodies keep their known types across generic function slots,
+  preserving direct field access and typed folds without extra runtime narrowing.
 
 A patch release for v0.29.1. `sky run` and `sky watch` now start the embedded
 PostgreSQL cluster and pass its address to a `Std.App` app and a Sky.Spa app,
