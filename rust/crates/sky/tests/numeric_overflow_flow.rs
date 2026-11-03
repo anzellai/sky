@@ -285,3 +285,59 @@ fn a_numeric_overflow_is_exit_1_in_a_cli_and_a_500_in_a_server() {
         "a stack overflow in the server log:\n{log_text}"
     );
 }
+
+/// An `Err` that reaches a value conversion fails as a classified panic; it is
+/// never printed as text. The test replaces the `Decimal_toString` kernel with
+/// one that panics with an unclassified message (no stdlib kernel does, so the
+/// fixture injects one into the generated Go and rebuilds it). `Ffi.callPure`
+/// turns that panic into an `Err`, and the bare-typed `Decimal.toString` hands
+/// it to `rt.AsString`, which printed `{1 <nil> {0 Error [2 {Ffi
+/// "Decimal_toString" panicked: …}]}}` and exited 0 before v0.29.2. It is now
+/// the classified `CoerceFailure`: exit 1 in a CLI. The Go-level legs run per
+/// commit (`runtime-go/rt/as_err_value_test.go`).
+#[test]
+#[ignore = "heavy go-build+run e2e leg; runs nightly and in the release suite (--ignored). Per-commit leg: runtime-go/rt/as_err_value_test.go"]
+fn an_err_reaching_a_string_conversion_is_a_classified_failure_not_text() {
+    if !have_go() {
+        required(Need::Go, false);
+        return;
+    }
+    let (project, app) = build_fixture();
+    let inject = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/numeric-overflow-inject/zz_kernel_panic.go");
+    let out_dir = project.join("sky-out");
+    std::fs::copy(&inject, out_dir.join("zz_kernel_panic.go")).unwrap();
+    let rebuild = run_bounded(
+        Command::new("go")
+            .args(["build", "-o", "app", "."])
+            .current_dir(&out_dir),
+        "go build (kernel panic injected)",
+    );
+    assert!(
+        rebuild.status.success(),
+        "rebuild failed:\n{}",
+        both(&rebuild)
+    );
+    let out = run_bounded(
+        Command::new(&app)
+            .current_dir(&project)
+            .env("FLOW_CASE", "kernelpanic")
+            .env_remove("ENV")
+            .env_remove("SKY_ENV"),
+        "kernelpanic",
+    );
+    let text = both(&out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "want exit 1 for the classified panic:\n{text}"
+    );
+    assert!(
+        text.contains("CoerceFailure"),
+        "the panic was not classified CoerceFailure:\n{text}"
+    );
+    assert!(
+        !text.contains("kernelpanic: "),
+        "the Err was printed as text:\n{text}"
+    );
+}

@@ -2,6 +2,7 @@ package rt
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -41,4 +42,43 @@ func loudPanicClass(msg string) (kind, hint string) {
 func isLoudByDesignPanic(r any) bool {
 	kind, _ := loudPanicClass(fmt.Sprintf("%v", r))
 	return kind != ""
+}
+
+// skyErrorMessage is the message of a Sky `Error` value (its ErrorInfo's
+// `message`), for a log line; any other value is printed as it is.
+func skyErrorMessage(v any) string {
+	ev := reflect.ValueOf(derefPointer(unwrapAny(v)))
+	if ev.IsValid() && ev.Kind() == reflect.Struct {
+		if fields := ev.FieldByName("Fields"); fields.IsValid() && fields.Kind() == reflect.Slice && fields.Len() == 2 {
+			if info := reflectElem(fields.Index(1)); info.IsValid() && info.Kind() == reflect.Struct {
+				if m := info.FieldByName("Message"); m.IsValid() && m.Kind() == reflect.String {
+					return m.String()
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// failOnValuelessContainer panics when v is an `Err` or a `Nothing`: a Sky
+// Result or Maybe that holds no value. Every value conversion (AsString,
+// AsInt, AsList, AsTuple2, …) calls it once its own shapes and the `Ok` /
+// `Just` unwrap have not answered, so such a container never becomes a value.
+// Before v0.29.2 AsString printed it (`{1 <nil> {…}}`, so a `callPure` String
+// kernel that panicked made the app show text) and the list, dict, rune and
+// tuple conversions answered an empty value: a silent wrong answer.
+//
+// The panic is CoerceFailure ("rt.Coerce: expected"), the class of a value of
+// the wrong shape at a typed slot. An `Err` whose message carries a
+// loud-by-design marker (loudPanicClass) keeps that class, because
+// classifyPanic asks loudPanicClass first and the message is in the panic.
+func failOnValuelessContainer(want string, v any) {
+	if !isSkyContainer(v) || reflect.ValueOf(v).FieldByName("Tag").Int() == 0 {
+		return
+	}
+	if ev := reflect.ValueOf(v).FieldByName("ErrValue"); ev.IsValid() {
+		panic(fmt.Sprintf("rt.Coerce: expected %s, got an Err, which has no value: %s",
+			want, skyErrorMessage(ev.Interface())))
+	}
+	panic(fmt.Sprintf("rt.Coerce: expected %s, got Nothing, which has no value", want))
 }

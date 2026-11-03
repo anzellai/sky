@@ -201,6 +201,17 @@ Breaking and Migration.
   so a run priced in ETH is stopped by its budget past 9.22 ETH instead of
   failing; `cloud.json` writes `spentMinor` as a decimal string and still
   reads the number an older run wrote.
+- **An `Err` or a `Nothing` that reached a value conversion was printed or
+  dropped.** A stdlib kernel that panics with an unclassified message reaches
+  a bare-typed caller through `Ffi.callPure` as an `Err`. `rt.AsString` then
+  printed the container (`Decimal.toString` showed `{1 <nil> {0 Error [2
+  {Ffi "Decimal_toString" panicked: …}]}}` and the app went on), and the
+  list, dict, char and tuple conversions (`AsList`, `AsListT`, `AsMapAny`,
+  `AsDict`, `AsRune`, `AsTuple2`, …) gave an empty value. Each now fails as
+  the classified `CoerceFailure`, or as the loud class the `Err` carries
+  (`NumericOverflow`, …): a 500 in a server, exit 1 in a CLI. `AsTuple2` and
+  `AsTuple3` now unwrap an `Ok` or a `Just`; before, they read the
+  container's own fields as the tuple.
 - **`Money.allocate` lost the part of an amount below the minor unit.**
   `Money.allocate 3 (1.005 USD)` gave `[0.34, 0.33, 0.33]`, which sums to
   1.00. Such amounts come from `Money.mul`, `percentOf` and `convert`. Every

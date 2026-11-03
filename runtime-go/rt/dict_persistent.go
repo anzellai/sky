@@ -676,6 +676,7 @@ func asSkyDict(v any) skyDictAny {
 		}
 		return asSkyDict(u)
 	}
+	failOnValuelessContainer("a Dict", v)
 	return SkyDict[any]{}
 }
 

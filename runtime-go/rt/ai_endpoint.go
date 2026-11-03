@@ -29,7 +29,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -709,22 +708,6 @@ func Ai_endpointWarm(cfgArg any) any {
 		}
 		return Ok[any, any](s.description())
 	}
-}
-
-// skyErrorMessage is the message of a Sky `Error` value (its ErrorInfo's
-// `message`), for a log line; any other value is printed as it is.
-func skyErrorMessage(v any) string {
-	ev := reflect.ValueOf(derefPointer(unwrapAny(v)))
-	if ev.IsValid() && ev.Kind() == reflect.Struct {
-		if fields := ev.FieldByName("Fields"); fields.IsValid() && fields.Kind() == reflect.Slice && fields.Len() == 2 {
-			if info := reflectElem(fields.Index(1)); info.IsValid() && info.Kind() == reflect.Struct {
-				if m := info.FieldByName("Message"); m.IsValid() && m.Kind() == reflect.String {
-					return m.String()
-				}
-			}
-		}
-	}
-	return fmt.Sprintf("%v", v)
 }
 
 // googleIDToken is the slot's Google ID token for its URL's origin: minted

@@ -1763,6 +1763,10 @@ func AsTuple2(v any) SkyTuple2 {
 	if t, ok := v.(SkyTuple2); ok {
 		return t
 	}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsTuple2(u)
+	}
+	failOnValuelessContainer("a tuple", v)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Ptr {
 		if rv.IsNil() {
@@ -1781,6 +1785,10 @@ func AsTuple3(v any) SkyTuple3 {
 	if t, ok := v.(SkyTuple3); ok {
 		return t
 	}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsTuple3(u)
+	}
+	failOnValuelessContainer("a tuple", v)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Ptr {
 		if rv.IsNil() {
@@ -1821,6 +1829,10 @@ func AsTuple2T[A any, B any](v any) T2[A, B] {
 	if t, ok := v.(SkyTuple2); ok {
 		return T2[A, B]{V0: Coerce[A](t.V0), V1: Coerce[B](t.V1)}
 	}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsTuple2T[A, B](u)
+	}
+	failOnValuelessContainer("a tuple", v)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Ptr {
 		if rv.IsNil() {
@@ -1845,6 +1857,10 @@ func AsTuple3T[A any, B any, C any](v any) T3[A, B, C] {
 	if t, ok := v.(SkyTuple3); ok {
 		return T3[A, B, C]{V0: Coerce[A](t.V0), V1: Coerce[B](t.V1), V2: Coerce[C](t.V2)}
 	}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsTuple3T[A, B, C](u)
+	}
+	failOnValuelessContainer("a tuple", v)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Ptr {
 		if rv.IsNil() {
@@ -2290,7 +2306,9 @@ func AsString(v any) string {
 	if bs, ok := v.([]byte); ok {
 		return string(bs)
 	}
-	v = derefPointer(unwrapAny(v))
+	v = unwrapAny(v)
+	failOnValuelessContainer("a String", v)
+	v = derefPointer(v)
 	if s, ok := v.(string); ok {
 		return s
 	}
@@ -2486,6 +2504,7 @@ func AsList(v any) []any {
 	if u, ok := unwrapSkyContainer(v); ok {
 		return AsList(u)
 	}
+	failOnValuelessContainer("a List", v)
 	return nil
 }
 
@@ -2508,6 +2527,7 @@ func AsListAny(v any) []any {
 		if u, ok := unwrapSkyContainer(v); ok {
 			return AsListAny(u)
 		}
+		failOnValuelessContainer("a List", v)
 		return nil
 	}
 	n := rv.Len()
@@ -2537,6 +2557,10 @@ func AsMapAny(v any) map[string]any {
 	if v == nil {
 		return nil
 	}
+	if u, ok := unwrapSkyContainer(v); ok {
+		return AsMapAny(u)
+	}
+	failOnValuelessContainer("a Dict", v)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
 		return nil
@@ -2636,6 +2660,7 @@ func AsListT[T any](v any) []T {
 	if u, ok := unwrapSkyContainer(v); ok {
 		return AsListT[T](u)
 	}
+	failOnValuelessContainer("a List", v)
 	return nil
 }
 
@@ -2739,6 +2764,7 @@ func AsInt(v any) int {
 	if u, ok := unwrapSkyContainer(v); ok {
 		return AsInt(u)
 	}
+	failOnValuelessContainer("an Int", v)
 	// A named int (a Sky union whose constructors take no arguments,
 	// `type Main_Color int`) is an Int by kind.
 	if rv := reflect.ValueOf(v); rv.IsValid() && rv.CanInt() {
@@ -2801,6 +2827,7 @@ func AsFloat(v any) float64 {
 	if u, ok := unwrapSkyContainer(v); ok {
 		return AsFloat(u)
 	}
+	failOnValuelessContainer("a Float", v)
 	// REACHABLE-FROM-SKY: same shape as AsInt — classified `TypeMismatch`
 	// at the top-level recover.
 	panic(fmt.Sprintf("rt.AsFloat: expected numeric value, got %T (%v)", v, v))
@@ -2855,6 +2882,7 @@ func AsRune(v any) rune {
 	if u, ok := unwrapSkyContainer(v); ok {
 		return AsRune(u)
 	}
+	failOnValuelessContainer("a Char", v)
 	return 0
 }
 
@@ -2866,6 +2894,7 @@ func AsBool(v any) bool {
 	if u, ok := unwrapSkyContainer(v); ok {
 		return AsBool(u)
 	}
+	failOnValuelessContainer("a Bool", v)
 	// REACHABLE-FROM-SKY: heterogeneous slice / untyped FFI return.
 	// Classified `TypeMismatch` at the top-level recover.
 	panic(fmt.Sprintf("rt.AsBool: expected bool, got %T (%v)", v, v))

@@ -48,6 +48,9 @@ caseText which =
         "tofloat" ->
             String.fromFloat (Decimal.toFloat (d "1e400"))
 
+        "kernelpanic" ->
+            Decimal.toString (d "1.5")
+
         _ ->
             String.fromInt (Money.toMinor (Money.fromMajor ETH 9))
 
