@@ -1174,9 +1174,16 @@ same ops `--gen` writes), puts a dropped column or table in its inert
 `db/schema.json` then records the code as what the migrations build, the file
 also carries the steps `--gen` writes against the old `db/schema.json` when the
 database is ahead of it (a table adopted from `--code`): its CREATE TABLE and
-CREATE INDEX are `IF NOT EXISTS`, change nothing on this database, and build
-the table on a fresh one. A column the database has and no migration adds is
-refused (an ADD COLUMN would fail here), and nothing is written. It refuses
+CREATE INDEX are `IF NOT EXISTS`. Snapshot-only unconditional unique indexes
+also carry `skipEquivalentConstraint: true`: applying the migration checks for
+an equivalent ordinary UNIQUE constraint in the current transaction and skips
+a redundant index. This check does not apply to explicit named index ops or to
+partial, expression or special indexes. Rendered SQL alone only checks the
+index name. Tables are created before added columns, and columns before their
+indexes. The same written file builds a fresh database and updates the live
+one. If a column exists in only one database state and CREATE cannot supply it
+on the other, `--write` refuses without writing. It also refuses any snapshot
+operation that would drop a constraint-backed index. It refuses
 while a migration is pending or edited, and in a project with no
 `db/migrations` (run `sky db init` first).
 

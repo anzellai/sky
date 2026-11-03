@@ -556,6 +556,12 @@ sky ai provision --device web|ios|android [--from <dir>]   # Std.Ai.Device engin
 sky doctor [--fix] | upgrade | upgrade-claude | clean
 ```
 
+`sky db check --write` orders table creation, column additions and indexes for
+both adoption and fresh replay. It refuses incompatible snapshot repairs and
+constraint-index drops. A snapshot-only unique index can reuse an equivalent
+ordinary UNIQUE constraint at application time. Explicit named indexes keep
+their normal behaviour.
+
 **`sky test` never takes a database from `.env` (v0.29.1).** A test DSN comes
 from `.env.test` or the environment, and test mode never loads `.env`, so a
 `.env` that names a shared or production database cannot reach a test. A

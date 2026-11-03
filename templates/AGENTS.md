@@ -316,6 +316,12 @@ sky db reset [table]           # empty data (all declared tables, or one); keeps
 sky db drop [table]            # drop tables (all + ledger, or one); fresh "never migrated" state — prompts / --yes
 ```
 
+`sky db check --write` orders table creation, column additions and indexes for
+both adoption and fresh replay. It refuses incompatible snapshot repairs and
+constraint-index drops. A snapshot-only unique index can reuse an equivalent
+ordinary UNIQUE constraint at application time. Explicit named indexes keep
+their normal behaviour.
+
 `Store.migrate`, `sky db push` and `--gen` follow one rule: a `Maybe` field is a
 nullable column, any other field `NOT NULL DEFAULT <declared default, else
 zero>` (`defaultInt` / `defaultText` / `defaultBool` / `defaultFloat` /

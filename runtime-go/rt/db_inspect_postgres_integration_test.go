@@ -57,6 +57,9 @@ func TestPostgresInspectCatalogue(t *testing.T) {
 		t.Fatalf("report: %+v", rep)
 	}
 	byName := map[string]inspectColumn{}
+	if len(rep.Tables[0].ProtectedIndexes) != 2 {
+		t.Errorf("folded primary and UNIQUE indexes lost protected names: %v", rep.Tables[0].ProtectedIndexes)
+	}
 	for _, c := range rep.Tables[0].Columns {
 		byName[c.Name] = c
 	}

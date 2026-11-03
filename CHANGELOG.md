@@ -140,6 +140,19 @@ Breaking and Migration.
 
 ### Fixed
 
+- **Adoption migrations replay safely.** `sky db check --write` creates tables
+  before adding columns, and columns before indexes. It refuses snapshot
+  repairs that cannot apply to both the live database and a fresh replay, and
+  protects folded primary-key and UNIQUE constraint indexes from drops.
+  An equivalent ordinary UNIQUE constraint satisfies a snapshot-only adoption
+  index without creating a duplicate. Explicit named index operations retain
+  their normal behaviour. SQLite primary keys with a collation or descending
+  order retain their unsupported-index notices.
+- **`Codec.auto` nested enum tuples.** Dict and native-map values retain their
+  declared tuple element types when encoded, so enum names read back through
+  JSON and Store. Codec safety checks traverse finite types beyond depth 64,
+  with cycle detection for recursive types.
+
 #### Data: codecs, `Std.Db.Store`, Decimal and Money
 
 - **Every stdlib leaf read by `Codec.auto` gets its write check.** This includes

@@ -61,8 +61,15 @@ func codecAutoTypePartialAt(t reflect.Type, declared string, depth int, seen map
 	if codecAutoDeclaresPartial(declared) {
 		return true
 	}
-	if t == nil || depth > 64 {
+	if t == nil {
 		return false
+	}
+	if t.Kind() != reflect.Interface {
+		if seen[t] {
+			return false
+		}
+		seen[t] = true
+		defer delete(seen, t)
 	}
 	if codecAutoPartialLeaf(t.Name()) {
 		return true
@@ -274,8 +281,15 @@ func codecAutoTypeProblem(t reflect.Type, declared string) string {
 }
 
 func codecAutoTypeProblemAt(t reflect.Type, declared string, inVariant bool, depth int, seen map[reflect.Type]bool) string {
-	if t == nil || depth > 64 {
+	if t == nil {
 		return ""
+	}
+	if t.Kind() != reflect.Interface {
+		if seen[t] {
+			return ""
+		}
+		seen[t] = true
+		defer delete(seen, t)
 	}
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array, reflect.Pointer, reflect.Map:
@@ -433,8 +447,15 @@ func codecAutoRecordDuplicateKey(t reflect.Type, snake bool) string {
 // an Array, a Maybe, a Dict, a tuple and a variant's payload) and returns the
 // first duplicate key, or "".
 func codecAutoNestedDuplicateKey(t reflect.Type, snake bool, depth int, seen map[reflect.Type]bool) string {
-	if t == nil || depth > 64 {
+	if t == nil {
 		return ""
+	}
+	if t.Kind() != reflect.Interface {
+		if seen[t] {
+			return ""
+		}
+		seen[t] = true
+		defer delete(seen, t)
 	}
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array, reflect.Pointer, reflect.Map:
@@ -501,9 +522,18 @@ func codecAutoNestedDuplicateKey(t reflect.Type, snake bool, depth int, seen map
 // List, an Array, a Maybe, a Dict, a record and a tuple; a variant has its own
 // problem (codecAutoTypeProblem).
 func codecAutoBlankProblem(t reflect.Type, w reflect.Value, depth int) string {
-	if t == nil || depth > 64 {
+	return codecAutoBlankProblemAt(t, w, depth, map[reflect.Type]bool{})
+}
+
+func codecAutoBlankProblemAt(t reflect.Type, w reflect.Value, depth int, seen map[reflect.Type]bool) string {
+	if t == nil {
 		return ""
 	}
+	if seen[t] {
+		return "a recursive Go record's blank cannot be derived by Codec.auto; give its field an explicit codec"
+	}
+	seen[t] = true
+	defer delete(seen, t)
 	switch t.Kind() {
 	case reflect.Interface:
 		if t.NumMethod() == 0 && !codecWitnessIsJSON(w) {
@@ -512,19 +542,19 @@ func codecAutoBlankProblem(t reflect.Type, w reflect.Value, depth int) string {
 		}
 		return ""
 	case reflect.Slice, reflect.Array:
-		return codecAutoBlankProblem(t.Elem(), codecWitnessElem(w), depth+1)
+		return codecAutoBlankProblemAt(t.Elem(), codecWitnessElem(w), depth+1, seen)
 	case reflect.Map, reflect.Pointer:
-		return codecAutoBlankProblem(t.Elem(), reflect.Value{}, depth+1)
+		return codecAutoBlankProblemAt(t.Elem(), reflect.Value{}, depth+1, seen)
 	case reflect.Struct:
 		if isSkyMaybeType(t) {
 			if jv, ok := t.FieldByName("JustValue"); ok {
-				return codecAutoBlankProblem(jv.Type, codecWitnessJust(w), depth+1)
+				return codecAutoBlankProblemAt(jv.Type, codecWitnessJust(w), depth+1, seen)
 			}
 			return ""
 		}
 		if isSkyDictType(t) {
 			vt := reflect.Zero(t).Interface().(skyDictAny).dictValueType()
-			return codecAutoBlankProblem(vt, codecWitnessDictValue(w), depth+1)
+			return codecAutoBlankProblemAt(vt, codecWitnessDictValue(w), depth+1, seen)
 		}
 		if !isRecordType(t) || t == reflect.TypeOf(JsonValue{}) || codecOpaqueStruct(t) || t == reflect.TypeOf(SkySet{}) {
 			return ""
@@ -534,7 +564,7 @@ func codecAutoBlankProblem(t reflect.Type, w reflect.Value, depth int) string {
 			if f.PkgPath != "" {
 				continue
 			}
-			if p := codecAutoBlankProblem(f.Type, codecWitnessField(w, t, i), depth+1); p != "" {
+			if p := codecAutoBlankProblemAt(f.Type, codecWitnessField(w, t, i), depth+1, seen); p != "" {
 				return p
 			}
 		}

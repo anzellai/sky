@@ -84,6 +84,12 @@ database match, with the unsafe steps commented out: show it to the user, do
 not run it yourself. `--write` saves the safe steps as a new file in
 `db/migrations`: it changes the project, so use it only when the user asks.
 
+`sky db check --write` orders table creation, column additions and indexes for
+both adoption and fresh replay. It refuses incompatible snapshot repairs and
+constraint-index drops. A snapshot-only unique index can reuse an equivalent
+ordinary UNIQUE constraint at application time. Explicit named indexes keep
+their normal behaviour.
+
 ### Embedded PostgreSQL and an explicit DSN together are an error
 
 The app never knows which tier it is in — it consumes a DSN, and only the

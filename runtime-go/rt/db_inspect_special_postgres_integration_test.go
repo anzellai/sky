@@ -4,8 +4,58 @@ package rt
 
 import (
 	"database/sql"
+	"encoding/json"
 	"testing"
 )
+
+func TestPostgresInspectMigrationAdoptionConstraint(t *testing.T) {
+	for _, adopted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "fresh", true: "adopted"}[adopted], func(t *testing.T) {
+			conn, err := sql.Open("pgx", requirePostgresDSN(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			conn.SetMaxOpenConns(1)
+			for _, stmt := range []string{`DROP SCHEMA IF EXISTS sky_review_migration CASCADE`, `CREATE SCHEMA sky_review_migration`, `SET search_path TO sky_review_migration`} {
+				if _, err := conn.Exec(stmt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			defer conn.Exec(`DROP SCHEMA sky_review_migration CASCADE`)
+			if adopted {
+				if _, err := conn.Exec(`CREATE TABLE items (id BIGINT PRIMARY KEY, a TEXT NOT NULL, b TEXT NOT NULL, UNIQUE(a,b))`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			files := []migFile{{Id: "adopt", Ops: []migOp{
+				{Kind: "createTable", Table: "items", Columns: []migColumn{{Name: "id", Type: "int", Pk: true}, {Name: "a", Type: "text"}, {Name: "b", Type: "text"}}},
+				{Kind: "addIndex", Table: "items", Name: "ux_items_ab", IndexColumns: []string{"a", "b"}, Unique: true, SkipEquivalentConstraint: true},
+			}}}
+			raw, err := json.Marshal(files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := AnyTaskRun(Db_migrateOps(&SkyDb{conn: conn, driver: "pgx"}, string(raw))).(SkyResult[any, any])
+			if result.Tag != 0 {
+				t.Fatalf("migration: %v", result)
+			}
+			var count int
+			if err := conn.QueryRow(`SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND tablename='items'`).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 2 {
+				t.Errorf("got %d indexes, want primary plus one unique index", count)
+			}
+			if _, err := conn.Exec(`INSERT INTO items VALUES (1,'x','y')`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.Exec(`INSERT INTO items VALUES (2,'x','y')`); err == nil {
+				t.Error("uniqueness was lost")
+			}
+		})
+	}
+}
 
 // NULLS NOT DISTINCT rejects rows a plain Store unique index permits. Both
 // standalone indexes and constraint-backed indexes must retain that fact,

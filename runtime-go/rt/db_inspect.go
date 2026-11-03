@@ -64,6 +64,9 @@ type inspectTable struct {
 	Name    string          `json:"name"`
 	Columns []inspectColumn `json:"columns"`
 	Indexes []inspectIndex  `json:"indexes"`
+	// Constraint-backed names remain protected even when their ordinary
+	// PK/single-column UNIQUE shape is folded into column metadata.
+	ProtectedIndexes []string `json:"protectedIndexes,omitempty"`
 }
 
 // inspectMigration is one committed migration file against the ledger:
@@ -87,6 +90,13 @@ type inspectReport struct {
 	Dialect string         `json:"dialect"`
 	Tables  []inspectTable `json:"tables"`
 	Ledger  inspectLedger  `json:"ledger"`
+}
+
+// The catalogue reader can run on the migration's transaction without
+// borrowing another pool connection (a one-connection pool must not deadlock).
+type inspectQueryer interface {
+	Query(string, ...any) (*sql.Rows, error)
+	QueryRow(string, ...any) *sql.Row
 }
 
 // Db_inspect : Db -> String(json) -> Task Error String.
@@ -206,7 +216,7 @@ func sqliteQuoteIdent(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
-func sqliteInspectTables(conn *sql.DB) ([]inspectTable, error) {
+func sqliteInspectTables(conn inspectQueryer) ([]inspectTable, error) {
 	type tbl struct{ name, sql string }
 	rows, err := conn.Query(
 		`SELECT name, COALESCE(sql, '') FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
@@ -283,12 +293,15 @@ func sqliteInspectTables(conn *sql.DB) ([]inspectTable, error) {
 		sort.Slice(ixs, func(i, j int) bool { return ixs[i].name < ixs[j].name })
 		colls := sqliteColumnCollations(t.sql)
 		for _, ix := range ixs {
-			if ix.origin == "pk" {
-				continue
+			if ix.origin == "pk" || ix.origin == "u" {
+				it.ProtectedIndexes = append(it.ProtectedIndexes, ix.name)
 			}
 			cols, inexact, err := sqliteIndexParts(conn, ix.name, colls)
 			if err != nil {
 				return nil, err
+			}
+			if ix.origin == "pk" && inexact == "" {
+				continue
 			}
 			// An exact one-column UNIQUE constraint is the column's UNIQUE.
 			// Every other UNIQUE constraint is listed as the index it is: a
@@ -309,7 +322,7 @@ func sqliteInspectTables(conn *sql.DB) ([]inspectTable, error) {
 			}
 			it.Indexes = append(it.Indexes, inspectIndex{
 				Name: ix.name, Columns: cols, Unique: ix.unique, Where: indexPredicateOf(ddl.String),
-				Constraint: ix.origin == "u", Inexact: inexact, Definition: ddl.String,
+				Constraint: ix.origin == "u" || ix.origin == "pk", Inexact: inexact, Definition: ddl.String,
 			})
 		}
 		out = append(out, it)
@@ -335,7 +348,7 @@ func inspectText(v any) string {
 // `unique "email"` is not). An inherited column collation has the same effect.
 // The decimal collation is the one collation a Store declares itself.
 // An expression column is listed as `<expression>`.
-func sqliteIndexParts(conn *sql.DB, index string, colls map[string]string) ([]string, string, error) {
+func sqliteIndexParts(conn inspectQueryer, index string, colls map[string]string) ([]string, string, error) {
 	rows, err := conn.Query(`PRAGMA index_xinfo(` + sqliteQuoteIdent(index) + `)`)
 	if err != nil {
 		return nil, "", fmt.Errorf("columns of index %s: %v", index, err)
@@ -550,7 +563,7 @@ func indexPredicateOf(ddl string) string {
 	return ""
 }
 
-func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
+func pgInspectTables(conn inspectQueryer) ([]inspectTable, error) {
 	rows, err := conn.Query(
 		`SELECT table_name FROM information_schema.tables
 		 WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' ORDER BY table_name`)
@@ -667,6 +680,9 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 				irows.Close()
 				return nil, err
 			}
+			if primary || contype != "" {
+				it.ProtectedIndexes = append(it.ProtectedIndexes, iname)
+			}
 			colList := []string{}
 			if err := json.Unmarshal([]byte(colsJSON), &colList); err != nil {
 				irows.Close()
@@ -703,7 +719,7 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 }
 
 type pgIndexFeatures struct {
-	exprs, include, desc, coll, opclass bool
+	exprs, include, desc, coll, opclass    bool
 	nullsNotDistinct, deferrable, unusable bool
 }
 

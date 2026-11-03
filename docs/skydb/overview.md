@@ -1471,6 +1471,16 @@ accepted with a notice and a commented `ALTER … TYPE BIGINT`. `--code`
 prints a record type alias, a `Codec` and a `Store` for each table the
 code has no Store for. See [`sky db check`](../tooling/cli.md#sky-db-check--does-the-live-database-match-the-code).
 
+When adopting an existing table, `--write` also includes the operations a
+fresh database needs. Snapshot-only unconditional unique indexes carry
+`skipEquivalentConstraint: true`: migration application checks the current
+transaction and skips an index already enforced by an ordinary equivalent
+UNIQUE constraint. Partial indexes, expression indexes and special index
+semantics are not equivalent. Explicitly authored named index operations keep
+their normal behaviour. This adoption check belongs to migration application;
+executing the rendered `CREATE INDEX IF NOT EXISTS` SQL alone only checks the
+index name.
+
 ## See also
 
 - [`examples/07-todo-cli`](../../examples/07-todo-cli/) — SQLite CLI todo app, showcases `withTransaction` and `queryDecode`

@@ -157,7 +157,7 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 		// Dict k v → JSON object, keyed by the runtime's encoded keys exactly
 		// as the Go map it replaced was (sorted for determinism).
 		if isSkyDictType(t) && rv.CanInterface() {
-			return codecAutoEncodeDict(rv.Interface().(skyDictAny), snake)
+			return codecAutoEncodeDict(rv.Interface().(skyDictAny), "", snake)
 		}
 		// Set a → JSON array (sorted, deterministic via Set_toList). Before this
 		// its sole unexported `items` field was skipped by codecAutoEncodeStruct
@@ -471,6 +471,41 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 		}
 	}
 	if declaredType != "" {
+		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyDict["); ok && rv.IsValid() && rv.CanInterface() {
+			if d, ok := rv.Interface().(skyDictAny); ok {
+				return codecAutoEncodeDict(d, strings.TrimSuffix(inner, "]"), snake)
+			}
+		}
+		if inner, ok := strings.CutPrefix(declaredType, "map["); ok && rv.IsValid() && rv.Kind() == reflect.Map {
+			if close := strings.IndexByte(inner, ']'); close >= 0 {
+				// Sort the encoded keys: enum ordinals and their wire names
+				// need not have the same order.
+				values := map[string]any{}
+				keys := make([]string, 0, rv.Len())
+				for _, key := range rv.MapKeys() {
+					k, err := codecAutoEncodeTyped(key, inner[:close], snake)
+					if err != nil {
+						return nil, err
+					}
+					v, err := codecAutoEncodeTyped(rv.MapIndex(key), inner[close+1:], snake)
+					if err != nil {
+						return nil, err
+					}
+					wireKey := fmt.Sprint(k)
+					if _, exists := values[wireKey]; exists {
+						return nil, fmt.Errorf("duplicate encoded map key %q", wireKey)
+					}
+					keys = append(keys, wireKey)
+					values[wireKey] = v
+				}
+				sort.Strings(keys)
+				out := jsonOrderedObject{keys: keys}
+				for _, key := range keys {
+					out.vals = append(out.vals, values[key])
+				}
+				return out, nil
+			}
+		}
 		if isRegisteredEnum(declaredType) {
 			switch rv.Kind() {
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -1421,7 +1456,7 @@ func codecSameJSON(a, b any) bool {
 
 // codecAutoEncodeDict writes a Dict as a JSON object keyed by its encoded
 // keys, sorted (the shape the Go map it replaced produced).
-func codecAutoEncodeDict(d skyDictAny, snake bool) (any, error) {
+func codecAutoEncodeDict(d skyDictAny, valType string, snake bool) (any, error) {
 	type kv struct {
 		k string
 		v any
@@ -1439,7 +1474,7 @@ func codecAutoEncodeDict(d skyDictAny, snake bool) (any, error) {
 		if !rv.IsValid() {
 			rv = reflect.Zero(vt)
 		}
-		ev, err := codecAutoEncodeVal(rv, snake)
+		ev, err := codecAutoEncodeTyped(rv, valType, snake)
 		if err != nil {
 			return nil, err
 		}

@@ -1478,3 +1478,128 @@ main =
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Adoption and fresh replay must execute the same written migration. The
+/// adopted table starts without a target column, and its UNIQUE constraint
+/// has a different name from the generated index.
+#[test]
+fn sqlite_write_adoption_and_fresh_replay() {
+    if !required(Need::Go, tool_on_path("go")) || !required(Need::Sqlite3, tool_on_path("sqlite3"))
+    {
+        return;
+    }
+    let src = r#"module Main exposing (main, db)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Db.Store as Store
+import Std.Codec as Codec
+type alias Item = { id : String, a : String, b : String, note : Maybe String }
+items : Store.Store Item
+items =
+    Store.fromCodec "items" (Codec.auto { id = "", a = "", b = "", note = Nothing })
+        |> Store.primaryKey "id"
+        |> Store.uniqueOn [ "a", "b" ]
+        |> Store.index [ "note" ]
+db = Store.project [ Store.toTable items ]
+main = Task.succeed ()
+"#;
+    let adopted = project(
+        "sky-adopt-replay",
+        "driver = \"sqlite\"\npath = \"app.db\"",
+        src,
+    );
+    ok(&adopted, &["db", "init"], &[]);
+    sqlite3(&adopted.join("app.db"), "CREATE TABLE items (id TEXT PRIMARY KEY, a TEXT NOT NULL, b TEXT NOT NULL, UNIQUE(a,b)); INSERT INTO items VALUES ('kept','x','y');");
+    let (code, out, err) = sky(&adopted, &["db", "check", "--sql", "--write"], &[]);
+    assert!(code == 0 || code == 1, "{out}\n{err}");
+    assert!(
+        out.contains("-- sky db check --write: wrote"),
+        "{out}\n{err}"
+    );
+    let ops = file_ops(&migration_files(&adopted)[0]).0;
+    assert!(
+        ops.as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["skipEquivalentConstraint"] == true),
+        "{ops}"
+    );
+    let fresh = project(
+        "sky-fresh-replay",
+        "driver = \"sqlite\"\npath = \"app.db\"",
+        src,
+    );
+    copy_dir(&adopted.join("db"), &fresh.join("db"));
+    for dir in [&adopted, &fresh] {
+        ok(dir, &["db", "migrate"], &[]);
+        ok(dir, &["db", "check"], &[]);
+        assert_eq!(
+            sqlite3(
+                &dir.join("app.db"),
+                "SELECT count(*) FROM pragma_table_info('items') WHERE name='note'"
+            ),
+            "1"
+        );
+        assert_eq!(
+            sqlite3(
+                &dir.join("app.db"),
+                "SELECT count(*) FROM pragma_index_list('items') WHERE \"unique\"=1"
+            ),
+            "2"
+        );
+    }
+    assert_eq!(
+        sqlite3(&adopted.join("app.db"), "SELECT id FROM items"),
+        "kept"
+    );
+    let _ = std::fs::remove_dir_all(adopted);
+    let _ = std::fs::remove_dir_all(fresh);
+}
+
+#[test]
+fn sqlite_store_dict_tuple_enum_round_trip() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let src = r#"module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Dict as Dict exposing (Dict)
+import Std.Db as Db
+import Std.Db.Store as Store
+import Std.Codec as Codec
+import Sky.Test as Test
+
+type Colour = Red | Blue
+
+type alias Row = { id : String, pairs : Dict String (Colour, Int), nested : Dict String (Dict String (Colour, Int)) }
+
+blank : Row
+blank = { id = "", pairs = Dict.empty, nested = Dict.empty }
+
+codec = Codec.auto blank
+store = Store.fromCodec "items" codec |> Store.primaryKey "id"
+
+row : Row
+row = { id = "one", pairs = Dict.fromList [ ("red", (Red,1)), ("blue", (Blue,2)) ], nested = Dict.fromList [ ("inner", Dict.fromList [ ("blue", (Blue,3)) ]) ] }
+
+work _ =
+    Db.open "sqlite" ":memory:"
+        |> Task.andThen insertAndRead
+
+insertAndRead conn =
+    Db.exec conn "CREATE TABLE items (id TEXT PRIMARY KEY, pairs TEXT NOT NULL, nested TEXT NOT NULL)" []
+        |> Task.andThen (\_ -> Store.insert conn store row)
+        |> Task.andThen (\_ -> Store.findBy conn store "id" "one")
+
+main =
+    Test.runMain
+        [ Test.test "Dict tuple enum JSON reads its own output" (\_ -> Test.equal (Ok row) (Codec.fromJson codec (Codec.toJson codec row)))
+        , Test.test "Dict tuple enum Store reads its own output" (\_ -> Test.equal (Ok (Just row)) (Task.run (work ())))
+        ]
+"#;
+    let dir = project("sky-codec-dict-tuple", "", src);
+    let out = ok(&dir, &["run"], &[]);
+    assert!(out.contains("2 passed"), "{out}");
+    let _ = std::fs::remove_dir_all(dir);
+}
