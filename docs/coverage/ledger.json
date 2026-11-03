@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2251,
+      "expected_assertions": 2258,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3243,
+    "stdlib_entries": 3245,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -1021,12 +1021,12 @@
     "units_by_role": {
       "Conformance": 1,
       "Example": 70,
-      "FlowTest": 61,
+      "FlowTest": 62,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 150
+    "units_total": 151
   },
   "surfaces": [
     {
@@ -6706,6 +6706,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -7500,6 +7505,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -8073,6 +8083,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -8622,6 +8637,11 @@
           },
           {
             "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -9436,6 +9456,11 @@
           },
           {
             "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -14119,6 +14144,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -15548,6 +15578,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:resolve_opaque_ctor_exposing_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -15909,6 +15944,11 @@
           },
           {
             "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -19248,10 +19288,9 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 11,
+          "count": 10,
           "symbols": [
             "Cookie",
-            "Route",
             "Server",
             "bytes",
             "delete",
@@ -19824,7 +19863,7 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 9,
+          "count": 11,
           "symbols": [
             "Agg",
             "Correlate",
@@ -19834,7 +19873,9 @@
             "SetExpr",
             "checkProjectData",
             "countDistinctAs",
-            "orderRightDesc"
+            "indexNamed",
+            "orderRightDesc",
+            "uniqueOnNamed"
           ]
         },
         "Std.Db.Table": {
@@ -20423,7 +20464,7 @@
           ]
         }
       },
-      "count": 867,
+      "count": 868,
       "pct_of_denominator": 26.7
     },
     "symbols_unreferenced_strict": {
@@ -20685,11 +20726,10 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 12,
+          "count": 11,
           "symbols": [
             "Cookie",
             "Handler",
-            "Route",
             "Server",
             "bytes",
             "delete",
@@ -21297,7 +21337,7 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 9,
+          "count": 11,
           "symbols": [
             "Agg",
             "Correlate",
@@ -21307,7 +21347,9 @@
             "SetExpr",
             "checkProjectData",
             "countDistinctAs",
-            "orderRightDesc"
+            "indexNamed",
+            "orderRightDesc",
+            "uniqueOnNamed"
           ]
         },
         "Std.Db.Table": {
@@ -21971,7 +22013,7 @@
           ]
         }
       },
-      "count": 982,
+      "count": 983,
       "pct_of_denominator": 30.3
     }
   },
@@ -23755,6 +23797,18 @@
       "refs_qualified": 36,
       "role": "FlowTest",
       "sky_files": 5,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "flow:numeric_overflow_flow",
+      "modules_imported": 8,
+      "path": "rust/crates/sky/tests/numeric_overflow_flow.rs",
+      "refs_generous": 22,
+      "refs_qualified": 19,
+      "role": "FlowTest",
+      "sky_files": 1,
       "sky_toml_sections": []
     },
     {
