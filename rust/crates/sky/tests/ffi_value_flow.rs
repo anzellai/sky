@@ -115,3 +115,58 @@ fn ffi_function_used_as_a_value_is_applied_not_nil() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn ffi_partial_evaluates_its_supplied_argument_once_before_use() {
+    if !required(Need::Go, go_on_path()) {
+        return;
+    }
+    let dir = scratch_project();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"ffi-partial\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[\"go.dependencies\"]\n\"strings\" = \"latest\"\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        r#"module Main exposing (main)
+
+import Strings
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Std.Log exposing (println)
+
+main =
+    let
+        partial = Strings.repeat (Result.withDefault "bad" (Task.run (println "CAPTURED" |> Task.map (\_ -> "x"))))
+        _ = println "BOUND"
+    in
+    Task.run
+        (Task.sequence
+            [ println (Result.withDefault "bad" (partial 1))
+            , println (Result.withDefault "bad" (partial 2))
+            ]
+        )
+"#,
+    )
+    .unwrap();
+    let (ok, log) = run(&dir, SKY, &["install"]);
+    assert!(ok, "install failed: {log}");
+    let (ok, log) = run(&dir, SKY, &["build", "src/Main.sky"]);
+    assert!(ok, "build failed: {log}");
+    let out = Command::new(dir.join("sky-out/app"))
+        .env_clear()
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        ["CAPTURED", "BOUND", "x", "xx"]
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

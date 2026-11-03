@@ -1021,12 +1021,12 @@
     "units_by_role": {
       "Conformance": 1,
       "Example": 70,
-      "FlowTest": 62,
+      "FlowTest": 63,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 151
+    "units_total": 152
   },
   "surfaces": [
     {
@@ -5663,6 +5663,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_polymorphism_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -6711,6 +6716,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_polymorphism_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -7506,6 +7516,11 @@
           },
           {
             "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:numeric_polymorphism_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -8646,6 +8661,11 @@
             "strength": 3
           },
           {
+            "by": "flow:numeric_polymorphism_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -9755,6 +9775,11 @@
           },
           {
             "by": "flow:codegen_record_alias_ctor_collision_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:numeric_polymorphism_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -16788,6 +16813,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "flow:numeric_polymorphism_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -23820,6 +23850,18 @@
       "path": "rust/crates/sky/tests/numeric_overflow_flow.rs",
       "refs_generous": 27,
       "refs_qualified": 24,
+      "role": "FlowTest",
+      "sky_files": 1,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "flow:numeric_polymorphism_flow",
+      "modules_imported": 6,
+      "path": "rust/crates/sky/tests/numeric_polymorphism_flow.rs",
+      "refs_generous": 15,
+      "refs_qualified": 15,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []

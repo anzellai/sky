@@ -1140,10 +1140,14 @@ matched to a declared `Store.uniqueOn` by its columns whatever the database
 named it; one the code does not declare is a difference that names the
 constraint. An index whose column list does not describe it (an expression
 column, a collation or operator class of its own, a DESC column, INCLUDE
-columns, another index method such as `hash`, an exclusion constraint) is
+columns, another index method such as `hash`, an exclusion constraint, or
+PostgreSQL's `NULLS NOT DISTINCT`, a deferrable constraint, or an index that
+is not valid, ready and live) is
 something no Store declares: `check` gives a notice for it, leaves it as it is,
 and says so in the report ("matches what the code declares; N notice(s)"). Under
 a name the code also declares, it is a difference.
+An inherited non-default column collation is also unsupported, on both
+SQLite and PostgreSQL. It does not become plain uniqueness in an adoption stub.
 
 `check` also runs the data check the app's `Store.migrate` runs before it
 changes a table (`Store.checkProjectData`, the same runtime function), so the
@@ -1170,9 +1174,16 @@ same ops `--gen` writes), puts a dropped column or table in its inert
 `db/schema.json` then records the code as what the migrations build, the file
 also carries the steps `--gen` writes against the old `db/schema.json` when the
 database is ahead of it (a table adopted from `--code`): its CREATE TABLE and
-CREATE INDEX are `IF NOT EXISTS`, change nothing on this database, and build
-the table on a fresh one. A column the database has and no migration adds is
-refused (an ADD COLUMN would fail here), and nothing is written. It refuses
+CREATE INDEX are `IF NOT EXISTS`. Snapshot-only unconditional unique indexes
+also carry `skipEquivalentConstraint: true`: applying the migration checks for
+an equivalent ordinary UNIQUE constraint in the current transaction and skips
+a redundant index. This check does not apply to explicit named index ops or to
+partial, expression or special indexes. Rendered SQL alone only checks the
+index name. Tables are created before added columns, and columns before their
+indexes. The same written file builds a fresh database and updates the live
+one. If a column exists in only one database state and CREATE cannot supply it
+on the other, `--write` refuses without writing. It also refuses any snapshot
+operation that would drop a constraint-backed index. It refuses
 while a migration is pending or edited, and in a project with no
 `db/migrations` (run `sky db init` first).
 

@@ -387,6 +387,19 @@ pub fn caller_record_args_query(
     })
 }
 
+/// Numeric evidence is inferred against CHECK, separately from lowering's
+/// BodyTypes. Its dependency includes the full check world and the resolved
+/// body, so both a changed caller and a changed imported scheme invalidate it.
+#[salsa::tracked(no_eq)]
+pub fn numeric_elaboration_query(
+    db: &dyn ResolveDb,
+    def: DefId,
+    module: ModuleId,
+    _file: SourceFile,
+) -> ty::numeric::NumericElaboration {
+    ty::numeric::compute_numeric_elaboration(&check_world_query(db), db.sky_db(), module, def)
+}
+
 /// `infer(DefId)` as a `#[salsa::tracked]` query (doc 01 `infer(DefId) -> types,
 /// per-region type map`) — memoised at **per-def granularity**, the ideal
 /// incremental unit. Builds the def's per-expression/per-local type table against
@@ -810,6 +823,13 @@ impl ty::TyDb for SkyDatabase {
         // `source_file` reads the append-only registry, also revision-safe.
         let file = self.source_file(module);
         Rc::new(infer_query(self, def, module, file).clone())
+    }
+    fn numeric_elaboration_of(
+        &self,
+        module: ModuleId,
+        def: DefId,
+    ) -> Rc<ty::numeric::NumericElaboration> {
+        Rc::new(numeric_elaboration_query(self, def, module, self.source_file(module)).clone())
     }
     fn as_sky_db(&self) -> &dyn SkyDb {
         self

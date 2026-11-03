@@ -40,7 +40,7 @@ type inspectColumn struct {
 // inspectIndex is one index: one a CREATE INDEX made, or one that backs a
 // UNIQUE (or exclusion) constraint (`Constraint`; its name is the
 // database's own). The index that backs the primary key is not listed (the
-// columns carry `pkPos`), nor is an exact single-column UNIQUE constraint
+// columns carry `pkPos`), unless it has unsupported features. Nor is an exact single-column UNIQUE constraint
 // (the column carries `unique`).
 //
 // `Inexact` says why the column list does not describe the index (an
@@ -64,6 +64,9 @@ type inspectTable struct {
 	Name    string          `json:"name"`
 	Columns []inspectColumn `json:"columns"`
 	Indexes []inspectIndex  `json:"indexes"`
+	// Constraint-backed names remain protected even when their ordinary
+	// PK/single-column UNIQUE shape is folded into column metadata.
+	ProtectedIndexes []string `json:"protectedIndexes,omitempty"`
 }
 
 // inspectMigration is one committed migration file against the ledger:
@@ -87,6 +90,13 @@ type inspectReport struct {
 	Dialect string         `json:"dialect"`
 	Tables  []inspectTable `json:"tables"`
 	Ledger  inspectLedger  `json:"ledger"`
+}
+
+// The catalogue reader can run on the migration's transaction without
+// borrowing another pool connection (a one-connection pool must not deadlock).
+type inspectQueryer interface {
+	Query(string, ...any) (*sql.Rows, error)
+	QueryRow(string, ...any) *sql.Row
 }
 
 // Db_inspect : Db -> String(json) -> Task Error String.
@@ -206,7 +216,7 @@ func sqliteQuoteIdent(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
-func sqliteInspectTables(conn *sql.DB) ([]inspectTable, error) {
+func sqliteInspectTables(conn inspectQueryer) ([]inspectTable, error) {
 	type tbl struct{ name, sql string }
 	rows, err := conn.Query(
 		`SELECT name, COALESCE(sql, '') FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
@@ -283,12 +293,15 @@ func sqliteInspectTables(conn *sql.DB) ([]inspectTable, error) {
 		sort.Slice(ixs, func(i, j int) bool { return ixs[i].name < ixs[j].name })
 		colls := sqliteColumnCollations(t.sql)
 		for _, ix := range ixs {
-			if ix.origin == "pk" {
-				continue
+			if ix.origin == "pk" || ix.origin == "u" {
+				it.ProtectedIndexes = append(it.ProtectedIndexes, ix.name)
 			}
 			cols, inexact, err := sqliteIndexParts(conn, ix.name, colls)
 			if err != nil {
 				return nil, err
+			}
+			if ix.origin == "pk" && inexact == "" {
+				continue
 			}
 			// An exact one-column UNIQUE constraint is the column's UNIQUE.
 			// Every other UNIQUE constraint is listed as the index it is: a
@@ -309,7 +322,7 @@ func sqliteInspectTables(conn *sql.DB) ([]inspectTable, error) {
 			}
 			it.Indexes = append(it.Indexes, inspectIndex{
 				Name: ix.name, Columns: cols, Unique: ix.unique, Where: indexPredicateOf(ddl.String),
-				Constraint: ix.origin == "u", Inexact: inexact, Definition: ddl.String,
+				Constraint: ix.origin == "u" || ix.origin == "pk", Inexact: inexact, Definition: ddl.String,
 			})
 		}
 		out = append(out, it)
@@ -335,7 +348,7 @@ func inspectText(v any) string {
 // `unique "email"` is not). An inherited column collation has the same effect.
 // The decimal collation is the one collation a Store declares itself.
 // An expression column is listed as `<expression>`.
-func sqliteIndexParts(conn *sql.DB, index string, colls map[string]string) ([]string, string, error) {
+func sqliteIndexParts(conn inspectQueryer, index string, colls map[string]string) ([]string, string, error) {
 	rows, err := conn.Query(`PRAGMA index_xinfo(` + sqliteQuoteIdent(index) + `)`)
 	if err != nil {
 		return nil, "", fmt.Errorf("columns of index %s: %v", index, err)
@@ -550,7 +563,7 @@ func indexPredicateOf(ddl string) string {
 	return ""
 }
 
-func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
+func pgInspectTables(conn inspectQueryer) ([]inspectTable, error) {
 	rows, err := conn.Query(
 		`SELECT table_name FROM information_schema.tables
 		 WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' ORDER BY table_name`)
@@ -578,7 +591,7 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 			`SELECT a.attname, k.ord FROM pg_index i
 			 CROSS JOIN LATERAL unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
 			 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
-			 WHERE i.indrelid = `+rel+` AND i.indisprimary`, name)
+			 WHERE i.indrelid = `+rel+` AND i.indisprimary AND k.ord <= i.indnkeyatts`, name)
 		if err != nil {
 			return nil, fmt.Errorf("primary key of %s: %v", name, err)
 		}
@@ -620,6 +633,9 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 		// does not describe the index. The constraint is the table's own
 		// UNIQUE / PRIMARY KEY / EXCLUDE (`conrelid`): a foreign key on
 		// another table names this index in `conindid` too.
+		// NULLS NOT DISTINCT changes which rows a unique index accepts and
+		// cannot be declared by a Store. Read the catalogue flag through JSON
+		// so PostgreSQL before 15, which has no such field, still works.
 		irows, err := conn.Query(
 			`SELECT c.relname, i.indisunique, i.indisprimary,
 			        COALESCE(pg_get_expr(i.indpred, i.indrelid), ''),
@@ -639,9 +655,13 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 			        EXISTS (SELECT 1 FROM unnest(i.indkey::int2[], i.indcollation::oid[]) AS kc(attnum, coll)
 			                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = kc.attnum
 			                WHERE kc.attnum > 0 AND kc.coll IS NOT NULL AND kc.coll <> 0
-			                  AND kc.coll <> a.attcollation),
+			                  AND (kc.coll <> a.attcollation
+			                       OR a.attcollation <> 'pg_catalog."default"'::regcollation)),
 			        EXISTS (SELECT 1 FROM unnest(i.indclass::oid[]) AS cl(opc)
 			                JOIN pg_opclass oc ON oc.oid = cl.opc WHERE NOT oc.opcdefault),
+			        COALESCE((to_jsonb(i)->>'indnullsnotdistinct')::boolean, false),
+			        NOT i.indimmediate,
+			        NOT (i.indisvalid AND i.indisready AND i.indislive),
 			        am.amname,
 			        pg_get_indexdef(i.indexrelid)
 			 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_am am ON am.oid = c.relam
@@ -651,21 +671,27 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 		}
 		for irows.Next() {
 			var iname, pred, colsJSON, contype, am, def string
-			var uniq, primary, exprs, include, desc, coll, opclass bool
+			var uniq, primary bool
+			var features pgIndexFeatures
 			if err := irows.Scan(&iname, &uniq, &primary, &pred, &colsJSON, &contype,
-				&exprs, &include, &desc, &coll, &opclass, &am, &def); err != nil {
+				&features.exprs, &features.include, &features.desc, &features.coll,
+				&features.opclass, &features.nullsNotDistinct, &features.deferrable,
+				&features.unusable, &am, &def); err != nil {
 				irows.Close()
 				return nil, err
 			}
-			if primary {
-				continue
+			if primary || contype != "" {
+				it.ProtectedIndexes = append(it.ProtectedIndexes, iname)
 			}
 			colList := []string{}
 			if err := json.Unmarshal([]byte(colsJSON), &colList); err != nil {
 				irows.Close()
 				return nil, fmt.Errorf("columns of index %s: %v", iname, err)
 			}
-			inexact := pgIndexInexact(exprs, include, desc, coll, opclass, am, contype)
+			inexact := pgIndexInexact(features, am, contype)
+			if primary && inexact == "" {
+				continue
+			}
 			// An exact one-column UNIQUE constraint is the column's UNIQUE.
 			// Every other constraint index is listed: a multi-column UNIQUE
 			// constraint is what Store.uniqueOn declares (v0.29.2: skipped).
@@ -692,25 +718,39 @@ func pgInspectTables(conn *sql.DB) ([]inspectTable, error) {
 	return out, nil
 }
 
+type pgIndexFeatures struct {
+	exprs, include, desc, coll, opclass    bool
+	nullsNotDistinct, deferrable, unusable bool
+}
+
 // pgIndexInexact says why an index's key-column list does not describe it,
 // or "" when it does. A Store declares a plain B-tree index over columns
-// with their own collation and default operator class, ascending.
-func pgIndexInexact(exprs, include, desc, coll, opclass bool, am, contype string) string {
+// with the database's default collation and operator class, ascending.
+func pgIndexInexact(f pgIndexFeatures, am, contype string) string {
 	var why []string
-	if exprs {
+	if f.exprs {
 		why = append(why, "an expression column")
 	}
-	if include {
+	if f.include {
 		why = append(why, "INCLUDE columns")
 	}
-	if desc {
+	if f.desc {
 		why = append(why, "a DESC or NULLS FIRST column")
 	}
-	if coll {
+	if f.coll {
 		why = append(why, "a column with a COLLATE of its own")
 	}
-	if opclass {
+	if f.opclass {
 		why = append(why, "an operator class that is not the default")
+	}
+	if f.nullsNotDistinct {
+		why = append(why, "NULLS NOT DISTINCT")
+	}
+	if f.deferrable {
+		why = append(why, "a deferrable constraint")
+	}
+	if f.unusable {
+		why = append(why, "an index that is not valid, ready and live")
 	}
 	if am != "" && am != "btree" {
 		why = append(why, "the "+am+" index method")

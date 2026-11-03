@@ -59,6 +59,9 @@ func TestInspectSqliteCatalogue(t *testing.T) {
 		t.Fatalf("report: %+v", rep)
 	}
 	u := rep.Tables[0]
+	if len(u.ProtectedIndexes) != 1 || u.ProtectedIndexes[0] != "sqlite_autoindex_users_1" {
+		t.Errorf("folded UNIQUE index lost its protected name: %v", u.ProtectedIndexes)
+	}
 	byName := map[string]inspectColumn{}
 	for _, c := range u.Columns {
 		byName[c.Name] = c
@@ -153,6 +156,14 @@ type inspectShapeCase struct {
 // composite key kept its first column only, an expression column was dropped
 // and `COLLATE NOCASE` lost, and `sky db check` then said "matches").
 var inspectShapeCases = []inspectShapeCase{
+	{name: "SQLite primary-key collation remains visible",
+		ddl:   []string{`CREATE TABLE pk_collated (id TEXT COLLATE NOCASE NOT NULL PRIMARY KEY)`},
+		table: "pk_collated", pk: []string{"id"},
+		indexes: []inspectIndex{{Columns: []string{"id"}, Name: "sqlite_autoindex_pk_collated_1", Unique: true, Constraint: true, Inexact: "column id has COLLATE NOCASE"}}},
+	{name: "SQLite primary-key DESC remains visible",
+		ddl:   []string{`CREATE TABLE pk_desc (id TEXT NOT NULL PRIMARY KEY DESC)`},
+		table: "pk_desc", pk: []string{"id"},
+		indexes: []inspectIndex{{Columns: []string{"id"}, Name: "sqlite_autoindex_pk_desc_1", Unique: true, Constraint: true, Inexact: "column id is DESC"}}},
 	{name: "multi-column UNIQUE constraint",
 		ddl:   []string{`CREATE TABLE ext2 (code TEXT PRIMARY KEY, name TEXT NOT NULL, tenant INTEGER NOT NULL, UNIQUE (tenant, name))`},
 		table: "ext2", pk: []string{"code"},
@@ -261,5 +272,25 @@ func TestSqliteColumnCollations(t *testing.T) {
 		"`n2` TEXT DEFAULT 'a,(b' COLLATE RTRIM, CONSTRAINT c UNIQUE (name COLLATE NOCASE))")
 	if got["email"] != "NOCASE" || got["n2"] != "RTRIM" || got["name"] != "" || len(got) != 2 {
 		t.Errorf("collations = %v", got)
+	}
+}
+
+func TestPostgresIndexEnforcementIsNotPlain(t *testing.T) {
+	if got := pgIndexInexact(pgIndexFeatures{nullsNotDistinct: true}, "btree", "u"); got != "NULLS NOT DISTINCT" {
+		t.Errorf("NULLS NOT DISTINCT index: got %q", got)
+	}
+	if got := pgIndexInexact(pgIndexFeatures{}, "btree", "u"); got != "" {
+		t.Errorf("ordinary unique index: got %q, want exact", got)
+	}
+	for _, c := range []struct {
+		features pgIndexFeatures
+		want     string
+	}{
+		{pgIndexFeatures{deferrable: true}, "a deferrable constraint"},
+		{pgIndexFeatures{unusable: true}, "an index that is not valid, ready and live"},
+	} {
+		if got := pgIndexInexact(c.features, "btree", "u"); got != c.want {
+			t.Errorf("got %q, want %q", got, c.want)
+		}
 	}
 }

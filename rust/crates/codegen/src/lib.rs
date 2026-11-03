@@ -590,6 +590,7 @@ fn narrow_call(to: &GoTy, inner: &str) -> String {
     // One level per level of the tree it walks: grow the stack on demand.
     base::ensure_stack(|| {
         match to {
+            GoTy::Any => format!("any({inner})"),
             GoTy::Named(n, args) if n == "rt.SkyTask" && args.len() == 2 => format!(
                 "rt.TaskCoerceT[{}, {}]({})",
                 render_ty(&args[0]),
@@ -761,6 +762,14 @@ fn escape_go(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn erased_function_result_needs_no_runtime_narrowing() {
+        let slot = GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any));
+        let code = narrow_call(&slot, "capture()");
+        assert!(!code.contains("rt.Coerce[any]"), "{code}");
+        assert_eq!(code.matches("capture()").count(), 1, "{code}");
+    }
 
     #[test]
     fn renders_call() {

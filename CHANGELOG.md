@@ -13,6 +13,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## v0.29.2 — `sky run` hands every app its embedded database (2026-11-01)
 
+- Numeric polymorphism now selects Int or Float representation before literals
+  and arithmetic run, including local functions, recursive calls, higher-order
+  calls and memoised values. This fixes precision errors that result conversion
+  could not repair.
+- Partial application evaluates supplied arguments once. Functions that return
+  functions preserve each application stage, and closures keep captured values
+  when their caller proceeds through a tail-recursive loop.
+- Inferred bounds follow forward function references through the full helper
+  chain. Mutually recursive unannotated functions share their types before
+  generalisation, so invalid infinite recursive types are rejected.
+- Typed callback bodies keep their known types across generic function slots,
+  preserving direct field access and typed folds without extra runtime narrowing.
+
 A patch release for v0.29.1. `sky run` and `sky watch` now start the embedded
 PostgreSQL cluster and pass its address to a `Std.App` app and a Sky.Spa app,
 as they already did for a plain app. `sky db check` compares a live database
@@ -139,6 +152,19 @@ Breaking and Migration.
   the ledger, as JSON. It never creates the ledger.
 
 ### Fixed
+
+- **Adoption migrations replay safely.** `sky db check --write` creates tables
+  before adding columns, and columns before indexes. It refuses snapshot
+  repairs that cannot apply to both the live database and a fresh replay, and
+  protects folded primary-key and UNIQUE constraint indexes from drops.
+  An equivalent ordinary UNIQUE constraint satisfies a snapshot-only adoption
+  index without creating a duplicate. Explicit named index operations retain
+  their normal behaviour. SQLite primary keys with a collation or descending
+  order retain their unsupported-index notices.
+- **`Codec.auto` nested enum tuples.** Dict and native-map values retain their
+  declared tuple element types when encoded, so enum names read back through
+  JSON and Store. Codec safety checks traverse finite types beyond depth 64,
+  with cycle detection for recursive types.
 
 #### Data: codecs, `Std.Db.Store`, Decimal and Money
 
@@ -493,7 +519,16 @@ Breaking and Migration.
   `Store.unique "email"`, which is case-sensitive. Each then "matched". The
   reader now says why such an index is not a column list (an expression, a
   collation or operator class of its own, DESC, INCLUDE columns, another
-  index method, an exclusion constraint). A Store cannot declare it, so the
+  index method, an exclusion constraint, or PostgreSQL's `NULLS NOT DISTINCT`).
+  The latter rejects duplicate null keys that plain uniqueness permits. It
+  remains an index with a notice, including a one-column UNIQUE constraint,
+  rather than becoming a plain unique field in an adoption stub.
+  Deferrable constraints and indexes that are not valid, ready and live
+  also retain a notice, including an unsupported primary-key index.
+  INCLUDE columns on a primary-key index are not reported as key columns.
+  A PostgreSQL index that inherits a non-default column collation also
+  retains its notice, including UNIQUE constraints and primary-key indexes.
+  A Store cannot declare it, so the
   check gives a notice for it and the stub a comment; under a name the code
   also declares, it is a difference. A foreign key on another table no
   longer makes PostgreSQL's plain unique index read as a constraint.

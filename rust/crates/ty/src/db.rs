@@ -59,6 +59,20 @@ pub trait TyDb: SkyDb {
     /// incremental path).
     fn body_types_of(&self, module: ModuleId, def: DefId) -> Rc<BodyTypes>;
 
+    /// CHECK-derived numeric dictionaries. Ordinary BodyTypes are unchanged.
+    fn numeric_elaboration_of(
+        &self,
+        module: ModuleId,
+        def: DefId,
+    ) -> Rc<crate::numeric::NumericElaboration> {
+        Rc::new(crate::numeric::compute_numeric_elaboration(
+            &self.check_world(),
+            self.as_sky_db(),
+            module,
+            def,
+        ))
+    }
+
     /// This database viewed as the resolution interface, so a `TyDb` value can be
     /// handed to `Infer::new` (which threads a `&dyn SkyDb`). Mirrors
     /// `ResolveDb::sky_db`.

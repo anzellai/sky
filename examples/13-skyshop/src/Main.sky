@@ -1151,6 +1151,7 @@ subscriptions model =
 -- ══════════════════════════════════════════════════════
 -- AUTHORIZATION GUARD
 -- ══════════════════════════════════════════════════════
+guard : Msg -> Model -> Result Error ()
 guard msg model =
     case msg of
 
@@ -1184,6 +1185,7 @@ guard msg model =
             -- Public messages (no auth needed)
 
 
+requireAuth : Model -> Result Error ()
 requireAuth model =
     case model.user of
 
@@ -1191,9 +1193,13 @@ requireAuth model =
             Ok ()
 
         Nothing ->
-            Err "Authentication required"
+            Err
+                (Error.withMessage
+                    "Authentication required"
+                    Error.permissionDenied)
 
 
+requireAdmin : Model -> Result Error ()
 requireAdmin model =
     case model.user of
 
@@ -1202,10 +1208,16 @@ requireAdmin model =
                 Ok ()
 
             else
-                Err "Admin access required"
+                Err
+                    (Error.withMessage
+                        "Admin access required"
+                        Error.permissionDenied)
 
         Nothing ->
-            Err "Authentication required"
+            Err
+                (Error.withMessage
+                    "Authentication required"
+                    Error.permissionDenied)
 
 
 -- ══════════════════════════════════════════════════════

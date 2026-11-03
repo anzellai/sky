@@ -38,6 +38,12 @@ pub struct LiveTable {
     pub columns: Vec<LiveColumn>,
     #[serde(default, deserialize_with = "crate::db_migrate::null_as_empty")]
     pub indexes: Vec<LiveIndex>,
+    #[serde(
+        rename = "protectedIndexes",
+        default,
+        deserialize_with = "crate::db_migrate::null_as_empty"
+    )]
+    pub protected_indexes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -835,10 +841,13 @@ fn op_key(op: &Value) -> (String, String, String) {
 /// the table, and `--gen` never writes it: the snapshot already has it
 /// (v0.29.2 Judge). So the file also carries the ops `--gen` writes against
 /// the snapshot, first and in `--gen`'s order, as far as they are no-ops on
-/// the live database: `createTable` and `addIndex` render `IF NOT EXISTS`,
-/// `dropIndex` `IF EXISTS`. An `addColumn` for a column the live database
-/// already has would fail there, so it is refused (the `Err` names each one)
-/// and nothing is written.
+/// the live database. Table creation, column additions and indexes are
+/// normalised so the same file applies to both states. A column present in
+/// only one state is supplied by CREATE when that table is missing in the
+/// other state; otherwise an unguarded ADD cannot reconcile them and is
+/// refused. Snapshot column-UNIQUE transitions get their own index operation,
+/// including when CREATE alone would only enforce uniqueness on the live side.
+
 pub fn write_ops(
     c: &Check,
     target: &Schema,
@@ -847,42 +856,239 @@ pub fn write_ops(
 ) -> Result<Vec<Value>, Vec<String>> {
     let gen = db_migrate::diff(target, snapshot);
     let check_ops = c.safe_ops();
-    let check_keys: Vec<(String, String, String)> = check_ops.iter().map(op_key).collect();
-    let live_has_column = |t: &str, col: &str| {
-        live.tables
-            .iter()
-            .any(|lt| lt.name == t && lt.columns.iter().any(|c| c.name == col))
-    };
-    let mut out: Vec<Value> = Vec::new();
-    let mut refused = Vec::new();
-    for op in &gen.ops {
-        let key = op_key(op);
+    let check_keys: Vec<_> = check_ops.iter().map(op_key).collect();
+    let mut ops = Vec::new();
+    for mut op in gen.ops {
+        let key = op_key(&op);
         if let Some(i) = check_keys.iter().position(|k| *k == key) {
-            // The live database needs it too: the check's own op.
-            out.push(check_ops[i].clone());
+            ops.push(check_ops[i].clone());
+        } else {
+            // An adopted UNIQUE constraint may enforce this snapshot-only
+            // index under another name. Fresh replay still needs the op.
+            if op_str(&op, "kind") == "addIndex"
+                && op["unique"].as_bool() == Some(true)
+                && op_str(&op, "where").trim().is_empty()
+            {
+                op["skipEquivalentConstraint"] = Value::Bool(true);
+            }
+            ops.push(op);
+        }
+    }
+    for op in check_ops {
+        if !ops.iter().any(|other| op_key(other) == op_key(&op)) {
+            ops.push(op);
+        }
+    }
+
+    // A CREATE for a missing live table is a no-op on a fresh replay when
+    // the snapshot already has that table. Column UNIQUE transitions therefore
+    // need their own index op on both paths, rather than only inline UNIQUE.
+    for table in &target.tables {
+        let Some(previous) = snapshot.tables.iter().find(|t| t.name == table.name) else {
+            continue;
+        };
+        for column in &table.columns {
+            if !column.unique
+                || column.external
+                || column.name == table.pk
+                || !previous
+                    .columns
+                    .iter()
+                    .any(|c| c.name == column.name && !c.external && !c.unique)
+            {
+                continue;
+            }
+            let columns = vec![column.name.clone()];
+            let name = db_migrate::index_name(&table.name, &columns, true, "");
+            if !ops.iter().any(|o| {
+                op_str(o, "kind") == "addIndex"
+                    && op_str(o, "table") == table.name
+                    && op_str(o, "name") == name
+            }) {
+                ops.push(json!({"kind":"addIndex","table":table.name,"name":name,"indexColumns":columns,"unique":true,"skipEquivalentConstraint":true}));
+            }
+            for op in &mut ops {
+                if op_str(op, "kind") == "createTable" && op_str(op, "table") == table.name {
+                    if let Some(cols) = op.get_mut("columns").and_then(Value::as_array_mut) {
+                        for col in cols {
+                            if op_str(col, "name") == column.name {
+                                col["unique"] = Value::Bool(false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let creates: Vec<String> = ops
+        .iter()
+        .filter(|op| op_str(op, "kind") == "createTable")
+        .map(|op| op_str(op, "table").to_string())
+        .collect();
+    let drops: Vec<_> = ops
+        .iter()
+        .filter(|o| op_str(o, "kind") == "dropIndex")
+        .map(|o| {
+            (
+                op_str(o, "table").to_string(),
+                op_str(o, "name").to_string(),
+            )
+        })
+        .collect();
+    let mut refused = Vec::new();
+    let mut additions = Vec::new();
+    let mut out = Vec::new();
+    for op in ops {
+        let table = op_str(&op, "table");
+        match op_str(&op, "kind") {
+            "addIndex" => {
+                let name = op_str(&op, "name");
+                let columns: Vec<String> = op
+                    .get("indexColumns")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect();
+                // The live constraint may let this op skip today, but a fresh
+                // replay can lack it. Retained snapshot names must be checked
+                // independently of the live equivalence shortcut.
+                for owner in &snapshot.tables {
+                    let dropped = drops.iter().any(|(t, n)| t == &owner.name && n == name);
+                    if !dropped
+                        && owner.indexes.iter().any(|ix| {
+                            ix.name == name
+                                && (owner.name != table
+                                    || ix.columns != columns
+                                    || ix.unique != op["unique"].as_bool().unwrap_or(false)
+                                    || ix.predicate != op_str(&op, "where"))
+                        })
+                    {
+                        refused.push(format!("index {name} is occupied on {} in the committed snapshot: a fresh replay cannot establish the declared index under that name",owner.name));
+                    }
+                }
+                let equivalent = op["skipEquivalentConstraint"].as_bool() == Some(true)
+                    && op["unique"].as_bool() == Some(true)
+                    && op_str(&op, "where").trim().is_empty()
+                    && live.tables.iter().any(|t| {
+                        t.name == table
+                            && ((columns.len() == 1
+                                && t.columns.iter().any(|c| c.name == columns[0] && c.unique))
+                                || t.indexes.iter().any(|ix| {
+                                    let mut got = ix.columns.clone();
+                                    got.sort();
+                                    let mut want = columns.clone();
+                                    want.sort();
+                                    ix.constraint
+                                        && ix.unique
+                                        && ix.inexact.is_empty()
+                                        && ix.predicate.is_empty()
+                                        && got == want
+                                }))
+                    });
+                if !equivalent {
+                    for owner in &live.tables {
+                        let protected = owner.protected_indexes.iter().any(|n| n == name);
+                        let collision = owner.indexes.iter().find(|ix| ix.name == name);
+                        let dropped = drops.iter().any(|(t, n)| t == &owner.name && n == name);
+                        let incompatible = collision.is_some_and(|ix| {
+                            !dropped
+                                && (owner.name != table
+                                    || !ix.inexact.is_empty()
+                                    || ix.unique != op["unique"].as_bool().unwrap_or(false)
+                                    || ix.columns != columns
+                                    || ix.predicate != op_str(&op, "where"))
+                        });
+                        if protected || incompatible {
+                            refused.push(format!("index {name} is occupied on {}: ADD INDEX cannot safely establish the declared index",owner.name));
+                        }
+                    }
+                }
+            }
+            "dropIndex" => {
+                let name = op_str(&op, "name");
+                let protected = live.tables.iter().find(|t| {
+                    t.protected_indexes.iter().any(|n| n == name)
+                        || t.indexes.iter().any(|i| i.name == name && i.constraint)
+                });
+                if let Some(owner) = protected {
+                    refused.push(format!("index {name} backs a constraint on {}: DROP INDEX cannot safely reconcile it with the committed snapshot", owner.name));
+                    continue;
+                }
+                if let Some(owner) = live
+                    .tables
+                    .iter()
+                    .find(|t| t.name != table && t.indexes.iter().any(|i| i.name == name))
+                {
+                    refused.push(format!("index {name} belongs to {}, not {table}: the snapshot must not drop another table's index", owner.name));
+                    continue;
+                }
+            }
+            "addColumn" => {
+                let column = op_str(&op, "column");
+                let st = snapshot.tables.iter().find(|t| t.name == table);
+                let lt = live.tables.iter().find(|t| t.name == table);
+                let in_snapshot =
+                    st.is_some_and(|t| t.columns.iter().any(|c| c.name == column && !c.external));
+                let in_live = lt.is_some_and(|t| t.columns.iter().any(|c| c.name == column));
+                if in_snapshot && in_live {
+                    continue;
+                }
+                if in_snapshot != in_live {
+                    let missing_table_can_be_created = creates.iter().any(|t| t == table)
+                        && ((in_snapshot && lt.is_none()) || (in_live && st.is_none()));
+                    if missing_table_can_be_created {
+                        // CREATE includes it on the missing side, and is a no-op
+                        // on the side that already has the table and column.
+                        continue;
+                    }
+                    refused.push(format!("column {table}.{column} exists in only one of the live database and committed snapshot: ADD COLUMN cannot apply to both this database and a fresh migration replay"));
+                    continue;
+                }
+                additions.push((table.to_string(), column.to_string()));
+            }
+            _ => {}
+        }
+        out.push(op);
+    }
+    for op in &mut out {
+        if op_str(op, "kind") != "createTable" {
             continue;
         }
-        match op_str(op, "kind") {
-            "createTable" | "addIndex" | "dropIndex" => out.push(op.clone()),
-            "addColumn" if live_has_column(op_str(op, "table"), op_str(op, "column")) => refused
-                .push(format!(
-                    "column {}.{} is in the database, and no committed migration adds it \
-                     (db/schema.json does not have it): an ADD COLUMN would fail on this \
-                     database, and without one a database built from db/migrations lacks it",
-                    op_str(op, "table"),
-                    op_str(op, "column")
-                )),
-            _ => out.push(op.clone()),
+        let table = op_str(op, "table").to_string();
+        if let Some(columns) = op.get_mut("columns").and_then(Value::as_array_mut) {
+            for column in columns.iter() {
+                let name = op_str(column, "name");
+                if additions.iter().any(|(t, c)| t == &table && c == name)
+                    && (column.get("pk").and_then(Value::as_bool) == Some(true)
+                        || column.get("autoinc").and_then(Value::as_bool) == Some(true))
+                {
+                    refused.push(format!("column {table}.{name} is a primary or serial key: ADD COLUMN cannot reproduce the key semantics of CREATE TABLE"));
+                }
+            }
+            columns.retain(|column| {
+                !additions
+                    .iter()
+                    .any(|(t, c)| t == &table && c == op_str(column, "name"))
+            });
+            if columns.is_empty() {
+                refused.push(format!("table {table} has no initial column before its additions: one migration cannot safely create and extend it on both database states"));
+            }
         }
     }
     if !refused.is_empty() {
         return Err(refused);
     }
-    for (op, key) in check_ops.iter().zip(&check_keys) {
-        if !out.iter().any(|o| op_key(o) == *key) {
-            out.push(op.clone());
-        }
-    }
+    // Drop old names before CREATE can reuse them for implicit constraints.
+    // Then tables precede alterations, and new columns precede their indexes.
+    out.sort_by_key(|op| match op_str(op, "kind") {
+        "dropIndex" => 0,
+        "createTable" => 1,
+        "addIndex" => 3,
+        _ => 2,
+    });
     Ok(out)
 }
 
@@ -1503,6 +1709,7 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
             let live_unique = lc.unique
                 || lt.indexes.iter().any(|ix| {
                     ix.unique
+                        && ix.inexact.is_empty()
                         && ix.predicate.is_empty()
                         && ix.columns.len() == 1
                         && ix.columns[0] == tc.name
@@ -1510,6 +1717,38 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
             if tc.unique && !is_pk && !live_unique {
                 let cols = vec![tc.name.clone()];
                 let name = db_migrate::index_name(&tt.name, &cols, true, "");
+                let add = json!({
+                    "kind":"addIndex", "table":tt.name, "name":name,
+                    "indexColumns":cols, "unique":true,
+                });
+                let collision = live.tables.iter().find_map(|table| {
+                    table
+                        .indexes
+                        .iter()
+                        .find(|ix| ix.name == name)
+                        .map(|ix| (table, ix))
+                });
+                let protected_owner = live
+                    .tables
+                    .iter()
+                    .find(|table| table.protected_indexes.contains(&name));
+                let steps = if let Some(owner) = protected_owner {
+                    vec![Step::Unsafe {
+                        sql:String::new(),
+                        reason:format!("the repair index name {name} backs a constraint on {}; resolve that name before adding ordinary uniqueness",owner.name),
+                    }]
+                } else {
+                    match collision {
+                    Some((owner,ix)) if owner.name==tt.name && !ix.constraint && !owner.protected_indexes.contains(&name) => vec![
+                        Step::Op(json!({"kind":"dropIndex","table":tt.name,"name":name})),Step::Op(add),
+                    ],
+                    Some((owner,_)) => vec![Step::Unsafe {
+                        sql:String::new(),
+                        reason:format!("the repair index name {name} is occupied on {} by an index that cannot safely be replaced; resolve that name before adding ordinary uniqueness",owner.name),
+                    }],
+                    None => vec![Step::Op(add)],
+                }
+                };
                 findings.push(Finding {
                     table: tt.name.clone(),
                     text: format!(
@@ -1517,10 +1756,7 @@ pub fn check(target: &Schema, live: &Inspect) -> Check {
                         tt.name, tc.name
                     ),
                     code: None,
-                    steps: vec![Step::Op(json!({
-                        "kind": "addIndex", "table": tt.name, "name": name,
-                        "indexColumns": cols, "unique": true,
-                    }))],
+                    steps,
                 });
             } else if !tc.unique && !is_pk && lc.unique {
                 findings.push(Finding {
@@ -2584,6 +2820,7 @@ mod tests {
     /// committed snapshot's migrations built holds.
     fn built(dialect: &str, t: &SchemaTable) -> LiveTable {
         LiveTable {
+            protected_indexes: vec![],
             name: t.name.clone(),
             columns: t
                 .columns
@@ -2773,6 +3010,7 @@ mod tests {
         let mut id = lcol("id", "TEXT", true, None);
         id.pk = true;
         let lt = LiveTable {
+            protected_indexes: vec![],
             name: "t".into(),
             columns: vec![id, lcol("on", "BOOLEAN", true, None)],
             indexes: vec![],
@@ -2799,6 +3037,7 @@ mod tests {
             )],
         };
         let mut lt = LiveTable {
+            protected_indexes: vec![],
             name: "t".into(),
             columns: vec![
                 lcol("id", "text", true, None),
@@ -2843,6 +3082,7 @@ mod tests {
         key.pk = true;
         key.pk_pos = 1;
         let lt = LiveTable {
+            protected_indexes: vec![],
             name: "prices".into(),
             columns: vec![key, lcol("cost", "TEXT", true, None)],
             indexes: vec![],
@@ -2898,6 +3138,7 @@ mod tests {
             )],
         };
         let mut lt = LiveTable {
+            protected_indexes: vec![],
             name: "legacy_dec_pg".into(),
             columns: vec![
                 lcol("id", "text", true, None),
@@ -2963,6 +3204,7 @@ mod tests {
         let mut id = lcol("id", "TEXT", true, None);
         id.pk = true;
         let lt = LiveTable {
+            protected_indexes: vec![],
             name: "t".into(),
             columns: vec![
                 id,
@@ -3065,6 +3307,7 @@ mod tests {
         id.pk = true;
         id.autoinc = true;
         let t = LiveTable {
+            protected_indexes: vec![],
             name: "order_items".into(),
             columns: vec![
                 id,
@@ -3087,6 +3330,7 @@ mod tests {
         assert!(!s.starts_with("-- NOT"), "{s}");
         // A Sky keyword column gets a field with a `_`; the column name stays.
         let t2 = LiveTable {
+            protected_indexes: vec![],
             name: "x".into(),
             columns: vec![
                 lcol("addr_2", "TEXT", true, None),
@@ -3188,6 +3432,7 @@ mod tests {
     #[test]
     fn a_stub_declares_the_live_defaults() {
         let t = LiveTable {
+            protected_indexes: vec![],
             name: "ext".into(),
             columns: vec![
                 {
@@ -3239,6 +3484,7 @@ mod tests {
         }
         // SQLite spellings.
         let t = LiveTable {
+            protected_indexes: vec![],
             name: "ext".into(),
             columns: vec![
                 lcol("created", "TIMESTAMP", false, Some("CURRENT_TIMESTAMP")),
@@ -3267,6 +3513,7 @@ mod tests {
         // A NUMERIC column whose name does not round-trip through snake_case
         // (the old Codec.autoCamel path wrote `""12""`): Codec.decimal.
         let t = LiveTable {
+            protected_indexes: vec![],
             name: "prices".into(),
             columns: vec![id.clone(), lcol("price_2", "numeric", true, None)],
             indexes: vec![],
@@ -3279,6 +3526,7 @@ mod tests {
         assert!(!s.contains("autoCamel"), "{s}");
         // A reserved-word column that is NOT NULL with no default: commented.
         let t = LiveTable {
+            protected_indexes: vec![],
             name: "lines".into(),
             columns: vec![id.clone(), lcol("order", "integer", true, None)],
             indexes: vec![],
@@ -3292,6 +3540,7 @@ mod tests {
         );
         // A nullable reserved column is left out, the rest works.
         let t = LiveTable {
+            protected_indexes: vec![],
             name: "lines".into(),
             columns: vec![id.clone(), lcol("user", "text", false, None)],
             indexes: vec![],
@@ -3305,6 +3554,7 @@ mod tests {
         assert!(s.contains("|> Codec.field \"user\" .user"), "{s}");
         // A quoted upper-case table on PostgreSQL: commented.
         let t = LiveTable {
+            protected_indexes: vec![],
             name: "Order".into(),
             columns: vec![id.clone()],
             indexes: vec![],
@@ -3314,6 +3564,7 @@ mod tests {
         assert!(s.lines().all(|l| l.starts_with("--")), "{s}");
         // A bytea column: a TODO, never a `Maybe String` field.
         let t = LiveTable {
+            protected_indexes: vec![],
             name: "files".into(),
             columns: vec![id.clone(), lcol("data", "bytea", false, None)],
             indexes: vec![],
@@ -3322,6 +3573,7 @@ mod tests {
         assert!(s.contains("-- column data: TODO it is BYTEA"), "{s}");
         assert!(!s.contains(".data"), "{s}");
         let t = LiveTable {
+            protected_indexes: vec![],
             name: "files".into(),
             columns: vec![id, lcol("data", "bytea", true, None)],
             indexes: vec![],
@@ -3348,6 +3600,7 @@ mod tests {
             ..LiveIndex::default()
         };
         let t = LiveTable {
+            protected_indexes: vec![],
             name: "acct".into(),
             columns: vec![
                 id,
@@ -3555,6 +3808,7 @@ mod tests {
         inspect(
             dialect,
             vec![LiveTable {
+                protected_indexes: vec![],
                 name: "ext2".into(),
                 columns: vec![
                     code,
@@ -3628,6 +3882,7 @@ mod tests {
             c.pk_pos = i + 1;
         }
         LiveTable {
+            protected_indexes: vec![],
             name: "ext4".into(),
             columns: cols,
             indexes: vec![],
@@ -3710,7 +3965,11 @@ mod tests {
             for (cols, why) in [
                 (&["<expression>", "tenant"][..], "an expression column"),
                 (&["email"][..], "column email has COLLATE NOCASE"),
+                (&["email"][..], "a column with a COLLATE of its own"),
                 (&["a"][..], "INCLUDE columns"),
+                (&["email"][..], "NULLS NOT DISTINCT"),
+                (&["email"][..], "a deferrable constraint"),
+                (&["email"][..], "an index that is not valid, ready and live"),
             ] {
                 let int = if is_pg(dialect) { "bigint" } else { "INTEGER" };
                 let mut id = lcol("id", int, true, None);
@@ -3720,6 +3979,7 @@ mod tests {
                 ix.inexact = why.into();
                 ix.definition = "CREATE UNIQUE INDEX u ON t (...)".into();
                 let lt = LiveTable {
+                    protected_indexes: vec![],
                     name: "t".into(),
                     columns: vec![
                         id,
@@ -3794,6 +4054,221 @@ mod tests {
     /// each once. A column the live table has and no migration adds is
     /// refused (an ADD COLUMN would fail on the live database).
     #[test]
+    fn write_ops_replays_unique_conversion_when_live_table_is_missing() {
+        let mut old = table(
+            "t",
+            "id",
+            vec![col("id", "int", false), col("a", "text", false)],
+        );
+        old.indexes.push(SchemaIndex {
+            name: "t_a_key".into(),
+            columns: vec!["a".into()],
+            unique: true,
+            predicate: String::new(),
+        });
+        let snapshot = Schema {
+            tables: vec![old.clone()],
+        };
+        let mut wanted = old;
+        wanted.indexes.clear();
+        wanted.columns[1].unique = true;
+        let target = Schema {
+            tables: vec![wanted],
+        };
+        let live = inspect("pgx", vec![]);
+        let ops = write_ops(&check(&target, &live), &target, &snapshot, &live).expect("ops");
+        let create = ops
+            .iter()
+            .position(|o| op_str(o, "kind") == "createTable")
+            .unwrap();
+        let drop = ops
+            .iter()
+            .position(|o| op_str(o, "kind") == "dropIndex")
+            .unwrap();
+        assert!(
+            drop < create,
+            "old names must be dropped before CREATE can reuse them: {ops:?}"
+        );
+        assert_eq!(
+            ops[create]["columns"][1]["unique"], false,
+            "uniqueness belongs to the replayable index op: {ops:?}"
+        );
+        assert!(
+            ops.iter().any(|o| op_str(o, "kind") == "addIndex"
+                && o["unique"] == true
+                && o["indexColumns"] == json!(["a"])),
+            "fresh replay loses uniqueness: {ops:?}"
+        );
+    }
+
+    #[test]
+    fn uniqueness_repair_replaces_an_inexact_index_with_its_generated_name() {
+        let mut t = table(
+            "t",
+            "id",
+            vec![col("id", "int", false), col("label", "text", false)],
+        );
+        t.columns[1].unique = true;
+        let name = db_migrate::index_name("t", &["label".into()], true, "");
+        let mut lt = built("pgx", &t);
+        lt.columns[1].unique = false;
+        lt.indexes.push(LiveIndex {
+            name: name.clone(),
+            columns: vec!["label".into()],
+            unique: true,
+            inexact: "invalid or unready index".into(),
+            ..LiveIndex::default()
+        });
+        let c = check(&Schema { tables: vec![t] }, &inspect("pgx", vec![lt]));
+        let ops = c.safe_ops();
+        let kinds: Vec<_> = ops.iter().map(|o| op_str(o, "kind")).collect();
+        assert_eq!(kinds, vec!["dropIndex", "addIndex"], "{ops:?}");
+        assert!(ops.iter().all(|o| op_str(o, "name") == name));
+    }
+
+    #[test]
+    fn live_constraint_cannot_hide_a_fresh_replay_name_collision() {
+        let old = table(
+            "t",
+            "id",
+            vec![col("id", "int", false), col("label", "text", false)],
+        );
+        let mut wanted = old.clone();
+        wanted.columns[1].unique = true;
+        let name = db_migrate::index_name("t", &["label".into()], true, "");
+        let mut other = table("other", "id", vec![col("id", "int", false)]);
+        other.indexes.push(SchemaIndex {
+            name,
+            columns: vec!["id".into()],
+            unique: false,
+            predicate: String::new(),
+        });
+        let snapshot = Schema {
+            tables: vec![old, other.clone()],
+        };
+        let mut lt = built("pgx", &wanted);
+        lt.columns[1].unique = true;
+        let live = inspect("pgx", vec![lt, built("pgx", &other)]);
+        // An extra table is inert destructive metadata, so its index remains
+        // present when replay applies the active ops.
+        let target = Schema {
+            tables: vec![wanted],
+        };
+        let c = check(&target, &live);
+        let err = write_ops(&c, &target, &snapshot, &live)
+            .expect_err("fresh replay cannot establish uniqueness under this name");
+        assert!(
+            err.iter()
+                .any(|e| e.contains("snapshot") && e.contains("other")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn folded_constraint_name_blocks_uniqueness_repair_across_tables() {
+        let mut t = table(
+            "t",
+            "id",
+            vec![col("id", "int", false), col("label", "text", false)],
+        );
+        let lt = built("pgx", &t);
+        t.columns[1].unique = true;
+        let target = Schema { tables: vec![t] };
+        let name = db_migrate::index_name("t", &["label".into()], true, "");
+        let mut other = built("pgx", &table("other", "id", vec![col("id", "int", false)]));
+        other.protected_indexes.push(name);
+        assert!(other.indexes.is_empty());
+        let live = inspect("pgx", vec![lt, other]);
+        let c = check(&target, &live);
+        let f = c
+            .findings
+            .iter()
+            .find(|f| f.text.contains("column t.label is not UNIQUE"))
+            .expect("missing uniqueness");
+        assert!(
+            f.steps.iter().all(|s| matches!(s, Step::Unsafe { .. })),
+            "{f:?}"
+        );
+        assert!(!c.safe_ops().iter().any(|o| op_str(o, "kind") == "addIndex"));
+        // A pre-existing unsafe check op must not bypass the final guard,
+        // regardless of whether the snapshot needs a synthetic transition.
+        let mut forced = c;
+        forced.findings.push(Finding{table:"t".into(),text:"stale repair".into(),code:None,steps:vec![Step::Op(json!({"kind":"addIndex","table":"t","name":db_migrate::index_name("t",&["label".into()],true,""),"indexColumns":["label"],"unique":true}))]});
+        assert!(write_ops(&forced, &target, &target, &live).is_err());
+    }
+
+    #[test]
+    fn snapshot_unique_repair_cannot_bypass_an_occupied_name() {
+        let old = table(
+            "t",
+            "id",
+            vec![col("id", "int", false), col("label", "text", false)],
+        );
+        let snapshot = Schema {
+            tables: vec![old.clone()],
+        };
+        let mut t = old;
+        t.columns[1].unique = true;
+        let name = db_migrate::index_name("t", &["label".into()], true, "");
+        let mut other = built("pgx", &table("other", "id", vec![col("id", "int", false)]));
+        other.indexes.push(LiveIndex {
+            name,
+            columns: vec!["id".into()],
+            ..LiveIndex::default()
+        });
+        let target = Schema { tables: vec![t] };
+        let live = inspect("pgx", vec![other]);
+        let err = write_ops(&check(&target, &live), &target, &snapshot, &live)
+            .expect_err("occupied schema-wide name");
+        assert!(err[0].contains("occupied on other"), "{err:?}");
+    }
+
+    #[test]
+    fn inexact_single_column_index_does_not_satisfy_declared_uniqueness() {
+        let mut t = table(
+            "t",
+            "id",
+            vec![col("id", "int", false), col("label", "text", false)],
+        );
+        t.columns[1].unique = true;
+        for reason in [
+            "invalid or unready index",
+            "column label has COLLATE NOCASE",
+            "a deferred constraint",
+            "NULLS NOT DISTINCT",
+        ] {
+            let mut live = built("pgx", &t);
+            live.columns[1].unique = false;
+            live.indexes.push(LiveIndex {
+                name: "special".into(),
+                columns: vec!["label".into()],
+                unique: true,
+                inexact: reason.into(),
+                ..LiveIndex::default()
+            });
+            let c = check(
+                &Schema {
+                    tables: vec![t.clone()],
+                },
+                &inspect("pgx", vec![live]),
+            );
+            assert!(
+                c.findings
+                    .iter()
+                    .any(|f| f.text.contains("column t.label is not UNIQUE")),
+                "{reason}: {:?}",
+                c.findings
+            );
+            assert!(
+                c.safe_ops()
+                    .iter()
+                    .any(|o| op_str(o, "kind") == "addIndex" && o["unique"] == true),
+                "{reason}: no repair"
+            );
+        }
+    }
+
+    #[test]
     fn write_ops_build_a_fresh_database_too() {
         let target = ext2_target(true);
         let live = ext2_live("sqlite");
@@ -3801,6 +4276,7 @@ mod tests {
         let ops = write_ops(&c, &target, &Schema::default(), &live).expect("ops");
         let kinds: Vec<&str> = ops.iter().map(|o| op_str(o, "kind")).collect();
         assert_eq!(kinds, ["createTable", "addIndex"], "{ops:?}");
+        assert_eq!(ops[1]["skipEquivalentConstraint"], true);
         // Nothing to do when the snapshot already has the table.
         assert!(write_ops(&c, &target, &target, &live)
             .expect("ops")
@@ -3815,11 +4291,134 @@ mod tests {
         let kinds: Vec<&str> = ops.iter().map(|o| op_str(o, "kind")).collect();
         assert_eq!(kinds, ["createTable", "addIndex"], "{ops:?}");
 
+        assert!(ops[1].get("skipEquivalentConstraint").is_none());
+
         // The snapshot has the table without `tenant`; the live table has it.
         let mut snap = ext2_target(true);
         snap.tables[0].columns.retain(|c| c.name != "tenant");
         snap.tables[0].indexes.clear();
         let err = write_ops(&c, &target, &snap, &live).expect_err("refused");
         assert!(err[0].contains("ext2.tenant"), "{err:?}");
+    }
+
+    #[test]
+    fn write_ops_adoption_adds_new_columns_once_before_indexes() {
+        for dialect in ["sqlite", "postgres"] {
+            let mut target = ext4_target("a");
+            target.tables[0].indexes = vec![sidx("ix_b", &["b"], false)];
+            let mut table = ext4_live(&["a"]);
+            table.columns.retain(|c| c.name == "a");
+            let live = inspect(dialect, vec![table]);
+            let c = check(&target, &live);
+            let ops = write_ops(&c, &target, &Schema::default(), &live).expect("safe adoption");
+            let create = ops
+                .iter()
+                .find(|op| op_str(op, "kind") == "createTable")
+                .expect("fresh database needs creation");
+            let columns = create["columns"].as_array().unwrap();
+            for (pos, op) in ops.iter().enumerate() {
+                if op_str(op, "kind") == "addColumn" {
+                    let name = op_str(op, "column");
+                    assert!(
+                        !columns.iter().any(|c| c["name"] == name),
+                        "{dialect}: fresh database adds {name} twice: {ops:?}"
+                    );
+                    let index = ops
+                        .iter()
+                        .position(|o| op_str(o, "kind") == "addIndex")
+                        .unwrap();
+                    assert!(
+                        pos < index,
+                        "{dialect}: index precedes its new column: {ops:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn write_ops_refuses_snapshot_drop_of_a_live_constraint() {
+        let mut target = ext2_target(true);
+        target.tables[0].indexes[0].name = "u".into();
+        let mut snapshot = target.clone();
+        snapshot.tables[0].indexes[0].columns = vec!["name".into()];
+        let mut live = ext2_live("postgres");
+        live.tables[0].indexes[0].name = "u".into();
+        let c = check(&target, &live);
+        assert!(c.findings.is_empty());
+        let refused = write_ops(&c, &target, &snapshot, &live)
+            .expect_err("DROP INDEX cannot remove a constraint-backed index");
+        assert!(refused
+            .iter()
+            .any(|r| r.contains("constraint") && r.contains('u')));
+
+        // Ordinary PK and one-column UNIQUE indexes are folded out of the
+        // visible index list, but their names remain protected.
+        live.tables[0].indexes.clear();
+        live.tables[0].protected_indexes = vec!["u".into()];
+        let c = check(&target, &live);
+        assert!(write_ops(&c, &target, &snapshot, &live).is_err());
+
+        // Index names resolve across the schema, not by the stale op.table.
+        live.tables[0].protected_indexes.clear();
+        live.tables.push(LiveTable {
+            name: "other".into(),
+            columns: vec![],
+            indexes: vec![],
+            protected_indexes: vec!["u".into()],
+        });
+        let c = check(&target, &live);
+        assert!(write_ops(&c, &target, &snapshot, &live).is_err());
+    }
+
+    #[test]
+    fn write_ops_refuses_to_split_key_semantics_out_of_creation() {
+        let mut target = ext4_target("b");
+        let mut table = ext4_live(&["a"]);
+        table.columns.retain(|c| c.name == "a");
+        let live = inspect("sqlite", vec![table]);
+        let c = check(&target, &live);
+        assert!(write_ops(&c, &target, &Schema::default(), &live).is_err());
+        target.tables[0].pk.clear();
+        target.tables[0].columns.retain(|c| c.name == "b");
+        let c = check(&target, &live);
+        assert!(
+            write_ops(&c, &target, &Schema::default(), &live).is_err(),
+            "initial CREATE cannot be empty"
+        );
+    }
+
+    #[test]
+    fn write_ops_refuses_column_repair_that_duplicates_committed_history() {
+        let target = ext4_target("a");
+        let mut table = ext4_live(&["a"]);
+        table.columns.retain(|c| c.name != "b");
+        let live = inspect("sqlite", vec![table]);
+        let c = check(&target, &live);
+        assert!(!c.safe_ops().is_empty());
+        assert!(
+            write_ops(&c, &target, &target, &live).is_err(),
+            "ADD COLUMN would duplicate the column on a fresh replay"
+        );
+    }
+
+    #[test]
+    fn write_ops_creates_a_missing_live_table_before_new_columns() {
+        let target = ext4_target("a");
+        let mut snapshot = target.clone();
+        snapshot.tables[0].columns.retain(|c| c.name == "a");
+        let live = inspect("sqlite", vec![]);
+        let c = check(&target, &live);
+        let ops = write_ops(&c, &target, &snapshot, &live).expect("recreate missing live table");
+        assert_eq!(op_str(&ops[0], "kind"), "createTable", "{ops:?}");
+        let columns = ops[0]["columns"].as_array().unwrap();
+        for op in &ops {
+            if op_str(op, "kind") == "addColumn" {
+                assert!(
+                    !columns.iter().any(|c| c["name"] == op_str(op, "column")),
+                    "fresh table adds a column twice: {ops:?}"
+                );
+            }
+        }
     }
 }

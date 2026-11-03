@@ -818,6 +818,19 @@ impl UnionFind {
         }
     }
 
+    /// A validated local `number` annotation generalises its literal root as
+    /// Number. Keep the bound, but remove the literal's default-to-Int marker
+    /// before each call gets a fresh instance. Concrete Int results never
+    /// enter this branch, and unannotated literals still default to Int.
+    pub(crate) fn generalise_annotated_number_literal(&mut self, v: TyVarId) {
+        let root = self.find(v);
+        if let Content::FlexSuper(bound) = self.content(root) {
+            if bound.has(SuperType::Number) && bound.has(SuperType::IntLit) {
+                self.set_content(root, Content::FlexSuper(bound.minus(SuperType::IntLit)));
+            }
+        }
+    }
+
     /// Default every integer literal that no rigid `number` variable
     /// absorbed to `Int`. Run at the end of a definition, before its types
     /// are read back.

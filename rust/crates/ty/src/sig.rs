@@ -51,19 +51,12 @@ pub struct World {
     /// exclusion rationale at sig.rs ~line 180-189). Closes audit #3.
     pub check_sigs: HashMap<DefId, Scheme>,
     pub check_kernel_sigs: HashMap<(String, String), Scheme>,
-    /// CHECK-ONLY monomorphic schemes for UNANNOTATED **app-module** top-level
-    /// defs used cross-module (F1c narrow subset). Same isolation contract as
-    /// `check_sigs`: consulted only by the accept/reject checker
-    /// (`use_inferred == false`), never by the lowerer (`use_inferred == true`)
-    /// nor pass-3 inference, so Go emission is byte-identical. STRICTLY filtered
-    /// at populate time (`infer_app_check_sigs`): admits only fully-monomorphic,
-    /// Unit-spine-free types (e.g. `allCategories : List String`, `Int -> Int`,
-    /// `String`, `Int -> {px:Int, py:Int}`) — every polymorphic/Unit-spine app
-    /// helper is excluded to preserve accept-parity. Record-typed monomorphic
-    /// sigs ARE admitted (the record-free clause was lifted once record
-    /// row-polymorphism became sound) so cross-module record
-    /// misuse is caught. Empty until pass 5 populates it.
+    /// CHECK-only inferred schemes for unannotated app-module definitions.
+    /// Includes polymorphic and Unit-parameter functions. Callers and numeric
+    /// elaboration must see the same scheme, including numeric quantifiers.
+    /// The ordinary lowering type world does not consume this channel.
     pub app_check_sigs: HashMap<DefId, Scheme>,
+    pub(crate) app_group_errors: HashMap<DefId, Vec<crate::infer::TypeError>>,
     /// CHECK-ONLY override of an ANNOTATED def's scheme, as callers see it
     /// (v0.27.0). Two writers:
     /// * pass 6 (D-ANY): the signature with every `any` filled from the body
@@ -755,6 +748,7 @@ impl World {
             check_sigs: HashMap::new(),
             check_kernel_sigs: HashMap::new(),
             app_check_sigs: HashMap::new(),
+            app_group_errors: HashMap::new(),
             any_result_check_sigs: HashMap::new(),
             weak_vars: HashMap::new(),
             bound_check_sigs: HashMap::new(),
@@ -954,14 +948,10 @@ impl World {
         }
     }
 
-    /// Pass 5 (see `build`, F1c narrow subset). Infer + register CHECK-ONLY
-    /// monomorphic schemes for unannotated top-level defs in APP (non-kernel)
-    /// modules, so a cross-module misuse of such a def (`allCategories + 1`) is
-    /// rejected instead of absorbed by a wildcard flex. STRICTLY filtered:
-    /// admits only fully-monomorphic, Unit-spine-free types (record-typed sigs
-    /// now included; excludes under-generalised polymorphs and `() -> X`
-    /// kernel-shim spines — the two remaining accept-parity landmines).
-    /// Modules in an import cycle (SCC size > 1) are skipped (fixpoint deferred).
+    /// Pass 5: infer CHECK schemes for unannotated app definitions in
+    /// dependency order. A Unit parameter is an ordinary parameter, and must
+    /// not erase a numeric quantifier or a concrete return type from callers.
+    /// Modules in an import cycle still require the existing SCC treatment.
     fn infer_app_check_sigs(&mut self, db: &dyn SkyDb) {
         use crate::infer::Infer;
         let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
@@ -1011,96 +1001,51 @@ impl World {
                 .iter()
                 .map(|td| (td.def, td.name.as_str().to_string()))
                 .collect();
-            for (def, body) in &resolved.bodies {
-                // Respect annotations: never shadow a declared signature.
-                if self.value_sigs.contains_key(def) {
-                    continue;
-                }
-                if !names.contains_key(def) {
-                    continue;
-                }
-                let mut infer = Infer::new(self, db).with_self_def(Some(*def));
-                // Checker channel: concretize an unresolved `Number` super to
-                // `Int` (oracle-faithful) so a numeric helper infers a
-                // MONOMORPHIC sig and stays subject to the F1c monomorphism
-                // filter rather than escaping via a spurious `∀a. a -> …`.
-                let Some(scheme) = infer.infer_def_scheme(body, true) else {
-                    continue;
-                };
-                // "CLEANLY USABLE" filter (the accept-parity guard). The one
-                // surviving clause: no Unit in the param spine — excludes the
-                // `() -> X` shims that interact with the zero-arg-call arity gate.
-                //
-                // HISTORY — two earlier clauses, both LIFTED after empirical P0
-                // experiments proved them vestigial (accept-parity held):
-                //   * record-free — lifted once record row-polymorphism became
-                //     sound + oracle-parity (leniency valve retired);
-                //     unlocked cross-module record misuse detection (F1c).
-                //   * monomorphic-only (`!scheme.vars.is_empty()`) — lifted here
-                //     (gap2). It was meant to guard "under-generalisation", but an
-                //     under-generalised scheme only makes the check LOOSER (accept-
-                //     more), never a false-reject — so the exclusion cost real
-                //     accept-invalid parity: an unannotated POLYMORPHIC helper
-                //     (`apply f x = f x`, `compose g f x = g (f x)`, `pair a b =
-                //     (a, b)`, `first xs = List.head xs`) escaped caller checking,
-                //     so a caller passing a wrong-typed arg (`apply String.fromInt
-                //     "s"`) was accepted where the oracle rejects. Admitting the
-                //     poly scheme lets the checker instantiate it fresh per call
-                //     site and unify the args — standard HM, exactly the oracle's
-                //     behaviour. Codegen-neutral (app_check_sigs is read only at
-                //     `!use_inferred`; the lowerer never consults it): infer 42/42,
-                //     build-run 31/31 match, repro 40/40 byte-stable, reject +5
-                //     gap2 locks, and 15+ valid-poly stress cases with zero
-                //     false-reject. Numeric helpers stay concretized to `Int` via
-                //     infer_def_scheme's concretize_super, so they were already
-                //     monomorphic-admitted in baseline — this lift adds only
-                //     genuine ∀-quantified helpers.
-                if param_spine_contains_unit(&scheme.ty) {
-                    continue;
-                }
-                self.app_check_sigs.entry(*def).or_insert(scheme);
-            }
-            // C-2 (v0.27.0): re-infer this module's unannotated CAFs with an
-            // EXPANSIVE body (zero parameters, not a syntactic value) until
-            // their schemes stop changing. The loop above infers defs in
-            // source order, so a CAF that uses a LATER sibling saw it as a
-            // fresh variable and its scheme came out over-general. For a
-            // function that only loosens caller checks; for an expansive CAF
-            // it would export a variable the value restriction must see, since
-            // the checker applies the restriction to exactly this scheme (the
-            // type every caller instantiates). Bounded: each round only
-            // narrows.
-            let cafs: Vec<DefId> = resolved
+            let defs: Vec<DefId> = resolved
                 .bodies
-                .iter()
-                .filter(|(def, body)| {
-                    names.contains_key(*def)
-                        && !self.value_sigs.contains_key(*def)
-                        && self.app_check_sigs.contains_key(*def)
-                        && body.params.is_empty()
-                        && body
-                            .root
-                            .is_some_and(|r| !crate::infer::is_syntactic_value(body, r))
-                })
-                .map(|(def, _)| *def)
+                .keys()
+                .copied()
+                .filter(|d| names.contains_key(d) && !self.value_sigs.contains_key(d))
                 .collect();
-            for _round in 0..4 {
-                let mut changed = false;
-                for def in &cafs {
-                    let Some(body) = resolved.bodies.get(def) else {
-                        continue;
-                    };
-                    let mut infer = Infer::new(self, db).with_self_def(Some(*def));
-                    let Some(scheme) = infer.infer_def_scheme(body, true) else {
-                        continue;
-                    };
-                    if self.app_check_sigs.get(def) != Some(&scheme) {
-                        self.app_check_sigs.insert(*def, scheme);
-                        changed = true;
+            let indices: HashMap<_, _> = defs.iter().enumerate().map(|(i, d)| (*d, i)).collect();
+            let edges: Vec<Vec<usize>> = defs
+                .iter()
+                .map(|d| {
+                    let mut deps: Vec<_> = resolved.bodies[d]
+                        .exprs
+                        .iter()
+                        .filter_map(|(_, e)| {
+                            if let hir::Expr::Var(hir::Res::Def(callee)) = e {
+                                indices.get(callee).copied()
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    deps.sort_unstable();
+                    deps.dedup();
+                    deps
+                })
+                .collect();
+            for group in crate::infer::dependency_groups(&edges) {
+                if group.len() == 1 {
+                    let def = defs[group[0]];
+                    let mut infer = Infer::new(self, db).with_self_def(Some(def));
+                    if let Some(scheme) = infer.infer_def_scheme(&resolved.bodies[&def], true) {
+                        self.app_check_sigs.insert(def, scheme);
                     }
-                }
-                if !changed {
-                    break;
+                } else {
+                    let members: Vec<_> = group
+                        .iter()
+                        .map(|&i| (defs[i], &resolved.bodies[&defs[i]]))
+                        .collect();
+                    let inferred = Infer::infer_definition_group(self, db, &members);
+                    for (def, scheme, errors) in inferred {
+                        self.app_check_sigs.insert(def, scheme);
+                        if !errors.is_empty() {
+                            self.app_group_errors.insert(def, errors);
+                        }
+                    }
                 }
             }
         }
@@ -1975,34 +1920,7 @@ fn intern_value(db: &dyn SkyDb, m: ModuleId, name: &str) -> DefId {
     db.intern_def(m, &Name::new(name), DefKind::Value)
 }
 
-// ---- F1c app-check-sig support: cycle detection, topo order, Unit spine ----
-
-/// Does the ARROW PARAM SPINE of `ty` contain a `Ty::Unit` anywhere? Walks each
-/// left-hand arrow argument (the param positions) and returns true if any param
-/// contains a Unit. The result type is NOT inspected. Used by the F1c filter to
-/// exclude `() -> X` kernel-shim spines (the getGitHubClientSecret landmine).
-fn param_spine_contains_unit(ty: &Ty) -> bool {
-    let mut cur = ty;
-    while let Ty::Fun(a, b) = cur {
-        if ty_contains_unit(a) {
-            return true;
-        }
-        cur = b;
-    }
-    false
-}
-
-/// Does `ty` contain a `Ty::Unit` anywhere in its structure?
-fn ty_contains_unit(ty: &Ty) -> bool {
-    // One level per level of the tree it walks: grow the stack on demand.
-    base::ensure_stack(|| match ty {
-        Ty::Unit => true,
-        Ty::Fun(a, b) => ty_contains_unit(a) || ty_contains_unit(b),
-        Ty::App(_, args) | Ty::Tuple(args) => args.iter().any(ty_contains_unit),
-        Ty::Record(fields, _) => fields.iter().any(|(_, t)| ty_contains_unit(t)),
-        Ty::Var(_) | Ty::Error => false,
-    })
-}
+// ---- App-check-sig support: dependency cycles and order ----
 
 /// The set of app modules that sit in an import cycle (a strongly-connected
 /// component of size > 1 in the dependency graph `deps_of`). These are skipped

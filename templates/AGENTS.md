@@ -316,6 +316,12 @@ sky db reset [table]           # empty data (all declared tables, or one); keeps
 sky db drop [table]            # drop tables (all + ledger, or one); fresh "never migrated" state — prompts / --yes
 ```
 
+`sky db check --write` orders table creation, column additions and indexes for
+both adoption and fresh replay. It refuses incompatible snapshot repairs and
+constraint-index drops. A snapshot-only unique index can reuse an equivalent
+ordinary UNIQUE constraint at application time. Explicit named indexes keep
+their normal behaviour.
+
 `Store.migrate`, `sky db push` and `--gen` follow one rule: a `Maybe` field is a
 nullable column, any other field `NOT NULL DEFAULT <declared default, else
 zero>` (`defaultInt` / `defaultText` / `defaultBool` / `defaultFloat` /
@@ -558,6 +564,15 @@ main = println (String.fromInt (update Increment 0))
 `{{expr}}` interpolation (escape as `\{{`). A let-bound helper function is
 polymorphic (`twice x = ( x, x )` works at two types in one body), and
 `Module.value.field` reads a field of another module's value.
+
+Numeric polymorphism selects Int or Float before arithmetic runs. Partial
+application evaluates supplied arguments once. Captured values stay fixed
+across a caller's tail-recursive iterations. See `docs/language/types.md` in
+the compiler repository for the type and application rules.
+A `()` parameter preserves inferred numeric bounds. Discarded arguments are
+evaluated too, including in a tail call.
+Unannotated recursive peers share monomorphic types before generalisation.
+Forward references preserve inferred bounds through the full helper chain.
 
 **Collection costs.** Every `List` / `Dict` / `Set` / `Array` / `String`
 function states its cost in `sky doc` (a `Cost:` line). `x :: xs` is amortised

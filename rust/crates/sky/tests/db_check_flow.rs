@@ -1478,3 +1478,221 @@ main =
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Adoption and fresh replay must execute the same written migration. The
+/// adopted table starts without a target column, and its UNIQUE constraint
+/// has a different name from the generated index.
+#[test]
+fn sqlite_write_adoption_and_fresh_replay() {
+    if !required(Need::Go, tool_on_path("go")) || !required(Need::Sqlite3, tool_on_path("sqlite3"))
+    {
+        return;
+    }
+    let src = r#"module Main exposing (main, db)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Db.Store as Store
+import Std.Codec as Codec
+type alias Item = { id : String, a : String, b : String, note : Maybe String }
+items : Store.Store Item
+items =
+    Store.fromCodec "items" (Codec.auto { id = "", a = "", b = "", note = Nothing })
+        |> Store.primaryKey "id"
+        |> Store.uniqueOn [ "a", "b" ]
+        |> Store.index [ "note" ]
+db = Store.project [ Store.toTable items ]
+main = Task.succeed ()
+"#;
+    let adopted = project(
+        "sky-adopt-replay",
+        "driver = \"sqlite\"\npath = \"app.db\"",
+        src,
+    );
+    ok(&adopted, &["db", "init"], &[]);
+    sqlite3(&adopted.join("app.db"), "CREATE TABLE items (id TEXT PRIMARY KEY, a TEXT NOT NULL, b TEXT NOT NULL, UNIQUE(a,b)); INSERT INTO items VALUES ('kept','x','y');");
+    let (code, out, err) = sky(&adopted, &["db", "check", "--sql", "--write"], &[]);
+    assert!(code == 0 || code == 1, "{out}\n{err}");
+    assert!(
+        out.contains("-- sky db check --write: wrote"),
+        "{out}\n{err}"
+    );
+    let ops = file_ops(&migration_files(&adopted)[0]).0;
+    assert!(
+        ops.as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["skipEquivalentConstraint"] == true),
+        "{ops}"
+    );
+    let fresh = project(
+        "sky-fresh-replay",
+        "driver = \"sqlite\"\npath = \"app.db\"",
+        src,
+    );
+    copy_dir(&adopted.join("db"), &fresh.join("db"));
+    for dir in [&adopted, &fresh] {
+        ok(dir, &["db", "migrate"], &[]);
+        ok(dir, &["db", "check"], &[]);
+        assert_eq!(
+            sqlite3(
+                &dir.join("app.db"),
+                "SELECT count(*) FROM pragma_table_info('items') WHERE name='note'"
+            ),
+            "1"
+        );
+        assert_eq!(
+            sqlite3(
+                &dir.join("app.db"),
+                "SELECT count(*) FROM pragma_index_list('items') WHERE \"unique\"=1"
+            ),
+            "2"
+        );
+    }
+    assert_eq!(
+        sqlite3(&adopted.join("app.db"), "SELECT id FROM items"),
+        "kept"
+    );
+    let _ = std::fs::remove_dir_all(adopted);
+    let _ = std::fs::remove_dir_all(fresh);
+}
+
+#[test]
+fn sqlite_store_dict_tuple_enum_round_trip() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let src = r#"module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Dict as Dict exposing (Dict)
+import Std.Db as Db
+import Std.Db.Store as Store
+import Std.Codec as Codec
+import Sky.Test as Test
+
+type Colour = Red | Blue
+
+type alias Row = { id : String, pairs : Dict String (Colour, Int), nested : Dict String (Dict String (Colour, Int)) }
+
+blank : Row
+blank = { id = "", pairs = Dict.empty, nested = Dict.empty }
+
+codec = Codec.auto blank
+store = Store.fromCodec "items" codec |> Store.primaryKey "id"
+
+row : Row
+row = { id = "one", pairs = Dict.fromList [ ("red", (Red,1)), ("blue", (Blue,2)) ], nested = Dict.fromList [ ("inner", Dict.fromList [ ("blue", (Blue,3)) ]) ] }
+
+work _ =
+    Db.open "sqlite" ":memory:"
+        |> Task.andThen insertAndRead
+
+insertAndRead conn =
+    Db.exec conn "CREATE TABLE items (id TEXT PRIMARY KEY, pairs TEXT NOT NULL, nested TEXT NOT NULL)" []
+        |> Task.andThen (\_ -> Store.insert conn store row)
+        |> Task.andThen (\_ -> Store.findBy conn store "id" "one")
+
+main =
+    Test.runMain
+        [ Test.test "Dict tuple enum JSON reads its own output" (\_ -> Test.equal (Ok row) (Codec.fromJson codec (Codec.toJson codec row)))
+        , Test.test "Dict tuple enum Store reads its own output" (\_ -> Test.equal (Ok (Just row)) (Task.run (work ())))
+        ]
+"#;
+    let dir = project("sky-codec-dict-tuple", "", src);
+    let out = ok(&dir, &["run"], &[]);
+    assert!(out.contains("2 passed"), "{out}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A missing live table must not make CREATE's inline constraints collide
+/// with a snapshot index that the same migration removes. The replacement
+/// uniqueness must also be present when replay starts from the old snapshot.
+#[test]
+fn postgres_write_unique_conversion_replays() {
+    if !required(Need::Go, tool_on_path("go")) {
+        return;
+    }
+    let pg = Pg::new();
+    if !required(Need::Postgres, pg.is_some()) {
+        return;
+    }
+    let pg = pg.unwrap();
+    let old = r#"module Main exposing (main, db)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Db.Store as Store
+import Std.Codec as Codec
+items =
+    Store.fromCodec "items" (Codec.auto { id = 0, a = "" })
+        |> Store.primaryKey "id"
+        |> Store.uniqueOnNamed "items_a_key" [ "a" ]
+db = Store.project [ Store.toTable items ]
+main = Task.succeed ()
+"#;
+    let dir = project("sky-pg-unique-replay", "", old);
+    let live_env = [("DATABASE_URL", pg.dsn.as_str())];
+    ok(&dir, &["db", "init"], &live_env);
+    ok(&dir, &["db", "migrate", "--gen", "initial"], &live_env);
+    ok(&dir, &["db", "migrate"], &live_env);
+    pg.psql("DROP TABLE items", true);
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        old.replace(
+            "Store.uniqueOnNamed \"items_a_key\" [ \"a\" ]",
+            "Store.unique \"a\"",
+        ),
+    )
+    .unwrap();
+    let (code, out, err) = sky(&dir, &["db", "check", "--sql", "--write"], &live_env);
+    assert!(code == 0 || code == 1, "{out}\n{err}");
+    assert!(
+        out.contains("-- sky db check --write: wrote"),
+        "{out}\n{err}"
+    );
+    let replay = Pg::new().expect("fresh replay schema");
+    for db in [&pg, &replay] {
+        let db_env = [("DATABASE_URL", db.dsn.as_str())];
+        ok(&dir, &["db", "migrate"], &db_env);
+        ok(&dir, &["db", "check"], &db_env);
+        db.psql("INSERT INTO items (id,a) VALUES (1,'same'); DO $$ BEGIN BEGIN INSERT INTO items (id,a) VALUES (2,'same'); RAISE EXCEPTION 'uniqueness missing'; EXCEPTION WHEN unique_violation THEN NULL; END; END $$",true);
+        assert_eq!(db.psql("SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=current_schema() AND t.relname='items' AND i.indisunique AND i.indisvalid",true),"2");
+    }
+    // A folded UNIQUE constraint on another table occupies the generated
+    // repair name. It must not turn a supposedly safe IF NOT EXISTS into a
+    // no-op when this table loses its unique index.
+    let repair_name = file_ops(&migration_files(&dir).pop().unwrap())
+        .0
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|op| op["kind"] == "addIndex" && op["indexColumns"] == serde_json::json!(["a"]))
+        .unwrap()["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(repair_name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_'));
+    pg.psql(&format!("DROP INDEX {repair_name}; CREATE TABLE other (id BIGINT PRIMARY KEY, label TEXT CONSTRAINT {repair_name} UNIQUE)"),true);
+    let before = migration_files(&dir).len();
+    let (code, out, err) = sky(&dir, &["db", "check", "--sql", "--write"], &live_env);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(out.contains("backs a constraint on other"), "{out}\n{err}");
+    assert!(
+        !out.contains(&format!(
+            "\nCREATE UNIQUE INDEX IF NOT EXISTS {repair_name}"
+        )),
+        "ineffective repair is presented as safe: {out}"
+    );
+    // The extra table can produce inert destructive metadata. No active
+    // operation may pretend to repair uniqueness under the occupied name.
+    for path in migration_files(&dir).iter().skip(before) {
+        assert_eq!(
+            file_ops(path).0,
+            serde_json::json!([]),
+            "unsafe collision wrote active operations"
+        );
+    }
+    assert_eq!(pg.psql("SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=current_schema() AND t.relname='items' AND i.indisunique",true),"1");
+    let _ = std::fs::remove_dir_all(dir);
+}

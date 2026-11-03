@@ -13,6 +13,8 @@
 > change, old code and new code, as loud, loud at run time or silent:
 > https://github.com/anzellai/sky/tree/main/docs/migration (`v0.27.md`,
 > `v0.28.md`, `v0.29.md`).
+> Numeric instantiation and function application follow the rules in
+> https://github.com/anzellai/sky/blob/main/docs/language/types.md.
 
 ## Response style (INVIOLABLE)
 
@@ -83,6 +85,12 @@ a read fails. It exits 1 on drift. `--sql` prints the SQL that would make the
 database match, with the unsafe steps commented out: show it to the user, do
 not run it yourself. `--write` saves the safe steps as a new file in
 `db/migrations`: it changes the project, so use it only when the user asks.
+
+`sky db check --write` orders table creation, column additions and indexes for
+both adoption and fresh replay. It refuses incompatible snapshot repairs and
+constraint-index drops. A snapshot-only unique index can reuse an equivalent
+ordinary UNIQUE constraint at application time. Explicit named indexes keep
+their normal behaviour.
 
 ### Embedded PostgreSQL and an explicit DSN together are an error
 

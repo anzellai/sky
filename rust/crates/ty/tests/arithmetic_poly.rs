@@ -143,3 +143,173 @@ fn div_helper_at_string_rejects() {
         "SOUNDNESS — `divh \"a\" \"b\"` must clash (`/` operands are Float)"
     );
 }
+
+#[test]
+fn annotated_local_number_literals_instantiate_at_int_and_float() {
+    let src=format!("{HDR}b =\n    let\n        delta : number -> number\n        delta _ = (9007199254740993 + 1) - 9007199254740993\n    in\n        (delta 1, delta 1.0)\n");
+    assert_eq!(
+        type_errors(&repo_root(), &src),
+        0,
+        "an annotated local numeric literal must retain its number quantifier"
+    );
+}
+
+#[test]
+fn annotated_local_number_still_rejects_string_calls() {
+    let src=format!("{HDR}b =\n    let\n        delta : number -> number\n        delta _ = 1\n    in\n        delta \"nope\"\n");
+    assert!(
+        type_errors(&repo_root(), &src) > 0,
+        "generalising a literal must retain the number bound"
+    );
+}
+
+#[test]
+fn annotated_local_number_cannot_generalise_a_concrete_int_result() {
+    let src=format!("{HDR}import Sky.Core.List as List\n\nb =\n    let\n        fixed : number -> number\n        fixed _ = List.length []\n    in\n        fixed 1.0\n");
+    assert!(
+        type_errors(&repo_root(), &src) > 0,
+        "only literal evidence can stand for number, not a monomorphic Int result"
+    );
+}
+
+#[test]
+fn numeric_metadata_keeps_instantiation_and_literal_identity() {
+    let src =
+        format!("{HDR}big : number -> number\nbig _ = 9007199254740993\n\nb = (big 1, big 1.0)\n");
+    let mut db = SourceDb::new();
+    for (name, parse) in load_stdlib(&repo_root()) {
+        db.add_module(&name, parse);
+    }
+    let module = db.add_module("Main", syntax::parse(&src, base::FileId(0)));
+    let world = ty::World::build(&db);
+    let resolved = hir::SkyDb::resolve(&db, module);
+    let get = |name: &str| {
+        resolved
+            .top_defs
+            .iter()
+            .find(|d| d.name.as_str() == name)
+            .unwrap()
+            .def
+    };
+    let big = ty::numeric::compute_numeric_elaboration(&world, &db, module, get("big"));
+    assert!(big.errors.is_empty(), "{:?}", big.errors);
+    assert_eq!(big.top_params, 1);
+    assert!(big.expressions.values().any(|s|matches!(s,ty::numeric::NumericShape::Number(p) if p.binder==ty::numeric::NumericBinder::Top)));
+    let caller = ty::numeric::compute_numeric_elaboration(&world, &db, module, get("b"));
+    assert!(caller.errors.is_empty(), "{:?}", caller.errors);
+    assert!(caller
+        .references
+        .values()
+        .any(|args| args == &[ty::numeric::NumberEvidence::Int]));
+    assert!(caller
+        .references
+        .values()
+        .any(|args| args == &[ty::numeric::NumberEvidence::Float]));
+}
+
+#[test]
+fn numeric_metadata_keeps_local_quantifier_before_instances_collapse() {
+    let src=format!("{HDR}b =\n    let\n        local : number -> number\n        local _ = 9007199254740993\n    in\n        (local 1, local 1.0)\n");
+    let mut db = SourceDb::new();
+    for (name, parse) in load_stdlib(&repo_root()) {
+        db.add_module(&name, parse);
+    }
+    let module = db.add_module("Main", syntax::parse(&src, base::FileId(0)));
+    let world = ty::World::build(&db);
+    let resolved = hir::SkyDb::resolve(&db, module);
+    let def = resolved
+        .top_defs
+        .iter()
+        .find(|d| d.name.as_str() == "b")
+        .unwrap()
+        .def;
+    let info = ty::numeric::compute_numeric_elaboration(&world, &db, module, def);
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(
+        info.local_params.values().copied().collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert!(info.expressions.values().any(|s|matches!(s,ty::numeric::NumericShape::Number(p) if matches!(p.binder,ty::numeric::NumericBinder::Local(_)))));
+    assert!(info
+        .references
+        .values()
+        .any(|args| args == &[ty::numeric::NumberEvidence::Int]));
+    assert!(info
+        .references
+        .values()
+        .any(|args| args == &[ty::numeric::NumberEvidence::Float]));
+}
+
+#[test]
+fn unannotated_recursive_int_parameter_rejects_a_float_self_call() {
+    let src = format!(
+        "{HDR}loop n x =\n    if n <= 0 then x + 1 else loop (n - 1) 1.0\n\nb = loop 1 1\n"
+    );
+    assert!(
+        type_errors(&repo_root(), &src) > 0,
+        "a monomorphic recursive call must share its definition's Int parameter"
+    );
+}
+
+#[test]
+fn unannotated_recursive_numeric_function_generalises_after_its_body() {
+    let src=format!("{HDR}loop n x =\n    if n <= 0 then x + x else loop (n - 1) x\n\nb = (loop 2 1, loop 2 1.0)\n");
+    assert_eq!(
+        type_errors(&repo_root(), &src),
+        0,
+        "monomorphic recursion must still generalise the finished function for independent callers"
+    );
+}
+
+#[test]
+fn unit_parameter_keeps_numeric_bounds_at_call_sites() {
+    let src = format!("{HDR}through () x = x + x\n\nb = through () \"invalid\"\n");
+    assert!(
+        type_errors(&repo_root(), &src) > 0,
+        "a Unit parameter must not hide the numeric bound from callers"
+    );
+}
+
+#[test]
+fn unit_parameter_numeric_function_instantiates_for_int_and_float() {
+    let src = format!("{HDR}through () x = x + x\n\nb = (through () 1, through () 1.25)\n");
+    assert_eq!(type_errors(&repo_root(), &src), 0);
+}
+
+#[test]
+fn mutually_recursive_arguments_cannot_form_an_infinite_list_type() {
+    let src = format!("{HDR}first x = second [ x ]\n\nsecond y = first [ y ]\n\nb = first 1\n");
+    assert!(
+        type_errors(&repo_root(), &src) > 0,
+        "unannotated recursive peers must share monomorphic argument variables"
+    );
+}
+
+#[test]
+fn local_helper_cannot_generalise_a_recursive_peers_argument() {
+    let src = format!("{HDR}first x =\n    let\n        call y = second y\n    in\n    (call 1, call \"invalid\")\n\nsecond y =\n    let\n        _ = first y\n    in\n    y\n\nb = first 0\n");
+    assert!(type_errors(&repo_root(), &src) > 0);
+}
+
+#[test]
+fn independent_local_helper_in_a_recursive_group_still_generalises() {
+    let src = format!("{HDR}first n x =\n    let\n        copy y = y\n        _ = copy \"ok\"\n        _ = copy 1\n    in\n    if n <= 0 then x else second (n - 1) x\n\nsecond n x =\n    if n <= 0 then x + x else first (n - 1) x\n\nb = (first 2 1.25, second 2 1)\n");
+    assert_eq!(type_errors(&repo_root(), &src), 0);
+}
+
+#[test]
+fn bound_propagation_preserves_recursive_group_sharing() {
+    let defs = format!("{HDR}first stop x y =\n    (second stop x, second stop y)\n\nsecond stop z =\n    if stop then z + z else Tuple.first (first True z z)\n\n");
+    assert!(
+        type_errors(&repo_root(), &format!("{defs}b = first True 1 1.0\n")) > 0,
+        "a bounds worklist must not independently generalise recursive peers"
+    );
+    assert_eq!(
+        type_errors(
+            &repo_root(),
+            &format!("{defs}b = (first True 1 2, first True 1.0 2.0)\n")
+        ),
+        0,
+        "finished recursive schemes still instantiate separately for independent callers"
+    );
+}

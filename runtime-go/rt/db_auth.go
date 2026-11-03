@@ -2056,17 +2056,18 @@ func dbMigrateCore(d *SkyDb, entries []migEntry, op string, fail func(msg string
 		// resumes from the failure.
 		sum, kind := migSQLChecksum(e.sql), "sql"
 		run := e.sql
+		applyAt := time.Now().UTC()
 		if e.isOps() {
 			// The SQLite `defaultNow` token of an op file is swapped for the
 			// apply time here. The ledger keeps the ops checksum, so the
 			// stamp never changes it. Hand-written SQL runs as given.
-			sum, kind, run = e.opsSum, "ops", migApplyText(e.sql)
+			sum, kind, run = e.opsSum, "ops", migApplyTextAt(e.sql, applyAt)
 		}
 		tx, err := d.conn.Begin()
 		if err != nil {
 			return fail("begin: "+err.Error(), Err[any, any](ErrIo("db.migrate: begin: "+err.Error())))
 		}
-		if _, err := tx.Exec(run); err != nil {
+		if err := migExecuteEntry(tx, d.driver, e, run, applyAt); err != nil {
 			tx.Rollback()
 			// A required unique column that an op file adds to a table
 			// with rows fails on its unique index, and a required column

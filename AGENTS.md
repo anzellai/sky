@@ -87,6 +87,13 @@ Core syntax you must get right:
   A let-bound function is polymorphic, like a top-level one (let-generalisation
   under the value restriction, `docs/language/types.md`). Local functions of one
   `let` may call each other (mutual recursion), in any source order.
+  Numeric polymorphism selects Int or Float before arithmetic runs. Partial
+  application evaluates supplied arguments once. Captured values stay fixed
+  across a caller's tail-recursive iterations.
+  A `()` parameter preserves inferred numeric bounds. Discarded arguments
+  are evaluated too, including in a tail call.
+  Unannotated recursive peers share monomorphic types before generalisation.
+  Forward references preserve inferred bounds through the full helper chain.
 - **Field access**: `model.user.name`; `Shape.origin.x` is field `x` of the
   qualified value `Shape.origin`.
 - **Record update**: `{ user | age = 41 }` (keeps every other field).
@@ -555,6 +562,12 @@ sky ai serve | deploy --service <n> | teardown --service <n>|--run <k>|--all-sky
 sky ai provision --device web|ios|android [--from <dir>]   # Std.Ai.Device engines; sky build --ai-web-engine / --ai-embed <slot>
 sky doctor [--fix] | upgrade | upgrade-claude | clean
 ```
+
+`sky db check --write` orders table creation, column additions and indexes for
+both adoption and fresh replay. It refuses incompatible snapshot repairs and
+constraint-index drops. A snapshot-only unique index can reuse an equivalent
+ordinary UNIQUE constraint at application time. Explicit named indexes keep
+their normal behaviour.
 
 **`sky test` never takes a database from `.env` (v0.29.1).** A test DSN comes
 from `.env.test` or the environment, and test mode never loads `.env`, so a

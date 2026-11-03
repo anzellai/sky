@@ -518,14 +518,13 @@ impl World {
     /// * An ANNOTATED def whose body forces `Encodable` on a plain variable
     ///   (`persist : a -> Codec a; persist b = Codec.auto b`) is seen by its
     ///   callers as `encodable_a -> Codec encodable_a` ([`World::bound_check_sigs`]).
-    /// * An UNANNOTATED def is re-inferred when a callee's scheme gained a
-    ///   bound after the def was inferred: a same-module helper defined LATER
-    ///   (pass 5 infers in source order and saw it as a fresh variable), or a
-    ///   def this pass changed.
+    /// * An UNANNOTATED def is re-inferred when a callee's scheme gains a
+    ///   bound after the dependency/SCC inference pass, for example through an
+    ///   annotated helper whose inferred Encodable bound is published here.
     ///
-    /// Each round re-checks only the defs that reference a changed def, so
-    /// the pass costs a handful of inferences on a real program. Bounds only
-    /// grow, so it converges; the round cap is a backstop.
+    /// A worklist revisits callers only when a callee's bounds change. The
+    /// finite bound lattice grows monotonically, without a helper-depth limit.
+    /// Recursive type equations have already been solved by the app SCC pass.
     pub(crate) fn infer_bounds_fixpoint(&mut self, db: &dyn SkyDb) {
         use crate::infer::Infer;
         struct Target {
@@ -557,7 +556,10 @@ impl World {
                         && body
                             .root
                             .is_some_and(|r| !crate::infer::is_syntactic_value(body, r));
-                    if !self.app_check_sigs.contains_key(def) || caf {
+                    if !self.app_check_sigs.contains_key(def)
+                        || self.app_group_errors.contains_key(def)
+                        || caf
+                    {
                         continue;
                     }
                 }
@@ -577,66 +579,90 @@ impl World {
                 });
             }
         }
-        let mut changed: std::collections::HashSet<base::DefId> = std::collections::HashSet::new();
-        for round in 0..6 {
-            let mut now: std::collections::HashSet<base::DefId> = std::collections::HashSet::new();
-            for t in &targets {
-                let due = if round == 0 {
-                    if t.annotated {
-                        t.defs.iter().any(|d| {
-                            self.caller_scheme(d)
-                                .is_some_and(|s| has_bound_var(&s.ty, true))
-                        }) || t
-                            .kernels
-                            .iter()
-                            .any(|k| self.bound_kernel_sigs.contains_key(k))
-                    } else {
-                        t.later_siblings.iter().any(|d| {
-                            self.caller_scheme(d)
-                                .is_some_and(|s| has_bound_var(&s.ty, false))
-                        })
-                    }
-                } else {
-                    t.defs.iter().any(|d| changed.contains(d))
+        let mut dependents: std::collections::HashMap<base::DefId, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut queue = std::collections::VecDeque::new();
+        let mut queued = vec![false; targets.len()];
+        for (i, t) in targets.iter().enumerate() {
+            for d in &t.defs {
+                dependents.entry(*d).or_default().push(i);
+            }
+            let due = if t.annotated {
+                t.defs.iter().any(|d| {
+                    self.caller_scheme(d)
+                        .is_some_and(|s| has_bound_var(&s.ty, true))
+                }) || t
+                    .kernels
+                    .iter()
+                    .any(|k| self.bound_kernel_sigs.contains_key(k))
+            } else {
+                t.later_siblings.iter().any(|d| {
+                    self.caller_scheme(d)
+                        .is_some_and(|s| has_bound_var(&s.ty, false))
+                })
+            };
+            if due {
+                queue.push_back(i);
+                queued[i] = true;
+            }
+        }
+        while let Some(i) = queue.pop_front() {
+            queued[i] = false;
+            let t = &targets[i];
+            if self.app_group_errors.contains_key(&t.def) {
+                continue;
+            }
+            let mut changed = false;
+            if t.annotated {
+                let Some(anno) = self.value_sigs.get(&t.def).cloned() else {
+                    continue;
                 };
-                if !due {
+                let mut infer = Infer::new(self, db).with_self_def(Some(t.def));
+                infer.infer_def_against(&t.body, &anno);
+                if !infer.errors.is_empty() || infer.inferred_bounds.is_empty() {
                     continue;
                 }
-                if t.annotated {
-                    let Some(anno) = self.value_sigs.get(&t.def).cloned() else {
-                        continue;
-                    };
-                    let mut infer = Infer::new(self, db).with_self_def(Some(t.def));
-                    infer.infer_def_against(&t.body, &anno);
-                    if !infer.errors.is_empty() || infer.inferred_bounds.is_empty() {
-                        continue;
-                    }
-                    let bounds = infer.inferred_bounds.clone();
-                    let base = self
-                        .any_result_check_sigs
-                        .get(&t.def)
-                        .cloned()
-                        .unwrap_or(anno);
-                    let bounded = with_bounds(&base, &bounds);
-                    if self.bound_check_sigs.get(&t.def) != Some(&bounded) {
-                        self.bound_check_sigs.insert(t.def, bounded);
-                        now.insert(t.def);
-                    }
-                } else {
-                    let mut infer = Infer::new(self, db).with_self_def(Some(t.def));
-                    let Some(scheme) = infer.infer_def_scheme(&t.body, true) else {
-                        continue;
-                    };
-                    if self.app_check_sigs.get(&t.def) != Some(&scheme) {
-                        self.app_check_sigs.insert(t.def, scheme);
-                        now.insert(t.def);
+                let bounds = infer.inferred_bounds.clone();
+                let base = self
+                    .any_result_check_sigs
+                    .get(&t.def)
+                    .cloned()
+                    .unwrap_or(anno);
+                let bounded = with_bounds(&base, &bounds);
+                if self.bound_check_sigs.get(&t.def) != Some(&bounded) {
+                    self.bound_check_sigs.insert(t.def, bounded);
+                    changed = true;
+                }
+            } else {
+                let Some(previous) = self.app_check_sigs.get(&t.def).cloned() else {
+                    continue;
+                };
+                let mut infer = Infer::new(self, db).with_self_def(Some(t.def));
+                let Some(scheme) = infer.refine_def_scheme(&t.body, &previous) else {
+                    continue;
+                };
+                if !infer.errors.is_empty() {
+                    let errors = std::mem::take(&mut infer.errors);
+                    drop(infer);
+                    self.app_group_errors
+                        .entry(t.def)
+                        .or_default()
+                        .extend(errors);
+                    continue;
+                }
+                if self.app_check_sigs.get(&t.def) != Some(&scheme) {
+                    self.app_check_sigs.insert(t.def, scheme);
+                    changed = true;
+                }
+            }
+            if changed {
+                for &caller in dependents.get(&t.def).into_iter().flatten() {
+                    if !queued[caller] {
+                        queue.push_back(caller);
+                        queued[caller] = true;
                     }
                 }
             }
-            if now.is_empty() {
-                break;
-            }
-            changed = now;
         }
     }
 }

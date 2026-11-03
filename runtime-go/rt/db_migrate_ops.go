@@ -9,11 +9,13 @@ package rt
 import (
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -61,7 +63,11 @@ func sqliteNowLiteral() string {
 // migNowToken is replaced with the apply time. The caller takes the checksum
 // first, and never calls this for hand-written Db.migrate SQL.
 func migApplyText(stmt string) string {
-	now := time.Now().UTC()
+	return migApplyTextAt(stmt, time.Now().UTC())
+}
+
+func migApplyTextAt(stmt string, now time.Time) string {
+	now = now.UTC()
 	stmt = strings.ReplaceAll(stmt, migNowToken, "'"+now.Format(sqliteNowLayout)+"'")
 	return strings.ReplaceAll(stmt, migNowMsToken, strconv.FormatInt(now.UnixMilli(), 10))
 }
@@ -118,8 +124,10 @@ type migOp struct {
 	Columns      []migColumn `json:"columns,omitempty"`
 	IndexColumns []string    `json:"indexColumns,omitempty"`
 	Unique       bool        `json:"unique,omitempty"`
-	Where        string      `json:"where,omitempty"`
-	Sql          string      `json:"sql,omitempty"`
+	// Only db check adoption ops opt in; ordinary named indexes are always created.
+	SkipEquivalentConstraint bool   `json:"skipEquivalentConstraint,omitempty"`
+	Where                    string `json:"where,omitempty"`
+	Sql                      string `json:"sql,omitempty"`
 }
 
 type migFile struct {
@@ -560,7 +568,8 @@ type migEntry struct {
 	// partial lists the addIndex ops with a `where`, which dbMigrateCore
 	// checks on SQLite against a v0.28 TEXT column
 	// (sqliteIndexPredicateLegacyErr).
-	partial []migOp
+	partial  []migOp
+	typedOps []migOp
 }
 
 func (e migEntry) isOps() bool { return e.opsSum != "" }
@@ -630,9 +639,104 @@ func migOpEntries(driver, raw string) ([]migEntry, error) {
 				partial = append(partial, op)
 			}
 		}
-		out = append(out, migEntry{name: f.Id, sql: text, opsSum: sum, partial: partial})
+		out = append(out, migEntry{name: f.Id, sql: text, opsSum: sum, partial: partial, typedOps: typed})
 	}
 	return out, nil
+}
+
+// A fresh migration replay needs the index operation. An adopted database
+// may already enforce the same unconditional uniqueness as a constraint under
+// another name. Check after earlier operations, on this transaction, so the
+// migration does not add a redundant index or borrow its own busy connection.
+func migEquivalentUniqueConstraint(tx *sql.Tx, driver string, op migOp) (bool, error) {
+	if !op.SkipEquivalentConstraint || op.Kind != "addIndex" || !op.Unique || strings.TrimSpace(op.Where) != "" {
+		return false, nil
+	}
+	return migOrdinaryUniqueness(tx, driver, op, true)
+}
+
+// Check the actual post-operation catalogue as well as the pre-operation
+// constraint. IF NOT EXISTS must not report success when another table or an
+// incompatible index occupies an adoption repair's name on fresh replay.
+func migOrdinaryUniqueness(tx *sql.Tx, driver string, op migOp, constraintsOnly bool) (bool, error) {
+	var tables []inspectTable
+	var err error
+	if driver == "pgx" {
+		tables, err = pgInspectTables(tx)
+	} else {
+		tables, err = sqliteInspectTables(tx)
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, table := range tables {
+		if table.Name != op.Table {
+			continue
+		}
+		if len(op.IndexColumns) == 1 {
+			for _, column := range table.Columns {
+				if column.Name == op.IndexColumns[0] && column.Unique {
+					return true, nil
+				}
+			}
+		}
+		want := append([]string(nil), op.IndexColumns...)
+		sort.Strings(want)
+		for _, index := range table.Indexes {
+			if (constraintsOnly && !index.Constraint) || !index.Unique || index.Inexact != "" || strings.TrimSpace(index.Where) != "" {
+				continue
+			}
+			got := append([]string(nil), index.Columns...)
+			sort.Strings(got)
+			if len(got) != len(want) {
+				continue
+			}
+			same := true
+			for i := range got {
+				if got[i] != want[i] {
+					same = false
+					break
+				}
+			}
+			if same {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func migExecuteEntry(tx *sql.Tx, driver string, entry migEntry, run string, at time.Time) error {
+	if !entry.isOps() || entry.typedOps == nil {
+		_, err := tx.Exec(run)
+		return err
+	}
+	for _, op := range entry.typedOps {
+		skip, err := migEquivalentUniqueConstraint(tx, driver, op)
+		if err != nil {
+			return err
+		}
+		if skip {
+			continue
+		}
+		statement, err := renderMigOp(driver, op)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(migApplyTextAt(statement, at)); err != nil {
+			return err
+		}
+		if op.SkipEquivalentConstraint && op.Kind == "addIndex" && op.Unique && strings.TrimSpace(op.Where) == "" {
+			established, err := migOrdinaryUniqueness(tx, driver, op, false)
+			if err != nil {
+				return err
+			}
+			if !established {
+				return fmt.Errorf("adoption index %q did not establish ordinary uniqueness on table %q; its name may already be occupied", op.Name, op.Table)
+			}
+		}
+	}
+	return nil
 }
 
 // renderMigFile renders one migration file to the SQL that applies it.

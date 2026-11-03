@@ -137,11 +137,15 @@ impl FfiTable {
     }
 }
 
+mod closure;
+mod numeric;
+
 struct DefEntry {
     module_name: String,
     name: String,
     body: Body,
     types: BodyTypes,
+    numeric: std::rc::Rc<ty::numeric::NumericElaboration>,
     /// The declared/derived scheme type (peeled for param types), if any.
     sig: Option<Ty>,
 }
@@ -360,7 +364,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         };
         crate::BODIES_TYPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let types = typer.body_types(*m, *d, body);
-        let sig = typer.value_sig(*d).map(|s| s.ty.clone());
+        let numeric = db.numeric_elaboration_of(*m, *d);
+        let sig = typer.value_sig(*d).map(|s| numeric.signature.apply(&s.ty));
         defs.insert(
             *d,
             DefEntry {
@@ -368,6 +373,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
                 name: td.name.as_str().to_string(),
                 body: body.clone(),
                 types,
+                numeric,
                 sig,
             },
         );
@@ -634,6 +640,11 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
                 _ if *rp_params.get(i).unwrap_or(&false) => Ty::Var(Name::new("any")),
                 _ => inferred(),
             };
+            let t = e
+                .numeric
+                .signature
+                .parameter(i)
+                .map_or_else(|| t.clone(), |shape| shape.apply(&t));
             ptys.push(t);
         }
         def_param_tys.insert(*d, ptys);
@@ -673,6 +684,11 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             _ => e.types.result.clone(),
         };
         if let Some(t) = t {
+            let t = e
+                .numeric
+                .signature
+                .result_after(e.body.params.len())
+                .map_or_else(|| t.clone(), |shape| shape.apply(&t));
             def_result_tys.insert(*d, t);
         }
     }
@@ -899,6 +915,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             def_effect: &def_effect,
             body: &e.body,
             types: &e.types,
+            numeric: &e.numeric,
+            numeric_scope: vec![ty::numeric::NumericBinder::Top],
             local_names: HashMap::new(),
             local_tys: HashMap::new(),
             local_counter: 0,
@@ -2385,6 +2403,8 @@ struct Ctx<'a> {
     def_effect: &'a HashMap<DefId, EffectKind>,
     body: &'a Body,
     types: &'a BodyTypes,
+    numeric: &'a ty::numeric::NumericElaboration,
+    numeric_scope: Vec<ty::numeric::NumericBinder>,
     local_names: HashMap<LocalId, String>,
     /// The *declared* Go type of each bound local (params from the sig,
     /// let-bindings from the RHS). A local reference uses this rather than the
@@ -2521,6 +2541,11 @@ impl<'a> Ctx<'a> {
     }
 
     fn expr_ty(&mut self, e: ExprId) -> GoTy {
+        if let Some(shape) = self.numeric.expressions.get(&e) {
+            if let Some(ty) = self.types.expr(e) {
+                return self.goty(&shape.apply(&ty));
+            }
+        }
         match self.types.expr_ref(e) {
             Some(r) => self.goty_ref(r),
             None => GoTy::Any,
@@ -2559,7 +2584,12 @@ impl<'a> Ctx<'a> {
     /// recorded type (a bare local reference often does not).
     fn sky_ty_of(&self, e: ExprId) -> Option<Ty> {
         if let Some(t) = self.types.expr(e) {
-            return Some(t);
+            return Some(
+                self.numeric
+                    .expressions
+                    .get(&e)
+                    .map_or_else(|| t.clone(), |shape| shape.apply(&t)),
+            );
         }
         if let Expr::Var(Res::Local(l)) = &self.body.exprs[e] {
             return self.types.local(*l);
@@ -2698,6 +2728,11 @@ impl<'a> Ctx<'a> {
     }
 
     fn local_ty(&mut self, l: LocalId) -> GoTy {
+        if let Some(shape) = self.numeric.locals.get(&l) {
+            if let Some(ty) = self.types.local(l) {
+                return self.goty(&shape.apply(&ty));
+            }
+        }
         match self.types.local_ref(l) {
             Some(r) => self.goty_ref(r),
             None => GoTy::Any,
@@ -2711,6 +2746,10 @@ impl<'a> Ctx<'a> {
         sig: Option<&Ty>,
         is_main: bool,
     ) -> Vec<GoItem> {
+        for error in &self.numeric.errors.clone() {
+            self.error(format!("numeric elaboration: {error}"));
+        }
+        let hidden = self.number_params(ty::numeric::NumericBinder::Top, self.numeric.top_params);
         // bind params
         let param_pats: Vec<PatId> = self.body.params.clone();
         let mut params = Vec::new();
@@ -2772,7 +2811,25 @@ impl<'a> Ctx<'a> {
         let result_row_poly = sig.is_none() && rp_result;
 
         if is_main {
-            return vec![self.lower_main(name, module)];
+            let mut item = self.lower_main(name, module);
+            if !hidden.is_empty() {
+                if let GoItem::Func(function) = &mut item {
+                    let mut prefix = Vec::new();
+                    for parameter in &hidden {
+                        prefix.push(GoStmt::Short(
+                            parameter.name.clone(),
+                            self.number_expr(ty::numeric::NumberEvidence::Int),
+                        ));
+                        prefix.push(GoStmt::Discard(GoExpr::new(
+                            GoExprKind::Ident(parameter.name.clone()),
+                            parameter.ty.clone(),
+                        )));
+                    }
+                    prefix.append(&mut function.body);
+                    function.body = prefix;
+                }
+            }
+            return vec![item];
         }
 
         let go_name = top_go_name(module, name);
@@ -2811,7 +2868,12 @@ impl<'a> Ctx<'a> {
                 Some(t) if !matches!(t, Ty::Var(_)) => Some(self.goty(&t)),
                 _ => match &self.types.result {
                     Some(t) => {
-                        let gt = self.goty(t);
+                        let ty = self
+                            .numeric
+                            .signature
+                            .result_after(param_pats.len())
+                            .map_or_else(|| t.clone(), |shape| shape.apply(t));
+                        let gt = self.goty(&ty);
                         (gt != GoTy::Any).then_some(gt)
                     }
                     None => Some(GoTy::Unit),
@@ -2952,11 +3014,19 @@ impl<'a> Ctx<'a> {
             // are LazyCaf.Get's, unchanged.
             let caf_var = format!("{go_name}__caf");
             let init_name = format!("{go_name}__cafInit");
-            let cell_ty = GoTy::Named("rt.LazyCaf".to_string(), vec![ret_ty.clone()]);
+            let cell_ty = GoTy::Named(
+                if hidden.is_empty() {
+                    "rt.LazyCaf"
+                } else {
+                    "rt.NumberCaf"
+                }
+                .to_string(),
+                vec![ret_ty.clone()],
+            );
             let init = GoFuncDecl {
                 name: init_name.clone(),
                 type_params: Vec::new(),
-                params: Vec::new(),
+                params: hidden.clone(),
                 ret: ret_ty.clone(),
                 body,
                 doc: None,
@@ -2964,21 +3034,49 @@ impl<'a> Ctx<'a> {
             // {caf_var}.Get({init_name})
             let init_ref = GoExpr::new(
                 GoExprKind::Ident(init_name),
-                GoTy::Func(Vec::new(), Box::new(ret_ty.clone())),
+                GoTy::Func(
+                    hidden.iter().map(|p| p.ty.clone()).collect(),
+                    Box::new(ret_ty.clone()),
+                ),
             );
+            let get_args = if hidden.is_empty() {
+                vec![init_ref]
+            } else {
+                let kinds: Vec<_> = hidden
+                    .iter()
+                    .map(|p| GoExpr::new(GoExprKind::Ident(p.name.clone()), p.ty.clone()))
+                    .collect();
+                let compute = GoExpr::new(
+                    GoExprKind::Call(Box::new(init_ref), kinds.clone()),
+                    ret_ty.clone(),
+                );
+                let thunk = GoExpr::new(
+                    GoExprKind::FuncLit(
+                        vec![],
+                        ret_ty.clone(),
+                        vec![GoStmt::Return(Some(compute))],
+                    ),
+                    GoTy::Func(vec![], Box::new(ret_ty.clone())),
+                );
+                let slice = GoExpr::new(
+                    GoExprKind::SliceLit(numeric::number_ty(), kinds),
+                    GoTy::Slice(Box::new(numeric::number_ty())),
+                );
+                vec![slice, thunk]
+            };
             let cell_ident = GoExpr::new(GoExprKind::Ident(caf_var.clone()), cell_ty.clone());
             let get_sel = GoExpr::new(
                 GoExprKind::Selector(Box::new(cell_ident), "Get".to_string()),
                 GoTy::Any,
             );
             let get_call = GoExpr::new(
-                GoExprKind::Call(Box::new(get_sel), vec![init_ref]),
+                GoExprKind::Call(Box::new(get_sel), get_args),
                 ret_ty.clone(),
             );
             let accessor = GoFuncDecl {
                 name: go_name.clone(),
                 type_params: Vec::new(),
-                params: Vec::new(),
+                params: hidden,
                 ret: ret_ty,
                 body: vec![GoStmt::Return(Some(get_call))],
                 doc: None,
@@ -2990,10 +3088,12 @@ impl<'a> Ctx<'a> {
             ];
         }
 
+        let mut all_params = hidden;
+        all_params.extend(params);
         vec![GoItem::Func(GoFuncDecl {
             name: go_name,
             type_params: Vec::new(),
-            params,
+            params: all_params,
             ret: ret_ty,
             body,
             doc: None,
@@ -3340,11 +3440,18 @@ impl<'a> Ctx<'a> {
             // (the previous behaviour) leaves each param referenced as an
             // undefined `v_N` ident (`undefined: v_2`, examples 18/36/37).
             let is_fn = !d.params.is_empty();
-            let lowered = if !is_fn {
+            let numeric_count = self.numeric.local_params.get(&lid).copied().unwrap_or(0);
+            if is_fn || numeric_count > 0 {
+                self.register_local_function(d, lid, numeric_count);
+            }
+            let lowered = if numeric_count > 0 {
+                self.lower_numeric_local(d, lid, numeric_count)
+            } else if !is_fn {
                 let ty = self.expr_ty(d.body);
                 self.lower_expr(d.body, &ty)
             } else {
-                self.lower_local_fn(&d.params, d.body)
+                let function = self.lower_local_fn(&d.params, d.body);
+                self.freeze_closure_context(function, d.body)
             };
             self.local_tys.insert(lid, lowered.ty.clone());
             // A SELF-RECURSIVE local function references its own name inside the
@@ -3721,6 +3828,13 @@ impl<'a> Ctx<'a> {
         let (from_ps, from_r) = (from_ps.clone(), (**from_r).clone());
         let (to_ps, to_r) = (to_ps.clone(), (**to_r).clone());
 
+        if self.function_value_needs_capture(x) {
+            return Some(self.with_frozen_values(vec![x.clone()], |cx, values| {
+                cx.func_shape_eta(&values[0], expected)
+                    .expect("captured symbol preserves a proven function shape")
+            }));
+        }
+
         // ── Source is a func LITERAL: retype it in place. ──────────────────
         // Wrapping a literal in a second closure would build the inner closure
         // on every call unless Go's inliner happens to fold the direct call, so
@@ -3841,8 +3955,7 @@ impl<'a> Ctx<'a> {
         }
         match &x.kind {
             GoExprKind::FuncLit(ps, _, _) => ps.len() == to_ps.len(),
-            GoExprKind::Ident(_) | GoExprKind::Selector(_, _) => true,
-            _ => false,
+            _ => true,
         }
     }
 
@@ -3871,7 +3984,7 @@ impl<'a> Ctx<'a> {
         if !Self::curry_shape_ok(&x.ty, expected) {
             return None;
         }
-        if matches!(&x.kind, GoExprKind::Ident(_) | GoExprKind::Selector(_, _)) {
+        if !self.function_value_needs_capture(x) && matches!(&x.kind, GoExprKind::Ident(_)) {
             return Some(self.curry_bridge_at(x.clone(), expected));
         }
         let tmp = self.fresh_temp();
@@ -3974,6 +4087,32 @@ impl<'a> Ctx<'a> {
     /// group is not yet full). A side-effect-free predicate, so
     /// [`Self::func_shape_eta_applies`] can ask it.
     fn curry_shape_ok(src: &GoTy, slot: &GoTy) -> bool {
+        // Grouping changes must not hide a per-invocation slice rebuild.
+        // Such a callback keeps the erased HOF path, as for equal arities.
+        let flatten = |ty: &GoTy| {
+            let mut current = ty.clone();
+            let mut params = Vec::new();
+            loop {
+                match current.into_func() {
+                    Ok((ps, ret)) if !ps.is_empty() => {
+                        params.extend(ps);
+                        current = ret;
+                    }
+                    Ok((ps, ret)) => return (params, GoTy::Func(ps, Box::new(ret))),
+                    Err(ret) => return (params, ret),
+                }
+            }
+        };
+        let (from, from_ret) = flatten(src);
+        let (to, to_ret) = flatten(slot);
+        if from
+            .iter()
+            .zip(&to)
+            .any(|(a, b)| a != b && matches!(a, GoTy::Slice(_)))
+            || (from_ret != to_ret && matches!(to_ret, GoTy::Slice(_)))
+        {
+            return false;
+        }
         match slot {
             GoTy::Func(sps, sr) if !sps.is_empty() => Self::curry_apply_ok(src, sps.len(), sr),
             _ => false,
@@ -4038,13 +4177,32 @@ impl<'a> Ctx<'a> {
 
     fn lower_expr_inner(&mut self, e: ExprId, actual: &GoTy, expected: &GoTy) -> GoExpr {
         match &self.body.exprs[e] {
-            Expr::Int(n) => GoExpr::new(GoExprKind::IntLit(*n), actual.clone()),
+            Expr::Int(n) => {
+                if let Some(ty::numeric::NumericShape::Number(p)) = self.numeric.expressions.get(&e)
+                {
+                    let kind = self.number_expr(ty::numeric::NumberEvidence::Param(*p));
+                    call_rt(
+                        "rt.NumberLiteral",
+                        vec![
+                            kind,
+                            GoExpr::new(GoExprKind::IntLit(*n), GoTy::Bare(Prim::Int)),
+                        ],
+                        GoTy::Any,
+                    )
+                } else {
+                    GoExpr::new(GoExprKind::IntLit(*n), actual.clone())
+                }
+            }
             Expr::Float(f) => GoExpr::new(GoExprKind::FloatLit(*f), GoTy::Bare(Prim::Float)),
             Expr::Str(s) => GoExpr::new(GoExprKind::StrLit(s.to_string()), GoTy::Bare(Prim::Str)),
             Expr::Bool(b) => GoExpr::new(GoExprKind::BoolLit(*b), GoTy::Bare(Prim::Bool)),
             Expr::Chr(s) => rune_lit(s),
             Expr::Unit => GoExpr::new(GoExprKind::Ident("struct{}{}".into()), GoTy::Unit),
-            Expr::Var(res) => self.lower_var(res.clone(), actual, expected),
+            Expr::Var(res) => {
+                let res = res.clone();
+                self.lower_numeric_reference(e)
+                    .unwrap_or_else(|| self.lower_var(res, actual, expected))
+            }
             Expr::Call(callee, args) => self.lower_call(*callee, args, actual),
             Expr::Binop { op, lhs, rhs, .. } => self.lower_binop(op.as_str(), *lhs, *rhs, actual),
             Expr::Negate(inner) => {
@@ -4165,10 +4323,19 @@ impl<'a> Ctx<'a> {
                 // ERASED function type (see `caf_lambda_row_poly_ty`).
                 if Some(e) == self.body.root {
                     if let Some(erased) = self.caf_lambda_ty.clone() {
-                        return self.lower_lambda(params, *body, &erased);
+                        let function = self.lower_lambda(params, *body, &erased);
+                        return self.freeze_closure_context(function, *body);
                     }
                 }
-                self.lower_lambda(params, *body, actual)
+                let slot = if matches!(expected, GoTy::Func(_, _))
+                    && !closure::slot_loses_lambda_types(actual, expected, params.len())
+                {
+                    expected
+                } else {
+                    actual
+                };
+                let function = self.lower_lambda(params, *body, slot);
+                self.freeze_closure_context(function, *body)
             }
             Expr::Case { subject, branches } => self.lower_case(*subject, branches, actual),
             Expr::Accessor(field) => {
@@ -4311,9 +4478,15 @@ impl<'a> Ctx<'a> {
                         // `any` here). A directly-called reference never reaches
                         // this arm — Go infers the args at the call site.
                         let inst = format!("{go}[{}]", ["any"].repeat(n).join(", "));
-                        GoExpr::new(GoExprKind::Ident(inst), actual.clone())
+                        GoExpr::new(
+                            GoExprKind::Ident(inst),
+                            self.erased_kernel_value_type(&go, actual),
+                        )
                     } else {
-                        GoExpr::new(GoExprKind::Ident(go), actual.clone())
+                        GoExpr::new(
+                            GoExprKind::Ident(go.clone()),
+                            self.erased_kernel_value_type(&go, actual),
+                        )
                     }
                 } else if let Some(e) = self.defs.get(&d) {
                     self.discovered.push(d);
@@ -4443,9 +4616,15 @@ impl<'a> Ctx<'a> {
                     // directly-called reference never reaches this arm — Go infers
                     // the args at the call site.
                     let inst = format!("{go}[{}]", ["any"].repeat(n).join(", "));
-                    GoExpr::new(GoExprKind::Ident(inst), actual.clone())
+                    GoExpr::new(
+                        GoExprKind::Ident(inst),
+                        self.erased_kernel_value_type(&go, actual),
+                    )
                 } else {
-                    GoExpr::new(GoExprKind::Ident(go), actual.clone())
+                    GoExpr::new(
+                        GoExprKind::Ident(go.clone()),
+                        self.erased_kernel_value_type(&go, actual),
+                    )
                 }
             }
             Res::Ctor(cr) => {
@@ -4589,6 +4768,16 @@ impl<'a> Ctx<'a> {
     /// one param and returns the wrapped handler. `logged = Mw.withLogging` used
     /// to emit the bare one-param symbol there, which `go build` rejected. See
     /// [`Self::kernel_over_arity_eta`].
+    fn erased_kernel_value_type(&self, go: &str, fallback: &GoTy) -> GoTy {
+        let arity = self
+            .kernel_runtime_arity(go)
+            .or_else(|| (go == "rt.List_cons").then_some(2));
+        arity.map_or_else(
+            || fallback.clone(),
+            |n| GoTy::Func(vec![GoTy::Any; n], Box::new(GoTy::Any)),
+        )
+    }
+
     fn kernel_value_eta(&mut self, go: &str, expected: &GoTy) -> Option<GoExpr> {
         let GoTy::Func(params, ret) = expected else {
             return None;
@@ -4599,41 +4788,44 @@ impl<'a> Ctx<'a> {
         // the value form is amortised O(1) too (doc 14 R5, lever §5.1 at the
         // slot's shape + §5.3). An all-`any` slot keeps the bare symbol.
         if go == "rt.List_cons" {
-            if let ([h, GoTy::Slice(t)], GoTy::Slice(rt_)) = (params.as_slice(), &**ret) {
-                if h == &**t && t == rt_ && *h != GoTy::Any {
-                    let (p0, p1) = (
-                        format!("_p{}", self.local_counter),
-                        format!("_p{}", self.local_counter + 1),
-                    );
-                    self.local_counter += 2;
-                    let call = GoExpr::new(
-                        GoExprKind::GenericCall(
-                            "rt.List_consT".to_string(),
-                            vec![h.clone()],
-                            vec![
-                                GoExpr::new(GoExprKind::Ident(p0.clone()), h.clone()),
-                                GoExpr::new(GoExprKind::Ident(p1.clone()), params[1].clone()),
-                            ],
-                        ),
-                        (**ret).clone(),
-                    );
-                    return Some(GoExpr::new(
-                        GoExprKind::FuncLit(
-                            vec![
-                                GoParam {
-                                    name: p0,
-                                    ty: h.clone(),
-                                },
-                                GoParam {
-                                    name: p1,
-                                    ty: params[1].clone(),
-                                },
-                            ],
-                            (**ret).clone(),
-                            vec![GoStmt::Return(Some(call))],
-                        ),
-                        expected.clone(),
-                    ));
+            if let Some((params, ret)) = closure::split_function_type(expected, 2) {
+                if let ([h, GoTy::Slice(t)], GoTy::Slice(rt_)) = (params.as_slice(), &ret) {
+                    if h == &**t && t == rt_ && *h != GoTy::Any {
+                        let (p0, p1) = (
+                            format!("_p{}", self.local_counter),
+                            format!("_p{}", self.local_counter + 1),
+                        );
+                        self.local_counter += 2;
+                        let call = GoExpr::new(
+                            GoExprKind::GenericCall(
+                                "rt.List_consT".to_string(),
+                                vec![h.clone()],
+                                vec![
+                                    GoExpr::new(GoExprKind::Ident(p0.clone()), h.clone()),
+                                    GoExpr::new(GoExprKind::Ident(p1.clone()), params[1].clone()),
+                                ],
+                            ),
+                            ret.clone(),
+                        );
+                        let raw = GoExpr::new(
+                            GoExprKind::FuncLit(
+                                vec![
+                                    GoParam {
+                                        name: p0,
+                                        ty: h.clone(),
+                                    },
+                                    GoParam {
+                                        name: p1,
+                                        ty: params[1].clone(),
+                                    },
+                                ],
+                                ret.clone(),
+                                vec![GoStmt::Return(Some(call))],
+                            ),
+                            GoTy::Func(params.clone(), Box::new(ret.clone())),
+                        );
+                        return Some(self.coerce_if_needed(raw, expected));
+                    }
                 }
             }
         }
@@ -4648,13 +4840,16 @@ impl<'a> Ctx<'a> {
             }
             return Some(self.kernel_over_arity_eta(go, arity, params, ret));
         }
-        if params.len() != arity {
+        let (all_params, result) = closure::split_function_type(expected, arity)?;
+        let raw_slot = GoTy::Func(all_params.clone(), Box::new(result.clone()));
+        if &raw_slot == expected
+            && all_params.iter().all(|p| *p == GoTy::Any)
+            && result == GoTy::Any
+        {
             return None;
         }
-        if params.iter().all(|p| *p == GoTy::Any) && **ret == GoTy::Any {
-            return None;
-        }
-        Some(self.kernel_partial(go, &[], arity, expected))
+        let value = self.kernel_partial(go, &[], arity, &raw_slot);
+        Some(self.coerce_if_needed(value, expected))
     }
 
     /// Eta-expand a function-returning kernel into a slot that takes more params
@@ -4853,6 +5048,12 @@ impl<'a> Ctx<'a> {
             }
             _ => return e,
         };
+        let capture = self.function_value_needs_capture(&e);
+        if capture {
+            return self.with_frozen_values(vec![e], |cx, mut values| {
+                cx.box_func_value(values.remove(0))
+            });
+        }
         let arity = ps.len();
         // Direct typed call `e(narrow(_w0), …)`, each `any` param narrowed to
         // `e`'s declared param type — reflection-free after the landed
@@ -5095,32 +5296,32 @@ impl<'a> Ctx<'a> {
         actual: &GoTy,
         pin: Option<String>,
     ) -> GoExpr {
-        let mut arg_exprs: Vec<GoExpr> = given
+        let arg_exprs: Vec<GoExpr> = given
             .iter()
             .map(|a| self.lower_expr(*a, &GoTy::Any))
             .collect();
-        let n_rest = arity - given.len();
-        let (rest_tys, ret): (Vec<GoTy>, GoTy) = match actual {
-            GoTy::Func(ps, r) if ps.len() == n_rest => (ps.clone(), (**r).clone()),
-            _ => (vec![GoTy::Any; n_rest], GoTy::Any),
-        };
-        let mut gparams: Vec<GoParam> = Vec::new();
-        for pty in &rest_tys {
-            let pname = format!("_p{}", self.local_counter);
-            self.local_counter += 1;
-            gparams.push(GoParam {
-                name: pname.clone(),
-                ty: pty.clone(),
-            });
-            arg_exprs.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
-        }
-        let ctor_val = self.ctor_emit(cname, arg_exprs, &ret, pin.as_deref());
-        let body = self.coerce_if_needed(ctor_val, &ret);
-        let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
-        GoExpr::new(
-            GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
-            fn_ty,
-        )
+        self.with_frozen_values(arg_exprs, |cx, mut arg_exprs| {
+            let n_rest = arity - given.len();
+            let (rest_tys, ret) = closure::split_function_type(actual, n_rest)
+                .unwrap_or_else(|| (vec![GoTy::Any; n_rest], GoTy::Any));
+            let mut gparams: Vec<GoParam> = Vec::new();
+            for pty in &rest_tys {
+                let pname = format!("_p{}", cx.local_counter);
+                cx.local_counter += 1;
+                gparams.push(GoParam {
+                    name: pname.clone(),
+                    ty: pty.clone(),
+                });
+                arg_exprs.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
+            }
+            let ctor_val = cx.ctor_emit(cname, arg_exprs, &ret, pin.as_deref());
+            let body = cx.coerce_if_needed(ctor_val, &ret);
+            let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
+            GoExpr::new(
+                GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
+                fn_ty,
+            )
+        })
     }
 
     /// Emit a constructor call from already-lowered argument expressions.
@@ -5524,6 +5725,9 @@ impl<'a> Ctx<'a> {
     }
 
     fn lower_call(&mut self, callee: ExprId, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        if let Some(value) = self.lower_numeric_call(callee, args, actual) {
+            return value;
+        }
         // constructor application?
         if let Expr::Var(Res::Ctor(cr)) = &self.body.exprs[callee] {
             let cr = cr.clone();
@@ -5884,6 +6088,9 @@ impl<'a> Ctx<'a> {
             if !largs.is_empty() && largs.len() < arity {
                 return self.make_partial(c, largs, &Some(ps), &cod, arity, actual);
             }
+            if arity > 0 && largs.len() > arity {
+                return self.over_apply(c, largs, arity, &cod);
+            }
         }
         if let Some((sym, targs, _, ret)) = hof_plan {
             // The type arguments name concrete Go types; register them so their
@@ -5975,7 +6182,7 @@ impl<'a> Ctx<'a> {
     /// type inside the wrapped call.
     ///
     /// Except where the SLOT already names the callee's param type: when `slot`
-    /// is a func of the same arity whose param `i` is the callee's own concrete
+    /// has a proven remaining arrow spine whose param `i` is the callee's own concrete
     /// Go param type, that param is declared at that type and passed straight
     /// through. Both shapes are known at emit time and EQUAL (doc 14 §1), so
     /// declaring it `any` only to `rt.Coerce` it back was an identity narrowing
@@ -5991,12 +6198,38 @@ impl<'a> Ctx<'a> {
         arity: usize,
         slot: &GoTy,
     ) -> GoExpr {
+        let callee = if callee.ty == GoTy::Any {
+            let ty = GoTy::Func(
+                param_gtys.clone().unwrap_or_else(|| vec![GoTy::Any; arity]),
+                Box::new(ret.clone()),
+            );
+            self.coerce_if_needed(callee, &ty)
+        } else {
+            callee
+        };
+        let mut captures = vec![callee];
+        captures.extend(given);
+        self.with_frozen_values(captures, |cx, values| {
+            let mut values = values.into_iter();
+            let callee = values
+                .next()
+                .expect("partial application captures its function");
+            cx.make_partial_body(callee, values.collect(), param_gtys, ret, arity, slot)
+        })
+    }
+
+    fn make_partial_body(
+        &mut self,
+        callee: GoExpr,
+        given: Vec<GoExpr>,
+        param_gtys: &Option<Vec<GoTy>>,
+        ret: &GoTy,
+        arity: usize,
+        slot: &GoTy,
+    ) -> GoExpr {
         let n_given = given.len();
         let n_rest = arity - n_given;
-        let slot_ps: Option<Vec<GoTy>> = match slot {
-            GoTy::Func(ps, _) if ps.len() == n_rest => Some(ps.clone()),
-            _ => None,
-        };
+        let slot_ps = closure::split_function_type(slot, n_rest).map(|(ps, _)| ps);
         let mut rest_params = Vec::new();
         let mut rest_tys = Vec::new();
         let mut call_args = given;
@@ -6238,28 +6471,27 @@ impl<'a> Ctx<'a> {
             pi += 1;
         }
         let n_rest = wrapper_params.len() - pi;
-        let (rest_tys, ret): (Vec<GoTy>, GoTy) = match actual {
-            GoTy::Func(ps, r) if ps.len() == n_rest => (ps.clone(), (**r).clone()),
-            _ => (vec![GoTy::Any; n_rest], GoTy::Any),
-        };
-        let mut gparams: Vec<GoParam> = Vec::new();
-        for pty in &rest_tys {
-            let pname = format!("_p{}", self.local_counter);
-            self.local_counter += 1;
-            gparams.push(GoParam {
-                name: pname.clone(),
-                ty: pty.clone(),
-            });
-            let e = GoExpr::new(GoExprKind::Ident(pname), pty.clone());
-            largs.push(self.ffi_coerce_arg(&base, pi, e, wrapper_params));
-            pi += 1;
-        }
-        let body = self.ffi_emit_call(go, largs, &ret);
-        let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
-        GoExpr::new(
-            GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
-            fn_ty,
-        )
+        let (rest_tys, ret) = closure::split_function_type(actual, n_rest)
+            .unwrap_or_else(|| (vec![GoTy::Any; n_rest], GoTy::Any));
+        self.with_frozen_values(largs, |cx, mut largs| {
+            let mut gparams: Vec<GoParam> = Vec::new();
+            for pty in &rest_tys {
+                let pname = cx.fresh_temp();
+                gparams.push(GoParam {
+                    name: pname.clone(),
+                    ty: pty.clone(),
+                });
+                let e = GoExpr::new(GoExprKind::Ident(pname), pty.clone());
+                largs.push(cx.ffi_coerce_arg(&base, pi, e, wrapper_params));
+                pi += 1;
+            }
+            let body = cx.ffi_emit_call(go, largs, &ret);
+            let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
+            GoExpr::new(
+                GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
+                fn_ty,
+            )
+        })
     }
 
     /// Narrow one lowered argument to the Go-FFI wrapper's param slot `pi`.
@@ -7023,7 +7255,8 @@ impl<'a> Ctx<'a> {
                     return None;
                 }
                 let want_cb = GoTy::Func(vec![a.clone(), b.clone()], Box::new(b.clone()));
-                if self.probe_goty(args[0]) != want_cb
+                if closure::split_function_type(&self.probe_goty(args[0]), 2)
+                    != Some((vec![a.clone(), b.clone()], b.clone()))
                     || !self.callback_reaches_slot(args[0], &[a.clone(), b.clone()], &b)
                 {
                     return None;
@@ -7493,42 +7726,42 @@ impl<'a> Ctx<'a> {
         arity: usize,
         actual: &GoTy,
     ) -> GoExpr {
-        let mut arg_exprs: Vec<GoExpr> = given
+        let arg_exprs: Vec<GoExpr> = given
             .iter()
             .map(|a| {
                 let e = self.lower_expr(*a, &GoTy::Any);
                 self.widen(e)
             })
             .collect();
-        let n_rest = arity - given.len();
-        let (rest_tys, ret): (Vec<GoTy>, GoTy) = match actual {
-            GoTy::Func(ps, r) if ps.len() == n_rest => (ps.clone(), (**r).clone()),
-            _ => (vec![GoTy::Any; n_rest], GoTy::Any),
-        };
-        let mut gparams: Vec<GoParam> = Vec::new();
-        for pty in &rest_tys {
-            let pname = format!("_p{}", self.local_counter);
-            self.local_counter += 1;
-            gparams.push(GoParam {
-                name: pname.clone(),
-                ty: pty.clone(),
-            });
-            // The kernel symbol takes `any` params — widen the typed closure param.
-            arg_exprs.push(self.widen(GoExpr::new(GoExprKind::Ident(pname), pty.clone())));
-        }
-        let call = GoExpr::new(
-            GoExprKind::Call(
-                Box::new(GoExpr::new(GoExprKind::Ident(go.into()), GoTy::Any)),
-                arg_exprs,
-            ),
-            GoTy::Any,
-        );
-        let body = self.coerce_if_needed(call, &ret);
-        let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
-        GoExpr::new(
-            GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
-            fn_ty,
-        )
+        self.with_frozen_values(arg_exprs, |cx, mut arg_exprs| {
+            let n_rest = arity - given.len();
+            let (rest_tys, ret) = closure::split_function_type(actual, n_rest)
+                .unwrap_or_else(|| (vec![GoTy::Any; n_rest], GoTy::Any));
+            let mut gparams: Vec<GoParam> = Vec::new();
+            for pty in &rest_tys {
+                let pname = format!("_p{}", cx.local_counter);
+                cx.local_counter += 1;
+                gparams.push(GoParam {
+                    name: pname.clone(),
+                    ty: pty.clone(),
+                });
+                // The kernel symbol takes `any` params — widen the typed closure param.
+                arg_exprs.push(cx.widen(GoExpr::new(GoExprKind::Ident(pname), pty.clone())));
+            }
+            let call = GoExpr::new(
+                GoExprKind::Call(
+                    Box::new(GoExpr::new(GoExprKind::Ident(go.into()), GoTy::Any)),
+                    arg_exprs,
+                ),
+                GoTy::Any,
+            );
+            let body = cx.coerce_if_needed(call, &ret);
+            let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
+            GoExpr::new(
+                GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
+                fn_ty,
+            )
+        })
     }
 
     fn lower_binop(&mut self, op: &str, lhs: ExprId, rhs: ExprId, actual: &GoTy) -> GoExpr {
@@ -8233,13 +8466,27 @@ impl<'a> Ctx<'a> {
         }
         let mut stmts: Vec<GoStmt> = Vec::new();
         let mut assigns: Vec<GoStmt> = Vec::new();
+        let evidence = self.number_args(callee, self.numeric.top_params);
+        for (i, value) in evidence.into_iter().enumerate() {
+            let temporary = self.fresh_temp();
+            stmts.push(GoStmt::Short(temporary.clone(), value));
+            assigns.push(GoStmt::Assign(
+                numeric::number_name(ty::numeric::NumericParam {
+                    binder: ty::numeric::NumericBinder::Top,
+                    index: i,
+                }),
+                GoExpr::new(GoExprKind::Ident(temporary), numeric::number_ty()),
+            ));
+        }
         for (i, a) in args.iter().enumerate() {
             let (pname, pty) = tco.params[i].clone();
+            let val = self.lower_expr(*a, &pty);
             if pname == "_" {
-                // Unused param — its arg is dead and Go forbids assigning `_`.
+                // Sky is strict even when the callee discards the value.
+                // Evaluate in argument order before any loop reassignment.
+                stmts.push(GoStmt::Discard(val));
                 continue;
             }
-            let val = self.lower_expr(*a, &pty);
             let tmp = self.fresh_temp();
             stmts.push(GoStmt::Short(tmp.clone(), val));
             assigns.push(GoStmt::Assign(
@@ -8484,12 +8731,24 @@ impl<'a> Ctx<'a> {
                 }
                 continue;
             }
+            for &i in &group {
+                let d = &defs[i];
+                let (_, lid) = &d.binders[0];
+                let count = self.numeric.local_params.get(lid).copied().unwrap_or(0);
+                self.register_local_function(d, *lid, count);
+            }
             let mut assigns: Vec<(String, GoExpr)> = Vec::with_capacity(group.len());
             for &i in &group {
                 let d = &defs[i];
                 let (bn, lid) = d.binders[0].clone();
                 let gname = self.fresh_local_named(lid, Some(bn.as_str()));
-                let lowered = self.lower_local_fn(&d.params, d.body);
+                let count = self.numeric.local_params.get(&lid).copied().unwrap_or(0);
+                let lowered = if count > 0 {
+                    self.lower_numeric_local(d, lid, count)
+                } else {
+                    let function = self.lower_local_fn(&d.params, d.body);
+                    self.freeze_closure_context(function, d.body)
+                };
                 self.local_tys.insert(lid, lowered.ty.clone());
                 assigns.push((gname, lowered));
             }
@@ -8930,59 +9189,27 @@ impl<'a> Ctx<'a> {
 
     fn lower_lambda(&mut self, params: &[PatId], body: ExprId, actual: &GoTy) -> GoExpr {
         let mut params = params.to_vec();
-        let (pt, rt) = match actual {
-            GoTy::Func(ps, r) => (ps.clone(), (**r).clone()),
-            _ => (vec![GoTy::Any; params.len()], GoTy::Any),
-        };
-        // `sky_ty_to_go` flattens the ENTIRE curried arrow spine into one N-ary Go
-        // func (`Int -> (Int -> Int)` → `func(int,int) int`), but a source
-        // `\c -> \d -> body` is a CHAIN of arity-1 lambda NODES. Binding only
-        // `params` against the flat `pt` would drop `pt[1..]`, pass the final
-        // codomain as the inner body's expected type, and emit a `func(int) int`
-        // value under a `func(int,int) int` declaration → `go build` arity error
-        // (plus a spurious `rt.AsInt` on the inner closure). Absorb the nested
-        // lambda spine so the emitted closure is a single flat `func(c, d) body`,
-        // matching the declared type and the flat func-value ABI (`rt.skyCallOne`
-        // curries a flat N-ary func, so both flat and curried application sites stay
-        // valid). Fires ONLY when the type carries more params than the lambda binds
-        // AND the body is a nested lambda — i.e. currently-broken shapes;
-        // arity-matched callbacks (`List.map (\x -> …)`) have `pt.len() ==
-        // params.len()` so the loop never runs → byte-identical. (audit #7b)
         let mut body = body;
-        while params.len() < pt.len() {
+        // Adjacent lambda nodes contain no intervening computation and may
+        // share a binder group at a fully applying runtime callback boundary.
+        let target_group = match actual {
+            GoTy::Func(ps, _) => ps.len(),
+            _ => params.len(),
+        };
+        while params.len() < target_group {
             if let Expr::Lambda {
                 params: inner,
-                body: ib,
+                body: next,
             } = &self.body.exprs[body]
             {
-                let inner = inner.clone();
-                let ib = *ib;
-                params.extend(inner);
-                body = ib;
+                params.extend(inner.clone());
+                body = *next;
             } else {
-                break; // residual: lambda bottoms out in a func VALUE — ETA-EXPAND below
+                break;
             }
         }
-        // F5 eta-expansion. The spine loop above absorbs a NESTED-lambda chain so
-        // the emitted closure's param count matches the flat `pt`. But a lambda can
-        // also bottom out in a func VALUE that supplies the remaining arrows —
-        // `makeF a = \_ -> add1` where `add1 : Int -> Int` (body is NOT a lambda
-        // node). The loop breaks with `params.len() < pt.len()`; without repair the
-        // closure would emit `func(_ any) int { return rt.AsInt(add1) }` (fewer
-        // params than the declared `func(any,int) int`, and the func-value body
-        // forced through the final codomain `int` via a spurious `rt.AsInt`) — a
-        // runtime TypeMismatch panic (or `go build` arity error) the oracle never
-        // produces. Eta-expand: synthesise the missing params and APPLY the body
-        // (a func value of the remaining arrow type) to them, so the emitted closure
-        // is `func(_ any, _eta0 int) int { return add1(_eta0) }` — arity matches the
-        // declared flat func type and the func-value body is called, not coerced to a
-        // scalar. Empty when the loop already matched arity (nested-lambda chains,
-        // `examples/41-nested-curry`) → byte-identical.
-        let eta_extra: Vec<GoTy> = if params.len() < pt.len() {
-            pt[params.len()..].to_vec()
-        } else {
-            Vec::new()
-        };
+        let (pt, rt) = closure::split_function_type(actual, params.len())
+            .unwrap_or_else(|| (vec![GoTy::Any; params.len()], self.expr_ty(body)));
         let mut gparams = Vec::new();
         let mut destructure: Vec<GoStmt> = Vec::new();
         let mut elem_pinned = false;
@@ -8993,11 +9220,7 @@ impl<'a> Ctx<'a> {
         // that record and its other fields are reset (the immediately-applied
         // `(\_ model -> ( { model | f = … }, cmd )) req m` shape). Only the
         // colliding positions change; every other lambda lowers as before.
-        let (rp_params, rp_result) = if eta_extra.is_empty() {
-            self.local_fn_row_poly(&params, body)
-        } else {
-            (vec![false; params.len()], false)
-        };
+        let (rp_params, rp_result) = self.local_fn_row_poly(&params, body);
         let mut rp_changed = false;
         for (i, p) in params.iter().enumerate() {
             let mut ty = pt.get(i).cloned().unwrap_or(GoTy::Any);
@@ -9184,43 +9407,12 @@ impl<'a> Ctx<'a> {
         } else {
             rt
         };
-        let b = if eta_extra.is_empty() {
-            match (&self.body.exprs[body], &rt) {
-                // A row-polymorphic lambda (a CAF's `caf_lambda_ty`, or a
-                // colliding row above) returning a tuple literal: build the tuple
-                // against the ERASED element types, so the reflective record
-                // update is not narrowed back to the nominal its open row
-                // collided with.
-                (Expr::Tuple(elems), GoTy::Tuple(_))
-                    if self.caf_lambda_ty.is_some() || rp_changed =>
-                {
-                    let elems = elems.clone();
-                    self.lower_tuple(&elems, &rt)
-                }
-                _ => self.lower_expr(body, &rt),
+        let b = match (&self.body.exprs[body], &rt) {
+            (Expr::Tuple(elems), GoTy::Tuple(_)) if self.caf_lambda_ty.is_some() || rp_changed => {
+                let elems = elems.clone();
+                self.lower_tuple(&elems, &rt)
             }
-        } else {
-            // The body is a func VALUE of the remaining arrow type `func(eta_extra) rt`.
-            // Lower it against that concrete func type (so a bare def reference like
-            // `add1` emits a callable `func(int) int` rather than being narrowed to a
-            // scalar), then apply it to freshly-synthesised extra params. `pt.len() ==
-            // gparams already-built params + eta_extra`, so appending concrete-typed
-            // extra params keeps the emitted signature equal to the declared `actual`
-            // func type.
-            let body_fn_ty = GoTy::Func(eta_extra.clone(), Box::new(rt.clone()));
-            let bexpr = self.lower_expr(body, &body_fn_ty);
-            let bexpr = self.coerce_if_needed(bexpr, &body_fn_ty);
-            let mut extra_args = Vec::new();
-            for pty in &eta_extra {
-                let pname = format!("_eta{}", self.local_counter);
-                self.local_counter += 1;
-                gparams.push(GoParam {
-                    name: pname.clone(),
-                    ty: pty.clone(),
-                });
-                extra_args.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
-            }
-            GoExpr::new(GoExprKind::Call(Box::new(bexpr), extra_args), rt.clone())
+            _ => self.lower_expr(body, &rt),
         };
         let mut stmts = destructure;
         stmts.push(GoStmt::Return(Some(b)));
@@ -9232,20 +9424,13 @@ impl<'a> Ctx<'a> {
         // literal by `actual` (`func(struct{…}) struct{…}`) lied about it, so
         // the slot's adaptation was skipped and `go build` rejected the call
         // (`update : ({ name : String, rank : Int } -> { … }) -> Job -> Job`).
-        // Only an ERASURE is corrected here (`erases_against`): a param pinned
-        // to its list's element type keeps the declared type, as before.
+        // Record the emitted binder group, including any remaining function
+        // result. The enclosing slot adapts it without merging source stages.
         let emitted = GoTy::Func(
             gparams.iter().map(|p| p.ty.clone()).collect(),
             Box::new(rt.clone()),
         );
-        let lit_ty = if rp_changed || erases_against(&emitted, actual) {
-            GoTy::Func(
-                gparams.iter().map(|p| p.ty.clone()).collect(),
-                Box::new(rt.clone()),
-            )
-        } else {
-            actual.clone()
-        };
+        let lit_ty = emitted;
         GoExpr::new(GoExprKind::FuncLit(gparams, rt, stmts), lit_ty)
     }
 
@@ -10566,6 +10751,7 @@ fn entry_task_run(expr: GoExpr, out: &mut Vec<GoStmt>) {
 /// types, a named record against its anonymous struct, a variant against its
 /// interface) is left to Go's own assignability, so this never adds a
 /// narrowing to an argument that already compiles.
+#[cfg(test)]
 fn erases_against(from: &GoTy, to: &GoTy) -> bool {
     go_unassignable(from, to, &|_| false)
 }
