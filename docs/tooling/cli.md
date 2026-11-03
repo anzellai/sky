@@ -1140,7 +1140,9 @@ matched to a declared `Store.uniqueOn` by its columns whatever the database
 named it; one the code does not declare is a difference that names the
 constraint. An index whose column list does not describe it (an expression
 column, a collation or operator class of its own, a DESC column, INCLUDE
-columns, another index method such as `hash`, an exclusion constraint) is
+columns, another index method such as `hash`, an exclusion constraint, or
+PostgreSQL's `NULLS NOT DISTINCT`, a deferrable constraint, or an index that
+is not valid, ready and live) is
 something no Store declares: `check` gives a notice for it, leaves it as it is,
 and says so in the report ("matches what the code declares; N notice(s)"). Under
 a name the code also declares, it is a difference.

@@ -3711,6 +3711,9 @@ mod tests {
                 (&["<expression>", "tenant"][..], "an expression column"),
                 (&["email"][..], "column email has COLLATE NOCASE"),
                 (&["a"][..], "INCLUDE columns"),
+                (&["email"][..], "NULLS NOT DISTINCT"),
+                (&["email"][..], "a deferrable constraint"),
+                (&["email"][..], "an index that is not valid, ready and live"),
             ] {
                 let int = if is_pg(dialect) { "bigint" } else { "INTEGER" };
                 let mut id = lcol("id", int, true, None);

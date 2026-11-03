@@ -263,3 +263,23 @@ func TestSqliteColumnCollations(t *testing.T) {
 		t.Errorf("collations = %v", got)
 	}
 }
+
+func TestPostgresIndexEnforcementIsNotPlain(t *testing.T) {
+	if got := pgIndexInexact(pgIndexFeatures{nullsNotDistinct: true}, "btree", "u"); got != "NULLS NOT DISTINCT" {
+		t.Errorf("NULLS NOT DISTINCT index: got %q", got)
+	}
+	if got := pgIndexInexact(pgIndexFeatures{}, "btree", "u"); got != "" {
+		t.Errorf("ordinary unique index: got %q, want exact", got)
+	}
+	for _, c := range []struct {
+		features pgIndexFeatures
+		want string
+	}{
+		{pgIndexFeatures{deferrable: true}, "a deferrable constraint"},
+		{pgIndexFeatures{unusable: true}, "an index that is not valid, ready and live"},
+	} {
+		if got := pgIndexInexact(c.features, "btree", "u"); got != c.want {
+			t.Errorf("got %q, want %q", got, c.want)
+		}
+	}
+}

@@ -493,7 +493,14 @@ Breaking and Migration.
   `Store.unique "email"`, which is case-sensitive. Each then "matched". The
   reader now says why such an index is not a column list (an expression, a
   collation or operator class of its own, DESC, INCLUDE columns, another
-  index method, an exclusion constraint). A Store cannot declare it, so the
+  index method, an exclusion constraint, or PostgreSQL's `NULLS NOT DISTINCT`).
+  The latter rejects duplicate null keys that plain uniqueness permits. It
+  remains an index with a notice, including a one-column UNIQUE constraint,
+  rather than becoming a plain unique field in an adoption stub.
+  Deferrable constraints and indexes that are not valid, ready and live
+  also retain a notice, including an unsupported primary-key index.
+  INCLUDE columns on a primary-key index are not reported as key columns.
+  A Store cannot declare it, so the
   check gives a notice for it and the stub a comment; under a name the code
   also declares, it is a difference. A foreign key on another table no
   longer makes PostgreSQL's plain unique index read as a constraint.
