@@ -814,6 +814,9 @@ impl<'a> Infer<'a> {
             .iter()
             .map(|&p| self.infer_pat_fresh(body, p))
             .collect();
+        if let Some(raw) = &mut self.numeric {
+            raw.params = param_vars.clone();
+        }
         let recursive_result = self.seed_shared_recursion(body, &param_vars);
         let rv = self.infer_expr(body, root);
         if let Some(result) = recursive_result {
@@ -2282,14 +2285,8 @@ impl<'a> Infer<'a> {
                         let s = s.clone();
                         return self.instantiate(&s);
                     }
-                    // CHECK-ONLY precise scheme for an unannotated APP-module def
-                    // used cross-module (F1c narrow subset). Same `!use_inferred`
-                    // gate + isolation as `check_sigs`; the map is strictly
-                    // filtered at populate time (`World::infer_app_check_sigs`)
-                    // to fully-monomorphic, record-free, Unit-spine-free types,
-                    // so pinning e.g. `allCategories : List String` here lets the
-                    // checker reject `allCategories + 1` without perturbing any
-                    // accept-parity case. Empty on the lowerer path → no-op there.
+                    // Inferred app schemes are CHECK-only. Unit parameters and
+                    // numeric quantifiers remain visible to every caller.
                     if let Some(s) = self.world.app_check_sigs.get(&def) {
                         let s = s.clone();
                         return self.instantiate(&s);

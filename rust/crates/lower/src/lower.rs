@@ -6472,28 +6472,27 @@ impl<'a> Ctx<'a> {
             pi += 1;
         }
         let n_rest = wrapper_params.len() - pi;
-        let (rest_tys, ret): (Vec<GoTy>, GoTy) = match actual {
-            GoTy::Func(ps, r) if ps.len() == n_rest => (ps.clone(), (**r).clone()),
-            _ => (vec![GoTy::Any; n_rest], GoTy::Any),
-        };
-        let mut gparams: Vec<GoParam> = Vec::new();
-        for pty in &rest_tys {
-            let pname = format!("_p{}", self.local_counter);
-            self.local_counter += 1;
-            gparams.push(GoParam {
-                name: pname.clone(),
-                ty: pty.clone(),
-            });
-            let e = GoExpr::new(GoExprKind::Ident(pname), pty.clone());
-            largs.push(self.ffi_coerce_arg(&base, pi, e, wrapper_params));
-            pi += 1;
-        }
-        let body = self.ffi_emit_call(go, largs, &ret);
-        let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
-        GoExpr::new(
-            GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
-            fn_ty,
-        )
+        let (rest_tys, ret) = closure::split_function_type(actual, n_rest)
+            .unwrap_or_else(|| (vec![GoTy::Any; n_rest], GoTy::Any));
+        self.with_frozen_values(largs, |cx, mut largs| {
+            let mut gparams: Vec<GoParam> = Vec::new();
+            for pty in &rest_tys {
+                let pname = cx.fresh_temp();
+                gparams.push(GoParam {
+                    name: pname.clone(),
+                    ty: pty.clone(),
+                });
+                let e = GoExpr::new(GoExprKind::Ident(pname), pty.clone());
+                largs.push(cx.ffi_coerce_arg(&base, pi, e, wrapper_params));
+                pi += 1;
+            }
+            let body = cx.ffi_emit_call(go, largs, &ret);
+            let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
+            GoExpr::new(
+                GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
+                fn_ty,
+            )
+        })
     }
 
     /// Narrow one lowered argument to the Go-FFI wrapper's param slot `pi`.
@@ -8481,11 +8480,13 @@ impl<'a> Ctx<'a> {
         }
         for (i, a) in args.iter().enumerate() {
             let (pname, pty) = tco.params[i].clone();
+            let val = self.lower_expr(*a, &pty);
             if pname == "_" {
-                // Unused param — its arg is dead and Go forbids assigning `_`.
+                // Sky is strict even when the callee discards the value.
+                // Evaluate in argument order before any loop reassignment.
+                stmts.push(GoStmt::Discard(val));
                 continue;
             }
-            let val = self.lower_expr(*a, &pty);
             let tmp = self.fresh_temp();
             stmts.push(GoStmt::Short(tmp.clone(), val));
             assigns.push(GoStmt::Assign(

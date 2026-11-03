@@ -15,7 +15,7 @@ fn have_go() -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|s| s.success());
-    required(Need::Go, go)
+    go
 }
 
 struct Fixture(PathBuf);
@@ -47,7 +47,7 @@ impl Drop for Fixture {
 
 #[test]
 fn numeric_polymorphism_preserves_each_instantiation() {
-    if !have_go() {
+    if !required(Need::Go, have_go()) {
         return;
     }
     let fixture = Fixture::new(include_str!("fixtures/numeric-polymorphism/src/Main.sky"));
@@ -60,15 +60,15 @@ fn numeric_polymorphism_preserves_each_instantiation() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stdout}\n{stderr}");
-    assert!(stdout.contains("42 passed"), "{stdout}");
+    assert!(stdout.contains("44 passed"), "{stdout}");
 }
 
 #[test]
 fn a_function_stage_fails_before_its_returned_function_is_called() {
-    if !have_go() {
+    if !required(Need::Go, have_go()) {
         return;
     }
-    let fixture = Fixture::new(
+    assert_division_by_zero(
         r#"module Main exposing (main)
 
 import Sky.Core.Task as Task
@@ -89,6 +89,37 @@ main =
     Task.run (println "UNREACHABLE")
 "#,
     );
+}
+
+#[test]
+fn tail_recursion_evaluates_discarded_arguments() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    assert_division_by_zero(
+        r#"module Main exposing (main)
+
+import Sky.Core.Task as Task
+import Std.Log exposing (println)
+
+loop : Int -> Float -> Float
+loop n _ =
+    if n <= 0 then
+        0.0
+    else
+        loop (n - 1) (1.0 / 0.0)
+
+main =
+    let
+        value = loop 2 1.0
+    in
+    Task.run (println "UNREACHABLE")
+"#,
+    );
+}
+
+fn assert_division_by_zero(source: &str) {
+    let fixture = Fixture::new(source);
     // Build inherits the toolchain path. The built app has no need for any
     // ambient settings, so execute it with an empty environment.
     let built = Command::new(env!("CARGO_BIN_EXE_sky"))

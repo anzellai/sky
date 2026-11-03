@@ -90,6 +90,8 @@ Core syntax you must get right:
   Numeric polymorphism selects Int or Float before arithmetic runs. Partial
   application evaluates supplied arguments once. Captured values stay fixed
   across a caller's tail-recursive iterations.
+  A `()` parameter preserves inferred numeric bounds. Discarded arguments
+  are evaluated too, including in a tail call.
 - **Field access**: `model.user.name`; `Shape.origin.x` is field `x` of the
   qualified value `Shape.origin`.
 - **Record update**: `{ user | age = 41 }` (keeps every other field).

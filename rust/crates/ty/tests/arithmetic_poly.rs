@@ -260,3 +260,18 @@ fn unannotated_recursive_numeric_function_generalises_after_its_body() {
         "monomorphic recursion must still generalise the finished function for independent callers"
     );
 }
+
+#[test]
+fn unit_parameter_keeps_numeric_bounds_at_call_sites() {
+    let src = format!("{HDR}through () x = x + x\n\nb = through () \"invalid\"\n");
+    assert!(
+        type_errors(&repo_root(), &src) > 0,
+        "a Unit parameter must not hide the numeric bound from callers"
+    );
+}
+
+#[test]
+fn unit_parameter_numeric_function_instantiates_for_int_and_float() {
+    let src = format!("{HDR}through () x = x + x\n\nb = (through () 1, through () 1.25)\n");
+    assert_eq!(type_errors(&repo_root(), &src), 0);
+}

@@ -138,10 +138,14 @@ Annotations are load-bearing:
 - An unannotated recursive function uses one type within its own definition.
   Its finished type may then generalise for separate callers. An explicit
   annotation can support polymorphic recursive calls that each satisfy it.
+  A `()` parameter preserves the same inferred types and numeric bounds as
+  any other parameter. It does not hide the rest of a function's signature.
 - Applying one function stage evaluates that stage before returning its next
   function. A partial application evaluates supplied arguments once, when the
   partial value is made. Captured values keep their values when a tail-recursive
-  caller advances to its next iteration.
+  caller advances to its next iteration. Discarded arguments are evaluated too,
+  including in a tail call. Go FFI partial applications follow the same rule
+  for supplied arguments, before their eventual Go call returns its `Result`.
 - The fix the error suggests is a type you can write: an unknown part is a fresh variable (`List x1`, not `List _`), and a record shows its fields (`{ r1 | count : x1 }`).
 - A `let` binding's annotation is checked too (since v0.27.14), as a top-level one is: `n : Int` above `n = "x"` is `[E2001]`. Its type variables are rigid in the definition, so the body must be as general as the annotation (`f : a -> a` with `f x = x + 1` is refused). A `let` annotation may name a variable of the enclosing annotation (`wrap : a -> List a` with `one : a` in its `let`): it is the same variable (scoped type variables, as in Elm). In the `let` body the binder has the annotated type, generalised under the same value restriction.
 

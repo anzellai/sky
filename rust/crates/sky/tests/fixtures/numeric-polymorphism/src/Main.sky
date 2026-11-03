@@ -371,9 +371,27 @@ inferredLocalBoth _ =
         ( localDelta 1, localDelta 2.25 )
 
 
+unitPatternProbe () =
+    let
+        twice : number -> number
+        twice x = x * 2
+    in
+        twice 1.25
+
+
+unitNumericThrough () x =
+    delta x
+
+
 main =
     Test.runMain
         [ Test.test
+              "unit pattern function forwards numeric evidence"
+              (\_ -> Test.equal 0.0 (unitNumericThrough () 1.0))
+        , Test.test
+              "unit pattern function preserves inferred Float result"
+              (\_ -> Test.equal 2.5 (unitPatternProbe ()))
+        , Test.test
               "inferred local numeric function instantiates independently"
               (\_ -> Test.equal ( 2, 4.5 ) (inferredLocalBoth ()))
         , Test.test
