@@ -14,6 +14,7 @@ package rt
 import (
 	"strings"
 	"syscall/js"
+	"unsafe"
 )
 
 // spaModelEncoder is the wired `model -> String` encoder (Spa_withModelEncoder),
@@ -23,6 +24,7 @@ import (
 var (
 	spaModelEncoder          any
 	spaNextModelEncoding     spaModelEncoding
+	spaFieldPersistenceState spaFieldPersistence
 	spaGeneratedModelEncoder bool
 	spaPersistProt           []string
 	// spaPersistSeed are the fields the `withRequest` hook writes: it runs on
@@ -74,6 +76,17 @@ func spaLocalStorage() (ls js.Value) {
 // and writes as a no-op, so persistence degrades and the app keeps working.
 type spaLocalKV struct{}
 
+// One bounded browser string, with its actual immutable Go owner. Reusing this
+// primitive avoids copying unchanged JSON across wasm/JS, but NEVER suppresses
+// setItem: unchanged steps must still reassert state after another tab/removal.
+var spaPersistBridge struct {
+	owner string
+	value js.Value
+}
+var spaPersistBridgeBytes int
+
+func spaResetPersistBridge() { spaPersistBridge.owner = ""; spaPersistBridge.value = js.Undefined() }
+
 func (spaLocalKV) Get(key string) (blob string, ok bool) {
 	defer func() {
 		if recover() != nil {
@@ -94,11 +107,26 @@ func (spaLocalKV) Get(key string) (blob string, ok bool) {
 func (spaLocalKV) Set(key, value string) {
 	defer func() { _ = recover() }()
 	if ls := spaLocalStorage(); ls.Truthy() {
-		ls.Call("setItem", key, value)
+		useCache := spaGeneratedModelEncoder && !spaStepReference && key == spaPersistKey && len(value) <= spaPersistMaxBytes
+		var argument js.Value
+		if useCache && spaPersistBridge.owner != "" && len(value) == len(spaPersistBridge.owner) && unsafe.StringData(value) == unsafe.StringData(spaPersistBridge.owner) {
+			argument = spaPersistBridge.value
+		} else {
+			spaResetPersistBridge()
+			argument = js.ValueOf(value)
+			spaPersistBridgeBytes += len(value)
+			if useCache {
+				spaPersistBridge.owner, spaPersistBridge.value = value, argument
+			}
+		}
+		ls.Call("setItem", key, argument)
 	}
 }
 
 func (spaLocalKV) Remove(key string) {
+	if key == spaPersistKey {
+		spaResetPersistBridge()
+	}
 	defer func() { _ = recover() }()
 	if ls := spaLocalStorage(); ls.Truthy() {
 		ls.Call("removeItem", key)
@@ -190,17 +218,31 @@ func spaFirstPaintNeedsTwoStep(seed, restored any) (twoStep bool) {
 // clear the httpOnly `sky_sid` cookie. All js access is guarded; a codec panic or
 // a storage throw never kills the instance.
 func spaPersistAfterStep(prevModel, nextModel any) {
+	spaPersistBridgeBytes = 0
 	if spaModelEncoder == nil {
 		return
 	}
 	defer func() { _ = recover() }()
 	var observe func(spaPersistMetrics)
 	if spaActiveStepMetrics != nil {
-		observe = func(m spaPersistMetrics) { spaActiveStepMetrics.Persist = m }
+		observe = func(m spaPersistMetrics) { m.BridgeBytes = spaPersistBridgeBytes; spaActiveStepMetrics.Persist = m }
 	}
-	if spaPersistStepWithEncoding(prevModel, nextModel, spaEncodeModel, func(nextJSON string) {
-		spaPersistWrite(spaLocalKV{}, &spaLife, spaPersistStripFields(nextJSON, spaPersistExclude, spaPersistProt), spaPersistProt, spaPersistMaxBytes)
-	}, spaPersistProt, spaGeneratedModelEncoder && !spaStepReference, &spaNextModelEncoding, observe) {
+	var cleared bool
+	if spaGeneratedModelEncoder && !spaStepReference {
+		spaFieldPersistenceState.profiling = spaActiveStepMetrics != nil
+		var metrics spaFieldPersistenceMetrics
+		cleared, metrics = spaFieldPersistenceState.step(prevModel, nextModel, spaEncodeModel, spaLocalKV{}, &spaLife, spaPersistExclude, spaPersistProt, spaPersistMaxBytes, true)
+		if observe != nil {
+			observe(metrics.Profile)
+		}
+	} else {
+		cleared = spaPersistStepWithEncoding(prevModel, nextModel, spaEncodeModel, func(nextJSON string) {
+			spaPersistWrite(spaLocalKV{}, &spaLife, spaPersistStripFields(nextJSON, spaPersistExclude, spaPersistProt), spaPersistProt, spaPersistMaxBytes)
+		}, spaPersistProt, spaGeneratedModelEncoder && !spaStepReference, &spaNextModelEncoding, observe)
+	}
+	if cleared {
+		spaResetPersistBridge()
+		spaFieldPersistenceState.reset()
 		spaNextModelEncoding.reset()
 		spaPostSignOut()
 	}

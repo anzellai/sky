@@ -53,6 +53,14 @@ while [ $# -gt 0 ]; do
             FILTER="$1"; shift ;;
     esac
 done
+# Resolve the caller's output before cd into the conformance project. A missing
+# report must not turn a successful suite run into a falsely successful gate.
+if [ -n "$JSON_OUT" ]; then
+    case "$JSON_OUT" in
+        /*) ;;
+        *) JSON_OUT="$(pwd)/$JSON_OUT" ;;
+    esac
+fi
 # Prefer the compiler in THIS tree over whatever `sky` is installed on PATH.
 # Defaulting to PATH meant the behavioural conformance suite could certify a
 # months-old installed binary while the tree under test was never exercised —
@@ -82,8 +90,8 @@ ran=0
 REPORT_DIR="$ROOT/.skycache/conformance-reports"
 if [ -n "$JSON_OUT" ]; then
     rm -rf "$REPORT_DIR"
-    mkdir -p "$REPORT_DIR"
-    : >| "$JSON_OUT.entries"
+    mkdir -p "$REPORT_DIR" || exit 1
+    : >| "$JSON_OUT.entries" || exit 1
 fi
 
 # How many suites to run CONCURRENTLY. `CONF_JOBS`, else cores capped at 8.
@@ -185,7 +193,7 @@ for suite in "${suites[@]}"; do
     fi
     if [ -n "$JSON_OUT" ]; then
         printf '{"name":"%s","exit_code":%d,"report":"%s"},\n' \
-            "$base" "$rc" "$REPORT_DIR/$base.json" >> "$JSON_OUT.entries"
+            "$base" "$rc" "$REPORT_DIR/$base.json" >> "$JSON_OUT.entries" || exit 1
     fi
     echo ""
 done
@@ -196,7 +204,7 @@ if [ -n "$JSON_OUT" ]; then
         # strip the trailing comma from the last entry
         sed '$ s/,$//' "$JSON_OUT.entries"
         printf '  ],\n  "suites_run": %d,\n  "filter": "%s"\n}\n' "$ran" "$FILTER"
-    } >| "$JSON_OUT"
+    } >| "$JSON_OUT" || exit 1
     rm -f "$JSON_OUT.entries"
 fi
 

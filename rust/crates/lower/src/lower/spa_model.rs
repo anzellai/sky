@@ -61,30 +61,67 @@ fn eligible<'a>(
     let Expr::Var(Res::Def(blank)) = &body.exprs[witnesses[0]] else {
         return false;
     };
-    let Some(blank) = lookup(*blank) else {
+    let Some(blank_body) = lookup(*blank) else {
         return false;
     };
-    blank.params.is_empty() && blank.root.is_some_and(|r| literal(blank, r))
+    let mut visiting = std::collections::HashSet::from([*blank]);
+    let mut budget = 4096;
+    blank_body.params.is_empty()
+        && blank_body
+            .root
+            .is_some_and(|r| literal(blank_body, r, lookup, &mut visiting, &mut budget))
 }
 
-fn literal(body: &Body, id: ExprId) -> bool {
-    base::ensure_stack(|| match &body.exprs[id] {
-        Expr::Int(_) | Expr::Str(_) | Expr::Chr(_) | Expr::Bool(_) | Expr::Unit => true,
-        Expr::Float(n) => n.is_finite(),
-        Expr::List(xs) | Expr::Tuple(xs) => xs.iter().all(|x| literal(body, *x)),
-        Expr::Record(fs) => fs.iter().all(|(_, x)| literal(body, *x)),
-        Expr::Negate(x) => {
-            matches!(&body.exprs[*x], Expr::Int(_) | Expr::Float(_)) && literal(body, *x)
+fn literal<'a>(
+    body: &Body,
+    id: ExprId,
+    lookup: &impl Fn(DefId) -> Option<&'a Body>,
+    visiting: &mut std::collections::HashSet<DefId>,
+    budget: &mut usize,
+) -> bool {
+    base::ensure_stack(|| {
+        if *budget == 0 {
+            return false;
         }
-        Expr::Var(Res::Ctor(c)) => c.arity == 0,
-        Expr::Call(_, _) => {
-            let (head, args) = call(body, id);
-            matches!(&body.exprs[head], Expr::Var(Res::Ctor(c)) if usize::from(c.arity) == args.len())
-                && args.iter().all(|x| literal(body, *x))
+        *budget -= 1;
+        match &body.exprs[id] {
+            Expr::Int(_) | Expr::Str(_) | Expr::Chr(_) | Expr::Bool(_) | Expr::Unit => true,
+            Expr::Float(n) => n.is_finite(),
+            Expr::List(xs) | Expr::Tuple(xs) => xs
+                .iter()
+                .all(|x| literal(body, *x, lookup, visiting, budget)),
+            Expr::Record(fs) => fs
+                .iter()
+                .all(|(_, x)| literal(body, *x, lookup, visiting, budget)),
+            Expr::Negate(x) => {
+                matches!(&body.exprs[*x], Expr::Int(_) | Expr::Float(_))
+                    && literal(body, *x, lookup, visiting, budget)
+            }
+            Expr::Var(Res::Ctor(c)) => c.arity == 0,
+            Expr::Var(Res::Def(d)) => {
+                if !visiting.insert(*d) {
+                    return false;
+                }
+                let proven = lookup(*d).is_some_and(|alias| {
+                    alias.params.is_empty()
+                        && alias
+                            .root
+                            .is_some_and(|root| literal(alias, root, lookup, visiting, budget))
+                });
+                visiting.remove(d);
+                proven
+            }
+            Expr::Call(_, _) => {
+                let (head, args) = call(body, id);
+                matches!(&body.exprs[head], Expr::Var(Res::Ctor(c)) if usize::from(c.arity) == args.len())
+                    && args
+                        .iter()
+                        .all(|x| literal(body, *x, lookup, visiting, budget))
+            }
+            // CAF aliases are admitted only by recursively proving literal data.
+            // Function calls, lets, effects and operators retain reference execution.
+            _ => false,
         }
-        // No helpers, lets, aliases, effects, operators, runtime-context reads
-        // or higher-order calls are inferred pure by omission.
-        _ => false,
     })
 }
 
@@ -104,7 +141,7 @@ mod tests {
                 FileId(0),
             ),
         );
-        let source = format!("module Main exposing (..)\nimport Codec as C\nblank =\n    {blank}\n\nencode m =\n    {encoder}\n");
+        let source = format!("module Main exposing (..)\nimport Codec as C\nrecordAlias = {{ text = \"\" }}\nsecondAlias = recordAlias\nimpureAlias = helper ()\ncycleA = cycleB\ncycleB = cycleA\nblank =\n    {blank}\n\nencode m =\n    {encoder}\n");
         let main = db.add_module("Main", syntax::parse(&source, FileId(1)));
         let codec = db.resolve(codec);
         let resolved = db.resolve(main);
@@ -148,5 +185,15 @@ mod tests {
         ));
         assert!(!check("{ text = \"\" }", "C.toJson (custom blank) m", true));
         assert!(!check("{ text = \"\" }", "helper m", true));
+        assert!(check("secondAlias", "C.toJson (C.auto blank) m", true));
+        assert!(check(
+            "[ secondAlias, secondAlias ]",
+            "C.toJson (C.auto blank) m",
+            true
+        ));
+        assert!(!check("impureAlias", "C.toJson (C.auto blank) m", true));
+        assert!(!check("cycleA", "C.toJson (C.auto blank) m", true));
+        let excessive = format!("[ {} ]", vec!["secondAlias"; 4096].join(", "));
+        assert!(!check(&excessive, "C.toJson (C.auto blank) m", true));
     }
 }

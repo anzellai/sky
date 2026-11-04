@@ -117,16 +117,23 @@ try {
       for (const phase of ["updateCalls", "viewCalls", "postCalls"]) assert.equal(ignored[phase], 10, "Reference phase count changed");
     } else {
       assert.equal(ignored.modelEncodes, 0, "Unchanged eligible model must reuse its successful next encoding");
-      assert.equal(ignored.modelEncodeReuses, 10, "Each ignored key must retain encoding reuse");
+      assert.equal(ignored.fieldModelSteps, 10, "Each ignored key must use its closed field certificate");
+      assert.equal(ignored.fieldEncodes, 0, "Ignored keys must not encode unrelated fields");
+      assert.equal(ignored.materializedBytes, 0, "Ignored keys must reuse the exact stored payload");
+      assert.equal(ignored.bridgeBytes, 0, "Ignored keys must reuse the existing browser string");
       assert(ignored.encodeComparedNodes <= 2560, "Identity witness exceeded its fixed budget");
-      assert.equal(ignored.projectionFields, 20, "Projection must visit only the two session fields");
+
       assert.equal(ignored.storageWrites, 10, "This stage must preserve storage writes");
       for (const phase of ["updateCalls", "viewCalls", "postCalls"]) assert.equal(ignored[phase], 10, "Incremental persistence suppressed transition work");
     }
     const typing = await measure("typing", count, () => input.pressSequentially("abcdefghij"));
     assert.equal(typing.steps, 20, "Each letter must retain keydown and input messages");
-    assert.equal(typing.modelEncodes, mode === "reference" ? 40 : 10, "Typing encode count changed");
-    if (mode !== "reference") assert.equal(typing.modelEncodeReuses, 10, "Keydown messages lost bounded encoding reuse");
+    assert.equal(typing.modelEncodes, mode === "reference" ? 40 : 0, "Typing encode count changed");
+    if (mode !== "reference") {
+      assert.equal(typing.fieldModelSteps, 20, "Each typing message must use field certificates");
+      assert.equal(typing.fieldEncodes, 10, "Only the input field should be encoded");
+      assert.equal(typing.fieldEncodedBytes, 75, "Typing encoded unrelated model bytes");
+    }
     assert.equal(await input.inputValue(), "abcdefghij", "Typing lost input");
     assert.equal(await page.locator("#echo").textContent(), "abcdefghij", "Model and input diverged");
     await measure("async-command", count, async () => {
@@ -141,6 +148,37 @@ try {
   await page.waitForFunction(() => globalThis.__skyStepProfileReady === true);
   assert.equal(await page.locator("#typing").inputValue(), "abcdefghij", "Reload lost typed state");
   assert.equal(await page.locator("#items").textContent(), "10000", "Reload lost unrelated data");
+  await page.locator("#huge").click();
+  await page.waitForFunction(() => document.querySelector("#items")?.textContent === "100000");
+  const hugeInput = page.locator("#typing");
+  await hugeInput.fill("");
+  const oversized = await measure("oversized-typing", 100000, async () => {
+    // Keep the same messages, but bound each automation action separately.
+    // The known slow reference path can exceed the default 30-second action
+    // timeout for ten characters together. Browser/guard deadlines stay intact.
+    for (const letter of "abcdefghij") await hugeInput.pressSequentially(letter);
+  });
+  assert.equal(oversized.steps, 20, "Oversized retained data dropped typing messages");
+  assert.equal(oversized.storageWrites, 0, "Oversized snapshot exceeded the unchanged persistence cap");
+  assert.equal(oversized.modelEncodes, mode === "reference" ? 40 : 0, "Oversized typing unexpectedly encoded the full model");
+  if (mode !== "reference") {
+    assert.equal(oversized.fieldEncodes, 10, "Oversized typing encoded unrelated fields");
+    assert.equal(oversized.fieldEncodedBytes, 75, "Oversized typing encoded unrelated bytes");
+    assert.equal(oversized.materializedBytes, 0, "Oversized snapshot was materialized");
+    assert.equal(oversized.bridgeBytes, 0, "Oversized snapshot crossed the wasm bridge");
+  }
+  await page.locator("#rows").click();
+  await page.getByText("visible row 200", { exact: true }).waitFor();
+  await hugeInput.focus();
+  await hugeInput.evaluate(el => el.setSelectionRange(el.value.length, el.value.length));
+  const visible = await measure("visible-rows-typing", 100000, () => hugeInput.pressSequentially("k"));
+  assert.equal(visible.steps, 2, "Large view dropped typing messages");
+  assert.equal(visible.viewCalls, 2, "This persistence stage must preserve full view execution");
+  assert.equal(await hugeInput.inputValue(), "abcdefghijk", "Large view lost typed input");
+  await hugeInput.evaluate(el => el.setSelectionRange(3, 3));
+  await hugeInput.pressSequentially("Z");
+  assert.equal(await hugeInput.inputValue(), "abcZdefghijk", "Large view lost a mid-string edit");
+  assert.equal(await page.locator("#echo").textContent(), "abcZdefghijk", "Mid-string edit diverged from the model");
   await page.locator("#advance").click();
   await page.locator("#select").click();
   assert.equal(await page.locator("#selected").textContent(), "2", "Visually equal button kept stale payload");

@@ -26,9 +26,9 @@ Never print dotenv contents or environment values. Use synthetic fixtures.
 |---|---|---|---|
 | 0 | Architecture consultation and executable invariants | Source review against released baseline | Complete |
 | 1 | Public large-model fixture, phase counters and reference path | Reference runs pass Chromium/WebKit/Firefox at 1K/10K retained entries, fixed small view; other size/context dimensions remain for later gates | Complete |
-| 2 | Internal model descriptors and protected-field projections | Compiler/provenance and focused runtime tests; Chromium/WebKit/Firefox both modes, identical correctness journey | Complete; broader compiler gates pending |
-| 3 | Conservative change evidence and safe reuse | Unknown mutation/effects, commands, handlers, context and panic boundaries | Restricted next-encoding cache validating; view reuse remains pending |
-| 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Pending |
+| 2 | Internal model descriptors and protected-field projections | Compiler/provenance and focused runtime tests; Chromium/WebKit/Firefox both modes, identical correctness journey | Complete; broad compiler/example/hosted gates passed at 2365815 |
+| 3 | Conservative change evidence and safe reuse | Unknown mutation/effects, commands, handlers, context and panic boundaries | Restricted cache validated; automatic view reuse remains pending |
+| 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Bounded synchronous v2 field path implemented; expanded browser validation running. General incremental storage remains pending |
 | 5 | Automatic view-region reuse and collection changes | Reference UI/effect traces, bounded cache retention and dependent work counters | Pending |
 | 6 | Cross-target end-to-end gates and independent review | Runtime/compiler suites, full examples, real app, browsers and available native/terminal targets | Pending |
 
@@ -65,7 +65,7 @@ are evidence and counterexample searches, not a universal proof.
 
 The driver grants resolved canonical codec IDs only while original stdlib source
 identities and namespaces remain intact. Lowering accepts only a direct encoder
-of the actual model parameter using those definitions and a literal blank CAF.
+of the actual model parameter using those definitions and a literal blank CAF (including resolved pure literal aliases).
 It emits an internal capsule retaining the exact original full encoder. An
 editable generated-project marker or arbitrary callable does not establish
 eligibility. A later public encoder builder revokes eligibility.
@@ -252,3 +252,66 @@ harvest and full 84-row narrowing gate also pass after the example sweep.
 Configuration census, denominators and coverage-ledger checks pass after these
 fixes. Both prior CI failures are addressed; the new head still needs its full
 hosted workflow result.
+
+
+## Cycle 4 bounded synchronous field path
+
+The first storage implementation preserves the synchronous v2 localStorage
+format and 1.5 MB post-exclusion limit. A successful original full encode plus
+closed-type proof establishes per-field encoding validity, exact byte lengths
+and bounded retained field bytes. Later steps compare bounded sufficient field
+witnesses and encode changed fields, including excluded fields whose failures
+must still invalidate the full result. Unknown types, metadata epochs and
+projection limits retain the original encoder. Pure literal blank CAF aliases
+are resolved with cycle detection and a 4096-expression budget.
+
+An invalid full next model never changes storage identity. An invalid previous
+model still prevents sign-out. Identity uses the existing alias precedence and
+number-preserving canonicalisation; sign-out keeps its distinct exact-key
+contract. Previous validity is reusable only for the actual previous immutable
+model and the metadata epoch still current AFTER publication. A storage callback
+that changes enum metadata therefore forces the original previous encoder.
+
+Valid oversized snapshots perform the original identity/removal/lifetime rules
+without building a whole JSON buffer. Bounded snapshots reconstruct exactly the
+original bytes and retain one payload. Unchanged persisted fields reuse those
+bytes. One browser string can also be retained with its actual immutable Go
+owner; boot, identity removal and sign-out reset it. EVERY original storage write
+still calls setItem, including retries and republication after another tab or
+removal. There is no asynchronous durability window or new storage protocol.
+
+This is a partial scaling improvement. Changed snapshots below the cap still
+join and write all persisted bytes. Changed large fields still require their
+full encoding. Large protected identity projections use reference fallback.
+Models containing ADTs, erased/foreign values or unsupported containers still
+use reference execution. FacePlan's broader model is not yet covered, and view
+execution is unchanged. General incremental storage, broader compiler-owned
+metadata and automatic view/collection work remain required.
+
+Numeric counters distinguish original full calls, certified field steps,
+individual field encodes/bytes, materialized payload bytes and wasm-to-JS string
+bytes. Identity reconstruction counts its field encodes too. encodeNanos covers
+full/field derivation and cold ingestion; writeNanos includes identity,
+reconstruction and the storage adapter; sessionNanos covers null projections and
+sign-out decisions. These are phase timers, not exclusive attribution of every
+field encode to encodeNanos. Profiling remains opt-in.
+
+Focused differential tests cover reference-equivalent storage calls, bytes,
+lifetime state and sign-out through identity A/B changes, invalid floats,
+exclusions, oversized values, repairs and removed snapshots at 1K/10K/100K
+retained entries. The expanded browser gate also exercises a 6 MB model and
+200 visible rows. Passing these gates is evidence for this restricted path,
+not a universal correctness or cross-device latency claim.
+
+### Nominal container correctness prerequisite
+
+Ordinary Sky records may legally contain fields named tag, justValue, okValue,
+errValue, skyName and fields. Runtime classification previously mistook some
+such records for Maybe/Result/ADT containers, potentially dropping data during
+encoding or rejecting their decode. Classification now recognises actual runtime
+containers, retains true Go aliases and fences structural conversions. The
+Sky-source regression suite checks preserved record fields and genuine
+Maybe/Result controls. If an application previously persisted one of the affected
+record shapes, data already discarded by that bug cannot be reconstructed by
+this fix; application-specific recovery would require another source. No private
+application is asserted to have had that shape.

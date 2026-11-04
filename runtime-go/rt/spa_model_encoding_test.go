@@ -225,3 +225,20 @@ func TestSpaModelEncodingMetadataChangeDuringFullIsNotCached(t *testing.T) {
 		t.Fatal("metadata changed during encoding but a certificate was retained")
 	}
 }
+
+func TestSpaModelEncodingHitReleasesObsoleteModelOwner(t *testing.T) {
+	type model struct {
+		Text     string             `sky:"text,string"`
+		Inactive SkyMaybe[[]string] `sky:"inactive,rt.SkyMaybe[[]string]"`
+	}
+	large := strings.Repeat("x", 8*1024*1024)
+	old := model{Text: large[:1], Inactive: SkyMaybe[[]string]{Tag: 1, JustValue: make([]string, 100000)}}
+	e := spaModelEncoding{generated: true, full: spaProjectionEncode}
+	e.encodeNext(old)
+	next := model{Text: strings.Clone(old.Text), Inactive: Nothing[[]string]()}
+	_, hit, _ := e.encodeNext(next)
+	retained := reflect.ValueOf(e.model)
+	if !hit || retained.FieldByName("Text").Pointer() != reflect.ValueOf(next.Text).Pointer() || retained.FieldByName("Inactive").FieldByName("JustValue").Len() != 0 {
+		t.Fatal("encoding hit retained an obsolete model/backing allocation")
+	}
+}

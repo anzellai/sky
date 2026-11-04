@@ -34,6 +34,10 @@ func (e *spaModelEncoding) encodeNext(model any) (out string, reused bool, compa
 		var same bool
 		same, compared = spaModelSame(e.model, model)
 		if same {
+			// Equal short strings or inactive Maybe payloads may have newer,
+			// smaller backing owners. Keep the certificate, not the obsolete
+			// model representation that originally established it.
+			e.model = model
 			return e.json, true, compared
 		}
 	}

@@ -65,6 +65,24 @@ fn real_build_grants_only_proven_encoders() {
     for (name, source, extra, eligible) in [
         ("canonical", SOURCE.to_string(), 0, true),
         (
+            "literal CAF alias",
+            SOURCE.replace(
+                "blank = { session = Nothing, text = \"\" }",
+                "blank = aliasBlank\naliasBlank : Model\naliasBlank = { session = Nothing, text = \"\" }",
+            ),
+            0,
+            true,
+        ),
+        (
+            "CAF alias with a function call",
+            SOURCE.replace(
+                "blank = { session = Nothing, text = \"\" }",
+                "blank = aliasBlank\naliasBlank : Model\naliasBlank = makeBlank ()",
+            ),
+            0,
+            false,
+        ),
+        (
             "arbitrary callable",
             SOURCE.replace(
                 "encoder m = C.toJson (C.auto blank) m",

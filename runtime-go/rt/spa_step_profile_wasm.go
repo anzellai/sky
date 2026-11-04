@@ -41,6 +41,11 @@ func spaProfilePublish(m *spaStepMetrics) {
 	t.ProjectionBytes += p.ProjectionBytes
 	t.EncodingReuses += p.EncodingReuses
 	t.EncodingCompared += p.EncodingCompared
+	t.FieldModelSteps += p.FieldModelSteps
+	t.FieldEncodes += p.FieldEncodes
+	t.FieldEncodedBytes += p.FieldEncodedBytes
+	t.MaterializedBytes += p.MaterializedBytes
+	t.BridgeBytes += p.BridgeBytes
 	names := [...]string{"update", "view", "vnode", "style", "patch", "post"}
 	stats := map[string]any{"steps": spaProfileSteps}
 	for i, name := range names {
@@ -51,6 +56,11 @@ func spaProfilePublish(m *spaStepMetrics) {
 	stats["modelEncodeReuses"] = t.EncodingReuses
 	stats["encodeComparedNodes"] = t.EncodingCompared
 	stats["encodedBytes"] = t.EncodedBytes
+	stats["fieldModelSteps"] = t.FieldModelSteps
+	stats["fieldEncodes"] = t.FieldEncodes
+	stats["fieldEncodedBytes"] = float64(t.FieldEncodedBytes)
+	stats["materializedBytes"] = float64(t.MaterializedBytes)
+	stats["bridgeBytes"] = t.BridgeBytes
 	stats["encodeNanos"] = float64(t.EncodeNanos)
 	stats["writeNanos"] = float64(t.WriteNanos)
 	stats["sessionNanos"] = float64(t.SessionNanos)

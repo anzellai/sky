@@ -65,3 +65,26 @@ func TestSpaPersistExcludeNeverDropsASessionField(t *testing.T) {
 		t.Fatalf("no exclusion changed the JSON: %s", got)
 	}
 }
+
+func TestSpaPersistExcludeProtectsSessionWireKeyAliases(t *testing.T) {
+	for _, tc := range []struct {
+		protected string
+		excluded  string
+	}{
+		{"sessionValue", "session_value"},
+		{"session_value", "sessionValue"},
+	} {
+		got := spaPersistStripFields(`{"session_value":{"id":"synthetic"},"draft":1}`, []string{tc.excluded, "draft"}, []string{tc.protected})
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(got), &fields); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := fields["session_value"]; !ok || len(fields) != 1 {
+			t.Fatal("an exclusion alias removed the protected session wire key")
+		}
+	}
+	got := spaPersistStripFields(`{"sessionValue":"exclude","session_value":"protect"}`, []string{"sessionValue"}, []string{"session_value"})
+	if got != `{"session_value":"protect"}` {
+		t.Fatal("protect only the identity's actual wire keys, not unrelated alias keys")
+	}
+}
