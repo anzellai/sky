@@ -131,6 +131,7 @@ func spaRun(cfg any) any {
 	spaSch.setHoldFree(spaStringList(fieldOrNil(cfg, "HoldFree")))
 	spaModelEncoder = fieldOrNil(cfg, "ModelEncoder")
 	spaGeneratedModelEncoder, _ = fieldOrNil(cfg, "GeneratedAutoModelEncoder").(bool)
+	spaNextModelEncoding = spaModelEncoding{full: spaEncodeModel, generated: spaGeneratedModelEncoder && !spaStepReference}
 	spaPersistProt = spaStringList(fieldOrNil(cfg, "PersistProtectedFields"))
 	spaPersistSeed = spaStringList(fieldOrNil(cfg, "PersistSeedFields"))
 	spaPersistExclude = spaStringList(fieldOrNil(cfg, "PersistExcludeFields"))

@@ -12,6 +12,8 @@ type spaPersistMetrics struct {
 	SessionNanos     int64
 	ProjectionFields int
 	ProjectionBytes  int
+	EncodingReuses   int
+	EncodingCompared int
 }
 
 // spaPersistStep is the portable persistence decision. The browser supplies
@@ -24,19 +26,37 @@ func spaPersistStep(prev, next any, encode func(any) string, write func(string),
 }
 
 func spaPersistStepWithCodec(prev, next any, encode func(any) string, write func(string), protected []string, generated bool, observe func(spaPersistMetrics)) bool {
+	return spaPersistStepWithEncoding(prev, next, encode, write, protected, generated, nil, observe)
+}
+
+func spaPersistStepWithEncoding(prev, next any, encode func(any) string, write func(string), protected []string, generated bool, cache *spaModelEncoding, observe func(spaPersistMetrics)) bool {
 	metrics := spaPersistMetrics{}
-	encodeModel := func(model any) string {
-		if observe == nil {
-			return encode(model)
+	encodeModel := func(model any, isNext bool) string {
+		var start time.Time
+		if observe != nil {
+			start = time.Now()
 		}
-		start := time.Now()
-		out := encode(model)
-		metrics.Encodes++
-		metrics.EncodedBytes += len(out)
-		metrics.EncodeNanos += time.Since(start).Nanoseconds()
+		var out string
+		reused, compared := false, 0
+		if isNext && generated && cache != nil {
+			out, reused, compared = cache.encodeNext(model)
+		} else {
+			out = encode(model)
+		}
+		if observe != nil {
+			if reused {
+				metrics.EncodingReuses++
+			} else {
+				metrics.Encodes++
+				metrics.EncodedBytes += len(out)
+			}
+			metrics.EncodingCompared += compared
+			metrics.EncodeNanos += time.Since(start).Nanoseconds()
+		}
 		return out
 	}
-	nextJSON := encodeModel(next)
+
+	nextJSON := encodeModel(next, true)
 	if nextJSON != "" {
 		if observe == nil {
 			write(nextJSON)
@@ -61,7 +81,7 @@ func spaPersistStepWithCodec(prev, next any, encode func(any) string, write func
 		}
 	}
 	if len(protected) != 0 && !skipPrevious {
-		prevJSON := encodeModel(prev)
+		prevJSON := encodeModel(prev, false)
 		if observe == nil {
 			cleared = spaSessionClearedByStep(prevJSON, nextJSON, protected)
 		} else {

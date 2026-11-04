@@ -20,9 +20,11 @@ for changing runtime decisions.
 | style | Node path assignment and style injection |
 | patch | Render planning, DOM application, deferred-input handling and handler refresh |
 | post | URL reconciliation, Cmd interpretation and subscription reconciliation |
-| modelEncodes, encodedBytes, encodeNanos | Full model encoder work |
+| modelEncodes, encodedBytes | Actual full model encoder calls and output bytes |
+| encodeNanos | Encoding decisions, bounded identity checks and full encoder work |
+| modelEncodeReuses, encodeComparedNodes | Successful next-encoding reuse and bounded witness visits |
 | writeNanos | Entire persistence write pipeline, including exclusions, identity processing and storage |
-| sessionNanos | Session-clear decision after encoding |
+| sessionNanos | Protected projections and session-clear decision after encoding |
 | storageWrites | Browser storage calls intercepted by the synthetic harness |
 
 The aggregate patch and write durations must not be described as pure DOM or

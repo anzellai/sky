@@ -22,6 +22,7 @@ import (
 // on boot these fields are kept from the SSR seed, never from localStorage.
 var (
 	spaModelEncoder          any
+	spaNextModelEncoding     spaModelEncoding
 	spaGeneratedModelEncoder bool
 	spaPersistProt           []string
 	// spaPersistSeed are the fields the `withRequest` hook writes: it runs on
@@ -197,9 +198,10 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 	if spaActiveStepMetrics != nil {
 		observe = func(m spaPersistMetrics) { spaActiveStepMetrics.Persist = m }
 	}
-	if spaPersistStepWithCodec(prevModel, nextModel, spaEncodeModel, func(nextJSON string) {
+	if spaPersistStepWithEncoding(prevModel, nextModel, spaEncodeModel, func(nextJSON string) {
 		spaPersistWrite(spaLocalKV{}, &spaLife, spaPersistStripFields(nextJSON, spaPersistExclude, spaPersistProt), spaPersistProt, spaPersistMaxBytes)
-	}, spaPersistProt, spaGeneratedModelEncoder && !spaStepReference, observe) {
+	}, spaPersistProt, spaGeneratedModelEncoder && !spaStepReference, &spaNextModelEncoding, observe) {
+		spaNextModelEncoding.reset()
 		spaPostSignOut()
 	}
 }
