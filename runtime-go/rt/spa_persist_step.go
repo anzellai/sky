@@ -5,6 +5,10 @@ import "time"
 // spaPersistMetrics contains counts and timings only. It never carries model,
 // session, field values or encoded data. The observer is nil in normal use.
 type spaPersistMetrics struct {
+	PreparedEncodes   int
+	PreparedFallbacks int
+	FieldMarshals     int
+	ClosedFieldReuses int
 	Encodes           int
 	EncodedBytes      int
 	EncodeNanos       int64

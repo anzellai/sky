@@ -10,13 +10,17 @@ import (
 // gate. It retains the EXACT full encoder: strict Codec.auto construction and
 // its failure behaviour are not replaced by a different runtime codec.
 // No Sky kernel constructs a capsule from an arbitrary callable.
-type SpaAutoModelEncoder struct{ Full any }
+type SpaAutoModelEncoder struct {
+	Full      any
+	InputType any
+}
 
 // Spa_withGeneratedModelEncoder is compiler plumbing, not a public Sky API.
 // A forged generated-project flag plus an ordinary callable gains nothing.
 func Spa_withGeneratedModelEncoder(encoder, cfg any) any {
 	if proven, ok := encoder.(SpaAutoModelEncoder); ok {
 		cfg = Spa_withModelEncoder(proven.Full, cfg)
+		cfg = spaCfgSet(cfg, "GeneratedModelInputType", proven.InputType)
 		return spaCfgSet(cfg, "GeneratedAutoModelEncoder", true)
 	}
 	return Spa_withModelEncoder(encoder, cfg)

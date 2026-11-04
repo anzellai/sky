@@ -10561,6 +10561,16 @@ fn gen_frontend(
         name
     };
     let generated_encoder_setter = fresh("spaWithGeneratedModelEncoder_");
+    let prepared_setter = fresh("spaWithPreparedModelEncoder_");
+    let prepared_prepare = fresh("spaPrepareModelEncoder_");
+    let prepared_finish = fresh("spaFinishModelEncoder_");
+    // Existing injection adds Full after this prefix. Kernel argument order is
+    // Prepare, Finish, Full, cfg; all helper bindings are private and hygienic.
+    let encoder_setter_application = if device_only.is_empty() {
+        format!("{prepared_setter} {prepared_prepare} {prepared_finish}")
+    } else {
+        generated_encoder_setter.clone()
+    };
     let ffi_qualifier = file
         .imports()
         .find(|i| i.name().is_some_and(|n| n.text() == "Sky.Ffi"))
@@ -10622,7 +10632,7 @@ fn gen_frontend(
                         main_text,
                         session_fields,
                         seed_fields,
-                        &generated_encoder_setter,
+                        &encoder_setter_application,
                     )
                 } else {
                     main_text.to_string()
@@ -10738,6 +10748,19 @@ fn gen_frontend(
              {generated_encoder_setter} =\n    \
              {ffi_qualifier}.kernel \"Spa_withGeneratedModelEncoder\"\n\n\n",
         ));
+        if device_only.is_empty() {
+            body.push_str(&format!(
+                "{prepared_setter} : (() -> Codec.Codec model) -> (Codec.Codec model -> model -> String) -> (model -> String) -> Spa.AppConfig model msg -> Spa.AppConfig model msg\n\
+                 {prepared_setter} =\n    \
+                 {ffi_qualifier}.kernel \"Spa_withPreparedModelEncoder\"\n\n\n\
+                 {prepared_prepare} : () -> Codec.Codec {model_ty}\n\
+                 {prepared_prepare} unit_ =\n    \
+                 Codec.auto spaModelBlank_\n\n\n\
+                 {prepared_finish} : Codec.Codec {model_ty} -> {model_ty} -> String\n\
+                 {prepared_finish} codec_ model_ =\n    \
+                 Codec.toJson codec_ model_\n\n\n"
+            ));
+        }
         // `withClientCrypto`: a device-only key field is `Nothing` whatever the
         // page or localStorage holds, so no key can be planted from outside.
         let (decode, decoded) = if device_only.is_empty() {

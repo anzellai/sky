@@ -137,3 +137,120 @@ fn real_build_grants_only_proven_encoders() {
         );
     }
 }
+
+#[test]
+fn real_build_prepared_capability_preserves_independent_closed_proof() {
+    let installer = "install : (Model -> String) -> S.AppConfig Model Msg -> S.AppConfig Model Msg\ninstall = Plumbing.kernel \"Spa_withGeneratedModelEncoder\"";
+    let prepared = r#"prepare : () -> C.Codec Model
+prepare unit = C.auto blank
+
+finish : C.Codec Model -> Model -> String
+finish codec m = C.toJson codec m
+
+install : (() -> C.Codec Model) -> (C.Codec Model -> Model -> String) -> (Model -> String) -> S.AppConfig Model Msg -> S.AppConfig Model Msg
+install = Plumbing.kernel "Spa_withPreparedModelEncoder""#;
+    assert!(SOURCE.contains(installer));
+    let source = SOURCE
+        .replace(installer, prepared)
+        .replace("|> install encoder", "|> install prepare finish encoder");
+    let dir = std::env::temp_dir().join(format!("sky-prepared-model-proof-{}", std::process::id()));
+    struct Cleanup(PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _clean = Cleanup(dir.clone());
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "[project]\nname=\"prepared-proof\"\n[spa]\ngenerated = true\nrole = \"frontend\"\n",
+    )
+    .unwrap();
+    for (name, candidate, added_namespace, eligible, closed) in [
+        ("canonical", source.clone(), false, true, true),
+        (
+            "unsafe Int preparation ABI with matching private kernel annotation",
+            source
+                .replace(
+                    "prepare : () -> C.Codec Model",
+                    "prepare : Int -> C.Codec Model",
+                )
+                .replace(
+                    "install : (() -> C.Codec Model)",
+                    "install : (Int -> C.Codec Model)",
+                ),
+            false,
+            false,
+            false,
+        ),
+        (
+            "nonliteral CAF",
+            source.replace(
+                "blank = { session = Nothing, text = \"\" }",
+                "blank = makeBlank ()",
+            ),
+            false,
+            true,
+            false,
+        ),
+        (
+            "different preparation",
+            source.replace(
+                "prepare unit = C.auto blank",
+                "prepare unit = C.auto { session = Nothing, text = \"\" }",
+            ),
+            false,
+            false,
+            false,
+        ),
+        (
+            "finish repeats construction",
+            source.replace(
+                "finish codec m = C.toJson codec m",
+                "finish codec m = C.toJson (C.auto blank) m",
+            ),
+            false,
+            false,
+            false,
+        ),
+        (
+            "arbitrary Full",
+            source.replace(
+                "encoder m = C.toJson (C.auto blank) m",
+                "encoder m = custom m",
+            ),
+            false,
+            false,
+            false,
+        ),
+        ("added namespace", source.clone(), true, false, false),
+    ] {
+        std::fs::write(dir.join("src/Main.sky"), candidate).unwrap();
+        if dir.join("src/Std").exists() {
+            std::fs::remove_dir_all(dir.join("src/Std")).unwrap();
+        }
+        if added_namespace {
+            std::fs::create_dir_all(dir.join("src/Std")).unwrap();
+            std::fs::write(
+                dir.join("src/Std/Extra.sky"),
+                "module Std.Extra exposing (marker)\nmarker = 0\n",
+            )
+            .unwrap();
+        }
+        let emitted =
+            project::emit_example_source(&root(), &dir).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(
+            emitted.contains("rt.SpaPreparedEncoderProof{"),
+            eligible,
+            "{name}: prepared provenance differs"
+        );
+        if eligible {
+            assert_eq!(
+                emitted.contains("Closed: true"),
+                closed,
+                "{name}: prepared proof must not grant closed reuse"
+            );
+        }
+    }
+}

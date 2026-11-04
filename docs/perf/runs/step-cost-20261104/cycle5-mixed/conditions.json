@@ -1,0 +1,17 @@
+{
+  "baselineCommit": "19363f3870575b0b65c5c87b9b4f821fa87e1d04",
+  "uncommittedImplementation": true,
+  "sourceDigest": "8d57c4a59d53785e876b4dde8fc3c27f5b0143891e353fde8eedd35645213f4a",
+  "compilerSha256": "a1086a2437388f5ad27887dc7f596120892347f25db25af95f4aa28f0243fdf8",
+  "diagnosticRepeats": 1,
+  "profilingEnabled": true,
+  "engines": [
+    "chromium",
+    "webkit",
+    "firefox"
+  ],
+  "physicalMobileDevices": false,
+  "unchangedStorageFormat": "v2",
+  "guardBudgetsChanged": false,
+  "scope": "Mixed model with payload ADT; one diagnostic repeat per engine/mode; no arbitrary-program or latency guarantee."
+}

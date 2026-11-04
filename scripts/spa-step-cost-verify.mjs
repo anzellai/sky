@@ -23,6 +23,7 @@ const throttle = Number(option("--cpu", "1"));
 assert(Number.isFinite(throttle) && throttle >= 1, "Invalid CPU rate");
 assert(throttle === 1 || engineName === "chromium", "CPU throttle requires Chromium");
 const output = option("--output", null);
+const mixed = option("--model-domain", "closed") === "mixed";
 const mode = option("--mode", "reference");
 assert(["reference", "incremental"].includes(mode), "Unknown execution mode");
 const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "sky-step-cost-"));
@@ -117,8 +118,14 @@ try {
       for (const phase of ["updateCalls", "viewCalls", "postCalls"]) assert.equal(ignored[phase], 10, "Reference phase count changed");
     } else {
       assert.equal(ignored.modelEncodes, 0, "Unchanged eligible model must reuse its successful next encoding");
-      assert.equal(ignored.fieldModelSteps, 10, "Each ignored key must use its closed field certificate");
-      assert.equal(ignored.fieldEncodes, 0, "Ignored keys must not encode unrelated fields");
+      if (mixed) {
+        assert.equal(ignored.preparedEncodes, 20, "Both logical invocations must prepare codecs");
+        assert.equal(ignored.preparedFallbacks, 0, "Mixed model must use the proven field path");
+        assert.equal(ignored.fieldEncodes, 20, "Unknown page must run on every logical invocation");
+      } else {
+        assert.equal(ignored.fieldModelSteps, 10, "Each ignored key must use its closed field certificate");
+        assert.equal(ignored.fieldEncodes, 0, "Ignored keys must not encode unrelated fields");
+      }
       assert.equal(ignored.materializedBytes, 0, "Ignored keys must reuse the exact stored payload");
       assert.equal(ignored.bridgeBytes, 0, "Ignored keys must reuse the existing browser string");
       assert(ignored.encodeComparedNodes <= 2560, "Identity witness exceeded its fixed budget");
@@ -130,9 +137,15 @@ try {
     assert.equal(typing.steps, 20, "Each letter must retain keydown and input messages");
     assert.equal(typing.modelEncodes, mode === "reference" ? 40 : 0, "Typing encode count changed");
     if (mode !== "reference") {
-      assert.equal(typing.fieldModelSteps, 20, "Each typing message must use field certificates");
-      assert.equal(typing.fieldEncodes, 10, "Only the input field should be encoded");
-      assert.equal(typing.fieldEncodedBytes, 75, "Typing encoded unrelated model bytes");
+      if (mixed) {
+        assert.equal(typing.preparedEncodes, 40, "Typing must retain both strict codec preparations");
+        assert.equal(typing.preparedFallbacks, 0, "Mixed typing unexpectedly used Full");
+        assert.equal(typing.fieldEncodes, 50, "Only unknown page and changed text should convert");
+      } else {
+        assert.equal(typing.fieldModelSteps, 20, "Each typing message must use field certificates");
+        assert.equal(typing.fieldEncodes, 10, "Only the input field should be encoded");
+        assert.equal(typing.fieldEncodedBytes, 75, "Typing encoded unrelated model bytes");
+      }
     }
     assert.equal(await input.inputValue(), "abcdefghij", "Typing lost input");
     assert.equal(await page.locator("#echo").textContent(), "abcdefghij", "Model and input diverged");
@@ -162,8 +175,11 @@ try {
   assert.equal(oversized.storageWrites, 0, "Oversized snapshot exceeded the unchanged persistence cap");
   assert.equal(oversized.modelEncodes, mode === "reference" ? 40 : 0, "Oversized typing unexpectedly encoded the full model");
   if (mode !== "reference") {
-    assert.equal(oversized.fieldEncodes, 10, "Oversized typing encoded unrelated fields");
-    assert.equal(oversized.fieldEncodedBytes, 75, "Oversized typing encoded unrelated bytes");
+    assert.equal(oversized.fieldEncodes, mixed ? 50 : 10, "Oversized typing encoded unrelated fields");
+    if (mixed) {
+      assert.equal(oversized.preparedEncodes, 40, "Oversized typing lost strict preparations");
+      assert.equal(oversized.preparedFallbacks, 0, "Oversized typing used Full");
+    } else assert.equal(oversized.fieldEncodedBytes, 75, "Oversized typing encoded unrelated bytes");
     assert.equal(oversized.materializedBytes, 0, "Oversized snapshot was materialized");
     assert.equal(oversized.bridgeBytes, 0, "Oversized snapshot crossed the wasm bridge");
   }
@@ -191,7 +207,12 @@ try {
     assert(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)), "Fixture horizontal overflow");
   }
   assert.equal(errors.length, 0, "Fixture emitted browser errors");
-  const report = { browser: engineName, cpuRate: throttle, mode, passed: true, measurements };
+  if (mixed && mode === "incremental") {
+    const typingRuns = measurements.filter(m => m.scenario === "typing" || m.scenario === "oversized-typing");
+    assert.equal(typingRuns.length, 3, "Missing scaling measurements");
+    assert(typingRuns.every(m => m.fieldEncodedBytes === typingRuns[0].fieldEncodedBytes), "Encoding work grew with unchanged retained data");
+  }
+  const report = { modelDomain: mixed ? "mixed" : "closed", browser: engineName, cpuRate: throttle, mode, passed: true, measurements };
   if (output) await fs.writeFile(output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify(report));
 } finally {

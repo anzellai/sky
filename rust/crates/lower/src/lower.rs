@@ -6573,16 +6573,58 @@ impl<'a> Ctx<'a> {
             && args.len() == 2
             && self.validated_auto_model_encoder(args[0])
         {
+            let input_type = self.spa_model_input_type(args[0]);
             let full = self.lower_expr(args[0], &GoTy::Any);
             let full = self.widen(full);
             let capsule = GoExpr::new(
-                GoExprKind::StructLit("rt.SpaAutoModelEncoder".into(), vec![("Full".into(), full)]),
+                GoExprKind::StructLit(
+                    "rt.SpaAutoModelEncoder".into(),
+                    vec![("Full".into(), full), ("InputType".into(), input_type)],
+                ),
                 GoTy::Named("rt.SpaAutoModelEncoder".into(), vec![]),
             );
             let capsule = self.widen(capsule);
             let cfg = self.lower_expr(args[1], &GoTy::Any);
             let cfg = self.widen(cfg);
             return self.kernel_call_lowered(go, vec![capsule, cfg], actual);
+        }
+
+        if go == "rt.Spa_withPreparedModelEncoder"
+            && args.len() == 4
+            && self.validated_prepared_model_encoder(args[2], args[0], args[1])
+        {
+            // All arguments remain in their original evaluation order. The
+            // independent OLD proof alone grants closed-model optimisation.
+            let closed = self.validated_auto_model_encoder(args[2]);
+            let input_type = self.spa_model_input_type(args[2]);
+            let mut lowered = Vec::new();
+            for (i, expr) in args.iter().enumerate() {
+                let value = self.lower_expr(*expr, &GoTy::Any);
+                let value = self.widen(value);
+                if i == 2 {
+                    let capsule = GoExpr::new(
+                        GoExprKind::StructLit(
+                            "rt.SpaPreparedEncoderProof".into(),
+                            vec![
+                                ("Full".into(), value),
+                                ("InputType".into(), input_type.clone()),
+                                (
+                                    "Closed".into(),
+                                    GoExpr::new(
+                                        GoExprKind::BoolLit(closed),
+                                        GoTy::Bare(Prim::Bool),
+                                    ),
+                                ),
+                            ],
+                        ),
+                        GoTy::Named("rt.SpaPreparedEncoderProof".into(), vec![]),
+                    );
+                    lowered.push(self.widen(capsule));
+                } else {
+                    lowered.push(value);
+                }
+            }
+            return self.kernel_call_lowered(go, lowered, actual);
         }
         // Sky.Spa client dispatch de-reflection (docs/skyspa/prod-web.md Path A).
         // `Spa.config { init, update, view, subscriptions }` normally lowers its

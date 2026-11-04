@@ -32,6 +32,10 @@ func spaProfilePublish(m *spaStepMetrics) {
 		spaProfileTotals.Nanos[i] += m.Nanos[i]
 	}
 	p, t := m.Persist, &spaProfileTotals.Persist
+	t.PreparedEncodes += p.PreparedEncodes
+	t.PreparedFallbacks += p.PreparedFallbacks
+	t.FieldMarshals += p.FieldMarshals
+	t.ClosedFieldReuses += p.ClosedFieldReuses
 	t.Encodes += p.Encodes
 	t.EncodedBytes += p.EncodedBytes
 	t.EncodeNanos += p.EncodeNanos
@@ -52,6 +56,10 @@ func spaProfilePublish(m *spaStepMetrics) {
 		stats[name+"Calls"] = spaProfileTotals.Calls[i]
 		stats[name+"Nanos"] = float64(spaProfileTotals.Nanos[i])
 	}
+	stats["preparedEncodes"] = t.PreparedEncodes
+	stats["preparedFallbacks"] = t.PreparedFallbacks
+	stats["fieldMarshals"] = t.FieldMarshals
+	stats["closedFieldReuses"] = t.ClosedFieldReuses
 	stats["modelEncodes"] = t.Encodes
 	stats["modelEncodeReuses"] = t.EncodingReuses
 	stats["encodeComparedNodes"] = t.EncodingCompared

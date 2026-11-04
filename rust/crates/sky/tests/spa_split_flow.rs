@@ -5103,14 +5103,17 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
     );
     // P2 client persistence: the SYMMETRIC model ENCODER is emitted beside the
     // decoder (same `Codec.auto spaModelBlank_`) and wired through the private
-    // generated-codec setter. Lowering proves eligibility separately; arbitrary
+    // prepared-codec setter. Lowering proves each capability separately; arbitrary
     // callables still retain the full reference encoder. The protected fields
     // keep the session from the SSR seed on restore.
     assert!(
         frontend_code.contains("spaModelEncoder_ m_ =")
             && frontend_code.contains("Codec.toJson (Codec.auto spaModelBlank_) m_")
-            && frontend_code.contains("|> spaWithGeneratedModelEncoder_ spaModelEncoder_")
-            && frontend_code.contains("kernel \"Spa_withGeneratedModelEncoder\"")
+            && frontend_code.contains("|> spaWithPreparedModelEncoder_ spaPrepareModelEncoder_ spaFinishModelEncoder_ spaModelEncoder_")
+            && frontend_code.contains("kernel \"Spa_withPreparedModelEncoder\"")
+            && frontend_code.contains("spaPrepareModelEncoder_ unit_ =")
+            && frontend_code.contains("spaFinishModelEncoder_ codec_ model_ =")
+            && frontend_code.contains("Codec.toJson codec_ model_")
             && frontend_code.contains("|> Spa.withPersistProtectedFields "),
         "P2: the frontend must emit + wire a model encoder + protected fields:\n{frontend}"
     );

@@ -22,11 +22,13 @@ import (
 // is the protected (session) field-name list (Spa_withPersistProtectedFields):
 // on boot these fields are kept from the SSR seed, never from localStorage.
 var (
-	spaModelEncoder          any
-	spaNextModelEncoding     spaModelEncoding
-	spaFieldPersistenceState spaFieldPersistence
-	spaGeneratedModelEncoder bool
-	spaPersistProt           []string
+	spaModelEncoder            any
+	spaNextModelEncoding       spaModelEncoding
+	spaFieldPersistenceState   spaFieldPersistence
+	spaGeneratedModelEncoder   bool
+	spaGeneratedModelInputType any
+	spaMixedPersistenceState   spaMixedPersistence
+	spaPersistProt             []string
 	// spaPersistSeed are the fields the `withRequest` hook writes: it runs on
 	// every SSR request, so they come from the seed on a reload (R2).
 	spaPersistSeed []string
@@ -107,7 +109,7 @@ func (spaLocalKV) Get(key string) (blob string, ok bool) {
 func (spaLocalKV) Set(key, value string) {
 	defer func() { _ = recover() }()
 	if ls := spaLocalStorage(); ls.Truthy() {
-		useCache := spaGeneratedModelEncoder && !spaStepReference && key == spaPersistKey && len(value) <= spaPersistMaxBytes
+		useCache := (spaGeneratedModelEncoder || spaMixedPersistenceState.encoder.Prepare != nil) && !spaStepReference && key == spaPersistKey && len(value) <= spaPersistMaxBytes
 		var argument js.Value
 		if useCache && spaPersistBridge.owner != "" && len(value) == len(spaPersistBridge.owner) && unsafe.StringData(value) == unsafe.StringData(spaPersistBridge.owner) {
 			argument = spaPersistBridge.value
@@ -228,21 +230,35 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 		observe = func(m spaPersistMetrics) { m.BridgeBytes = spaPersistBridgeBytes; spaActiveStepMetrics.Persist = m }
 	}
 	var cleared bool
-	if spaGeneratedModelEncoder && !spaStepReference {
+	closed := !spaStepReference && spaClosedEncoderModelsEligible(spaGeneratedModelEncoder, spaGeneratedModelInputType, prevModel, nextModel)
+	if closed {
 		spaFieldPersistenceState.profiling = spaActiveStepMetrics != nil
 		var metrics spaFieldPersistenceMetrics
 		cleared, metrics = spaFieldPersistenceState.step(prevModel, nextModel, spaEncodeModel, spaLocalKV{}, &spaLife, spaPersistExclude, spaPersistProt, spaPersistMaxBytes, true)
 		if observe != nil {
 			observe(metrics.Profile)
 		}
+	} else if !spaStepReference && spaMixedPersistenceState.encoder.Prepare != nil {
+		spaFieldPersistenceState.reset()
+		spaNextModelEncoding.reset()
+		spaMixedPersistenceState.profiling = spaActiveStepMetrics != nil
+		var metrics spaPersistMetrics
+		cleared, metrics = spaMixedPersistenceState.step(prevModel, nextModel, spaEncodeModel, spaLocalKV{}, &spaLife, spaPersistExclude, spaPersistProt, spaPersistMaxBytes)
+		if observe != nil {
+			observe(metrics)
+		}
 	} else {
+		spaFieldPersistenceState.reset()
+		spaMixedPersistenceState.reset()
+		spaNextModelEncoding.reset()
 		cleared = spaPersistStepWithEncoding(prevModel, nextModel, spaEncodeModel, func(nextJSON string) {
 			spaPersistWrite(spaLocalKV{}, &spaLife, spaPersistStripFields(nextJSON, spaPersistExclude, spaPersistProt), spaPersistProt, spaPersistMaxBytes)
-		}, spaPersistProt, spaGeneratedModelEncoder && !spaStepReference, &spaNextModelEncoding, observe)
+		}, spaPersistProt, false, nil, observe)
 	}
 	if cleared {
 		spaResetPersistBridge()
 		spaFieldPersistenceState.reset()
+		spaMixedPersistenceState.reset()
 		spaNextModelEncoding.reset()
 		spaPostSignOut()
 	}

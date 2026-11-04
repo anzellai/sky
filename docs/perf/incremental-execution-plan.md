@@ -28,7 +28,7 @@ Never print dotenv contents or environment values. Use synthetic fixtures.
 | 1 | Public large-model fixture, phase counters and reference path | Reference runs pass Chromium/WebKit/Firefox at 1K/10K retained entries, fixed small view; other size/context dimensions remain for later gates | Complete |
 | 2 | Internal model descriptors and protected-field projections | Compiler/provenance and focused runtime tests; Chromium/WebKit/Firefox both modes, identical correctness journey | Complete; broad compiler/example/hosted gates passed at 2365815 |
 | 3 | Conservative change evidence and safe reuse | Unknown mutation/effects, commands, handlers, context and panic boundaries | Restricted cache validated; automatic view reuse remains pending |
-| 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Bounded synchronous v2 field path implemented; expanded browser validation running. General incremental storage remains pending |
+| 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Bounded synchronous v2 closed-field path validated in all three browser engines. Mixed-model prepared path validated in all three browser engines; recursive closed-field summaries under implementation. General incremental storage remains pending |
 | 5 | Automatic view-region reuse and collection changes | Reference UI/effect traces, bounded cache retention and dependent work counters | Pending |
 | 6 | Cross-target end-to-end gates and independent review | Runtime/compiler suites, full examples, real app, browsers and available native/terminal targets | Pending |
 
@@ -315,3 +315,73 @@ Maybe/Result controls. If an application previously persisted one of the affecte
 record shapes, data already discarded by that bug cannot be reconstructed by
 this fix; application-specific recovery would require another source. No private
 application is asserted to have had that shape.
+
+## Mixed-model PIV extension (in progress)
+
+The compiler now separately proves an exact Prepare/Finish factorization of
+canonical `Codec.toJson (Codec.auto blank) model`, while retaining Full unchanged.
+The blank may be nonliteral only for this prepared capability: every logical
+invocation still executes strict codec construction, including registry factories.
+The independent closed proof is not widened. The proof checks the actual emitted
+Go callback ABI and transports Full's parameter type; inputs requiring coercion
+use Full before any preparation effects.
+
+A portable mixed controller converts unknown fields on every invocation in the
+original declaration order, then marshals their captured raw results in the
+original order. Closed fields alone receive bounded immutable certificates.
+Conversion failures stop before marshaling; pure early marshal failures remain
+deferred to their original marshal position. Global enum metadata changes discard
+stale certificates without replaying unknown effects. Excluded and oversized
+fields still validate. The previous invocation runs after publication even when
+nullness appears unchanged, because its unknown effects remain observable.
+
+Payload reuse occurs only after all unknown effects, and requires exact selected
+encoded output evidence. Retention is bounded; the cache refreshes its current
+model owner. This retains synchronous v2 storage and every required write.
+
+Compiler lower units, two real project proof groups, and 18 focused runtime test
+files against all production runtime sources passed before browser wiring.
+The actual generated wasm callback probe also confirmed factory construction
+count/failure parity. Browser integration and the public payload-ADT fixture passed all six
+engine/mode runs (Chromium, WebKit, Firefox; reference and mixed). The first
+mixed run exposed a routing error: HIR literal provenance alone selected the
+whole-closed controller even when its runtime domain rejected Page. The selector
+now requires both proofs; the focused regression and all six browser runs pass.
+Saved [reports](runs/step-cost-20261104/cycle5-mixed/conditions.json) include the
+source/compiler digests. Typing converts 1,315 field bytes at each of 1K/10K/100K
+retained entries, with zero Full invocations; every required update/view/post and
+storage write remains. This is one instrumented diagnostic repeat, not a latency
+claim. Ordinary under-cap changed snapshots still join/copy the selected payload.
+A synthetic probe of the previously generated private-app model is described below; no fresh-build application or latency claim is made. Automatic view/collection work and final cross-target validation
+remain pending.
+
+
+The next concrete granularity gap is a changed nested form inside a large closed
+Editor record. Root-only summaries reencode that entire Editor, including
+unchanged sibling product lists. The next PIV decomposes closed records and
+nominal Maybe while keeping lists atomic and unknown root effects ordered.
+Source inspection of the isolated FacePlan copy suggests Page and one tuple
+counts list are its nonclosed root fields; generated runtime evidence is still
+required before asserting application activation.
+
+
+A private synthetic wasm probe passed against the existing generated FacePlan Go
+model and current production runtime. Its exact canonical Full body was checked
+before a test-only Prepare/Finish factorization was supplied. The Full parameter
+and model representations match. At both 1K and 10K synthetic patient rows, 274
+of 276 root fields reused closed certificates; the two unknown fields still
+converted and marshaled, totaling 20 warm field bytes. Full byte/length parity
+passed. Probe source and hashes stay private. This establishes runtime shape and
+unchanged-field behavior; fresh root compiler/build integration remains pending
+because the unchanged local memory guard stopped that build. It does not cover
+nested form changes or real-user/application latency.
+
+
+The mixed-model checkpoint additionally passed the full lower/project suite and
+focused actual Sky CLI build regression (571 passing tests combined, one harvest
+test ignored in the ordinary suite). The ignored all-example harvest was then
+run explicitly: one test passed. Denominators, regenerated tracked-file coverage
+ledger, configuration surface and migration gates pass. The focused native
+runtime staging used 18 unchanged test files against every production runtime
+source. Independent review found no further scoped semantic blocker after the
+runtime closed-domain routing fix. Hosted CI for this checkpoint is still needed.

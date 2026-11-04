@@ -175,6 +175,8 @@ func Spa_withModelEncoder(fn, cfg any) any {
 	// Builder order matters: a custom encoder always revokes generated-codec
 	// eligibility, even if it happens to produce the same bytes in a test.
 	cfg = spaCfgSet(cfg, "GeneratedAutoModelEncoder", false)
+	cfg = spaCfgSet(cfg, "GeneratedModelInputType", nil)
+	cfg = spaCfgSet(cfg, "PreparedAutoModelEncoder", nil)
 	return spaCfgSet(cfg, "ModelEncoder", fn)
 }
 

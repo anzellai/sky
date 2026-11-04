@@ -1797,6 +1797,9 @@ jobs:
       - name: Sky.Spa large-model step cost and reference semantics
         timeout-minutes: 5
         run: scripts/spa-step-cost-e2e.sh
+      - name: Sky.Spa mixed-model step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-mixed-e2e.sh
       - name: Sky.Live client e2e (handler addressing, input authority)
         timeout-minutes: 6
         run: scripts/live-client-e2e.sh
