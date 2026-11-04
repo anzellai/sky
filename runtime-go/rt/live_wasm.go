@@ -101,6 +101,7 @@ type spaTopicSub struct {
 // starts any initial subscriptions, then parks the Go runtime so the browser
 // can deliver events. It never returns.
 func spaRun(cfg any) any {
+	spaProfileInit()
 	// The Sky.Spa target always emits an rt.SpaFns (typed adapter closures);
 	// asSpaFns unwraps it reflect-free. A missing/foreign config yields nil
 	// closures — but codegen guarantees a SpaFns for every real client.
@@ -281,6 +282,10 @@ func spaRun(cfg any) any {
 	// the first-paint hydration affordance (`<html data-sky-hydrating>` → progress
 	// cursor + top bar, liveBaseCSS). From here a click lands on a live handler.
 	spaClearHydratingMarker()
+	if spaStepProfiling {
+		// Harness readiness: SSR markup alone does not prove wasm handlers exist.
+		js.Global().Set("__skyStepProfileReady", true)
+	}
 	// Reconcile the address bar to the mounted view's [data-sky-path] marker
 	// (push=false: the loaded URL is already correct — a mount must never mint a
 	// history entry). Then seed the navigation tracker to the mounted path so the
@@ -640,6 +645,14 @@ func spaClosestAnchor(node js.Value) js.Value {
 // each Msg runs once, in arrival order, and the model mutation + render +
 // effect + subscription reconciliation always happen together.
 func step(msg any) {
+	if spaStepProfiling {
+		previous := spaActiveStepMetrics
+		spaActiveStepMetrics = &spaStepMetrics{}
+		defer func() {
+			spaProfilePublish(spaActiveStepMetrics)
+			spaActiveStepMetrics = previous
+		}()
+	}
 	// The whole transition runs under the portable panic guard (spa_step.go):
 	// Sky.Live's server dispatch recovers a panicking update/view to a 500 and
 	// the session survives; this gives the wasm client the same net on its
@@ -658,6 +671,8 @@ func step(msg any) {
 			renderCurrent()
 		},
 		func(cmd any) {
+			started := spaProfileBeginPhase()
+			defer spaProfileEndPhase(started, spaProfilePost)
 			// A msg-driven render is the programmatic-Navigate case: the address
 			// bar still shows the previous page, so a [data-sky-path] change here
 			// is a real, Back-able navigation (push=true), mirroring Sky.Live's
@@ -683,6 +698,8 @@ func step(msg any) {
 // spaGuardedStep is update behind the client guard (Spa.withGuard): a rejected
 // Msg keeps the model, runs no Cmd, and is reported on the console.
 func spaGuardedStep(msg, model any) SkyTuple2 {
+	started := spaProfileBeginPhase()
+	defer spaProfileEndPhase(started, spaProfileUpdate)
 	pair, rejected, reason := spaGuardedUpdate(spaGuard, spaUpdate, msg, model)
 	if rejected {
 		if c := js.Global().Get("console"); c.Truthy() {
@@ -767,7 +784,13 @@ func spaReportPanic(stage string, r any) {
 // identity — and therefore a focused input's focus/caret/uncommitted value — is
 // preserved across updates.
 func renderCurrent() {
-	vn := HtmlToVNode(spaView(spaModel))
+	started := spaProfileBeginPhase()
+	html := spaView(spaModel)
+	spaProfileEndPhase(started, spaProfileView)
+	started = spaProfileBeginPhase()
+	vn := HtmlToVNode(html)
+	spaProfileEndPhase(started, spaProfileVNode)
+	started = spaProfileBeginPhase()
 	assignSkyIDs(&vn, "r")
 	// Parity with the server (HtmlRenderWithHandlers): hoist media-query /
 	// pseudo-class (:hover/:focus) / transition / animation markers into scoped
@@ -775,6 +798,9 @@ func renderCurrent() {
 	// are INERT in the wasm client (their data-sky-mq/pc markers are never
 	// consumed) — responsive + hover styling silently do nothing.
 	applyStyleInjections(&vn)
+	spaProfileEndPhase(started, spaProfileStyle)
+	started = spaProfileBeginPhase()
+	defer spaProfileEndPhase(started, spaProfilePatch)
 	if spaPrev == nil {
 		// SSR first paint (design §4.4): when the mount was server-rendered
 		// (data-sky-ssr) AND the freshly-computed tree is provably hydratable,

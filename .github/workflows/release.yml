@@ -1783,6 +1783,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
       - uses: ./.github/actions/playwright-setup
+        with:
+          browsers: chromium webkit firefox
       - name: Sky.Spa wasm client e2e (restore, stale handlers, RPC consistency, examples)
         timeout-minutes: 18
         run: |
@@ -1792,6 +1794,9 @@ jobs:
           scripts/spa-rpc-consistency-e2e.sh
           scripts/spa-examples-e2e.sh
           scripts/spa-client-crypto-e2e.sh
+      - name: Sky.Spa large-model step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-e2e.sh
       - name: Sky.Live client e2e (handler addressing, input authority)
         timeout-minutes: 6
         run: scripts/live-client-e2e.sh

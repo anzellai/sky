@@ -192,15 +192,13 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 		return
 	}
 	defer func() { _ = recover() }()
-	nextJSON := spaEncodeModel(nextModel)
-	if nextJSON != "" {
+	var observe func(spaPersistMetrics)
+	if spaActiveStepMetrics != nil {
+		observe = func(m spaPersistMetrics) { spaActiveStepMetrics.Persist = m }
+	}
+	if spaPersistStep(prevModel, nextModel, spaEncodeModel, func(nextJSON string) {
 		spaPersistWrite(spaLocalKV{}, &spaLife, spaPersistStripFields(nextJSON, spaPersistExclude, spaPersistProt), spaPersistProt, spaPersistMaxBytes)
-	}
-	if len(spaPersistProt) == 0 {
-		return // no session to protect → nothing to sign out
-	}
-	prevJSON := spaEncodeModel(prevModel)
-	if spaSessionClearedByStep(prevJSON, nextJSON, spaPersistProt) {
+	}, spaPersistProt, observe) {
 		spaPostSignOut()
 	}
 }

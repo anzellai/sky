@@ -283,10 +283,13 @@ jobs:
         timeout-minutes: 10
         # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" webkit
-          npx playwright install webkit
+          bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" webkit firefox
+          npx playwright install webkit firefox
           command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
           scripts/ui-canvas-terminal-e2e.sh
+      - name: Gate — Sky.Spa large-model step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-e2e.sh
       # Std.Nav: `update` moves the address bar without a reload (pushUrl,
       # replaceUrl, clearFragment, a server arm's navigation, an off-site URL
       # refused), on Sky.Live and the Sky.Spa client. Chromium + WebKit.
