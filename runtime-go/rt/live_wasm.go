@@ -130,6 +130,7 @@ func spaRun(cfg any) any {
 	// commutation table, Spa.withHoldFree). Absent: every Msg waits.
 	spaSch.setHoldFree(spaStringList(fieldOrNil(cfg, "HoldFree")))
 	spaModelEncoder = fieldOrNil(cfg, "ModelEncoder")
+	spaGeneratedModelEncoder, _ = fieldOrNil(cfg, "GeneratedAutoModelEncoder").(bool)
 	spaPersistProt = spaStringList(fieldOrNil(cfg, "PersistProtectedFields"))
 	spaPersistSeed = spaStringList(fieldOrNil(cfg, "PersistSeedFields"))
 	spaPersistExclude = spaStringList(fieldOrNil(cfg, "PersistExcludeFields"))
@@ -284,7 +285,7 @@ func spaRun(cfg any) any {
 	spaClearHydratingMarker()
 	if spaStepProfiling {
 		// Harness readiness: SSR markup alone does not prove wasm handlers exist.
-		js.Global().Set("__skyStepProfileReady", true)
+		spaProfileReady()
 	}
 	// Reconcile the address bar to the mounted view's [data-sky-path] marker
 	// (push=false: the loaded URL is already correct — a mount must never mint a

@@ -139,6 +139,7 @@ impl FfiTable {
 
 mod closure;
 mod numeric;
+mod spa_model;
 
 struct DefEntry {
     module_name: String,
@@ -178,6 +179,10 @@ enum TypeDeclKind {
 /// defaults — the runtime reads these via `rt.SkyDefault` (`SKY_*` fallbacks).
 #[derive(Default, Clone)]
 pub struct LowerConfig {
+    /// Resolved Std.Codec (toJson, auto) definitions granted by the build
+    /// driver only while the canonical stdlib source namespace is intact.
+    /// No sky.toml key can grant this. Missing means reference-only encoders.
+    pub trusted_auto_codec: Option<(DefId, DefId)>,
     /// `port` (default 8000 when `None`).
     pub port: Option<String>,
     /// The `[env] prefix` from sky.toml — re-namespaces every runtime `SKY_*`
@@ -897,6 +902,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             continue;
         }
         let mut cx = Ctx {
+            trusted_auto_codec: cfg.trusted_auto_codec,
             db: db.as_sky_db(),
             defs: &defs,
             kernel_alias: &kernel_alias,
@@ -2373,6 +2379,7 @@ fn ty_refs_ambiguous(t: &Ty, ambiguous: &HashSet<String>, declares: &dyn Fn(&str
 // `tqueue` / `type_items`. `used_types` is drained only via a set-union that a
 // later `.sort()` re-orders. So `HashMap` is sound here despite randomized order.
 struct Ctx<'a> {
+    trusted_auto_codec: Option<(DefId, DefId)>,
     db: &'a dyn SkyDb,
     defs: &'a BTreeMap<DefId, DefEntry>,
     kernel_alias: &'a HashMap<DefId, String>,
@@ -6559,6 +6566,24 @@ impl<'a> Ctx<'a> {
     }
 
     fn kernel_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        // An editable generated-project marker is not an optimisation proof.
+        // Only this resolved-HIR check can construct the runtime capsule. An
+        // arbitrary callable passed to the internal setter stays reference-only.
+        if go == "rt.Spa_withGeneratedModelEncoder"
+            && args.len() == 2
+            && self.validated_auto_model_encoder(args[0])
+        {
+            let full = self.lower_expr(args[0], &GoTy::Any);
+            let full = self.widen(full);
+            let capsule = GoExpr::new(
+                GoExprKind::StructLit("rt.SpaAutoModelEncoder".into(), vec![("Full".into(), full)]),
+                GoTy::Named("rt.SpaAutoModelEncoder".into(), vec![]),
+            );
+            let capsule = self.widen(capsule);
+            let cfg = self.lower_expr(args[1], &GoTy::Any);
+            let cfg = self.widen(cfg);
+            return self.kernel_call_lowered(go, vec![capsule, cfg], actual);
+        }
         // Sky.Spa client dispatch de-reflection (docs/skyspa/prod-web.md Path A).
         // `Spa.config { init, update, view, subscriptions }` normally lowers its
         // record to an all-`any` anonymous struct the wasm driver

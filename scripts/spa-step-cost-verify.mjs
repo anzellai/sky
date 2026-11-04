@@ -115,10 +115,15 @@ try {
       assert.equal(ignored.modelEncodes, 20, "Reference must retain both model encodes");
       assert.equal(ignored.storageWrites, 10, "Reference must retain each storage write");
       for (const phase of ["updateCalls", "viewCalls", "postCalls"]) assert.equal(ignored[phase], 10, "Reference phase count changed");
+    } else {
+      assert.equal(ignored.modelEncodes, 10, "Eligible steps must avoid the previous full encode");
+      assert.equal(ignored.projectionFields, 20, "Projection must visit only the two session fields");
+      assert.equal(ignored.storageWrites, 10, "This stage must preserve storage writes");
+      for (const phase of ["updateCalls", "viewCalls", "postCalls"]) assert.equal(ignored[phase], 10, "Incremental persistence suppressed transition work");
     }
     const typing = await measure("typing", count, () => input.pressSequentially("abcdefghij"));
     assert.equal(typing.steps, 20, "Each letter must retain keydown and input messages");
-    if (mode === "reference") assert.equal(typing.modelEncodes, 40, "Reference typing encode count changed");
+    assert.equal(typing.modelEncodes, mode === "reference" ? 40 : 20, "Typing encode count changed");
     assert.equal(await input.inputValue(), "abcdefghij", "Typing lost input");
     assert.equal(await page.locator("#echo").textContent(), "abcdefghij", "Model and input diverged");
     await measure("async-command", count, async () => {

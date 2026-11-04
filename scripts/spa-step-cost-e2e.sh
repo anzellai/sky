@@ -19,7 +19,9 @@ APP="$FX/.skyapp/web-app/.split/backend/sky-out/app"
 [ -x "$APP" ] || { echo "spa-step-cost: fixture backend missing" >&2; exit 1; }
 
 for browser in chromium webkit firefox; do
-    with_timeout 300 node "$ROOT/scripts/spa-step-cost-verify.mjs" "$APP" \
-        --browser "$browser" --output "$FX/$browser.json"
+    for mode in reference incremental; do
+        with_timeout 300 node "$ROOT/scripts/spa-step-cost-verify.mjs" "$APP" \
+            --browser "$browser" --mode "$mode" --output "$FX/$mode-$browser.json"
+    done
 done
 echo "spa-step-cost: PASS, actual wasm in all three browser engines"

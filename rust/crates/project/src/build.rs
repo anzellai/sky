@@ -410,6 +410,12 @@ fn assemble_and_emit_loaded(
     }
     let stdlib_names: std::collections::BTreeSet<String> =
         stdlib.iter().map(|(n, _, _)| n.clone()).collect();
+    // Keep source identities, not a module-name purity heuristic. A project
+    // may shadow stdlib source; that disables auto-codec specialisation.
+    let canonical_stdlib_sources: Vec<_> = stdlib
+        .iter()
+        .map(|(n, file, _)| (n.clone(), *file))
+        .collect();
     // The stdlib is trusted (never type-checked again), but a stdlib module
     // that does not parse is still reported as the parse error it is, naming
     // the stdlib file. Before this, a recovered ERROR node in a stdlib module
@@ -933,6 +939,27 @@ fn assemble_and_emit_loaded(
         }
     }
     let t_lower = crate::timings::phase("lower + emit Go");
+    if is_spa_generated_project(example_dir)
+        && canonical_stdlib_sources.iter().all(|(name, source)| {
+            hir::SkyDb::module_by_name(&db, name).is_some_and(|m| db.source_file(m) == *source)
+        })
+        && hir::SkyDb::module_ids(&db).iter().all(|m| {
+            let name = hir::SkyDb::module_name(&db, *m);
+            !(name.starts_with("Sky.") || name.starts_with("Std.")) || stdlib_names.contains(name)
+        })
+    {
+        if let Some(module) = hir::SkyDb::module_by_name(&db, "Std.Codec") {
+            cfg.trusted_auto_codec = Some((
+                hir::SkyDb::intern_def(
+                    &db,
+                    module,
+                    &base::Name::new("toJson"),
+                    hir::DefKind::Value,
+                ),
+                hir::SkyDb::intern_def(&db, module, &base::Name::new("auto"), hir::DefKind::Value),
+            ));
+        }
+    }
     let config = skydb::BuildConfig::new(&db, cfg);
     let prog = skydb::go_program(&db, entry, config);
     if !prog.entry_ok {

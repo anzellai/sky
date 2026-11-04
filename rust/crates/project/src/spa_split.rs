@@ -8373,6 +8373,7 @@ fn inject_model_decoder_into_main(
     main_text: &str,
     session_fields: &[String],
     seed_fields: &[String],
+    generated_encoder_setter: &str,
 ) -> String {
     if main_text.contains("Spa.withModelDecoder") || main_text.contains("Spa.withPersistDecoder") {
         return main_text.to_string();
@@ -8410,7 +8411,7 @@ fn inject_model_decoder_into_main(
     let decoder_line = "Spa.withModelDecoder spaModelDecoder_";
     let block = format!(
         "            |> {decoder_line}\n\
-         \x20           |> Spa.withModelEncoder spaModelEncoder_\n\
+         \x20           |> {generated_encoder_setter} spaModelEncoder_\n\
          \x20           |> Spa.withPersistProtectedFields {fields_lit}\n\
          \x20           |> Spa.withPersistSeedFields {seed_lit}\n"
     );
@@ -10550,17 +10551,31 @@ fn gen_frontend(
     if (decoder_blank.is_some() || follow_here) && !has_module(imports, "Std.Codec") {
         import_lines.push("import Std.Codec as Codec".to_string());
     }
-    // A device-key model is read and written by the `Spa_model*Json` kernels
-    // (see [`DEVICE_MODEL_TO_JSON`]).
-    if decoder_blank.is_some()
-        && !device_only.is_empty()
-        && !has_module(imports, "Sky.Ffi")
-        && !import_lines
-            .iter()
-            .any(|l| l.starts_with("import Sky.Ffi "))
-    {
-        import_lines.push("import Sky.Ffi as Ffi".to_string());
-    }
+    // Hygiene is independent of the HIR proof: never collide with a user's
+    // otherwise valid binding/import alias. Generated trust is not eligibility.
+    let fresh = |base: &str| {
+        let mut name = base.to_string();
+        while src.contains(&name) {
+            name.push('_');
+        }
+        name
+    };
+    let generated_encoder_setter = fresh("spaWithGeneratedModelEncoder_");
+    let ffi_qualifier = file
+        .imports()
+        .find(|i| i.name().is_some_and(|n| n.text() == "Sky.Ffi"))
+        .map(|i| {
+            i.alias()
+                .map(|a| a.text().to_string())
+                .unwrap_or_else(|| "Sky.Ffi".into())
+        })
+        .unwrap_or_else(|| {
+            let alias = fresh("SkyModelCodecFfi_");
+            if decoder_blank.is_some() {
+                import_lines.push(format!("import Sky.Ffi as {alias}"));
+            }
+            alias
+        });
     if follow_here {
         if let Some(f) = &follow {
             if !f.q.is_empty() {
@@ -10603,7 +10618,12 @@ fn gen_frontend(
                 // driver can boot from `#sky-model` (design §4.5).
                 let main_text = slice(src, d.syntax());
                 let main_text = if decoder_blank.is_some() {
-                    inject_model_decoder_into_main(main_text, session_fields, seed_fields)
+                    inject_model_decoder_into_main(
+                        main_text,
+                        session_fields,
+                        seed_fields,
+                        &generated_encoder_setter,
+                    )
                 } else {
                     main_text.to_string()
                 };
@@ -10713,6 +10733,11 @@ fn gen_frontend(
     // fields to their declared element types, so the decoder's `Codec.auto` matches
     // the encoder's byte-for-byte and hydration is lossless.
     if let Some(model) = &decoder_blank {
+        body.push_str(&format!(
+            "{generated_encoder_setter} : (model -> String) -> Spa.AppConfig model msg -> Spa.AppConfig model msg\n\
+             {generated_encoder_setter} =\n    \
+             {ffi_qualifier}.kernel \"Spa_withGeneratedModelEncoder\"\n\n\n",
+        ));
         // `withClientCrypto`: a device-only key field is `Nothing` whatever the
         // page or localStorage holds, so no key can be planted from outside.
         let (decode, decoded) = if device_only.is_empty() {
@@ -10721,8 +10746,12 @@ fn gen_frontend(
                 String::new(),
             )
         } else {
-            body.push_str(DEVICE_MODEL_TO_JSON);
-            body.push_str(DEVICE_MODEL_FROM_JSON);
+            body.push_str(
+                &DEVICE_MODEL_TO_JSON.replace("Ffi.kernel", &format!("{ffi_qualifier}.kernel")),
+            );
+            body.push_str(
+                &DEVICE_MODEL_FROM_JSON.replace("Ffi.kernel", &format!("{ffi_qualifier}.kernel")),
+            );
             (
                 "spaModelFromJson_ spaModelBlank_ jsonStr_",
                 format!(

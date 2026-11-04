@@ -21,8 +21,9 @@ import (
 // is the protected (session) field-name list (Spa_withPersistProtectedFields):
 // on boot these fields are kept from the SSR seed, never from localStorage.
 var (
-	spaModelEncoder any
-	spaPersistProt  []string
+	spaModelEncoder          any
+	spaGeneratedModelEncoder bool
+	spaPersistProt           []string
 	// spaPersistSeed are the fields the `withRequest` hook writes: it runs on
 	// every SSR request, so they come from the seed on a reload (R2).
 	spaPersistSeed []string
@@ -196,9 +197,9 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 	if spaActiveStepMetrics != nil {
 		observe = func(m spaPersistMetrics) { spaActiveStepMetrics.Persist = m }
 	}
-	if spaPersistStep(prevModel, nextModel, spaEncodeModel, func(nextJSON string) {
+	if spaPersistStepWithCodec(prevModel, nextModel, spaEncodeModel, func(nextJSON string) {
 		spaPersistWrite(spaLocalKV{}, &spaLife, spaPersistStripFields(nextJSON, spaPersistExclude, spaPersistProt), spaPersistProt, spaPersistMaxBytes)
-	}, spaPersistProt, observe) {
+	}, spaPersistProt, spaGeneratedModelEncoder && !spaStepReference, observe) {
 		spaPostSignOut()
 	}
 }

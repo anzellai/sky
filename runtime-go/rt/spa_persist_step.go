@@ -5,11 +5,13 @@ import "time"
 // spaPersistMetrics contains counts and timings only. It never carries model,
 // session, field values or encoded data. The observer is nil in normal use.
 type spaPersistMetrics struct {
-	Encodes      int
-	EncodedBytes int
-	EncodeNanos  int64
-	WriteNanos   int64
-	SessionNanos int64
+	Encodes          int
+	EncodedBytes     int
+	EncodeNanos      int64
+	WriteNanos       int64
+	SessionNanos     int64
+	ProjectionFields int
+	ProjectionBytes  int
 }
 
 // spaPersistStep is the portable persistence decision. The browser supplies
@@ -18,6 +20,10 @@ type spaPersistMetrics struct {
 // Update, rendering, Cmd execution and subscriptions are deliberately outside
 // this function and must never be suppressed by a persistence decision.
 func spaPersistStep(prev, next any, encode func(any) string, write func(string), protected []string, observe func(spaPersistMetrics)) bool {
+	return spaPersistStepWithCodec(prev, next, encode, write, protected, false, observe)
+}
+
+func spaPersistStepWithCodec(prev, next any, encode func(any) string, write func(string), protected []string, generated bool, observe func(spaPersistMetrics)) bool {
 	metrics := spaPersistMetrics{}
 	encodeModel := func(model any) string {
 		if observe == nil {
@@ -41,14 +47,27 @@ func spaPersistStep(prev, next any, encode func(any) string, write func(string),
 		}
 	}
 	cleared := false
-	if len(protected) != 0 {
+	skipPrevious := false
+	if generated && nextJSON != "" && len(protected) != 0 {
+		var started time.Time
+		if observe != nil {
+			started = time.Now()
+		}
+		var fields, bytes int
+		skipPrevious, fields, bytes = spaAutoSessionCannotClear(prev, next, protected)
+		if observe != nil {
+			metrics.ProjectionFields, metrics.ProjectionBytes = fields, bytes
+			metrics.SessionNanos += time.Since(started).Nanoseconds()
+		}
+	}
+	if len(protected) != 0 && !skipPrevious {
 		prevJSON := encodeModel(prev)
 		if observe == nil {
 			cleared = spaSessionClearedByStep(prevJSON, nextJSON, protected)
 		} else {
 			start := time.Now()
 			cleared = spaSessionClearedByStep(prevJSON, nextJSON, protected)
-			metrics.SessionNanos = time.Since(start).Nanoseconds()
+			metrics.SessionNanos += time.Since(start).Nanoseconds()
 		}
 	}
 	if observe != nil {

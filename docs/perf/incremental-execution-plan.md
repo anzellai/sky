@@ -26,7 +26,7 @@ Never print dotenv contents or environment values. Use synthetic fixtures.
 |---|---|---|---|
 | 0 | Architecture consultation and executable invariants | Source review against released baseline | Complete |
 | 1 | Public large-model fixture, phase counters and reference path | Reference runs pass Chromium/WebKit/Firefox at 1K/10K retained entries, fixed small view; other size/context dimensions remain for later gates | Complete |
-| 2 | Internal model descriptors and protected-field projections | Custom encoder fallback, encoding failure and session/sign-out equivalence | Pending |
+| 2 | Internal model descriptors and protected-field projections | Compiler/provenance and focused runtime tests; Chromium/WebKit/Firefox both modes, identical correctness journey | Complete; broader compiler gates pending |
 | 3 | Conservative change evidence and safe reuse | Unknown mutation/effects, commands, handlers, context and panic boundaries | Pending |
 | 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Pending |
 | 5 | Automatic view-region reuse and collection changes | Reference UI/effect traces, bounded cache retention and dependent work counters | Pending |
@@ -61,6 +61,30 @@ No formal end-to-end guarantee is claimed until proof obligations are connected
 to the implementation and trusted target adapters. Differential/property tests
 are evidence and counterexample searches, not a universal proof.
 
+## Cycle 2 proof boundary
+
+The driver grants resolved canonical codec IDs only while original stdlib source
+identities and namespaces remain intact. Lowering accepts only a direct encoder
+of the actual model parameter using those definitions and a literal blank CAF.
+It emits an internal capsule retaining the exact original full encoder. An
+editable generated-project marker or arbitrary callable does not establish
+eligibility. A later public encoder builder revokes eligibility.
+
+Skipping the previous full encode also skips unrelated fields, so the descriptor
+must prove the ENTIRE model type has closed, acyclic serialization. Interfaces,
+maps, pointers, opaque/foreign values, variants and recursive back-edges retain
+reference execution initially. This is a metadata check, not a walk through large
+instance data. It establishes no foreign method dispatch under canonical codec,
+valid immutable representations and fixed codec metadata. It is not a general
+application purity or total-encoding theorem.
+
+When protected projections prove that no field can clear, the old full encode
+has no sign-out result to contribute. If a clear is possible, projection fails,
+or next encoding fails, the original previous encoder and decision still run.
+This preserves the case where an unrelated invalid old Float prevents encoding.
+Rendering, commands, subscription reconciliation, next full encoding and storage
+writes remain unchanged in this cycle. Incremental storage/view work is pending.
+
 ## Cycle 1 evidence
 
 Fresh instrumented compiler build PASS under locked Nix and the unchanged
@@ -80,3 +104,28 @@ and transition test files passes. Their SHA256 manifest is retained in
 .skycache/piv/runtime-focused/focused-test-sources.json. Full native runtime
 coverage remains mandatory on a runner that can compile the complete package.
 Browser fixture builds and actual wasm tests pass on the local machine.
+
+## Cycle 2 evidence
+
+The restricted lower proof, 35 split-generator unit cases, five real-project
+proof scenarios and focused native runtime tests pass. A fresh compiler build
+and all six real-browser journeys (reference/optimised × Chromium/WebKit/Firefox)
+pass. For twenty typing messages, full-model encoding calls fall from40 to20,
+while update/view/post/storage-write counts remain identical. Protected-field
+projection visits40 fields at both retained sizes. Reports and measurement
+conditions are under runs/step-cost-20261104/cycle2/. These are instrumented
+single diagnostic runs, not a cross-device latency claim.
+
+The previous phase's complete native runtime suite passed hosted CI. Its
+coverage-accounting job identified a stale ledger for the new browser gate;
+the owned-tree regeneration and both accounting checks now pass. The complete
+lowering/project suites pass567 tests with one explicit dependency-harvest
+ignore (run after the sweep fetches all example dependencies). Complete
+compiler/example/real-app gates remain mandatory before
+claiming the overall implementation verified. Cycle2 new runtime code still
+requires the hosted complete runtime suite. No release is authorised here.
+
+Storage design constraints and independent review findings are recorded in
+[incremental-persistence-protocol.md](incremental-persistence-protocol.md). In
+particular, unchanged local state still republishes under current multi-tab
+semantics, and asynchronous storage cannot silently add a reload loss window.

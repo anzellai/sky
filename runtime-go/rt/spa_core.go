@@ -171,7 +171,12 @@ func Spa_withModelDecoder(fn, cfg any) any { return spaCfgSet(cfg, "ModelDecoder
 // ModelDecoder (both use the same `Codec.auto blank`). The server IGNORES it —
 // persistence is a client concern, exactly like ModelDecoder. Stored on the
 // config map so it survives the withX builder chain.
-func Spa_withModelEncoder(fn, cfg any) any { return spaCfgSet(cfg, "ModelEncoder", fn) }
+func Spa_withModelEncoder(fn, cfg any) any {
+	// Builder order matters: a custom encoder always revokes generated-codec
+	// eligibility, even if it happens to produce the same bytes in a test.
+	cfg = spaCfgSet(cfg, "GeneratedAutoModelEncoder", false)
+	return spaCfgSet(cfg, "ModelEncoder", fn)
+}
 
 // Spa_withPersistProtectedFields stores the protected-field name list (a Sky
 // `List String`) under "PersistProtectedFields". On boot the wasm client keeps
