@@ -64,7 +64,7 @@ func codecSchemaTyped(t reflect.Type, declared string, snake bool, depth int) co
 		return codecOpenSchema
 	}
 	if declared != "" {
-		if names, ok := enumRegistry[declared]; ok {
+		if names, ok := enumVariantsForType(declared); ok {
 			quoted := make([]string, len(names))
 			for i, n := range names {
 				quoted[i] = codecJSONString(n)

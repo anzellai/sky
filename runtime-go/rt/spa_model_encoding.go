@@ -16,9 +16,10 @@ type spaModelEncoding struct {
 	generated bool
 	model     any
 	json      string
+	enums     *codecEnumRegistrySnapshot
 }
 
-func (e *spaModelEncoding) reset() { e.model, e.json = nil, "" }
+func (e *spaModelEncoding) reset() { e.model, e.json, e.enums = nil, "", nil }
 
 func spaModelEncodingEligible(model any) (ok bool) {
 	defer func() { _ = recover() }()
@@ -27,8 +28,9 @@ func spaModelEncodingEligible(model any) (ok bool) {
 }
 
 func (e *spaModelEncoding) encodeNext(model any) (out string, reused bool, compared int) {
+	metadata := codecEnumRegistry()
 	eligible := e.generated && spaModelEncodingEligible(model)
-	if eligible && e.json != "" {
+	if eligible && e.json != "" && e.enums == metadata {
 		var same bool
 		same, compared = spaModelSame(e.model, model)
 		if same {
@@ -39,8 +41,8 @@ func (e *spaModelEncoding) encodeNext(model any) (out string, reused bool, compa
 	// snapshot. In particular, do not leave the entry live until a success.
 	e.reset()
 	out = e.full(model)
-	if eligible && out != "" && len(out) <= spaPersistMaxBytes {
-		e.model, e.json = model, out
+	if eligible && out != "" && len(out) <= spaPersistMaxBytes && metadata == codecEnumRegistry() {
+		e.model, e.json, e.enums = model, out, metadata
 	}
 	return out, false, compared
 }

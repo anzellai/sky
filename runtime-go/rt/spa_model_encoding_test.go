@@ -188,3 +188,40 @@ func TestSpaModelEncodingKeepsPreviousFullFailureAndCmdBoundaries(t *testing.T) 
 		t.Fatal("encoding reuse suppressed rendering or commands")
 	}
 }
+
+func TestSpaModelEncodingEnumRegistrationInvalidates(t *testing.T) {
+	type model struct {
+		Kind int `sky:"kind,spaCacheEpochKind"`
+	}
+	RegisterEnum("spaCacheEpochKind", []string{"Before"})
+	calls := 0
+	e := spaModelEncoding{generated: true, full: func(v any) string { calls++; return spaProjectionEncode(v) }}
+	first, _, _ := e.encodeNext(model{})
+	RegisterEnum("spaCacheEpochKind", []string{"After"})
+	second, hit, _ := e.encodeNext(model{})
+	if hit || calls != 2 || first == second || !strings.Contains(second, "After") {
+		t.Fatal("enum re-registration reused a stale encoding")
+	}
+	RegisterEnum("spaCacheEpochKind", []string{"After"})
+	_, hit, _ = e.encodeNext(model{})
+	if hit || calls != 3 {
+		t.Fatal("even identical registration must invalidate conservatively")
+	}
+}
+
+func TestSpaModelEncodingMetadataChangeDuringFullIsNotCached(t *testing.T) {
+	calls := 0
+	e := spaModelEncoding{generated: true, full: func(v any) string {
+		calls++
+		out := spaProjectionEncode(v)
+		RegisterEnum("spaCacheDuringFull", []string{"Synthetic"})
+		return out
+	}}
+	defer setEnumRegistration("spaCacheDuringFull", nil, false)
+	m := spaProjectionModel{}
+	e.encodeNext(m)
+	_, hit, _ := e.encodeNext(m)
+	if hit || calls != 2 || e.model != nil || e.enums != nil {
+		t.Fatal("metadata changed during encoding but a certificate was retained")
+	}
+}

@@ -110,16 +110,16 @@ Browser fixture builds and actual wasm tests pass on the local machine.
 The restricted lower proof, 35 split-generator unit cases, five real-project
 proof scenarios and focused native runtime tests pass. A fresh compiler build
 and all six real-browser journeys (reference/optimised × Chromium/WebKit/Firefox)
-pass. For twenty typing messages, full-model encoding calls fall from40 to20,
+pass. For twenty typing messages, full-model encoding calls fall from 40 to 20,
 while update/view/post/storage-write counts remain identical. Protected-field
-projection visits40 fields at both retained sizes. Reports and measurement
+projection visits 40 fields at both retained sizes. Reports and measurement
 conditions are under runs/step-cost-20261104/cycle2/. These are instrumented
 single diagnostic runs, not a cross-device latency claim.
 
 The previous phase's complete native runtime suite passed hosted CI. Its
 coverage-accounting job identified a stale ledger for the new browser gate;
 the owned-tree regeneration and both accounting checks now pass. The complete
-lowering/project suites pass567 tests with one explicit dependency-harvest
+lowering/project suites pass 567 tests with one explicit dependency-harvest
 ignore (run after the sweep fetches all example dependencies). Complete
 compiler/example/real-app gates remain mandatory before
 claiming the overall implementation verified. Cycle2 new runtime code still
@@ -133,7 +133,7 @@ semantics, and asynchronous storage cannot silently add a reload loss window.
 ## Cycle 3 restricted encoding witness
 
 The compiler-proven canonical encoder may retain one successful next-model JSON
-result up to the existing1.5MB persistence cap, together with its actual model.
+result up to the existing 1.5 MB persistence cap, together with its actual model.
 A bounded sufficient identity check covers closed tagged records, Maybe,
 primitive bits, immutable strings and the existing immutable List slice
 representation. A list requires the same data pointer, visible length and nil
@@ -155,8 +155,8 @@ Cmd and subscription phase still runs. Targeted tests cover bounded work at
 Maybe changes, custom/open-model fallback, cache cap/reset/failure, denied-write
 retry, snapshot removal, cross-tab republication and the previous-failure
 sign-out case. Fresh compiler and all six browser/mode journeys now pass. Ignored-key
-full encodes fall from20 to0 per ten messages, and typing full encodes fall
-from40 to10 per twenty messages, with all original writes and phase counts
+full encodes fall from 20 to 0 per ten messages, and typing full encodes fall
+from 40 to 10 per twenty messages, with all original writes and phase counts
 retained. Reports are under runs/step-cost-20261104/cycle3/.
 
 The first broader example run used an unsupported generated-source ancestor
@@ -164,4 +164,91 @@ and was rejected by source discovery; its replacement was stopped before
 optional cleanup could purge the shared Go cache. Both build and sweep scripts now accept `--keep-go-cache` to preserve
 the shared cache without changing any verification. An additional build-script
 cleanup path was missed and did purge the cache before that option was added;
-subsequent runs must pass the option explicitly. No test is omitted. A complete sweep and isolated real-app build remain required.
+subsequent runs must pass the option explicitly. No test is omitted. A complete
+sweep now passes all 38 examples with runtime checks; the isolated real-app
+`web:app` build also passes. The explicit dependency-harvest test is now running
+after the sweep fetched and mirrored the dependencies.
+
+## Broader codec domain: review findings
+
+The isolated FacePlan `web:app` build passes with the cycle 3 compiler. The
+generated encoder receives no proof capsule: its blank is an alias to the
+application's initial-model binding. Following that alias is admissible only
+when resolved definitions prove a terminating literal-data graph. Do not infer
+purity from its name, annotation or generated-project flag. Broader runtime model
+representations still require evidence even after the encoder shape qualifies.
+
+Two implementation facts constrain the next phase:
+
+- `GoTypeDef::SealedIface` currently emits only public `SkyVariantTag` and
+  `SkyVariantName` methods. The Go interface admits foreign implementations.
+  A schema must identify exact compiler-generated concrete types and payload
+  schemas. Interface implementation, names and method results are insufficient.
+- Strict `Codec.auto` construction calls registered factories through
+  `codecAutoTypePartialAt` and `adtVariantZeros`. Those callbacks may have
+  effects or fail. Pure actual model variants do not prove pure construction.
+  Either retain exact construction per reference attempt or introduce a
+  compiler-owned immutable metadata path with its own equivalence proof.
+
+A possible intermediate split retains exact construction and caches only
+certified value encoding. Generated construction/finish callbacks would need
+resolved-HIR validation against the same canonical codec and blank, preserving
+the original full callable for fallback. Changing enum metadata must invalidate
+encoding certificates, or metadata must be proven immutable.
+
+Value conversion and JSON marshalling are separate phases today: the runtime
+first converts every record field, then marshals the resulting ordered object.
+Foreign variant methods can run during conversion; foreign JSON marshalers can
+run later. Encoding each field completely in a single pass would reorder those
+effects. Any field-chunk encoder must preserve the two phases and stop at the
+same failure, without rerunning effectful conversion during fallback.
+
+Typed Dict values offer an existing canonical encoding path and can use exact
+typed runtime capabilities over their private immutable structure. Erased
+`SkyArray` leaves cannot be certified from their Go type alone, and existing
+canonical auto-codec support must first be established. Construction/ingress
+certificates and persistent-node propagation need separate PIV regressions.
+These are next-phase obligations, not implemented features or reasons to widen
+the current conservative guard.
+
+## Enum metadata invalidation
+
+A new regression exposed a stale-cache result after `RegisterEnum` changed a
+registered constructor name. The original cache fails that regression. Enum
+registration now publishes an immutable registry snapshot atomically. Cache
+entries retain the snapshot pointer and require the same snapshot on a hit;
+metadata changes during full encoding prevent cache population. This replaces
+the cache's assumed fixed enum metadata with an executable invalidation rule.
+
+Registration keeps last-registration-wins and present-empty-table semantics.
+It now copies the caller's name slice: later caller mutation cannot change a
+registered wire representation. That is explicit ownership hardening of the Go
+runtime API, not preservation of its previous borrowed-slice behaviour.
+
+All focused runtime tests pass after the fix. The exact production registry
+block and unchanged registry tests also pass ten runs under Go's race detector;
+that focused extraction is not a claim that the complete local runtime package
+ran with race detection. Independent review found no blocker. Publication copies
+the registry map, so many distinct startup registrations have cumulative
+quadratic map-copy work; broad startup performance remains unmeasured. Reads
+require an atomic snapshot load, avoiding a new per-element reader lock.
+
+Fresh compiler installation using `scripts/build.sh --dev --keep-go-cache`
+and all six reference/optimised browser journeys pass after metadata
+invalidation. The compiler uses the repository's optimised development profile
+with assertions and overflow checks enabled; two release compilations were
+terminated without a guard diagnostic. Budgets and the guard were not relaxed.
+Numeric reports and conditions are in runs/step-cost-20261104/cycle3-metadata/.
+The same work counts survive this fix; single instrumented timings are not
+claimed as statistically established latency improvements.
+
+The CI encoder-wiring regression was reproduced locally, then corrected to
+assert both the generated private setter and its kernel binding. All other
+SSR, database-isolation, codec and protected-field assertions remain. The
+corrected real build test passes. Configuration-census regeneration changes
+only two source-location details, with its summary unchanged. The dependency
+harvest and full 84-row narrowing gate also pass after the example sweep.
+
+Configuration census, denominators and coverage-ledger checks pass after these
+fixes. Both prior CI failures are addressed; the new head still needs its full
+hosted workflow result.

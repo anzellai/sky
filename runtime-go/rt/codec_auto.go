@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // skyTagName returns the Sky field name from a struct field's `sky:"name,type"`
@@ -1333,12 +1335,53 @@ func codecRawFloat(raw any) float64 {
 
 // ── Enum registry (populated by codegen init()s) ─────────────────────────────
 
-// enumRegistry maps an enum type name → its ordered variant names. Written only
-// from generated init() functions (single-threaded at startup); read-only after.
-var enumRegistry = map[string][]string{}
+// codecEnumRegistrySnapshot is immutable after publication. The snapshot
+// pointer is also the encoding-cache epoch: a live cache retains its snapshot,
+// so pointer reuse cannot produce an ABA hit and no counter can wrap.
+type codecEnumRegistrySnapshot struct{ names map[string][]string }
 
-// RegisterEnum records an enum type's variant names, in ordinal order.
-func RegisterEnum(name string, variants []string) { enumRegistry[name] = variants }
+var emptyCodecEnumRegistry = &codecEnumRegistrySnapshot{names: map[string][]string{}}
+var enumRegistry atomic.Pointer[codecEnumRegistrySnapshot]
+var enumRegistryWriter sync.Mutex
+
+func codecEnumRegistry() *codecEnumRegistrySnapshot {
+	if snapshot := enumRegistry.Load(); snapshot != nil {
+		return snapshot
+	}
+	return emptyCodecEnumRegistry
+}
+
+// RegisterEnum records an enum type's variant names in ordinal order. The
+// registration captures a copy: later mutation of the caller's slice cannot
+// change a type's wire representation. Re-registration replaces the names and
+// invalidates encoding certificates, even when the names are identical.
+func RegisterEnum(name string, variants []string) { setEnumRegistration(name, variants, true) }
+
+func setEnumRegistration(name string, variants []string, present bool) {
+	var owned []string
+	if variants != nil {
+		owned = append(make([]string, 0, len(variants)), variants...)
+	}
+	enumRegistryWriter.Lock()
+	defer enumRegistryWriter.Unlock()
+	previous := codecEnumRegistry()
+	next := &codecEnumRegistrySnapshot{names: make(map[string][]string, len(previous.names)+1)}
+	for key, names := range previous.names {
+		next.names[key] = names
+	}
+	if present {
+		next.names[name] = owned
+	} else {
+		delete(next.names, name)
+	}
+	enumRegistry.Store(next)
+}
+
+// Internal immutable view; callers must never modify the returned names.
+func enumVariantsForType(typeName string) ([]string, bool) {
+	variants, ok := codecEnumRegistry().names[typeName]
+	return variants, ok
+}
 
 // EnumName is the constructor name of ordinal `ord` of the enum `typeName`
 // (a union whose constructors all take no arguments), or "" when unknown.
@@ -1349,10 +1392,10 @@ func EnumName(typeName string, ord int) string {
 	return name
 }
 
-func isRegisteredEnum(typeName string) bool { _, ok := enumRegistry[typeName]; return ok }
+func isRegisteredEnum(typeName string) bool { _, ok := enumVariantsForType(typeName); return ok }
 
 func enumNameForOrdinal(typeName string, ord int) (string, bool) {
-	vs, ok := enumRegistry[typeName]
+	vs, ok := enumVariantsForType(typeName)
 	if !ok || ord < 0 || ord >= len(vs) {
 		return "", false
 	}
@@ -1360,7 +1403,7 @@ func enumNameForOrdinal(typeName string, ord int) (string, bool) {
 }
 
 func enumOrdinalForName(typeName, name string) (int, bool) {
-	vs, ok := enumRegistry[typeName]
+	vs, ok := enumVariantsForType(typeName)
 	if !ok {
 		return 0, false
 	}
