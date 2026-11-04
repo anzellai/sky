@@ -140,7 +140,7 @@ try {
       if (mixed) {
         assert.equal(typing.preparedEncodes, 40, "Typing must retain both strict codec preparations");
         assert.equal(typing.preparedFallbacks, 0, "Mixed typing unexpectedly used Full");
-        assert.equal(typing.fieldEncodes, 50, "Only unknown page and changed text should convert");
+        assert.equal(typing.fieldEncodes, 60, "Only unknown page and changed text/brand should convert");
       } else {
         assert.equal(typing.fieldModelSteps, 20, "Each typing message must use field certificates");
         assert.equal(typing.fieldEncodes, 10, "Only the input field should be encoded");
@@ -149,6 +149,7 @@ try {
     }
     assert.equal(await input.inputValue(), "abcdefghij", "Typing lost input");
     assert.equal(await page.locator("#echo").textContent(), "abcdefghij", "Model and input diverged");
+    if (mixed) assert.equal(await page.locator("#brand").textContent(), "abcdefghij", "Nested form and input diverged");
     await measure("async-command", count, async () => {
       const previous = Number(await page.locator("#completed").innerText());
       await page.locator("#dispatch").click();
@@ -161,6 +162,7 @@ try {
   await page.waitForFunction(() => globalThis.__skyStepProfileReady === true);
   assert.equal(await page.locator("#typing").inputValue(), "abcdefghij", "Reload lost typed state");
   assert.equal(await page.locator("#items").textContent(), "10000", "Reload lost unrelated data");
+  if (mixed) assert.equal(await page.locator("#brand").textContent(), "abcdefghij", "Reload lost nested form state");
   await page.locator("#huge").click();
   await page.waitForFunction(() => document.querySelector("#items")?.textContent === "100000");
   const hugeInput = page.locator("#typing");
@@ -175,7 +177,7 @@ try {
   assert.equal(oversized.storageWrites, 0, "Oversized snapshot exceeded the unchanged persistence cap");
   assert.equal(oversized.modelEncodes, mode === "reference" ? 40 : 0, "Oversized typing unexpectedly encoded the full model");
   if (mode !== "reference") {
-    assert.equal(oversized.fieldEncodes, mixed ? 50 : 10, "Oversized typing encoded unrelated fields");
+    assert.equal(oversized.fieldEncodes, mixed ? 60 : 10, "Oversized typing encoded unrelated fields");
     if (mixed) {
       assert.equal(oversized.preparedEncodes, 40, "Oversized typing lost strict preparations");
       assert.equal(oversized.preparedFallbacks, 0, "Oversized typing used Full");
@@ -195,6 +197,7 @@ try {
   await hugeInput.pressSequentially("Z");
   assert.equal(await hugeInput.inputValue(), "abcZdefghijk", "Large view lost a mid-string edit");
   assert.equal(await page.locator("#echo").textContent(), "abcZdefghijk", "Mid-string edit diverged from the model");
+  if (mixed) assert.equal(await page.locator("#brand").textContent(), "abcZdefghijk", "Mid-string edit lost nested form state");
   await page.locator("#advance").click();
   await page.locator("#select").click();
   assert.equal(await page.locator("#selected").textContent(), "2", "Visually equal button kept stale payload");

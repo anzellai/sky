@@ -6,6 +6,7 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
 import Sky.Core.String as String
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
@@ -20,10 +21,18 @@ type Page
 type alias Session =
     { userId : String }
 
+type alias ProductForm =
+    { brand : String }
+
+type alias Editor =
+    { products : List String
+    , productForm : ProductForm
+    }
+
 type alias Model =
     { page : Page
     , session : Maybe Session
-    , items : List String
+    , editor : Maybe Editor
     , text : String
     , completed : Int
     , choice : Int
@@ -48,7 +57,7 @@ init : () -> ( Model, Cmd Msg )
 init _ =
     ( { page = Home "synthetic"
       , session = Nothing
-      , items = []
+      , editor = Nothing
       , text = ""
       , completed = 0
       , choice = 0
@@ -59,6 +68,36 @@ init _ =
     )
 
 
+withBrand : String -> Editor -> Editor
+withBrand value editor =
+    let
+        form = editor.productForm
+    in
+        { editor | productForm = { form | brand = value } }
+
+
+editorBrand : Maybe Editor -> String
+editorBrand editor =
+    case editor of
+
+        Nothing ->
+            ""
+
+        Just value ->
+            value.productForm.brand
+
+
+editorCount : Maybe Editor -> Int
+editorCount editor =
+    case editor of
+
+        Nothing ->
+            0
+
+        Just value ->
+            List.length value.products
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
@@ -67,17 +106,29 @@ update msg model =
             ( model, Cmd.none )
 
         Type value ->
-            ( { model | text = value }, Cmd.none )
-
-        Load count ->
             ( { model
-                  | items =
-                      List.repeat
-                          count
-                          "synthetic immutable payload with sixty characters per entry.."
+                  | text = value
+                  , editor = Maybe.map (withBrand value) model.editor
               }
             , Cmd.none
             )
+
+        Load count ->
+            let
+                items =
+                    List.repeat
+                        count
+                        "synthetic immutable payload with sixty characters per entry.."
+            in
+                ( { model
+                      | editor =
+                          Just
+                              { products = items
+                              , productForm = { brand = model.text }
+                              }
+                  }
+                , Cmd.none
+                )
 
         ShowRows count ->
             ( { model | visibleRows = count }, Cmd.none )
@@ -136,8 +187,9 @@ view model =
 
                   Detail number ->
                       String.fromInt number)
-        , row "items" (String.fromInt (List.length model.items))
+        , row "items" (String.fromInt (editorCount model.editor))
         , row "echo" model.text
+        , row "brand" (editorBrand model.editor)
         , row "completed" (String.fromInt model.completed)
         , row "selected" (String.fromInt model.selected)
         , row

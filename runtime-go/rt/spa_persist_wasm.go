@@ -231,14 +231,7 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 	}
 	var cleared bool
 	closed := !spaStepReference && spaClosedEncoderModelsEligible(spaGeneratedModelEncoder, spaGeneratedModelInputType, prevModel, nextModel)
-	if closed {
-		spaFieldPersistenceState.profiling = spaActiveStepMetrics != nil
-		var metrics spaFieldPersistenceMetrics
-		cleared, metrics = spaFieldPersistenceState.step(prevModel, nextModel, spaEncodeModel, spaLocalKV{}, &spaLife, spaPersistExclude, spaPersistProt, spaPersistMaxBytes, true)
-		if observe != nil {
-			observe(metrics.Profile)
-		}
-	} else if !spaStepReference && spaMixedPersistenceState.encoder.Prepare != nil {
+	if !spaStepReference && spaMixedPersistenceState.encoder.Prepare != nil {
 		spaFieldPersistenceState.reset()
 		spaNextModelEncoding.reset()
 		spaMixedPersistenceState.profiling = spaActiveStepMetrics != nil
@@ -246,6 +239,14 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 		cleared, metrics = spaMixedPersistenceState.step(prevModel, nextModel, spaEncodeModel, spaLocalKV{}, &spaLife, spaPersistExclude, spaPersistProt, spaPersistMaxBytes)
 		if observe != nil {
 			observe(metrics)
+		}
+	} else if closed {
+		spaMixedPersistenceState.reset()
+		spaFieldPersistenceState.profiling = spaActiveStepMetrics != nil
+		var metrics spaFieldPersistenceMetrics
+		cleared, metrics = spaFieldPersistenceState.step(prevModel, nextModel, spaEncodeModel, spaLocalKV{}, &spaLife, spaPersistExclude, spaPersistProt, spaPersistMaxBytes, true)
+		if observe != nil {
+			observe(metrics.Profile)
 		}
 	} else {
 		spaFieldPersistenceState.reset()

@@ -1,0 +1,14 @@
+{
+  "baseCommit": "76a7b7512b77e7a0d5086b9fe743f57994c01396",
+  "uncommittedImplementation": true,
+  "productionRuntimeDigest": "1c54035037f6406f2afa08a03bf5b97bb28858d2f09da52585d51e66c5538fda",
+  "fixtureSha256": "20162971fd28037be54e41f13ed991f6830214e61b06e20d0af07c7a35ea8626",
+  "harnessSha256": "fc836babdacdc30ba1c093d6c0d8f97d2f0a40efd418fb64a6c2f129c3c29232",
+  "compilerSha256": "bd690a964ead5ffee9be3c0ec1d1a77a0ecfca9fd92d6d03f7360d80ed3fb124",
+  "diagnosticRepeats": 1,
+  "profilingEnabled": true,
+  "scope": "Closed and mixed payload-ADT/nested Editor fixtures. Mixed retains one 100K-entry list inside Editor; Type changes root text and nested brand. One repeat per engine/mode; no universal latency/cross-device claim.",
+  "physicalMobileDevices": false,
+  "unchangedStorageFormat": "v2",
+  "guardBudgetsChanged": false
+}

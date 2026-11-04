@@ -135,7 +135,7 @@ func spaRun(cfg any) any {
 	spaFieldPersistenceState = spaFieldPersistence{}
 	spaGeneratedModelInputType = fieldOrNil(cfg, "GeneratedModelInputType")
 	preparedEncoder, _ := fieldOrNil(cfg, "PreparedAutoModelEncoder").(SpaPreparedModelEncoder)
-	spaMixedPersistenceState = spaMixedPersistence{encoder: preparedEncoder}
+	spaMixedPersistenceState = spaMixedPersistence{encoder: preparedEncoder, generatedClosed: spaGeneratedModelEncoder}
 	spaResetPersistBridge()
 	spaPersistProt = spaStringList(fieldOrNil(cfg, "PersistProtectedFields"))
 	spaPersistSeed = spaStringList(fieldOrNil(cfg, "PersistSeedFields"))

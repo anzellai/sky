@@ -6074,6 +6074,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-step-cost-mixed-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
@@ -22458,10 +22463,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/spa-step-cost-mixed-e2e.sh",
-      "modules_imported": 7,
+      "modules_imported": 8,
       "path": "scripts/spa-step-cost-mixed-e2e.sh",
-      "refs_generous": 21,
-      "refs_qualified": 20,
+      "refs_generous": 22,
+      "refs_qualified": 21,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []

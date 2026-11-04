@@ -28,7 +28,7 @@ Never print dotenv contents or environment values. Use synthetic fixtures.
 | 1 | Public large-model fixture, phase counters and reference path | Reference runs pass Chromium/WebKit/Firefox at 1K/10K retained entries, fixed small view; other size/context dimensions remain for later gates | Complete |
 | 2 | Internal model descriptors and protected-field projections | Compiler/provenance and focused runtime tests; Chromium/WebKit/Firefox both modes, identical correctness journey | Complete; broad compiler/example/hosted gates passed at 2365815 |
 | 3 | Conservative change evidence and safe reuse | Unknown mutation/effects, commands, handlers, context and panic boundaries | Restricted cache validated; automatic view reuse remains pending |
-| 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Bounded synchronous v2 closed-field path validated in all three browser engines. Mixed-model prepared path validated in all three browser engines; recursive closed-field summaries under implementation. General incremental storage remains pending |
+| 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Bounded synchronous v2 closed-field path validated in all three browser engines. Mixed and recursive closed record/Maybe paths validated in all three browser engines; lazy reconstruction for raw-budget eviction under implementation. General incremental storage remains pending |
 | 5 | Automatic view-region reuse and collection changes | Reference UI/effect traces, bounded cache retention and dependent work counters | Pending |
 | 6 | Cross-target end-to-end gates and independent review | Runtime/compiler suites, full examples, real app, browsers and available native/terminal targets | Pending |
 
@@ -385,3 +385,61 @@ ledger, configuration surface and migration gates pass. The focused native
 runtime staging used 18 unchanged test files against every production runtime
 source. Independent review found no further scoped semantic blocker after the
 runtime closed-domain routing fix. Hosted CI for this checkpoint is still needed.
+
+
+## Recursive closed summaries: validated checkpoint
+
+Closed records and nominal Maybe values now decompose into bounded summaries;
+lists remain atomic. An edit to `Editor.productForm.brand` can reuse unchanged
+`Editor.products`. Invocation-local byte plans append captured bytes directly
+into the final selected payload and protected identity, without intermediate
+whole-Editor JSON joins. The mixed root alone owns the current model. Recursive
+cache metadata reserves node headers and child slots under a shared 4096-unit
+budget (in addition to the fixed root field table), with depth 64 and one shared
+raw-byte cap. Exhausted subtrees retain canonical atomic execution.
+
+Proven prepared encoders use this path for both mixed and fully closed models.
+A previous invocation may be skipped only with the original literal/canonical
+proof, matching input types, both whole-model closed runtime descriptors, a
+valid supported next encode, and the existing negative projection after
+publication. Prepared-only/nonliteral or unknown-field models retain every
+previous preparation and unknown effect. Successful supported next invocations
+count as `fieldModelSteps`; conversions/reuses now include recursive atomic
+leaves. Strict next codec construction remains observable.
+
+Validation: all production runtime sources plus 20 focused native test files
+passed, including controller differential ordering, enum changes during A/B and
+publication, nested NaN/true conversion failure, exact escaped bytes, input
+proof guards and retained cache-slot budgets. A fresh canonical compiler,
+repository Sky formatting gate and all twelve closed/nested engine-mode browser
+journeys pass. [Reports and exact source hashes](runs/step-cost-20261104/cycle6-recursive/conditions.json)
+record one instrumented repeat per Chromium/WebKit/Firefox and mode. Nested
+fixture typing encodes 1,390 field bytes at each of 1K/10K/100K retained products;
+no Full model encoder runs. Reload, both form/input state, caret, commands,
+handler captures and sign-out remain checked. Ordinary changed under-cap v2
+snapshots still require the selected payload join/copy.
+
+A separate private wasm probe uses the real app's previously generated model
+and actual compiled `SetBrandTyped`/`BrandKey` update arms with synthetic product
+records. At 1K and 10K products, typing converts five fields/leaves totaling 44
+bytes; ignored brand keys encode 20 bytes. Both form locations and exact
+canonical Full size/bytes pass. This is model/update/persistence evidence, not a
+fresh root build, private-app browser journey, deployment or latency guarantee.
+The fresh root build remains constrained by the unchanged local memory guard.
+
+The initially expanded browser fixture serialized its list at two positions;
+Firefox reference execution exceeded the unchanged deadline. The final fixture
+retains the full 100K-entry list once inside Editor, matching the intended
+retained-data dimension; all twelve final journeys pass with unchanged budgets.
+
+Small flat-model diagnostics show the cost of retaining strict next preparation:
+one instrumented Chromium repeat measured about 0.27 ms extra encoding per
+ignored key. This is a tradeoff observation, not a latency benchmark. No shortcut
+assumes codec construction total from convenience alone.
+
+The preceding mixed checkpoint, including its canonical-format follow-up at
+`76a7b7512`, passed all 39 hosted CI jobs (run 41920407390). Hosted validation for
+this recursive checkpoint remains pending. Many individually small lists can
+still exhaust retained raw bytes and trigger unchanged-leaf reconstruction;
+pinned-metadata lazy reconstruction is the next separate PIV. Automatic
+view/collection reuse and broader storage/cross-target work remain pending.

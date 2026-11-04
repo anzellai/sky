@@ -56,6 +56,7 @@ type spaMixedModelCache struct {
 	fields   []spaMixedFieldCertificate
 	payload  string
 	selected []int
+	closed   []*spaClosedEncodingNode
 }
 
 type spaMixedFieldDescriptor struct {
@@ -114,6 +115,7 @@ type spaMixedInvocationField struct {
 	null       bool
 	reused     bool
 	generation int
+	closed     *spaClosedEncodingResult
 }
 
 // Every logical invocation owns its own recovery boundary. Failure produces no
@@ -180,6 +182,7 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 			generation++
 		}
 	}
+	closedBudget := spaNewClosedEncodingBudget(options.CapBytes)
 	fields := make([]spaMixedInvocationField, len(d.fields))
 	canCompare := previous != nil && reflect.TypeOf(previous.model) == value.Type() && len(previous.fields) == len(fields)
 	var old reflect.Value
@@ -192,15 +195,37 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 		observeMetadata()
 		field := &fields[i]
 		field.generation = generation
-		if f.closed && canCompare && previous.enums == metadata && previous.fields[i].valid {
-			prior := previous.fields[i]
-			budget := spaModelWitnessBudget
-			same := spaModelValueSame(old.Field(f.index), value.Field(f.index), &budget)
-			out.Work.ComparedNodes += spaModelWitnessBudget - budget
-			missingAllowed := options.PreviousOnly || !selected[i] || (!protected[i] && prior.size > uint64(options.CapBytes))
-			if same && (prior.raw != "" || missingAllowed) {
-				field.encoded, field.size, field.null, field.reused = prior.raw, prior.size, prior.null, true
-				out.Work.ClosedReuses++
+
+		if f.closed {
+			var prior *spaClosedEncodingNode
+			var oldField reflect.Value
+			var previousEpoch *codecEnumRegistrySnapshot
+			if canCompare {
+				oldField = old.Field(f.index)
+				previousEpoch = previous.enums
+				if len(previous.closed) == len(fields) {
+					prior = previous.closed[i]
+				}
+			}
+			summary := spaEncodeClosed(value.Field(f.index), oldField, prior, f.declared, previousEpoch, metadata,
+				spaClosedEncodingOptions{
+					NeedRaw:                 !options.PreviousOnly && (selected[i] || protected[i]),
+					AllowOversizeWithoutRaw: !protected[i],
+					DiscardRawRetention:     options.PreviousOnly || !selected[i],
+				}, closedBudget)
+			if summary.Supported {
+				field.closed = &summary
+				out.Work.Conversions += summary.Work.Conversions
+				out.Work.Marshals += summary.Work.Marshals
+				out.Work.ClosedReuses += summary.Work.Reuses
+				out.Work.ComparedNodes += summary.Work.ComparedNodes
+				out.Work.EncodedBytes = spaSizeAdd(out.Work.EncodedBytes, summary.Work.EncodedBytes)
+				if summary.ConversionErr != nil {
+					panic("Codec.auto: cannot encode this value — " + summary.ConversionErr.Error())
+				}
+				field.size, field.null, field.marshalErr = summary.Size, summary.Null, summary.MarshalErr
+				// Observe enum changes without replaying any prior work.
+				observeMetadata()
 				continue
 			}
 		}
@@ -211,22 +236,14 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 		}
 		field.raw = raw
 		observeMetadata()
-		if f.closed {
-			// This domain has no foreign methods. Moving pure work is safe,
-			// but its FAILURE may become observable only at its Phase-B position.
-			out.Work.Marshals++
-			encoded, err := json.Marshal(raw)
-			field.encoded, field.marshalErr = string(encoded), err
-			field.size, field.null = uint64(len(encoded)), spaIsNullRaw(encoded)
-			out.Work.EncodedBytes = spaSizeAdd(out.Work.EncodedBytes, uint64(len(encoded)))
-		}
+
 	}
 	// PHASE B: marshal/error/panic order matches jsonOrderedObject.MarshalJSON.
 	// Unknown values are the captured A results, not freshly read model fields.
-	for i, f := range d.fields {
+	for i := range d.fields {
 		observeMetadata()
 		field := &fields[i]
-		if !f.closed {
+		if field.closed == nil {
 			out.Work.Marshals++
 			encoded, err := json.Marshal(field.raw)
 			field.encoded, field.marshalErr = string(encoded), err
@@ -242,21 +259,38 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 		out.Work.EncodeNanos = time.Since(encodeStart).Nanoseconds()
 		buildStart = time.Now()
 	}
+	// All unknown conversion/marshal FX have run. Byte-plan materialization
+	// below consumes ONLY captured pure bytes, never mutable enum metadata.
+	size := uint64(2)
+	for pos, index := range indices {
+		if pos > 0 {
+			size = spaSizeAdd(size, 1)
+		}
+		size = spaSizeAdd(size, uint64(len(d.fields[index].keyJSON))+1)
+		size = spaSizeAdd(size, fields[index].size)
+	}
+	reusePayload := canCompare && spaMixedRecursivePayloadSame(previous, fields, indices)
 	// Build the new certificate only after the ENTIRE invocation succeeded.
 	// One retained epoch; stamps discard certificates computed before changes.
-	next := &spaMixedModelCache{model: model, enums: metadata, fields: make([]spaMixedFieldCertificate, len(fields))}
-	remaining := spaPersistMaxBytes
-	for i, f := range d.fields {
+	next := &spaMixedModelCache{model: model, enums: metadata, fields: make([]spaMixedFieldCertificate, len(fields)), closed: make([]*spaClosedEncodingNode, len(fields))}
+	remaining := closedBudget.BytesLeft
+	for i := range d.fields {
 		field := fields[i]
-		if f.closed && field.generation == generation {
+		if field.closed != nil && field.generation == generation {
 			next.fields[i] = spaMixedFieldCertificate{valid: true, size: field.size, null: field.null}
+			if field.closed != nil {
+				next.closed[i] = field.closed.Cache
+				if field.closed.Cache != nil {
+					next.fields[i].raw = field.closed.Cache.raw
+				}
+			}
 		}
 	}
 	// Give selected data first claim on bounded raw retention; excluded values
 	// need only success/nullness certificates unless configuration changes.
 	for pass := 0; pass < 2; pass++ {
 		for i, field := range fields {
-			if selected[i] != (pass == 0) || (!next.fields[i].valid && len(field.encoded) > 256) || len(field.encoded) > remaining {
+			if field.closed != nil || selected[i] != (pass == 0) || (!next.fields[i].valid && len(field.encoded) > 256) || len(field.encoded) > remaining {
 				continue
 			}
 			next.fields[i].raw = field.encoded
@@ -292,7 +326,7 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 		if !protected[i] {
 			continue
 		}
-		if fields[i].encoded == "" {
+		if fields[i].closed == nil && fields[i].encoded == "" {
 			panic("mixed codec: missing protected raw")
 		}
 		if wrote {
@@ -301,7 +335,13 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 		wrote = true
 		identity.WriteString(f.keyJSON)
 		identity.WriteByte(':')
-		identity.WriteString(fields[i].encoded)
+		if fields[i].closed != nil {
+			if !fields[i].closed.Plan.appendTo(&identity) {
+				panic("recursive codec: incomplete captured identity plan")
+			}
+		} else {
+			identity.WriteString(fields[i].encoded)
+		}
 	}
 	identity.WriteByte('}')
 	var identityOK bool
@@ -309,33 +349,11 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 	if !identityOK {
 		panic("mixed codec: invalid protected identity")
 	}
-	size := uint64(2)
-	for pos, index := range indices {
-		if pos > 0 {
-			size = spaSizeAdd(size, 1)
-		}
-		size = spaSizeAdd(size, uint64(len(d.fields[index].keyJSON))+1)
-		size = spaSizeAdd(size, fields[index].size)
-	}
 	out.EncodedBytes = size
 	if size <= uint64(options.CapBytes) {
 		// All preparation, conversions and unknown marshaling have already run.
 		// Reuse only byte-proven output, never the identity of a foreign value.
-		samePayload := canCompare && previous.payload != "" && len(previous.selected) == len(indices)
-		if samePayload {
-			for pos, index := range indices {
-				if previous.selected[pos] != index {
-					samePayload = false
-					break
-				}
-				a, b := fields[index].encoded, previous.fields[index].raw
-				same := len(a) == len(b) && a != "" && (unsafe.StringData(a) == unsafe.StringData(b) || (len(a) <= 256 && a == b))
-				if !same {
-					samePayload = false
-					break
-				}
-			}
-		}
+		samePayload := reusePayload
 		if samePayload {
 			out.Payload = previous.payload
 		} else {
@@ -343,7 +361,7 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 			b.Grow(int(size))
 			b.WriteByte('{')
 			for pos, index := range indices {
-				if fields[index].encoded == "" {
+				if fields[index].closed == nil && fields[index].encoded == "" {
 					panic(fmt.Sprintf("mixed codec: missing stored raw at field %d", index))
 				}
 				if pos > 0 {
@@ -351,7 +369,13 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 				}
 				b.WriteString(d.fields[index].keyJSON)
 				b.WriteByte(':')
-				b.WriteString(fields[index].encoded)
+				if fields[index].closed != nil {
+					if !fields[index].closed.Plan.appendTo(&b) {
+						panic("recursive codec: incomplete captured payload plan")
+					}
+				} else {
+					b.WriteString(fields[index].encoded)
+				}
 			}
 			b.WriteByte('}')
 			out.Payload = b.String()
@@ -365,4 +389,25 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 	}
 	out.Valid = true
 	return
+}
+
+// This proof is evaluated only AFTER unknown A/B FX. Recursive SameJSON is
+// tied to the prior owner's matching node/epoch and its exact canonical schema.
+func spaMixedRecursivePayloadSame(previous *spaMixedModelCache, fields []spaMixedInvocationField, indices []int) bool {
+	if previous == nil || previous.payload == "" || len(previous.fields) != len(fields) || len(previous.selected) != len(indices) {
+		return false
+	}
+	for pos, index := range indices {
+		if previous.selected[pos] != index {
+			return false
+		}
+		if fields[index].closed != nil && fields[index].closed.SameJSON {
+			continue
+		}
+		a, b := fields[index].encoded, previous.fields[index].raw
+		if len(a) != len(b) || a == "" || !(unsafe.StringData(a) == unsafe.StringData(b) || (len(a) <= 256 && a == b)) {
+			return false
+		}
+	}
+	return true
 }

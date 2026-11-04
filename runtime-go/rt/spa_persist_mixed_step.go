@@ -5,9 +5,10 @@ import "time"
 // State belongs to exactly one compiler-proven encoder configured at app boot.
 // The current model owner is replaced after every next invocation, even failure.
 type spaMixedPersistence struct {
-	encoder   SpaPreparedModelEncoder
-	cache     *spaMixedModelCache
-	profiling bool
+	encoder         SpaPreparedModelEncoder
+	cache           *spaMixedModelCache
+	profiling       bool
+	generatedClosed bool
 }
 
 func (p *spaMixedPersistence) reset() { p.cache = nil }
@@ -51,6 +52,9 @@ func (p *spaMixedPersistence) step(prev, next any, full func(any) string, st spa
 	candidate := spaEncodeMixed(p.encoder, previousCache, next, options)
 	addWork(candidate, false)
 	p.cache = candidate.NextCache
+	if candidate.Valid && !candidate.Reference {
+		metrics.FieldModelSteps++
+	}
 	if candidate.Valid {
 		var start time.Time
 		if p.profiling {
@@ -67,6 +71,23 @@ func (p *spaMixedPersistence) step(prev, next any, full func(any) string, st spa
 	}
 	if len(protected) == 0 {
 		return
+	}
+	// Only the original literal/canonical proof PLUS both runtime domains can
+	// skip a previous invocation. Prepared-only or mixed models retain every
+	// strict preparation and unknown effect, after publication.
+	if p.generatedClosed && candidate.Valid && !candidate.Reference && spaClosedEncoderModelsEligible(true, p.encoder.InputType, prev, next) {
+		var start time.Time
+		if p.profiling {
+			start = time.Now()
+		}
+		cannotClear, fields, bytes := spaAutoSessionCannotClear(prev, next, protected)
+		metrics.ProjectionFields, metrics.ProjectionBytes = fields, bytes
+		if p.profiling {
+			metrics.SessionNanos += time.Since(start).Nanoseconds()
+		}
+		if cannotClear {
+			return
+		}
 	}
 	// Unknown encoders can observe every previous logical invocation, even when
 	// session nullness looks unchanged. Preserve its strict preparation and all
