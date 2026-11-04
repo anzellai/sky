@@ -144,14 +144,12 @@ func dbSchemaKindForField(t any, col string, ft reflect.Type) (string, bool) {
 	if len(dbEnumFor(t, col)) > 0 {
 		return "text", false
 	}
-	// Maybe a — struct with Tag + JustValue → nullable, inner kind from JustValue.
-	if ft.Kind() == reflect.Struct {
-		if jv, ok := ft.FieldByName("JustValue"); ok {
-			if _, hasTag := ft.FieldByName("Tag"); hasTag {
-				k, _ := dbSchemaKindForField(t, col, jv.Type)
-				return k, true // nullable
-			}
-		}
+	// Only actual Maybe values introduce nullability. Record field names
+	// cannot opt a record into an unrelated container representation.
+	if isSkyMaybeType(ft) {
+		jv, _ := ft.FieldByName("JustValue")
+		k, _ := dbSchemaKindForField(t, col, jv.Type)
+		return k, true
 	}
 	switch ft.Kind() {
 	case reflect.String:
@@ -266,24 +264,20 @@ func dbDecodeInto(t any, col string, dst reflect.Value, raw any, present bool) e
 	}
 	// Maybe a → Nothing / Just(inner). A NULL column comes back from Db_query
 	// already wrapped as a Sky Nothing (SkyMaybe); a present value comes raw.
-	if dst.Kind() == reflect.Struct {
-		if _, hasJV := dst.Type().FieldByName("JustValue"); hasJV {
-			if _, hasTag := dst.Type().FieldByName("Tag"); hasTag {
-				if !present || raw == nil {
-					dst.FieldByName("Tag").SetInt(1) // Nothing
-					return nil
-				}
-				if tag, just := anyMaybeView(raw); tag >= 0 {
-					if tag != 0 { // already a Nothing marker
-						dst.FieldByName("Tag").SetInt(1)
-						return nil
-					}
-					raw = just // unwrap Just(inner)
-				}
-				dst.FieldByName("Tag").SetInt(0) // Just
-				return dbSetScalar(dst.FieldByName("JustValue"), raw, col)
-			}
+	if isSkyMaybeType(dst.Type()) {
+		if !present || raw == nil {
+			dst.FieldByName("Tag").SetInt(1)
+			return nil
 		}
+		if tag, just := anyMaybeView(raw); tag >= 0 {
+			if tag != 0 {
+				dst.FieldByName("Tag").SetInt(1)
+				return nil
+			}
+			raw = just
+		}
+		dst.FieldByName("Tag").SetInt(0)
+		return dbSetScalar(dst.FieldByName("JustValue"), raw, col)
 	}
 	return dbSetScalar(dst, raw, col)
 }

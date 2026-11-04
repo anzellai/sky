@@ -539,7 +539,7 @@ func ffiDecodeKey(s string, k reflect.Type) any {
 
 // ffiMaybeParts reads any instantiation of SkyMaybe: (tag, payload, ok).
 func ffiMaybeParts(rv reflect.Value) (int, any, bool) {
-	if rv.Kind() != reflect.Struct {
+	if !rv.IsValid() || !isSkyMaybeType(rv.Type()) {
 		return 0, nil, false
 	}
 	tag := rv.FieldByName("Tag")
@@ -552,7 +552,7 @@ func ffiMaybeParts(rv reflect.Value) (int, any, bool) {
 
 // ffiResultParts reads any instantiation of SkyResult: (tag, ok, err, ok).
 func ffiResultParts(rv reflect.Value) (int, any, any, bool) {
-	if rv.Kind() != reflect.Struct {
+	if !rv.IsValid() || !isSkyResultType(rv.Type()) {
 		return 0, nil, nil, false
 	}
 	tag := rv.FieldByName("Tag")

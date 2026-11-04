@@ -171,12 +171,12 @@ func skyShowStruct(rv reflect.Value, depth int, t reflect.Type, enumType string)
 	switch {
 	case t.NumField() == 0:
 		return "()", true
-	case strings.HasPrefix(name, "SkyResult["):
+	case isSkyResultType(t):
 		if rv.FieldByName("Tag").Int() == 0 {
 			return skyShowCtor("Ok", []reflect.Value{rv.FieldByName("OkValue")}, depth)
 		}
 		return skyShowCtor("Err", []reflect.Value{rv.FieldByName("ErrValue")}, depth)
-	case strings.HasPrefix(name, "SkyMaybe["):
+	case isSkyMaybeType(t):
 		if rv.FieldByName("Tag").Int() == 0 {
 			// A `Maybe Color` field's tag is `rt.SkyMaybe[Main_Color]`.
 			inner := strings.TrimSuffix(strings.TrimPrefix(enumType, "rt.SkyMaybe["), "]")
@@ -207,7 +207,7 @@ func skyShowStruct(rv reflect.Value, depth int, t reflect.Type, enumType string)
 			parts[i], _ = skyShow(reflect.ValueOf(it), depth+1, "")
 		}
 		return "Set.fromList [" + strings.Join(parts, ", ") + "]", false
-	case name == "SkyADT":
+	case isSkyAdtType(t):
 		ctor := rv.FieldByName("SkyName").String()
 		fields := rv.FieldByName("Fields")
 		args := make([]reflect.Value, 0, fields.Len())

@@ -703,15 +703,13 @@ func dbBindArg(a any) any {
 		}
 		rv = rv.Elem()
 	}
-	if rv.Kind() != reflect.Struct {
+	if !isSkyMaybeType(rv.Type()) {
 		return a
 	}
 	tagField := rv.FieldByName("Tag")
 	justField := rv.FieldByName("JustValue")
-	// Both fields must be present AND Tag must be an Int — that's
-	// the SkyMaybe[T] shape and nothing else (Sky's ADT codegen for
-	// user types uses different field names; Result has OkValue /
-	// ErrValue, not JustValue).
+	// Nominal identity was checked above. Ordinary records may use these
+	// field names too, and must reach the driver without being unwrapped.
 	if !tagField.IsValid() || !justField.IsValid() || tagField.Kind() != reflect.Int {
 		return a
 	}

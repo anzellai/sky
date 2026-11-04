@@ -1,0 +1,161 @@
+module CodecNominalRecordConformanceTest exposing (main, tests)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+import Std.Codec as Codec exposing (Codec)
+
+type alias MaybeNamedRecord =
+    { tag : Int
+    , justValue : String
+    , extra : List String
+    }
+
+
+maybeBlank : MaybeNamedRecord
+maybeBlank =
+    { tag = 1, justValue = "", extra = [] }
+
+
+maybeValue : MaybeNamedRecord
+maybeValue =
+    { tag = 1, justValue = "kept", extra = [ "keep" ] }
+
+
+maybeCodec : Codec MaybeNamedRecord
+maybeCodec =
+    Codec.auto maybeBlank
+
+type alias ResultNamedRecord =
+    { tag : Int
+    , okValue : String
+    , errValue : String
+    , extra : Int
+    }
+
+
+resultBlank : ResultNamedRecord
+resultBlank =
+    { tag = 0, okValue = "", errValue = "", extra = 0 }
+
+
+resultValue : ResultNamedRecord
+resultValue =
+    { tag = 0, okValue = "kept", errValue = "ordinary data", extra = 42 }
+
+
+resultCodec : Codec ResultNamedRecord
+resultCodec =
+    Codec.auto resultBlank
+
+type alias AdtNamedRecord =
+    { skyName : String
+    , fields : List Int
+    , extra : String
+    }
+
+
+adtBlank : AdtNamedRecord
+adtBlank =
+    { skyName = "", fields = [], extra = "" }
+
+
+adtValue : AdtNamedRecord
+adtValue =
+    { skyName = "Report", fields = [ 1, 2 ], extra = "kept" }
+
+
+adtCodec : Codec AdtNamedRecord
+adtCodec =
+    Codec.auto adtBlank
+
+type alias ActualMaybeRecord =
+    { id : Int
+    , note : Maybe String
+    }
+
+
+actualMaybeBlank : ActualMaybeRecord
+actualMaybeBlank =
+    { id = 0, note = Nothing }
+
+
+actualMaybeCodec : Codec ActualMaybeRecord
+actualMaybeCodec =
+    Codec.auto actualMaybeBlank
+
+
+actualResult : Result Error Int
+actualResult =
+    Ok 41
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "tag and justValue are ordinary record fields at tag 1"
+          (\_ ->
+              Test.equal
+                  True
+                  (String.contains
+                      "\"extra\""
+                      (Codec.toJson maybeCodec maybeValue)))
+    , Test.test
+          "tag and justValue are ordinary record fields at tag 0"
+          (\_ ->
+              Test.equal
+                  True
+                  (String.contains
+                      "\"extra\""
+                      (Codec.toJson maybeCodec { maybeValue | tag = 0 })))
+    , Test.test
+          "Maybe-named record keeps all data on decode"
+          (\_ ->
+              Test.equal
+                  (Ok [ "keep" ])
+                  (Codec.fromJson maybeCodec (Codec.toJson maybeCodec maybeValue)
+                      |> Result.map .extra))
+    , Test.test
+          "Result-named record keeps its extra field"
+          (\_ ->
+              Test.equal
+                  (Ok 42)
+                  (Codec.fromJson
+                      resultCodec
+                      (Codec.toJson resultCodec resultValue)
+                      |> Result.map .extra))
+    , Test.test
+          "skyName and fields remain record data"
+          (\_ ->
+              Test.equal
+                  (Ok [ 1, 2 ])
+                  (Codec.fromJson adtCodec (Codec.toJson adtCodec adtValue)
+                      |> Result.map .fields))
+    , Test.test
+          "ADT-named record keeps its extra field"
+          (\_ ->
+              Test.equal
+                  (Ok "kept")
+                  (Codec.fromJson adtCodec (Codec.toJson adtCodec adtValue)
+                      |> Result.map .extra))
+    , Test.test
+          "real Maybe still round-trips"
+          (\_ ->
+              Test.equal
+                  (Ok (Just "kept"))
+                  (Codec.fromJson
+                      actualMaybeCodec
+                      (Codec.toJson
+                          actualMaybeCodec
+                          { id = 1, note = Just "kept" })
+                      |> Result.map .note))
+    , Test.test
+          "real Result still maps its payload"
+          (\_ ->
+              Test.equal (Ok 42) (Result.map (\value -> value + 1) actualResult))
+    ]
+
+
+main =
+    Test.runMain tests

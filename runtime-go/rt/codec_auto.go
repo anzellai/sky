@@ -78,24 +78,6 @@ func skyTagType(f reflect.StructField) string {
 	return ""
 }
 
-func isSkyMaybeType(t reflect.Type) bool {
-	if t.Kind() != reflect.Struct {
-		return false
-	}
-	_, hasTag := t.FieldByName("Tag")
-	_, hasJust := t.FieldByName("JustValue")
-	return hasTag && hasJust
-}
-
-func isSkyAdtType(t reflect.Type) bool {
-	if t.Kind() != reflect.Struct {
-		return false
-	}
-	_, hasName := t.FieldByName("SkyName")
-	_, hasFields := t.FieldByName("Fields")
-	return hasName && hasFields
-}
-
 func isRecordType(t reflect.Type) bool {
 	return t.Kind() == reflect.Struct && !isSkyMaybeType(t) && !isSkyAdtType(t)
 }

@@ -182,7 +182,7 @@ func islandResultParts(r any) (tag int, okV, errV any, isResult bool) {
 		return 0, nil, nil, false
 	}
 	rv := reflect.ValueOf(r)
-	if rv.Kind() != reflect.Struct {
+	if !isSkyResultType(rv.Type()) {
 		return 0, nil, nil, false
 	}
 	t, o, e := rv.FieldByName("Tag"), rv.FieldByName("OkValue"), rv.FieldByName("ErrValue")

@@ -124,7 +124,7 @@ func ErrDomain(kindTag int, msg string, f DomainFailure) any {
 // any element type, a list of typed tuples), through reflection.
 func DomainOf(v any) (DomainFailure, bool) {
 	ev := reflect.ValueOf(derefPointer(unwrapAny(v)))
-	if !ev.IsValid() || ev.Kind() != reflect.Struct {
+	if !ev.IsValid() || !isSkyAdtType(ev.Type()) {
 		return DomainFailure{}, false
 	}
 	if n := ev.FieldByName("SkyName"); !n.IsValid() || n.Kind() != reflect.String || n.String() != "Error" {
@@ -147,7 +147,7 @@ func DomainOf(v any) (DomainFailure, bool) {
 		return DomainFailure{}, false
 	}
 	adt := reflectElem(inner)
-	if !adt.IsValid() || adt.Kind() != reflect.Struct {
+	if !adt.IsValid() || !isSkyAdtType(adt.Type()) {
 		return DomainFailure{}, false
 	}
 	if n := adt.FieldByName("SkyName"); !n.IsValid() || n.String() != errorDetailsDomainCtr {
@@ -162,7 +162,7 @@ func DomainOf(v any) (DomainFailure, bool) {
 
 func domainFailureFromSky(v reflect.Value) (DomainFailure, bool) {
 	df := reflectElem(v)
-	if !df.IsValid() || df.Kind() != reflect.Struct {
+	if !df.IsValid() || !isSkyAdtType(df.Type()) {
 		return DomainFailure{}, false
 	}
 	fs := df.FieldByName("Fields")
@@ -213,7 +213,7 @@ func reflectElem(v reflect.Value) reflect.Value {
 // reflectMaybe reads a SkyMaybe of any element type: (value, true) for Just.
 func reflectMaybe(v reflect.Value) (reflect.Value, bool) {
 	m := reflectElem(v)
-	if !m.IsValid() || m.Kind() != reflect.Struct {
+	if !m.IsValid() || !isSkyMaybeType(m.Type()) {
 		return reflect.Value{}, false
 	}
 	tag := m.FieldByName("Tag")
