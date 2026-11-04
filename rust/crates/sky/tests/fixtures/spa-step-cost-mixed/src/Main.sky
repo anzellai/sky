@@ -13,8 +13,9 @@ import Std.App as App
 import Std.Ui as Ui exposing (Element)
 import Std.Ui.Input as Input
 
-type Page = Home String | Detail Int
-
+type Page
+    = Home String
+    | Detail Int
 
 type alias Session =
     { userId : String }
@@ -126,9 +127,15 @@ view : Model -> Element Msg
 view model =
     Ui.column
         [ Ui.spacing 8 ]
-        [ row "page" (case model.page of
-              Home label -> label
-              Detail number -> String.fromInt number)
+        [ row
+              "page"
+              (case model.page of
+
+                  Home label ->
+                      label
+
+                  Detail number ->
+                      String.fromInt number)
         , row "items" (String.fromInt (List.length model.items))
         , row "echo" model.text
         , row "completed" (String.fromInt model.completed)
