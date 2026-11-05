@@ -15,6 +15,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -234,44 +237,106 @@ func TestAiTierLoadsAVersionOnDemandAndEvictsTheLeastRecentlyUsed(t *testing.T) 
 // request failed" assertions must go red.
 func TestAiTierHotLoadsAPromotionWithoutDroppingARequest(t *testing.T) {
 	n := 0
-	engine := startFakeVLLM(t, "-delay-ms", "150")
+	engine := startFakeVLLM(t)
+	target, err := url.Parse(engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	arrived := make(chan string, 20)
+	releaseV1, releaseV2 := make(chan struct{}), make(chan struct{})
+	var onceV1, onceV2 sync.Once
+	releaseOld := func() { onceV1.Do(func() { close(releaseV1) }) }
+	releaseNew := func() { onceV2.Do(func() { close(releaseV2) }) }
+	defer releaseOld()
+	defer releaseNew()
+	// Hold actual tier requests at the engine boundary, rather than assuming
+	// scheduler progress from a delay. Tier leases remain in flight throughout
+	// promotion and until their explicit generation barrier is released.
+	gated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/chat/completions" {
+			body, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				http.Error(w, "read request", 400)
+				return
+			}
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+			var request struct {
+				Model string `json:"model"`
+			}
+			if json.Unmarshal(body, &request) != nil {
+				http.Error(w, "request JSON", 400)
+				return
+			}
+			arrived <- request.Model
+			release := releaseV1
+			if request.Model == "support-v2" {
+				release = releaseV2
+			}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer func() { releaseOld(); releaseNew(); gated.Close() }()
 	reg := newFakeRegistry(t)
 	reg.point("support@prod", 1)
-	tier, url := startTier(t, engine, reg, nil)
-	waitReady(t, url)
-
-	var wg sync.WaitGroup
+	tier, tierURL := startTier(t, gated.URL, reg, nil)
+	waitReady(t, tierURL)
+	var oldRequests, newRequests sync.WaitGroup
 	var failures int32
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			time.Sleep(time.Duration(i*10) * time.Millisecond)
-			model := "support-v1"
-			if i >= 10 {
-				model = "support-v2"
-			}
-			if st, body := tierChat(t, url, "tier-token", model); st != 200 {
-				atomic.AddInt32(&failures, 1)
-				t.Logf("request %d (%s): %d %s", i, model, st, body)
-			}
-		}(i)
+	start := func(model string, wg *sync.WaitGroup) {
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if status, body := tierChat(t, tierURL, "tier-token", model); status != 200 || !strings.Contains(body, "echo:"+model) {
+					atomic.AddInt32(&failures, 1)
+					t.Logf("request for %s failed: status %d", model, status)
+				}
+			}()
+		}
 	}
-	time.Sleep(30 * time.Millisecond)
+	admitted := func(model string) {
+		timer := time.NewTimer(10 * time.Second)
+		defer timer.Stop()
+		for i := 0; i < 10; i++ {
+			select {
+			case got := <-arrived:
+				if got != model {
+					t.Fatalf("engine admission: got %s, want %s", got, model)
+				}
+			case <-timer.C:
+				t.Fatalf("requests for %s did not reach their engine barrier", model)
+			}
+		}
+	}
+	start("support-v1", &oldRequests)
+	admitted("support-v1")
 	reg.point("support@prod", 2)
 	if err := tier.refreshAliases(); err != nil {
 		t.Fatal(err)
 	}
 	n++
-	stats := vllmStats(t, engine)
-	if !strings.Contains(fmt.Sprint(stats["loaded"]), "support-v1") {
-		t.Fatalf("v1 is unloaded while its requests run: %v", stats["loaded"])
+	if loaded := fmt.Sprint(vllmStats(t, engine)["loaded"]); !strings.Contains(loaded, "support-v1") || !strings.Contains(loaded, "support-v2") {
+		t.Fatalf("promotion must retain in-flight v1 and load v2: %s", loaded)
+	}
+	start("support-v2", &newRequests)
+	admitted("support-v2")
+	releaseNew()
+	newRequests.Wait()
+	// Completion of the new generation must not retire the still-held old one.
+	if loaded := fmt.Sprint(vllmStats(t, engine)["loaded"]); !strings.Contains(loaded, "support-v1") {
+		t.Fatalf("new completions unloaded in-flight v1: %s", loaded)
 	}
 	n++
-	wg.Wait()
+	releaseOld()
+	oldRequests.Wait()
 	tier.drain()
-	time.Sleep(100 * time.Millisecond)
-	stats = vllmStats(t, engine)
+	stats := vllmStats(t, engine)
 	if failures != 0 || stats["broken"].(float64) != 0 {
 		t.Fatalf("%d requests failed, %v saw their adapter vanish", failures, stats["broken"])
 	}
@@ -280,8 +345,8 @@ func TestAiTierHotLoadsAPromotionWithoutDroppingARequest(t *testing.T) {
 		t.Fatalf("after the drain only v2 is loaded: %s", loaded)
 	}
 	n++
-	if st, _ := tierChat(t, url, "tier-token", "support-v2"); st != 200 {
-		t.Fatalf("v2 serves")
+	if status, _ := tierChat(t, tierURL, "tier-token", "support-v2"); status != 200 {
+		t.Fatal("v2 serves")
 	}
 	n++
 	fmt.Printf("ASSERTIONS: %d\n", n)

@@ -763,6 +763,9 @@ func (t *aiTier) proxy(w http.ResponseWriter, r *http.Request, body []byte, mode
 			aiServeError(w, 503, "unavailable", "`"+model+"` was unloaded; retry")
 			return
 		}
+		// A resident entry is published before its engine load finishes. Reserve
+		// this request before waiting, so drain/eviction cannot race its lease.
+		loading := res.loading
 		res.inflight++
 		res.lastUsed = time.Now()
 		t.mu.Unlock()
@@ -772,6 +775,21 @@ func (t *aiTier) proxy(w http.ResponseWriter, r *http.Request, body []byte, mode
 			t.mu.Unlock()
 			t.drain()
 		}()
+		if loading != nil {
+			select {
+			case <-loading:
+				t.mu.Lock()
+				loadErr := res.loadErr
+				t.mu.Unlock()
+				if loadErr != nil {
+					t.count(model, "load-failed")
+					aiServeError(w, 503, "unavailable", "cannot load `"+model+"`")
+					return
+				}
+			case <-r.Context().Done():
+				return
+			}
+		}
 	}
 	var rdr io.Reader
 	if body != nil {
