@@ -96,8 +96,8 @@ needs_compiler() {
 spa_e2e() {
     add 60 "e2e: Sky.Spa large-model step cost and reference semantics" "scripts/spa-step-cost-e2e.sh"
     add 60 "e2e: Sky.Spa mixed-model step cost and reference semantics" "scripts/spa-step-cost-mixed-e2e.sh"
-    add 60 "e2e: Sky.Spa typed Dict step cost and reference semantics" "scripts/spa-step-cost-collections-e2e.sh --collection dict"
-    add 60 "e2e: Sky.Spa tuple-list step cost and reference semantics" "scripts/spa-step-cost-collections-e2e.sh --collection tuple"
+    add 60 "e2e: Sky.Spa typed Dict step cost and reference semantics" "scripts/spa-step-cost-dict-e2e.sh"
+    add 60 "e2e: Sky.Spa tuple-list step cost and reference semantics" "scripts/spa-step-cost-tuple-e2e.sh"
     add 60 "e2e: Sky.Spa restore" "scripts/spa-restore-e2e.sh"
     add 60 "e2e: Sky.Spa stale handlers" "scripts/spa-stale-handler-e2e.sh"
     add 60 "e2e: Sky.Spa RPC consistency" "scripts/spa-rpc-consistency-e2e.sh"
