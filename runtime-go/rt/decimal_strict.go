@@ -196,7 +196,7 @@ func moneyFromJSONRaw(raw any) (SkyADT, error) {
 	if err != nil {
 		return SkyADT{}, fmt.Errorf("Money currency: %v", err)
 	}
-	return SkyADT{Tag: 0, SkyName: "Money", Fields: []any{decimalBox(amt), sqlCodeToCurrency(code)}}, nil
+	return SkyADT{SkyOwner: skyMoneyOwner, Tag: 0, SkyName: "Money", Fields: []any{decimalBox(amt), sqlCodeToCurrency(code)}}, nil
 }
 
 // jsonObjectMap reads a JSON object as a map, from a parsed document
@@ -238,7 +238,7 @@ func moneyFromText(s string) (SkyADT, error) {
 	if err != nil {
 		return SkyADT{}, fmt.Errorf("Money currency: %v", err)
 	}
-	return SkyADT{Tag: 0, SkyName: "Money", Fields: []any{decimalBox(amt), sqlCodeToCurrency(code)}}, nil
+	return SkyADT{SkyOwner: skyMoneyOwner, Tag: 0, SkyName: "Money", Fields: []any{decimalBox(amt), sqlCodeToCurrency(code)}}, nil
 }
 
 func init() {

@@ -1,0 +1,129 @@
+module CodecNominalBuiltinCollisionTest exposing (main, tests)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Test as Test exposing (Test)
+import Std.Codec as Codec
+import Std.Decimal as Decimal
+import Std.Money as RealMoney
+import CodecNominalBag as Bag
+import CodecNominalAliases as Aliases
+
+-- User Money has the same constructor spelling as the genuine builtin.
+-- Custom __Internal constructors remain opaque to Codec.auto; a separate
+-- project rejection test preserves that checker boundary. Runtime/Gob tests
+-- cover ambiguous legacy Decimal__Internal roots without bypassing the checker.
+type Price
+    = Money String Int
+
+
+sealedCodec =
+    Codec.auto { price = Money "" 0 }
+
+
+-- Auto's writer is usable for an erased union; its reader remains a builder
+-- problem because its payload type information was erased. This test must
+-- not claim to add erased-union decoding support.
+bagCodec =
+    Codec.auto { price = Bag.Money "" 0 }
+
+-- Real transparent aliases must expand to the resolved builtin parents in
+-- actual emitted field metadata, including cross-module alias chains.
+type alias LocalAmount =
+    Aliases.AmountChain
+
+type alias AliasRow =
+    { amount : LocalAmount
+    , exact : Aliases.Exact
+    , currency : Aliases.Coin
+    , coins : Dict.Dict String Aliases.Coin
+    , nested : Aliases.Nested
+    }
+
+
+aliasBlank : AliasRow
+aliasBlank =
+    { amount = RealMoney.zero RealMoney.GBP
+    , exact = Decimal.zero
+    , currency = RealMoney.GBP
+    , coins = Dict.empty
+    , nested = []
+    }
+
+
+aliasValue : AliasRow
+aliasValue =
+    { aliasBlank
+        | exact = Decimal.one
+        , coins = Dict.fromList [ ( "home", RealMoney.GBP ) ]
+        , nested = [ Just ( Decimal.one, RealMoney.GBP ) ]
+    }
+
+
+aliasCodec : Codec.Codec AliasRow
+aliasCodec =
+    Codec.auto aliasBlank
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "sealed user Money retains all tagged fields"
+          (\_ ->
+              Test.equal
+                  "{\"price\":{\"tag\":\"Money\",\"v0\":\"keep\",\"v1\":7}}"
+                  (Codec.toJson sealedCodec { price = Money "keep" 7 }))
+    , Test.test
+          "sealed user Money constructor spelling round-trips"
+          (\_ ->
+              Test.equal
+                  (Ok (Money "keep" 7))
+                  (Codec.fromJson
+                      sealedCodec
+                      (Codec.toJson sealedCodec { price = Money "keep" 7 })
+                      |> Result.map .price))
+    , Test.test
+          "ambiguous user bags retain all tagged fields"
+          (\_ ->
+              Test.equal
+                  "{\"price\":{\"tag\":\"Money\",\"v0\":\"keep\",\"v1\":7}}"
+                  (Codec.toJson bagCodec { price = Bag.Money "keep" 7 }))
+    , Test.test
+          "user Money constructor spelling does not acquire a builtin exact schema"
+          (\_ -> Test.equal False (Codec.jsonSchema sealedCodec).exact)
+    , Test.test
+          "transparent builtin aliases retain derivable actual metadata"
+          (\_ -> Test.equal [] (Codec.problems aliasCodec))
+    , Test.test
+          "transparent alias containers retain every partial write check"
+          (\_ -> Test.equal 5 (List.length (Codec.writeChecks aliasCodec)))
+    , Test.test
+          "direct and nested builtin aliases round-trip canonical JSON"
+          (\_ ->
+              let
+                  encoded = Codec.toJson aliasCodec aliasValue
+              in
+                  Test.equal
+                      (Ok encoded)
+                      (Codec.fromJson aliasCodec encoded
+                          |> Result.map (Codec.toJson aliasCodec)))
+    , Test.test
+          "genuine Decimal and Money keep canonical builtin formatting"
+          (\_ ->
+              Test.equal
+                  "{\"price\":{\"amount\":\"0\",\"currency\":\"GBP\"},\"qty\":\"1\"}"
+                  (Codec.toJson
+                      (Codec.auto
+                          { price = RealMoney.zero RealMoney.GBP
+                          , qty = Decimal.zero
+                          })
+                      { price = RealMoney.zero RealMoney.GBP
+                      , qty = Decimal.one
+                      }))
+    ]
+
+
+main =
+    Test.runMain tests

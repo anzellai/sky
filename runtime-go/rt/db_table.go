@@ -87,7 +87,7 @@ func dbStructType(sample any) (reflect.Type, bool) {
 	if rv.Kind() == reflect.Ptr {
 		rv = rv.Elem()
 	}
-	if rv.Kind() != reflect.Struct {
+	if rv.Kind() != reflect.Struct || isSkyAdtType(rv.Type()) {
 		return nil, false
 	}
 	return rv.Type(), true

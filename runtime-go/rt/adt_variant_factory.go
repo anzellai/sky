@@ -154,6 +154,7 @@ func adtVariantZeros(adtName string) []any {
 // localTag is that per-app fallback; pass -1 if unavailable.
 func BuildAdtFromWire(adtName, msgName string, rawArgs []json.RawMessage, localTag int) (any, bool) {
 	tag := -1
+	owner := ""
 	if adtName != "" {
 		// Variant factory (v0.17 sealed-interface) takes priority.
 		if factory, found := LookupAdtVariant(adtName, msgName); found {
@@ -162,6 +163,7 @@ func BuildAdtFromWire(adtName, msgName string, rawArgs []json.RawMessage, localT
 		// Legacy SkyADT path, scoped to the same ADT.
 		if t, ok := LookupAdtTag(adtName, msgName); ok {
 			tag = t
+			owner = lookupAdtOwner(adtName)
 		}
 	}
 	if tag < 0 && localTag >= 0 {
@@ -177,7 +179,7 @@ func BuildAdtFromWire(adtName, msgName string, rawArgs []json.RawMessage, localT
 			fields = append(fields, v)
 		}
 	}
-	return SkyADT{Tag: tag, SkyName: msgName, Fields: fields}, true
+	return SkyADT{SkyOwner: owner, Tag: tag, SkyName: msgName, Fields: fields}, true
 }
 
 // IsFinalisedAdt reports whether msg is already a constructed ADT
@@ -192,6 +194,88 @@ func IsFinalisedAdt(msg any) bool {
 		return true
 	}
 	if _, ok := msg.(SkyVariant); ok {
+		return true
+	}
+	return false
+}
+
+// Owner registration is explicit because legacy ADTs alias rt.SkyADT: their
+// Go reflection type cannot retain the declaring Sky type. A bare wire name
+// or an unknown/localTag fallback never authorises provenance recovery.
+var adtOwnerRegistry = make(map[string]string)
+var adtOwnerRegistryMu sync.RWMutex
+
+func RegisterAdtOwner(adtName, declaredName, owner string) {
+	if adtName == "" || declaredName == "" || owner == "" {
+		panic("rt.RegisterAdtOwner: empty ADT identity")
+	}
+	adtOwnerRegistryMu.Lock()
+	defer adtOwnerRegistryMu.Unlock()
+	if previous, ok := adtOwnerRegistry[adtName]; ok && previous != owner {
+		panic("rt.RegisterAdtOwner: conflicting resolved parent for " + adtName)
+	}
+	registerCodecDeclaredOwner(declaredName, owner)
+	adtOwnerRegistry[adtName] = owner
+}
+
+func lookupAdtOwner(adtName string) string {
+	adtOwnerRegistryMu.RLock()
+	defer adtOwnerRegistryMu.RUnlock()
+	return adtOwnerRegistry[adtName]
+}
+
+// A declared Go alias is trusted only through source-granted compiler
+// registration, including opaque aliases whose ordinary ctor is never called.
+func codecAutoDeclaredOwner(declared string) string {
+	return codecAutoDeclaredOwnerAt(declared, nil)
+}
+
+func codecAutoDeclaredOwnerAt(declared string, snapshot *codecEnumRegistrySnapshot) string {
+	if codecAutoDeclaredOwnerPrimitive(declared) {
+		return ""
+	}
+	if snapshot == nil {
+		snapshot = codecEnumRegistry()
+	}
+	return snapshot.owners[declared]
+}
+
+// Owners participate in the SAME immutable metadata epoch as enum names.
+// A tagged closed scalar can mention an arbitrary alias; registering that
+// alias may change its encoding to a nominal-type failure. Both eager cache
+// reuse and deferred reconstruction therefore require this dependency.
+func registerCodecDeclaredOwner(declared, owner string) {
+	enumRegistryWriter.Lock()
+	defer enumRegistryWriter.Unlock()
+	previous := codecEnumRegistry()
+	if old, ok := previous.owners[declared]; ok {
+		if old != owner {
+			panic("rt.RegisterAdtOwner: conflicting declared parent for " + declared)
+		}
+		return
+	}
+	next := &codecEnumRegistrySnapshot{names: previous.names, owners: make(map[string]string, len(previous.owners)+1)}
+	for key, value := range previous.owners {
+		next.owners[key] = value
+	}
+	next.owners[declared] = owner
+	enumRegistry.Store(next)
+}
+
+func codecAutoDeclaredReadable(declared string) bool {
+	switch codecAutoDeclaredOwner(declared) {
+	case skyDecimalOwner, skyMoneyOwner, skyCurrencyOwner:
+		return true
+	default:
+		return false
+	}
+}
+
+// This is exactly the original no-owner declaration domain, shared with
+// invocation-local memo lookup so caching never widens provenance authority.
+func codecAutoDeclaredOwnerPrimitive(declared string) bool {
+	switch declared {
+	case "", "any", "int", "float64", "string", "bool", "rune", "struct{}":
 		return true
 	}
 	return false

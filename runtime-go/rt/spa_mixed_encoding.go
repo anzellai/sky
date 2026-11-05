@@ -90,7 +90,6 @@ func spaMixedRoot(t reflect.Type) spaMixedRootDescriptor {
 		t != reflect.TypeOf(SkySet{}) && t != reflect.TypeOf(JsonValue{}) && !codecOpaqueStruct(t) {
 		d.valid = true
 		keys := map[string]bool{}
-		states := map[reflect.Type]uint8{}
 		for i := 0; i < t.NumField(); i++ {
 			f := t.Field(i)
 			key := skyColKey(f, true)
@@ -102,7 +101,7 @@ func spaMixedRoot(t reflect.Type) spaMixedRootDescriptor {
 			keyJSON, _ := json.Marshal(key)
 			d.fields = append(d.fields, spaMixedFieldDescriptor{
 				index: i, key: key, keyJSON: string(keyJSON), declared: skyTagType(f),
-				closed: spaProjectionTypeClosed(f.Type, states, 0),
+				closed: spaClosedTypeEligible(f.Type),
 			})
 		}
 	}

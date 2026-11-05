@@ -1,0 +1,3 @@
+module CodecNominalRight exposing (Token)
+
+type alias Token = { label : String }

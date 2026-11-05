@@ -56,7 +56,7 @@ func TestEqDecimalAndJsonValueCompareTheValue(t *testing.T) {
 	// A Money holds its amount as a Decimal: equal amounts in one currency are
 	// equal however they are written.
 	m := func(s string) any {
-		return SkyADT{Tag: 0, SkyName: "Money", Fields: []any{dec(s), sqlCodeToCurrency("GBP")}}
+		return canonicalMoneyFixture(decimal.RequireFromString(s), "GBP")
 	}
 	if !deepEq(m("1.50"), m("1.5")) {
 		t.Errorf("Money 1.50 GBP == Money 1.5 GBP is False")

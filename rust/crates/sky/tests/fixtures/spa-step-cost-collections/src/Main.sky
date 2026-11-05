@@ -1,0 +1,345 @@
+module Main exposing (main)
+
+-- Public synthetic fixture. Data size and visible row count vary independently.
+-- Ignored keys return the same model. Dispatch starts a real asynchronous task.
+-- No external integration, credentials or private application data are used.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+
+type Page
+    = Home String
+    | Detail Int
+
+type alias Session =
+    { userId : String }
+
+type alias ProductForm =
+    { brand : String }
+
+type alias Editor =
+    { products : List String
+    , lookup : Dict String String
+    , pairs : List ( Int, String )
+    , productForm : ProductForm
+    }
+
+type alias Model =
+    { page : Page
+    , session : Maybe Session
+    , pressureA : List String
+    , pressureB : List String
+    , editor : Maybe Editor
+    , collection : String
+    , text : String
+    , completed : Int
+    , choice : Int
+    , selected : Int
+    , visibleRows : Int
+    }
+
+type Msg
+    = IgnoredKey
+    | Type String
+    | Load Int
+    | ChooseCollection String
+    | NoopCollection
+    | ChangeCollection
+    | AddPressure
+    | DropPressure
+    | ShowRows Int
+    | Dispatch
+    | Done (Result Error ())
+    | Advance
+    | Select Int
+    | SignIn
+    | SignOut
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = Home "synthetic"
+      , session = Nothing
+      , pressureA = []
+      , pressureB = []
+      , editor = Nothing
+      , collection = "dict"
+      , text = ""
+      , completed = 0
+      , choice = 0
+      , selected = -1
+      , visibleRows = 0
+      }
+    , Cmd.none
+    )
+
+
+withBrand : String -> Editor -> Editor
+withBrand value editor =
+    let
+        form = editor.productForm
+    in
+        { editor | productForm = { form | brand = value } }
+
+
+editorBrand : Maybe Editor -> String
+editorBrand editor =
+    case editor of
+
+        Nothing ->
+            ""
+
+        Just value ->
+            value.productForm.brand
+
+
+editorCount : Maybe Editor -> Int
+editorCount editor =
+    case editor of
+
+        Nothing ->
+            0
+
+        Just value ->
+            List.length value.products + Dict.size value.lookup
+                + List.length value.pairs
+
+
+syntheticValue : String
+syntheticValue =
+    "x"
+
+
+makePair : Int -> ( Int, String )
+makePair n =
+    ( n, syntheticValue )
+
+
+makeBinding : Int -> ( String, String )
+makeBinding n =
+    ( "key-" ++ String.fromInt n, syntheticValue )
+
+
+loadEditor : String -> Int -> String -> Editor
+loadEditor collection count brand =
+    { products = []
+    , lookup =
+        if collection == "dict" then
+            Dict.fromList (List.map makeBinding (List.range 1 count))
+
+        else
+            Dict.empty
+    , pairs =
+        if collection == "tuple" then
+            List.map makePair (List.range 1 count)
+
+        else
+            []
+    , productForm = { brand = brand }
+    }
+
+
+noopCollection : Editor -> Editor
+noopCollection editor =
+    { editor | lookup = Dict.remove "absent-key" editor.lookup }
+
+
+changeCollection : Editor -> Editor
+changeCollection editor =
+    if Dict.isEmpty editor.lookup then
+        { editor | pairs = ( 1, "changed" ) :: List.drop 1 editor.pairs }
+
+    else
+        { editor | lookup = Dict.insert "key-1" "changed" editor.lookup }
+
+
+editorSample : Maybe Editor -> String
+editorSample editor =
+    case editor of
+
+        Nothing ->
+            ""
+
+        Just value ->
+            if Dict.isEmpty value.lookup then
+                case value.pairs of
+
+                    ( _, sample ) :: _ ->
+                        sample
+
+                    [] ->
+                        ""
+
+            else
+                Maybe.withDefault "" (Dict.get "key-1" value.lookup)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        IgnoredKey ->
+            ( model, Cmd.none )
+
+        Type value ->
+            ( { model
+                  | text = value
+                  , editor = Maybe.map (withBrand value) model.editor
+              }
+            , Cmd.none
+            )
+
+        ChooseCollection collection ->
+            ( { model | collection = collection, editor = Nothing }, Cmd.none )
+
+        Load count ->
+            ( { model
+                  | editor = Just (loadEditor model.collection count model.text)
+              }
+            , Cmd.none
+            )
+
+        NoopCollection ->
+            ( { model | editor = Maybe.map noopCollection model.editor }
+            , Cmd.none
+            )
+
+        ChangeCollection ->
+            ( { model | editor = Maybe.map changeCollection model.editor }
+            , Cmd.none
+            )
+
+        AddPressure ->
+            ( { model
+                  | pressureA = [ String.repeat 1000000 "a" ]
+                  , pressureB = [ String.repeat 480000 "b" ]
+              }
+            , Cmd.none
+            )
+
+        DropPressure ->
+            ( { model | pressureA = [], pressureB = [] }, Cmd.none )
+
+        ShowRows count ->
+            ( { model | visibleRows = count }, Cmd.none )
+
+        Dispatch ->
+            ( model, Cmd.perform (Time.sleep 300) Done )
+
+        Done _ ->
+            ( { model | completed = model.completed + 1 }, Cmd.none )
+
+        Advance ->
+            ( { model | choice = model.choice + 1 }, Cmd.none )
+
+        Select value ->
+            ( { model | selected = value }, Cmd.none )
+
+        SignIn ->
+            case Task.run (Time.now ()) of
+
+                Ok _ ->
+                    ( { model
+                          | session = Just { userId = "synthetic-fixture" }
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+        SignOut ->
+            ( { model | session = Nothing }, Cmd.none )
+
+
+button : String -> String -> Msg -> Element Msg
+button id label msg =
+    Ui.button
+        [ Ui.htmlAttribute "id" id ]
+        { onPress = Just msg, label = Ui.text label }
+
+
+row : String -> String -> Element Msg
+row id value =
+    Ui.el [ Ui.htmlAttribute "id" id ] (Ui.text value)
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 8 ]
+        [ row
+              "page"
+              (case model.page of
+
+                  Home label ->
+                      label
+
+                  Detail number ->
+                      String.fromInt number)
+        , row "collection" model.collection
+        , row "sample" (editorSample model.editor)
+        , row "items" (String.fromInt (editorCount model.editor))
+        , row "echo" model.text
+        , row "brand" (editorBrand model.editor)
+        , row "completed" (String.fromInt model.completed)
+        , row "selected" (String.fromInt model.selected)
+        , row
+              "identity"
+              (case model.session of
+
+                  Just _ ->
+                      "signed-in"
+
+                  Nothing ->
+                      "anonymous")
+        , Input.text
+              [ Ui.htmlAttribute "id" "typing", Ui.onKeyDown IgnoredKey ]
+              { onChange = Type
+              , text = model.text
+              , placeholder = Nothing
+              , label = Input.labelHidden "Synthetic typing input"
+              }
+        , button "dict" "Dictionary mode" (ChooseCollection "dict")
+        , button "tuple" "Tuple mode" (ChooseCollection "tuple")
+        , button "noop-collection" "Absent dictionary removal" NoopCollection
+        , button
+              "change-collection"
+              "Change one collection entry"
+              ChangeCollection
+        , button "small" "1K entries" (Load 1000)
+        , button "large" "10K entries" (Load 10000)
+        , button "pressure" "Add unrelated data" AddPressure
+        , button "unpressure" "Remove unrelated data" DropPressure
+        , button "huge" "100K entries" (Load 100000)
+        , button "rows" "200 visible rows" (ShowRows 200)
+        , button "dispatch" "Start async work" Dispatch
+        , button "advance" "Advance choice" Advance
+        , button "select" "Select current choice" (Select model.choice)
+        , button "signin" "Synthetic sign in" SignIn
+        , button "signout" "Sign out" SignOut
+        , Ui.column
+              []
+              (List.map
+                  (\n -> Ui.text ("visible row " ++ String.fromInt n))
+                  (List.range 1 model.visibleRows))
+        ]
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound (Ui.text "Not found"))

@@ -4546,6 +4546,11 @@ type SkyADT struct {
 	Tag     int
 	SkyName string
 	Fields  []any
+	// SkyOwner is the resolved declaring Sky module and type, emitted by the
+	// compiler. It is provenance, never a constructor-name or Go-name guess.
+	// Gob preserves it; old Gob values decode with an empty owner. JSON wire
+	// input cannot supply it: reconstruction uses the expected ADT registry.
+	SkyOwner string `json:"-"`
 }
 
 // adtTagRegistry maps (owning ADT, constructor) → Tag for

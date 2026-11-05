@@ -170,18 +170,8 @@ func codecAutoEncodeValAt(rv reflect.Value, snake bool, snapshot *codecEnumRegis
 			if codecIsHandleADT(rv.Interface()) {
 				return nil, codecUnencodableError("the runtime handle " + name)
 			}
-			switch name {
-			// Std.Decimal — shopspring-backed; its canonical string round-trips.
-			case "Decimal__Internal":
-				return decimalUnbox(rv.Interface()).String(), nil
-			// Std.Money — the pinned currency default: {amount, currency}.
-			case "Money":
-				if len(fields) >= 2 {
-					return jsonOrderedObject{
-						keys: []string{"amount", "currency"},
-						vals: []any{decimalUnbox(fields[0]).String(), currencyCodeOf(fields[1])},
-					}, nil
-				}
+			if encoded, handled, err := codecAutoEncodeNominalADTAt(rv, "", snapshot); handled {
+				return encoded, err
 			}
 			// General payload ADT → TAGGED `{"tag":<name>,"v0":…,…}`: nullary arms
 			// are distinguished by tag and the whole thing decodes via
@@ -318,7 +308,7 @@ func Codec_autoDecoderOverrides(snakeArg, decsArg, witness any) any {
 	}
 	return JsonDecoder{run: func(raw any) any {
 		m, ok := raw.(map[string]any)
-		if !ok || wt == nil || wt.Kind() != reflect.Struct {
+		if !ok || wt == nil || wt.Kind() != reflect.Struct || isSkyAdtType(wt) {
 			return Err[any, any](ErrDecode("Codec.autoWith: expected object"))
 		}
 		out := reflect.New(wt).Elem()
@@ -456,19 +446,17 @@ func codecAutoEncodeStruct(rv reflect.Value, snake bool) (any, error) {
 }
 
 func codecAutoEncodeStructAt(rv reflect.Value, snake bool, snapshot *codecEnumRegistrySnapshot) (any, error) {
-	t := rv.Type()
-	obj := jsonOrderedObject{}
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if f.PkgPath != "" { // unexported
-			continue
-		}
-		raw, err := codecAutoEncodeTypedAt(rv.Field(i), skyTagType(f), snake, snapshot)
+	plan := codecAutoFields(rv.Type(), snake)
+	obj := plan.newObject()
+	for ordinal, field := range plan.fields {
+		// Value reads and every canonical conversion stay at their original
+		// declaration-order position; earlier foreign FX may mutate later data.
+		raw, err := codecAutoEncodeTypedAt(rv.Field(field.index), field.declared, snake, snapshot)
 		if err != nil {
 			return nil, err
 		}
-		obj.keys = append(obj.keys, skyColKey(f, snake))
-		obj.vals = append(obj.vals, raw)
+		obj.keys[ordinal] = field.key
+		obj.vals[ordinal] = raw
 	}
 	return obj, nil
 }
@@ -481,12 +469,30 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 }
 
 func codecAutoEncodeTypedAt(rv reflect.Value, declaredType string, snake bool, snapshot *codecEnumRegistrySnapshot) (any, error) {
+	return codecAutoEncodeTypedTupleArgsAt(rv, declaredType, snake, snapshot, nil)
+}
+
+// tupleArgs is private, invocation-local immutable parsing metadata only.
+// The full canonical dispatch prefix remains below and executes per value.
+// Direct callers and supplied mutable TupleAt args retain their original paths.
+func codecAutoEncodeTypedTupleArgsAt(rv reflect.Value, declaredType string, snake bool, snapshot *codecEnumRegistrySnapshot, tupleArgs []string) (any, error) {
+	return codecAutoEncodeTypedMemoAt(rv, declaredType, snake, snapshot, tupleArgs, nil)
+}
+
+func codecAutoEncodeTypedMemoAt(rv reflect.Value, declaredType string, snake bool, snapshot *codecEnumRegistrySnapshot, tupleArgs []string, ownerMemo *codecDeclaredOwnerMemo) (any, error) {
+	if err := codecAutoCheckDeclaredOwner(rv, codecAutoDeclaredOwnerMemoAt(declaredType, snapshot, ownerMemo)); err != nil {
+		return nil, err
+	}
+	if owner := codecAutoDeclaredOwnerMemoAt(declaredType, snapshot, ownerMemo); owner == skyDecimalOwner || owner == skyMoneyOwner {
+		if encoded, handled, err := codecAutoEncodeNominalADTAt(rv, declaredType, snapshot); handled {
+			return encoded, err
+		}
+		return nil, fmt.Errorf("Codec.auto: expected nominal %s", declaredType)
+	}
 	// A Currency is its code (`"GBP"`), as Codec.isoCurrency writes it
 	// (v0.29.2 sixth Judge: the tagged object it was written as never read).
-	if declaredType == "Std_Money_Currency" && rv.IsValid() && rv.CanInterface() {
-		if _, _, _, ok := unwrapADTShape(rv.Interface()); ok {
-			return currencyCodeOf(rv.Interface()), nil
-		}
+	if codecAutoDeclaredOwnerMemoAt(declaredType, snapshot, ownerMemo) == skyCurrencyOwner {
+		return codecAutoCurrencyCodeExpected(rv)
 	}
 	if declaredType != "" {
 		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyDict["); ok && rv.IsValid() && rv.CanInterface() {
@@ -538,13 +544,23 @@ func codecAutoEncodeTypedAt(rv reflect.Value, declaredType string, snake bool, s
 			}
 			return codecAutoJust(codecAutoEncodeTypedAt(rv.FieldByName("JustValue"), strings.TrimSuffix(inner, "]"), snake, snapshot))
 		}
-		if args := codecDeclaredTupleArgs(declaredType); args != nil && rv.Kind() == reflect.Struct && rv.NumField() == len(args) {
+		args := tupleArgs
+		if args == nil {
+			args = codecDeclaredTupleArgs(declaredType)
+		}
+		if args != nil && rv.Kind() == reflect.Struct && !isSkyAdtType(rv.Type()) && rv.NumField() == len(args) {
 			return codecAutoEncodeTupleAt(rv, args, snake, snapshot)
 		}
 		if elem, ok := strings.CutPrefix(declaredType, "[]"); ok && rv.Kind() == reflect.Slice {
+			// elem is a by-value string fixed for this invocation. Parse its
+			// tuple syntax once; no registry state, values or external args
+			// enter this local metadata, and it never escapes to a cache.
+			elemTupleArgs := codecDeclaredTupleArgs(elem)
+			// Only this fixed list-element declaration owns this one-entry memo.
+			elemOwnerMemo := codecDeclaredOwnerMemo{declared: elem}
 			out := make([]any, rv.Len())
 			for i := 0; i < rv.Len(); i++ {
-				e, err := codecAutoEncodeTypedAt(rv.Index(i), elem, snake, snapshot)
+				e, err := codecAutoEncodeTypedMemoAt(rv.Index(i), elem, snake, snapshot, elemTupleArgs, &elemOwnerMemo)
 				if err != nil {
 					return nil, err
 				}
@@ -582,9 +598,9 @@ func sqlCodeToCurrency(code string) SkyADT {
 	// `case` on a Currency matches the Tag. Every named code used to get
 	// Tag 0, so a decoded GBP matched the `USD` arm (and printed as USD).
 	if tag, ok := currencyTags[code]; ok {
-		return SkyADT{Tag: tag, SkyName: code, Fields: []any{}}
+		return SkyADT{SkyOwner: skyCurrencyOwner, Tag: tag, SkyName: code, Fields: []any{}}
 	}
-	return SkyADT{Tag: len(currencyOrder), SkyName: "CurrencyRaw", Fields: []any{code}}
+	return SkyADT{SkyOwner: skyCurrencyOwner, Tag: len(currencyOrder), SkyName: "CurrencyRaw", Fields: []any{code}}
 }
 
 // currencyOrder is the constructor order of `Std.Money.Currency`
@@ -940,12 +956,12 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 			}
 			return out, nil
 		}
-		if args := codecDeclaredTupleArgs(declaredType); args != nil && gt.Kind() == reflect.Struct && gt.NumField() == len(args) {
+		if args := codecDeclaredTupleArgs(declaredType); args != nil && gt.Kind() == reflect.Struct && !isSkyAdtType(gt) && gt.NumField() == len(args) {
 			return codecAutoDecodeTuple(gt, args, raw, snake, w)
 		}
 		// Std.Decimal — a JSON string; rebuild via decimalBox (round-trips the
 		// canonical `Decimal.String()` the encoder emitted).
-		if declaredType == "Std_Decimal_Decimal" {
+		if codecAutoDeclaredOwner(declaredType) == skyDecimalOwner {
 			// The strict grammar (decimal_strict.go): no exponent, at most
 			// 1000 characters, so a request body cannot make String() write
 			// out billions of digits.
@@ -959,7 +975,7 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 		// required (a missing currency used to read as `CurrencyRaw ""`), the
 		// code is read in upper case (`gbp` is GBP), and the amount is a strict
 		// decimal string or an exact JSON number.
-		if declaredType == "Std_Money_Money" {
+		if codecAutoDeclaredOwner(declaredType) == skyMoneyOwner {
 			money, err := moneyFromJSONRaw(raw)
 			if err != nil {
 				return reflect.Value{}, fmt.Errorf("Codec.auto: %v", err)
@@ -971,7 +987,7 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 		// v0.29.2 (sixth Judge) it was written as a tagged object
 		// (`{"tag":"USD"}`) that no read rebuilt; that form is read too, so
 		// a row stored then reads.
-		if declaredType == "Std_Money_Currency" {
+		if codecAutoDeclaredOwner(declaredType) == skyCurrencyOwner {
 			code, ok := raw.(string)
 			if obj, isObj := jsonObjectMap(raw); isObj {
 				tag, _ := obj["tag"].(string)
@@ -998,7 +1014,7 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 	if gt.Kind() == reflect.Interface && gt.NumMethod() > 0 {
 		return codecAutoDecodeVariant(gt, raw, snake)
 	}
-	if isSkyAdtType(gt) && !codecAutoReadable[declaredType] {
+	if isSkyAdtType(gt) && !codecAutoDeclaredReadable(declaredType) {
 		// A stdlib custom type other than Decimal, Money and Currency: its
 		// payload types are erased, so it is a builder problem
 		// (codecAutoTypeProblem) and never read as a guess.
@@ -1074,19 +1090,20 @@ func codecAutoEncodeTuple(rv reflect.Value, args []string, snake bool) (any, err
 }
 
 func codecAutoEncodeTupleAt(rv reflect.Value, args []string, snake bool, snapshot *codecEnumRegistrySnapshot) (any, error) {
-	t := rv.Type()
-	obj := jsonOrderedObject{}
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if f.PkgPath != "" {
-			continue
-		}
-		raw, err := codecAutoEncodeTypedAt(rv.Field(i), args[i], snake, snapshot)
+	if isSkyAdtType(rv.Type()) {
+		return nil, fmt.Errorf("Codec.auto: an ADT is not a tuple")
+	}
+	plan := codecAutoFields(rv.Type(), snake)
+	obj := plan.newObject()
+	for ordinal, field := range plan.fields {
+		// args are invocation data, not schema: read by ORIGINAL physical
+		// index here, after any earlier conversion FX, without prevalidation.
+		raw, err := codecAutoEncodeTypedAt(rv.Field(field.index), args[field.index], snake, snapshot)
 		if err != nil {
 			return nil, err
 		}
-		obj.keys = append(obj.keys, skyColKey(f, snake))
-		obj.vals = append(obj.vals, raw)
+		obj.keys[ordinal] = field.key
+		obj.vals[ordinal] = raw
 	}
 	return obj, nil
 }
@@ -1094,6 +1111,9 @@ func codecAutoEncodeTupleAt(rv reflect.Value, args []string, snake bool, snapsho
 // codecAutoDecodeTuple reads what codecAutoEncodeTuple writes, each element by
 // its declared type.
 func codecAutoDecodeTuple(gt reflect.Type, args []string, raw any, snake bool, w reflect.Value) (reflect.Value, error) {
+	if isSkyAdtType(gt) {
+		return reflect.Value{}, fmt.Errorf("Codec.auto: an ADT is not a tuple")
+	}
 	m, ok := jsonObjectMap(raw)
 	if !ok {
 		return reflect.Value{}, fmt.Errorf("Codec.auto: expected object for a tuple, got %s", jsonValueKind(raw))
@@ -1358,9 +1378,12 @@ func codecRawFloat(raw any) float64 {
 // codecEnumRegistrySnapshot is immutable after publication. The snapshot
 // pointer is also the encoding-cache epoch: a live cache retains its snapshot,
 // so pointer reuse cannot produce an ABA hit and no counter can wrap.
-type codecEnumRegistrySnapshot struct{ names map[string][]string }
+type codecEnumRegistrySnapshot struct {
+	names  map[string][]string
+	owners map[string]string
+}
 
-var emptyCodecEnumRegistry = &codecEnumRegistrySnapshot{names: map[string][]string{}}
+var emptyCodecEnumRegistry = &codecEnumRegistrySnapshot{names: map[string][]string{}, owners: map[string]string{}}
 var enumRegistry atomic.Pointer[codecEnumRegistrySnapshot]
 var enumRegistryWriter sync.Mutex
 
@@ -1385,7 +1408,7 @@ func setEnumRegistration(name string, variants []string, present bool) {
 	enumRegistryWriter.Lock()
 	defer enumRegistryWriter.Unlock()
 	previous := codecEnumRegistry()
-	next := &codecEnumRegistrySnapshot{names: make(map[string][]string, len(previous.names)+1)}
+	next := &codecEnumRegistrySnapshot{names: make(map[string][]string, len(previous.names)+1), owners: previous.owners}
 	for key, names := range previous.names {
 		next.names[key] = names
 	}

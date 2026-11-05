@@ -960,6 +960,15 @@ fn assemble_and_emit_loaded(
             ));
         }
     }
+    for (name, source) in &canonical_stdlib_sources {
+        if matches!(name.as_str(), "Std.Decimal" | "Std.Money") {
+            if let Some(module) = hir::SkyDb::module_by_name(&db, name) {
+                if db.source_file(module) == *source {
+                    cfg.trusted_builtin_adt_modules.insert(module);
+                }
+            }
+        }
+    }
     let config = skydb::BuildConfig::new(&db, cfg);
     let prog = skydb::go_program(&db, entry, config);
     if !prog.entry_ok {

@@ -181,7 +181,7 @@ func spaClosedTypeEligible(t reflect.Type) bool {
 	if cached, ok := spaClosedEligibleTypes.Load(t); ok {
 		return cached.(bool)
 	}
-	eligible := spaProjectionTypeClosed(t, map[reflect.Type]uint8{}, 0) && spaClosedOwnDomain(t, map[reflect.Type]uint8{}, 0)
+	eligible := spaClosedOwnDomain(t, map[reflect.Type]uint8{}, 0)
 	spaClosedEligibleTypes.Store(t, eligible)
 	return eligible
 }
@@ -201,7 +201,21 @@ func spaClosedOwnDomain(t reflect.Type, seen map[reflect.Type]uint8, depth int) 
 		(t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map) {
 		return false
 	}
-	if depth > spaClosedEncodingDepthLimit || spaClosedSpecialStruct(t) {
+	if depth > spaClosedEncodingDepthLimit || t.Implements(spaProjectionVariantType) {
+		return false
+	}
+	if spaClosedNominalDict(t) {
+		return spaClosedOwnDomain(reflect.Zero(t).Interface().(spaClosedDictMarker).spaClosedDictElement(), seen, depth+1)
+	}
+	if spaClosedNominalTuple(t) {
+		for i := 0; i < t.NumField(); i++ {
+			if !spaClosedOwnDomain(t.Field(i).Type, seen, depth+1) {
+				return false
+			}
+		}
+		return true
+	}
+	if spaClosedSpecialStruct(t) {
 		return false
 	}
 	if state := seen[t]; state != 0 {
@@ -227,7 +241,7 @@ func spaClosedOwnDomain(t reflect.Type, seen map[reflect.Type]uint8, depth int) 
 		}
 		for i := 0; i < t.NumField(); i++ {
 			f := t.Field(i)
-			if f.PkgPath != "" || f.Tag.Get("sky") == "" || !spaClosedOwnDomain(f.Type, seen, depth+1) {
+			if f.PkgPath != "" || f.Anonymous || f.Tag.Get("sky") == "" || !spaClosedOwnDomain(f.Type, seen, depth+1) {
 				return false
 			}
 		}
@@ -239,6 +253,9 @@ func spaClosedOwnDomain(t reflect.Type, seen map[reflect.Type]uint8, depth int) 
 
 func spaClosedDispatch(value reflect.Value, declared string) (spaClosedNodeKind, string) {
 	t := value.Type()
+	if (spaClosedNominalTuple(t) || spaClosedNominalDict(t)) && spaClosedTypeEligible(t) {
+		return spaClosedAtomic, ""
+	}
 	if spaClosedSpecialStruct(t) {
 		return spaClosedUnsupported, ""
 	}
@@ -263,7 +280,14 @@ func spaClosedDispatch(value reflect.Value, declared string) (spaClosedNodeKind,
 
 func (c *spaClosedEncodeContext) encode(value, old reflect.Value, prior *spaClosedEncodingNode, declared string, depth int) (out spaClosedEncodingResult) {
 	out.Supported = true
-	kind, inner := spaClosedDispatch(value, declared)
+	// Nominal declared-type dispatch precedes record/Maybe/null dispatch in
+	// canonical conversion, even for foreign tagged closed composite values.
+	// Use the invocation's pinned owner metadata, never a live registry read.
+	kind, inner := spaClosedAtomic, ""
+	owner := codecAutoDeclaredOwnerAt(declared, c.epoch)
+	if owner != skyDecimalOwner && owner != skyMoneyOwner && owner != skyCurrencyOwner {
+		kind, inner = spaClosedDispatch(value, declared)
+	}
 	if kind == spaClosedUnsupported {
 		return spaClosedEncodingResult{}
 	}
@@ -368,7 +392,7 @@ func (c *spaClosedEncodeContext) atomicWithOld(value, old reflect.Value, prior *
 	node := &spaClosedEncodingNode{type_: value.Type(), declared: declared, kind: spaClosedAtomic}
 	if prior != nil && old.IsValid() {
 		budget := spaModelWitnessBudget
-		same := spaModelValueSame(old, value, &budget)
+		same := spaClosedMixedValueSame(old, value, &budget)
 		c.work.ComparedNodes += spaModelWitnessBudget - budget
 		missingAllowed := !c.options.NeedRaw || (c.options.AllowOversizeWithoutRaw && prior.size > uint64(c.budget.CapBytes))
 		if same && prior.raw == "" && !missingAllowed && c.budget.Pins.claim(c.epoch) {

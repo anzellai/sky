@@ -74,10 +74,10 @@ func codecSchemaTyped(t reflect.Type, declared string, snake bool, depth int) co
 		// Std.Decimal and Std.Money are erased to rt.SkyADT, so only the
 		// declared type names them: a zero SkyADT has no name for
 		// codecSchemaType to read, and their schema was the open `{}`.
-		switch declared {
-		case "Std_Decimal_Decimal":
+		switch codecAutoDeclaredOwner(declared) {
+		case skyDecimalOwner:
 			return codecDecimalSchema()
-		case "Std_Money_Money":
+		case skyMoneyOwner:
 			return codecMoneySchema()
 		}
 		if inner, ok := strings.CutPrefix(declared, "rt.SkyMaybe["); ok && isSkyMaybeType(t) {
@@ -130,13 +130,10 @@ func codecSchemaType(t reflect.Type, snake bool, depth int) codecSchema {
 		if t == reflect.TypeOf(SkySet{}) || t == reflect.TypeOf(JsonValue{}) || codecOpaqueStruct(t) {
 			return codecOpenSchema
 		}
-		if name, _, _, ok := unwrapADTShape(reflect.Zero(t).Interface()); ok {
-			switch name {
-			case "Decimal__Internal":
-				return codecDecimalSchema()
-			case "Money":
-				return codecMoneySchema()
-			}
+		if _, _, _, ok := unwrapADTShape(reflect.Zero(t).Interface()); ok {
+			// A constructor spelling is not a type identity. Builtin schemas
+			// require the trusted declared-type path above; user variants with
+			// the same constructor names keep the general union schema.
 			return codecOpenSchema
 		}
 		if !isRecordType(t) {

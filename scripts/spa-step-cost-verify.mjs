@@ -261,7 +261,17 @@ try {
   if (browser) await browser.close();
   child.kill("SIGTERM");
   if (child.exitCode === null && child.signalCode === null) {
-    await Promise.race([new Promise(resolve => child.once("exit", resolve)), delay(5000)]);
+    const stopDelay = new AbortController();
+    try {
+      await Promise.race([
+        new Promise(resolve => child.once("exit", resolve)),
+        delay(5000, undefined, { signal: stopDelay.signal }),
+      ]);
+    } finally {
+      // An early exit must not leave the losing five-second timer alive.
+      // A backend that does not exit still receives the full 5000ms grace.
+      stopDelay.abort();
+    }
   }
   if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   await fs.rm(scratch, { recursive: true, force: true });

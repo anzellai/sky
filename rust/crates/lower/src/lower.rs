@@ -153,6 +153,7 @@ struct DefEntry {
 
 /// A collected type declaration (union or record alias) awaiting emission.
 struct TypeDecl {
+    module_id: ModuleId,
     name: String,
     /// The Sky module that DECLARED this type. Its field / constructor-payload
     /// types must resolve through `nominal_by_module` with this as `cur_mod` (as
@@ -183,6 +184,10 @@ pub struct LowerConfig {
     /// driver only while the canonical stdlib source namespace is intact.
     /// No sky.toml key can grant this. Missing means reference-only encoders.
     pub trusted_auto_codec: Option<(DefId, DefId)>,
+    /// Original canonical stdlib SourceFile identities verified by the build
+    /// driver. Default empty: a matching module/type spelling grants nothing.
+    /// No user configuration key can populate this capability.
+    pub trusted_builtin_adt_modules: HashSet<ModuleId>,
     /// `port` (default 8000 when `None`).
     pub port: Option<String>,
     /// The `[env] prefix` from sky.toml — re-namespaces every runtime `SKY_*`
@@ -992,7 +997,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             .get(&gn)
             .or_else(|| type_by_go.get(gn.trim_end_matches("_R")));
         if let Some(decl) = decl {
-            let (items, more) = emit_type_decl(decl, &env, &sealed_unions);
+            let (items, more) =
+                emit_type_decl(decl, &env, &sealed_unions, &cfg.trusted_builtin_adt_modules);
             for m in more {
                 if !seen_types.contains(&m) {
                     tqueue.push(m);
@@ -1819,6 +1825,7 @@ fn collect_types(
                         TypeDeclKind::Adt(variants)
                     };
                     decls.push(TypeDecl {
+                        module_id: m,
                         name: tname,
                         module: mname.clone(),
                         go_name,
@@ -1889,6 +1896,7 @@ fn collect_types(
                             }
                         );
                         decls.push(TypeDecl {
+                            module_id: m,
                             name: tname,
                             module: mname.clone(),
                             go_name,
@@ -1964,6 +1972,7 @@ fn emit_type_decl(
     decl: &TypeDecl,
     env: &TypeEnv,
     sealed_unions: &HashSet<String>,
+    trusted_builtin_modules: &HashSet<ModuleId>,
 ) -> (Vec<GoItem>, Vec<String>) {
     let mut more: Vec<String> = Vec::new();
     // Resolve declared field / constructor-payload types AS THE DECLARING MODULE,
@@ -1974,6 +1983,16 @@ fn emit_type_decl(
         collect_named(&gt, &mut more);
         gt
     };
+    let parent = format!("{}.{}", decl.module, decl.name);
+    let builtin = trusted_builtin_modules.contains(&decl.module_id)
+        && matches!(
+            parent.as_str(),
+            "Std.Decimal.Decimal" | "Std.Money.Money" | "Std.Money.Currency"
+        );
+    let owner = base::go_string_literal(&format!(
+        "{}:{parent}",
+        if builtin { "builtin" } else { "sky" }
+    ));
     match &decl.kind {
         TypeDeclKind::Iota(variants) => (
             vec![GoItem::Type(
@@ -2124,7 +2143,10 @@ fn emit_type_decl(
             // variants), and the wire JSON factory.
             let mut variant_defs: Vec<(String, usize, Vec<GoTy>)> = Vec::new();
             let mut items: Vec<GoItem> = Vec::new();
-            let mut reg = String::from("func init() { ");
+            let mut reg = format!(
+                "func init() {{ rt.RegisterAdtOwner(\"main.{}\", \"{}\", {owner}); ",
+                decl.go_name, decl.go_name
+            );
             for (i, (cn, args)) in variants.iter().enumerate() {
                 let ftys: Vec<GoTy> = args.iter().map(&mut collect).collect();
                 let vstruct = format!("{}_{}_V", decl.go_name, cn);
@@ -2199,7 +2221,10 @@ fn emit_type_decl(
         }
         TypeDeclKind::Adt(variants) => {
             let mut items = vec![GoItem::Type(decl.go_name.clone(), GoTypeDef::AdtAlias)];
-            let mut reg = String::from("func init() { ");
+            let mut reg = format!(
+                "func init() {{ rt.RegisterAdtOwner(\"main.{}\", \"{}\", {owner}); ",
+                decl.go_name, decl.go_name
+            );
             for (i, (cn, args)) in variants.iter().enumerate() {
                 // ADT payloads are stored in the untyped `Fields []any` bag, so
                 // the constructor params are `any` — call sites pass already-
@@ -2218,7 +2243,7 @@ fn emit_type_decl(
                 let fields: Vec<String> = (0..args.len()).map(|j| format!("v{j}")).collect();
                 // constructor
                 items.push(GoItem::Raw(format!(
-                    "func {}_{}({}) {} {{ return {}{{Tag: {i}, SkyName: \"{cn}\", Fields: []any{{{}}}}} }}",
+                    "func {}_{}({}) {} {{ return {}{{SkyOwner: {owner}, Tag: {i}, SkyName: \"{cn}\", Fields: []any{{{}}}}} }}",
                     decl.go_name,
                     cn,
                     params.join(", "),

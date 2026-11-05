@@ -331,7 +331,7 @@ func TestSpaClosedRecursiveProtectedAndExcludedMissingRawPolicies(t *testing.T) 
 
 func TestSpaClosedRecursiveSpecialStructDispatchNeverBecomesOrdinaryRecord(t *testing.T) {
 	log := []string{}
-	values := []any{SkyADT{}, SkyDict[int]{}, SkySet{}, JsonValue{}, struct{ private int }{}, spaClosedPhaseFX{log: &log, V0: "synthetic"}}
+	values := []any{SkyADT{}, SkyDict[any]{}, SkySet{}, JsonValue{}, struct{ private int }{}, spaClosedPhaseFX{log: &log, V0: "synthetic"}}
 	for _, value := range values {
 		kind, _ := spaClosedDispatch(reflect.ValueOf(value), "")
 		if kind != spaClosedUnsupported || spaClosedOwnDomain(reflect.TypeOf(value), map[reflect.Type]uint8{}, 0) {

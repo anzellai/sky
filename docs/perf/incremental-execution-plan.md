@@ -203,8 +203,9 @@ run later. Encoding each field completely in a single pass would reorder those
 effects. Any field-chunk encoder must preserve the two phases and stop at the
 same failure, without rerunning effectful conversion during fallback.
 
-Typed Dict values offer an existing canonical encoding path and can use exact
-typed runtime capabilities over their private immutable structure. Erased
+Typed Dict values now have a local implementation of unchanged-root reuse over
+their private immutable structure, with integrated browser validation pending
+as described below. Changed roots still use full canonical conversion. Erased
 `SkyArray` leaves cannot be certified from their Go type alone, and existing
 canonical auto-codec support must first be established. Construction/ingress
 certificates and persistent-node propagation need separate PIV regressions.
@@ -476,5 +477,81 @@ a fresh private application build or application browser E2E.
 Automatic view/collection reuse, the separately discovered nominal codec
 constructor collision, broader storage and final cross-target/application
 validation remain in the active PIV. Changed under-cap v2 payloads still need
-their selected payload join/copy. Hosted validation for the pinned checkpoint
-will follow its commit; no release or main merge is implied.
+their selected payload join/copy. The complete hosted CI run
+[41954316141](https://github.com/anzellai/sky/actions/runs/41954316141) passes
+for checkpoint `5b489e811`, including the pinned work and subsequent fixes.
+
+Hosted testing uncovered a real AI adapter loading race: requests could reach a
+resident before its engine finished loading. The fix waits with a request lease
+and handles load failure/cancellation explicitly. Deterministic regression tests
+fail the old implementation and pass the fix. All functional jobs then passed;
+the aggregate duration gate exposed an uneven runtime race-test partition.
+Refreshing recorded durations and moving the existing smoke step between
+equivalent shards preserves the work, tests, deadlines and budgets. The complete
+run above passes after that rebalance. No release or main merge is implied.
+
+
+## Owner provenance: locally validated correctness prerequisite
+
+A constructor spelling cannot identify its parent type. A user constructor
+named `Money` previously reached the builtin writer and silently lost its
+payload. Constructors now carry their resolved parent identity; builtin grants
+come only from the original standard-library source modules. Project tests
+exercise actual source loading, transparent aliases, generated projects, added
+namespaces and rejected standard-library replacements. Runtime checks preserve
+live and pinned metadata reads at their original conversion positions.
+
+The internal owner field is hidden from JSON. Typed legacy builtin slots can
+recover their parent through registered metadata. An ambiguous legacy root
+fails with classified `JsonEncodeFailure` instead of guessing. Cross-binary
+experiments use the released v0.29.2 runtime and the new runtime: five static
+payload combinations and thirteen reports cover upgrade, rollback and erased
+slots. They detect owner loss during rollback. Their synthetic authority
+bootstrap is separate from the real compiler source-grant tests.
+
+Local evidence includes 292 focused native tests, a real PostgreSQL
+cross-instance session test in an owned temporary cluster, the compiler proof
+suites, and all four Sky codec suites. The bundled console was regenerated and
+the canonical compiler rebuilt afterward. A separate production-only restart
+probe exposed missing Gob registration that the console's initialization had
+masked; that fix is committed at `e490b26b3` and passes all forty hosted CI jobs.
+The owner changes themselves still require the final integrated gates.
+
+Canonical field metadata and escaped schema keys are cached without retaining
+model values. Tuple type arguments are parsed once per list invocation, while
+each element keeps its original conversion and metadata reads. Ordered-object
+output buffers start at 32 bytes. Only exact builtin `int64`, boolean, null and
+safe ASCII strings of at most 64 bytes use direct primitive appends at their
+original marshal position. Named values, custom marshalers, floats, escaped,
+non-ASCII and longer strings retain `encoding/json.Marshal`. Differential
+byte/error/effect tests and race checks accompany these changes.
+
+Two rejected proposals remain excluded: discovering hints in invisible slice
+capacity introduced a demonstrated race, and sharing key/value allocation would
+retain replaced values through the existing plain-null key-slice path. The
+passing implementation preserves the ordered-object layout and ownership.
+
+## Collection integration: validation in progress
+
+Mixed-model reuse now admits exact runtime T2/T3 tuples and SkyDict values when
+their children qualify. It reuses unchanged roots. A changed root still takes
+the complete canonical conversion; this is not a changed-key delta algorithm.
+The original Full/projection gate remains in place.
+
+The new public Dict/tuple fixture uses one-byte string values and the unchanged
+1.5 MiB persistence cap. Ten of twelve current-owner browser reports pass, but
+the complete gate exits 124 after the Firefox tuple reference reaches its
+300-second deadline. A separate cached diagnostic also times out, reaching
+step 29 at 290 seconds after completing typing. Both current-owner Firefox
+tuple reports are therefore still required. No cycle8 success bundle is
+published. Earlier passing Firefox reports from before owner integration do
+not validate this candidate.
+
+An invocation-local owner memo preserves each original live atomic registry
+read and supplied pin, while reusing the owner map result only for the same
+fixed list-element declaration and immutable metadata epoch. It retains one
+epoch and no model values. Its candidate passes 298 selected native tests and
+23 targeted race tests with no skips. The fresh Firefox tuple reference still
+exceeds its unchanged deadline, so these runtime results do not establish
+browser throughput. A separate invocation-local tuple field-plan optimization
+is being validated before adoption.

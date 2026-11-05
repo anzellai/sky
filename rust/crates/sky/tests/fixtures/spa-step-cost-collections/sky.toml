@@ -1,0 +1,5 @@
+[project]
+name = "spa-step-cost-collections"
+
+[app]
+target = "web:app"

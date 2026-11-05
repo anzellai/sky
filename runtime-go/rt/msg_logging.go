@@ -466,6 +466,11 @@ func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
 		}
 		h.writeString("S<")
 		for i := 0; i < rv.NumField(); i++ {
+			// Provenance is not logical model state. Preserve the pre-owner
+			// ADT hash, including for legacy restored boxes with empty owner.
+			if isSkyAdtType(rv.Type()) && rv.Type().Field(i).Name == "SkyOwner" {
+				continue
+			}
 			h.writeString(rv.Type().Field(i).Name)
 			h.writeString("=")
 			walkHash(h, rv.Field(i), depth+1, deadline)

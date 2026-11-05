@@ -2442,8 +2442,8 @@ func authClaimsToMap(v any) map[string]any {
 	t := rv.Type()
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if f.PkgPath != "" {
-			continue // unexported — not a Sky record field
+		if f.PkgPath != "" || f.Tag.Get("json") == "-" {
+			continue // unexported or explicitly excluded runtime metadata
 		}
 		out[lowerFirst(f.Name)] = rv.Field(i).Interface()
 	}

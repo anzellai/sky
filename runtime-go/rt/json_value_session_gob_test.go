@@ -55,7 +55,7 @@ func jvTestModel(t *testing.T) jvSessModel {
 		t.Fatalf("Encode.raw: %v", rawRes.ErrValue)
 	}
 	d, _ := decimal.NewFromString("12345.6789")
-	money := SkyADT{Tag: 0, SkyName: "Money", Fields: []any{decimalBox(d), SkyADT{Tag: 2, SkyName: "GBP"}}}
+	money := canonicalMoneyFixture(d, "GBP")
 	return jvSessModel{Note: "n", Decoded: decoded, Built: built, Raw: rawRes.OkValue, Price: money}
 }
 
