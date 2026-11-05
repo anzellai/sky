@@ -266,15 +266,15 @@
       "proven_at_unix": 1793727247
     },
     "build-growth-linear": {
-      "inputs_files": 560,
-      "inputs_hash": "9946aaf11810a33a4c38879df702aabd5816b6c6",
+      "inputs_files": 567,
+      "inputs_hash": "5321f6c4761560bd14ca6261714b0e92c304d4a3",
       "mutation": "build-growth.one-model-wire-per-arm",
       "mutations": [
         "build-growth.one-model-wire-per-arm"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1793727247
+      "proven_at_unix": 1793915996
     },
     "build-new-dir-compiles-nothing": {
       "inputs_files": 560,
@@ -296,7 +296,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1793738388
+      "proven_at_unix": 1793915996
     },
     "cli-verbs": {
       "inputs_files": 3,
