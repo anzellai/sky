@@ -367,6 +367,19 @@ impl UnionFind {
         }
     }
 
+    /// Read only an application's head without cloning its child IDs or a
+    /// different shape's record fields. Finding the root may path-compress.
+    pub(crate) fn app_name(&mut self, v: TyVarId) -> Option<&Name> {
+        let root = self.find(v);
+        match &self.slots[root.0 as usize] {
+            Slot::Root {
+                content: Content::Structure(FlatTy::App(name, _)),
+                ..
+            } => Some(name),
+            _ => None,
+        }
+    }
+
     /// Overwrite a root's content with no checks — builds the cyclic graphs
     /// the read-back tests need (the unifier only makes them through paths
     /// that are hard to drive from a test).

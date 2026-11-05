@@ -294,6 +294,15 @@ struct Emitted {
     console_needed: bool,
 }
 
+// Split the existing check_modules forwarding pair for durable attribution.
+// The same full world query runs once and its Arc moves into the same checker.
+fn check_modules_profiled(db: &dyn ty::TyDb, modules: &[base::ModuleId]) -> ty::CheckOutput {
+    let world_phase = crate::timings::phase("check world");
+    let world = ty::TyDb::check_world(db);
+    world_phase.end();
+    ty::check_modules_with_world(db, world, modules)
+}
+
 /// Assemble the source db (stdlib + example src), lower, and emit the Go source.
 /// Returns `Err(note)` for every non-emit outcome (no stdlib, no src, no entry,
 /// no `main`) so callers surface the same diagnostics. Deterministic: no wall
@@ -376,6 +385,11 @@ impl LoadedProgram {
     }
 }
 
+/// These owned trees serve reporting, not the lowerer's independent type tables.
+fn release_checker_report_types(checked: &mut ty::CheckOutput) {
+    drop(std::mem::take(&mut checked.def_types));
+}
+
 fn assemble_and_emit_loaded(
     repo_root: &Path,
     example_dir: &Path,
@@ -384,6 +398,7 @@ fn assemble_and_emit_loaded(
     progress: bool,
     scope: AppScope,
 ) -> Result<(Emitted, LoadedProgram), BuildFailure> {
+    timing_role(example_dir);
     // ---- assemble the source db (stdlib + example src) ----
     // Stage A/B (doc 01, doc 12): a salsa db holds the source set as `SourceFile`
     // inputs and the `parse` leaf query memoises each module's CST. Every parse
@@ -702,7 +717,7 @@ fn assemble_and_emit_loaded(
     let t_check = crate::timings::phase("canonicalise + typecheck");
     let counters_start = ty::counters::snapshot();
     crate::timings::count_type_check();
-    let mut checked = ty::check_modules(&db, &check_ids);
+    let mut checked = check_modules_profiled(&db, &check_ids);
     t_check.end();
     let counters_checked = ty::counters::snapshot();
     crate::timings::note(format!(
@@ -877,6 +892,10 @@ fn assemble_and_emit_loaded(
     if !exhaustive_diags.is_empty() {
         return Err(render_diags(&exhaustive_diags, &sources));
     }
+    // Reporting-only owned type trees are not consumed by lowering or the
+    // later split. Release them before configuration/GoIR allocations begin;
+    // keep the check verdict and diagnostics for LoadedProgram unchanged.
+    release_checker_report_types(&mut checked);
     if progress {
         println!("   Types OK ({} module(s))", check_ids.len());
         println!("-- Generating Go");
@@ -948,6 +967,126 @@ fn assemble_and_emit_loaded(
             !(name.starts_with("Sky.") || name.starts_with("Std.")) || stdlib_names.contains(name)
         })
     {
+        cfg.trusted_private_modules = canonical_stdlib_sources
+            .iter()
+            .filter_map(|(name, _)| hir::SkyDb::module_by_name(&db, name))
+            .collect();
+        // Same source-identity gate as codec capsules. Keep the grant as
+        // resolved DefIDs, never a project setting or editable helper name.
+        for (module_name, names) in [
+            (
+                "Std.Spa",
+                &[
+                    "app",
+                    "config",
+                    "withRoutes",
+                    "withNotFound",
+                    "withOnNavigate",
+                    "withHead",
+                    "withModelDecoder",
+                    "withModelEncoder",
+                    "withPersistProtectedFields",
+                    "withPersistDecoder",
+                    "withPersistSeedFields",
+                    "withPersistExcludeFields",
+                    "withHoldFree",
+                    "withGuard",
+                ][..],
+            ),
+            (
+                "Sky.Core.List",
+                &[
+                    "map",
+                    "indexedMap",
+                    "filter",
+                    "filterMap",
+                    "concatMap",
+                    "any",
+                    "all",
+                    "foldl",
+                    "foldr",
+                    "length",
+                    "isEmpty",
+                    "reverse",
+                    "take",
+                    "drop",
+                    "append",
+                    "concat",
+                ][..],
+            ),
+            ("Sky.Core.Maybe", &["map", "andThen", "withDefault"][..]),
+            ("Sky.Core.Result", &["withDefault"][..]),
+            (
+                "Sky.Core.Char",
+                &["isAlpha", "isDigit", "isAlphaNum", "toLower", "toUpper"][..],
+            ),
+            (
+                "Sky.Core.Regex",
+                &[
+                    "fromString",
+                    "never",
+                    "contains",
+                    "find",
+                    "findMatch",
+                    "replace",
+                    "replaceWith",
+                ][..],
+            ),
+            ("Std.Ui", &["onPseudo"][..]),
+            (
+                "Sky.Core.String",
+                &[
+                    "fromInt",
+                    "fromFloat",
+                    "length",
+                    "isEmpty",
+                    "join",
+                    "split",
+                    "replace",
+                    "slice",
+                    "toUpper",
+                    "toLower",
+                    "trim",
+                    "trimStart",
+                    "trimEnd",
+                    "reverse",
+                    "append",
+                    "concat",
+                    "contains",
+                    "startsWith",
+                    "endsWith",
+                    "padLeft",
+                    "padRight",
+                    "left",
+                    "right",
+                    "dropLeft",
+                    "dropRight",
+                    "toInt",
+                    "toFloat",
+                    "toList",
+                    "fromList",
+                ][..],
+            ),
+            (
+                "Sky.Core.Math",
+                &["abs", "min", "max", "round", "floor", "ceil"][..],
+            ),
+        ] {
+            if let Some(module) = hir::SkyDb::module_by_name(&db, module_name) {
+                for name in names {
+                    cfg.trusted_view_memo.push((
+                        module_name.into(),
+                        (*name).into(),
+                        hir::SkyDb::intern_def(
+                            &db,
+                            module,
+                            &base::Name::new(name),
+                            hir::DefKind::Value,
+                        ),
+                    ));
+                }
+            }
+        }
         if let Some(module) = hir::SkyDb::module_by_name(&db, "Std.Codec") {
             cfg.trusted_auto_codec = Some((
                 hir::SkyDb::intern_def(
@@ -1055,12 +1194,9 @@ fn assemble_and_emit_loaded(
         db,
         split_entry,
         split_check_ids,
-        // The split reads the verdict and the diagnostics, never the per-def
-        // types, so those are not carried.
-        checked: ty::CheckOutput {
-            def_types: Vec::new(),
-            ..checked
-        },
+        // Reporting types were released before lowering; preserve the verdict
+        // and diagnostics for the split over this same database.
+        checked,
         checked_ids: check_ids,
         // Only the plain load (no extra source roots, the whole app) builds
         // the db `load_source_db` builds.
@@ -2957,6 +3093,17 @@ pub fn bundled_source_texts(repo_root: &Path) -> std::collections::HashSet<Strin
 /// `[spa] generated = true` in the project's `sky.toml`: the Sky.Spa split
 /// wrote this project (the same marker `sky build` keys its no-re-split guard
 /// on).
+fn timing_role(project_dir: &Path) {
+    if crate::timings::enabled() {
+        let role = match spa_role(project_dir).as_deref() {
+            Some("backend") => crate::timings::Role::Backend,
+            Some("frontend") => crate::timings::Role::Frontend,
+            _ => crate::timings::Role::Source,
+        };
+        crate::timings::set_role(role);
+    }
+}
+
 /// The `[spa] role` of a generated Sky.Spa half (`frontend` or `backend`).
 fn spa_role(example_dir: &Path) -> Option<String> {
     let s = std::fs::read_to_string(example_dir.join("sky.toml")).ok()?;
@@ -3597,6 +3744,8 @@ pub(crate) fn load_source_db(
     example_dir: &Path,
     entry_module: Option<&str>,
 ) -> Result<(skydb::SkyDatabase, base::ModuleId, Vec<base::ModuleId>), String> {
+    timing_role(example_dir);
+    let _source_load_phase = crate::timings::phase("source database load");
     crate::timings::count_source_load();
     let mut db = skydb::SkyDatabase::with_kernel();
     let mut next_id: u32 = 0;
@@ -5638,6 +5787,91 @@ mod go_build_timeout_tests {
         for bad in ["", "0", "0m", "-5", "1.5m", "ten", "5d", "m"] {
             let e = parse_go_build_timeout(bad).unwrap_err();
             assert!(e.contains("15m"), "{bad:?}: {e}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod checker_report_lifetime_tests {
+    use super::*;
+
+    #[test]
+    fn report_types_release_storage_before_lowering_without_changing_check_results() {
+        let diagnostics = vec![diagnostics::Diagnostic::error(
+            "E2001",
+            "synthetic diagnostic",
+        )];
+        let mut checked = ty::CheckOutput {
+            type_errors: 2,
+            exhaustiveness_warnings: 3,
+            name_errors: 4,
+            diagnostics: diagnostics.clone(),
+            def_types: vec![ty::DefType {
+                module: "Main".into(),
+                name: "model".into(),
+                ty: ty::Ty::Tuple(vec![ty::Ty::Error; 256]),
+                declared: true,
+            }],
+        };
+        let diagnostics_storage = checked.diagnostics.as_ptr();
+        assert!(checked.def_types.capacity() > 0);
+        release_checker_report_types(&mut checked);
+        assert!(checked.def_types.is_empty());
+        assert_eq!(
+            checked.def_types.capacity(),
+            0,
+            "release the allocation, not just its entries"
+        );
+        assert_eq!(checked.type_errors, 2);
+        assert_eq!(checked.exhaustiveness_warnings, 3);
+        assert_eq!(checked.name_errors, 4);
+        assert_eq!(checked.diagnostics, diagnostics);
+        assert_eq!(checked.diagnostics.as_ptr(), diagnostics_storage);
+
+        // Check the actual phase boundary too: the operation must follow all
+        // diagnostic gates and precede configuration and lowering allocations.
+        let source = include_str!("build.rs");
+        let assembly = source.split_once("fn assemble_and_emit_loaded(").unwrap().1;
+        let release = assembly
+            .find("release_checker_report_types(&mut checked);")
+            .unwrap();
+        assert!(assembly.find("if !exhaustive_diags.is_empty()").unwrap() < release);
+        assert!(release < assembly.find("let mut cfg = read_sky_toml_config").unwrap());
+        assert!(release < assembly.find("skydb::go_program(").unwrap());
+    }
+}
+
+#[cfg(test)]
+mod check_world_checkpoint_tests {
+    use super::*;
+
+    #[test]
+    fn profiled_check_preserves_full_checker_result_and_cached_world() {
+        for source in [
+            "module Main exposing (..)\nid : a -> a\nid x = x\nmain = id 7\n",
+            "module Main exposing (..)\nmain : Int\nmain = \"bad\"\n",
+            "module Main exposing (..)\nmain = missing\n",
+            "module Main exposing (..)\ntype Choice = One | Two\nmain choice = case choice of\n    One -> 1\n",
+        ] {
+            let mut db = skydb::SkyDatabase::with_kernel();
+            let file = db.new_source(0, source.to_string());
+            let parsed = skydb::parse(&db, file);
+            assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+            let module = db.add_module("Main", file);
+            let first_world = ty::TyDb::check_world(&db);
+            let expected = ty::check_modules(&db, &[module]);
+            let actual = check_modules_profiled(&db, &[module]);
+            assert!(!expected.def_types.is_empty(), "the fixture must be checked");
+            let last_world = ty::TyDb::check_world(&db);
+            assert!(std::sync::Arc::ptr_eq(&first_world, &last_world));
+            assert_eq!(actual.type_errors, expected.type_errors);
+            assert_eq!(actual.name_errors, expected.name_errors);
+            assert_eq!(actual.exhaustiveness_warnings, expected.exhaustiveness_warnings);
+            assert_eq!(actual.diagnostics, expected.diagnostics);
+            let signatures = |out: &ty::CheckOutput| out.def_types.iter()
+                .map(|d| (d.module.clone(), d.name.clone(), d.ty.clone(), d.declared))
+                .collect::<Vec<_>>();
+            assert_eq!(signatures(&actual), signatures(&expected));
         }
     }
 }

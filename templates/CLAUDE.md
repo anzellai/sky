@@ -15,6 +15,8 @@
 > `v0.28.md`, `v0.29.md`).
 > Numeric instantiation and function application follow the rules in
 > https://github.com/anzellai/sky/blob/main/docs/language/types.md.
+> Task execution and tuple discard rules are in
+> https://github.com/anzellai/sky/blob/main/docs/language/syntax.md.
 
 ## Response style (INVIOLABLE)
 

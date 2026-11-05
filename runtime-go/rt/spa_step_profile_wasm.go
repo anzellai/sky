@@ -31,6 +31,11 @@ func spaProfilePublish(m *spaStepMetrics) {
 		spaProfileTotals.Calls[i] += m.Calls[i]
 		spaProfileTotals.Nanos[i] += m.Nanos[i]
 	}
+	vm := &spaProfileTotals.ViewMemo
+	vm.Frames += m.ViewMemo.Frames
+	vm.Hits += m.ViewMemo.Hits
+	vm.Builds += m.ViewMemo.Builds
+	vm.Resets += m.ViewMemo.Resets
 	p, t := m.Persist, &spaProfileTotals.Persist
 	t.DeferredFieldEncodes += p.DeferredFieldEncodes
 	t.DeferredFieldMarshals += p.DeferredFieldMarshals
@@ -60,6 +65,10 @@ func spaProfilePublish(m *spaStepMetrics) {
 		stats[name+"Calls"] = spaProfileTotals.Calls[i]
 		stats[name+"Nanos"] = float64(spaProfileTotals.Nanos[i])
 	}
+	stats["viewMemoFrames"] = vm.Frames
+	stats["viewMemoHits"] = vm.Hits
+	stats["viewMemoBuilds"] = vm.Builds
+	stats["viewMemoResets"] = vm.Resets
 	stats["deferredFieldEncodes"] = t.DeferredFieldEncodes
 	stats["deferredFieldMarshals"] = t.DeferredFieldMarshals
 	stats["deferredFieldEncodedBytes"] = float64(t.DeferredFieldEncodedBytes)

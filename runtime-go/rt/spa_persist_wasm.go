@@ -257,6 +257,7 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 		}, spaPersistProt, false, nil, observe)
 	}
 	if cleared {
+		spaResetViewMemo()
 		spaResetPersistBridge()
 		spaFieldPersistenceState.reset()
 		spaMixedPersistenceState.reset()

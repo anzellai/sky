@@ -181,7 +181,10 @@ encodable type (no function, `Secret`, key or handle), `Crypto.aesGcmEncrypt`
 / `chacha20Encrypt` return a `Task`, `Auth.verifyToken` returns `Result Error
 Json.Value`, and a `Cookie` value goes through `Server.addCookie`.
 
-`let _ = someTask` auto-forces the task (fires the effect). A top-level
+A root `let _ = someTask` runs the Task once when its type is known
+statically, including from an annotation. A wildcard inside a tuple pattern
+discards Task data without running it. Ordinary function values and
+unconstrained polymorphic discards stay latent. A top-level
 zero-arg binding is **memoised** (a CAF — evaluated once, cached): `db =
 Task.run (Db.connect ())` opens one shared pool; but `newId = Task.run Uuid.v4`
 freezes to ONE uuid — for a fresh value per call make it a function

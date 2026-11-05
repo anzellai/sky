@@ -561,3 +561,63 @@ at the original tuple-conversion boundary. Mutable argument/value reads,
 canonical guards, metadata observations and independent output buffers remain
 unchanged. Both the fresh Firefox pair and the subsequent full twelve-report
 matrix pass with those changes.
+
+
+## Automatic view regions: implementation checkpoint, integrated gates pending
+
+The candidate now lowers proven-pure `indexedMap` regions through an explicit
+per-application frame. Reuse requires the same physical list and capture
+witnesses and an admissible data-only result. Source-tree reuse leaves VNode
+conversion, event refresh, styles, paths and DOM planning on their normal path.
+Entries publish only after successful paint; reset, authentication changes,
+reboot, persistence reset and failed frames invalidate them. Frame bounds are
+128 entries/sites, 131072 accounted cells and 8 MiB of accounted strings. These
+are admission/work bounds, not a strict byte bound on retained backing arrays.
+The implementation reuses a whole mapped region, not changed rows individually.
+
+Local validation passes twelve native lifecycle/admission tests and twelve
+actual Go/Wasm runtime tests. Thirty-three compiler proofs cover purity,
+ownership, callable capture, source-authorized domains, model encoding and the
+actual private normal-row callback. Private source probes were removed before
+the shipping compiler rebuild. An expanded regression also exposed and fixes
+statically Task-typed root discards that previously failed to execute their
+effect; tuple-contained Task data remains latent. Actual generated-IR and native
+counter execution validate both sides of that distinction.
+
+The full private application and final cross-target gates remain pending. A
+fresh application build exceeded the unchanged memory guard. After borrowing
+HIR bodies, avoiding full annotated type readback for Task-head queries and
+consuming alternate GoIR scratch, a second measured build still exceeded it.
+Fixed phase markers put the checker high-water at 1048313856 bytes before
+lowering; the guard observed 1210 MiB current RSS during lowering. No browser,
+latency or memory improvement is claimed from this failed build. Compiler
+retention is being investigated before another changed-source attempt.
+
+General changed-key storage deltas, arbitrary-model scaling, real-device IME
+behavior and successful native GUI execution remain outside the evidence so
+far. The existing collection browser results above do not establish those
+properties. Final hosted CI is also required for this checkpoint.
+
+Follow-up lifetime changes release reporting type trees before lowering and
+solved inference scratch before checker scans. Lowering also retains immutable
+resolved-module owners instead of cloning reached HIR bodies. The latter passes
+all 45 lowerer unit tests and six project integration proofs. The checker
+regressions pass all 48 tests; the two release-only Task/WebSocket and
+parallel-panic programs pass when explicitly selected with `--ignored`. The
+unchanged coercion floor passes without widening or baseline changes.
+
+The latest full-app measurement still fails the guard during checking. The
+separate `check-world` marker ends at a process high-water of 1030995968 bytes,
+before per-module checking finishes. This localizes most peak allocation to
+world assembly; it does not establish that all those bytes remain live. The
+ownership changes have not yet demonstrated a successful complete application
+build. Actual application browser comparisons remain unrun.
+
+The local checkpoint preflight passes all 21 static integration binaries and the
+first five original configuration steps, including the effective-value matrix.
+The final combined harness passes CLI verbs, roundtrip, shared-world and format
+checks. Four Go runtime gates fail during building, before any assertions run;
+the memory guard separately records three Go compiler terminations. The gate
+helper omits compiler stderr, so the captured harness diagnostics do not prove
+that every failure has the same cause. Improving that diagnostic and validating
+the remaining gates are required before a complete-green claim or merge.

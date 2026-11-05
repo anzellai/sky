@@ -12491,10 +12491,13 @@ fn analyze_for_split(
 ) -> Result<(SpaPartitionReport, Vec<String>), String> {
     // One check serves both analyses: the db is not written between them, so
     // a second `check_modules` over the same modules returns the same value.
+    let check_phase = crate::timings::phase("split typecheck");
     let checked = match checked {
         Some(c) => c,
         None => spa_partition::check_program(db, check_ids),
     };
+    check_phase.end();
+    let _partition_phase = crate::timings::phase("split analysis");
     // The analyses read the verdict and the diagnostics, never the per-def
     // types: free those now rather than hold them through both analyses.
     let checked = ty::CheckOutput {

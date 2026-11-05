@@ -139,13 +139,44 @@ impl FfiTable {
 
 mod closure;
 mod numeric;
+mod spa_capability_domain;
 mod spa_model;
+mod task_discard;
+mod view_memo;
+
+/// One immutable body in its memoised resolved-module owner. Keeping the
+/// owner alive preserves arena storage and ExprIds without deep-copying HIR.
+/// Construction stays private and follows a successful bodies.get(def).
+struct DefBody {
+    owner: std::sync::Arc<hir::ResolveResult>,
+    def: DefId,
+}
+
+impl std::ops::Deref for DefBody {
+    type Target = Body;
+    fn deref(&self) -> &Body {
+        &self.owner.bodies[&self.def]
+    }
+}
+
+// Only adversarial unit fixtures mutate HIR. Copy-on-write leaves the source
+// database and other entries untouched; production has no mutable body access.
+#[cfg(test)]
+impl std::ops::DerefMut for DefBody {
+    fn deref_mut(&mut self) -> &mut Body {
+        std::sync::Arc::make_mut(&mut self.owner)
+            .bodies
+            .get_mut(&self.def)
+            .expect("DefBody retains its validated definition")
+    }
+}
 
 struct DefEntry {
     module_name: String,
     name: String,
-    body: Body,
+    body: DefBody,
     types: BodyTypes,
+    task_discards: BTreeSet<ExprId>,
     numeric: std::rc::Rc<ty::numeric::NumericElaboration>,
     /// The declared/derived scheme type (peeled for param types), if any.
     sig: Option<Ty>,
@@ -184,6 +215,11 @@ pub struct LowerConfig {
     /// driver only while the canonical stdlib source namespace is intact.
     /// No sky.toml key can grant this. Missing means reference-only encoders.
     pub trusted_auto_codec: Option<(DefId, DefId)>,
+    /// Actual canonical modules granted by the project source-identity check.
+    /// Namespace spelling alone never grants private reuse capabilities.
+    pub trusted_private_modules: BTreeSet<ModuleId>,
+    /// Compiler driver-only canonical source identity grant. No user setting.
+    pub trusted_view_memo: Vec<(String, String, DefId)>,
     /// Original canonical stdlib SourceFile identities verified by the build
     /// driver. Default empty: a matching module/type spelling grants nothing.
     /// No user configuration key can populate this capability.
@@ -374,6 +410,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         };
         crate::BODIES_TYPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let types = typer.body_types(*m, *d, body);
+        let task_discards = task_discard::logical_task_discards(&typer, *d, body, &types);
         let numeric = db.numeric_elaboration_of(*m, *d);
         let sig = typer.value_sig(*d).map(|s| numeric.signature.apply(&s.ty));
         defs.insert(
@@ -381,8 +418,12 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             DefEntry {
                 module_name: db.module_name(*m).to_string(),
                 name: td.name.as_str().to_string(),
-                body: body.clone(),
+                body: DefBody {
+                    owner: std::sync::Arc::clone(resolved),
+                    def: *d,
+                },
                 types,
+                task_discards,
                 numeric,
                 sig,
             },
@@ -880,6 +921,24 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     device_regs.sort();
     device_regs.dedup();
 
+    // Canonical Codec source alone does not certify ownership of values a raw
+    // Go FFI producer can return/reuse. Gate ALL private capabilities together.
+    let private_caps = (!cfg.trusted_view_memo.is_empty() || cfg.trusted_auto_codec.is_some())
+        && spa_capability_domain::permitted(
+            db.as_sky_db(),
+            &defs,
+            &kernel_alias,
+            &cfg.trusted_private_modules,
+        );
+    let trusted_auto_codec = cfg.trusted_auto_codec.filter(|_| private_caps);
+    let view_grant = if private_caps {
+        cfg.trusted_view_memo.as_slice()
+    } else {
+        &[]
+    };
+    let view_memo_plan = view_memo::plan(main_def, &defs, &kernel_alias, view_grant);
+    let mut view_memo_funcs = Vec::new();
+    let mut view_memo_regions = 0usize;
     // ---- DCE: lower reachable defs, discovering refs as we go ----
     let mut seen: HashSet<DefId> = HashSet::new();
     // Root the work-list at `main` AND (when present) the `config` entry point,
@@ -906,75 +965,100 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             // a value-reference would need a wrapper (tracked when it happens).
             continue;
         }
-        let mut cx = Ctx {
-            trusted_auto_codec: cfg.trusted_auto_codec,
-            db: db.as_sky_db(),
-            defs: &defs,
-            kernel_alias: &kernel_alias,
-            kernel_alias_arity: &kernel_alias_arity,
-            env: &env,
-            record_fields: &record_fields,
-            ctor_owner: &ctor_owner,
-            ctor_tag: &ctor_tag,
-            ctor_arity: &ctor_arity,
-            ctor_in_union: &ctor_in_union,
-            ctor_arity_in_union: &ctor_arity_in_union,
-            ctor_field_gotys: &ctor_field_gotys,
-            sealed_unions: &sealed_unions,
-            def_param_tys: &def_param_tys,
-            def_result_tys: &def_result_tys,
-            def_effect: &def_effect,
-            body: &e.body,
-            types: &e.types,
-            numeric: &e.numeric,
-            numeric_scope: vec![ty::numeric::NumericBinder::Top],
-            local_names: HashMap::new(),
-            local_tys: HashMap::new(),
-            local_counter: 0,
-            container_record_slot: false,
-            record_at_slot: false,
-            discovered: Vec::new(),
-            used_types: HashSet::new(),
-            warnings: Vec::new(),
-            errors: Vec::new(),
-            closure_elem: None,
-            closure_elem_at: None,
-            caf_lambda_ty: None,
-            ffi: &cfg.ffi,
-            ffi_used: BTreeSet::new(),
-            kernel_arity: &cfg.kernel_arity,
-            variadic_kernels: &cfg.variadic_kernels,
-            cur_module: e.module_name.clone(),
-            cur_def: d,
-            goty_memo: HashMap::new(),
-            goty_ref_memo: HashMap::new(),
-            def_span: def_spans.get(&d).copied(),
-            cur_span: None,
-            tco: None,
-            // Only `lower_main` reads this; harmless to carry on every Ctx.
-            apply_config: config_go_name.clone(),
-            device_regs: device_regs.clone(),
-        };
-        let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
-        // determinism (L4): `discovered` is a Vec (ordered), and the two set
-        // drains below are order-INDEPENDENT — they only union into another
-        // set/BTreeSet, so the resulting membership is identical regardless of the
-        // (randomized) HashSet iteration order. `used_go_types` is sorted before it
-        // drives emission (see `tqueue.sort()`); `ffi_used` is a BTreeSet.
-        for r in cx.discovered {
-            if !seen.contains(&r) {
-                work.push(r);
+        for view_memo_copy in [false, true] {
+            if view_memo_copy
+                && !view_memo_plan
+                    .as_ref()
+                    .is_some_and(|p| p.route.contains(&d))
+            {
+                continue;
+            }
+            let mut cx = Ctx {
+                view_memo_sites: if view_memo_copy {
+                    view_memo_plan.as_ref().and_then(|p| p.sites.get(&d))
+                } else {
+                    None
+                },
+                view_memo_regions: 0,
+                trusted_auto_codec,
+                db: db.as_sky_db(),
+                defs: &defs,
+                kernel_alias: &kernel_alias,
+                kernel_alias_arity: &kernel_alias_arity,
+                env: &env,
+                record_fields: &record_fields,
+                ctor_owner: &ctor_owner,
+                ctor_tag: &ctor_tag,
+                ctor_arity: &ctor_arity,
+                ctor_in_union: &ctor_in_union,
+                ctor_arity_in_union: &ctor_arity_in_union,
+                ctor_field_gotys: &ctor_field_gotys,
+                sealed_unions: &sealed_unions,
+                def_param_tys: &def_param_tys,
+                def_result_tys: &def_result_tys,
+                def_effect: &def_effect,
+                body: &e.body,
+                types: &e.types,
+                task_discards: &e.task_discards,
+                numeric: &e.numeric,
+                numeric_scope: vec![ty::numeric::NumericBinder::Top],
+                local_names: HashMap::new(),
+                local_tys: HashMap::new(),
+                local_counter: 0,
+                container_record_slot: false,
+                record_at_slot: false,
+                discovered: Vec::new(),
+                used_types: HashSet::new(),
+                warnings: Vec::new(),
+                errors: Vec::new(),
+                closure_elem: None,
+                closure_elem_at: None,
+                caf_lambda_ty: None,
+                ffi: &cfg.ffi,
+                ffi_used: BTreeSet::new(),
+                kernel_arity: &cfg.kernel_arity,
+                variadic_kernels: &cfg.variadic_kernels,
+                cur_module: e.module_name.clone(),
+                cur_def: d,
+                goty_memo: HashMap::new(),
+                goty_ref_memo: HashMap::new(),
+                def_span: def_spans.get(&d).copied(),
+                cur_span: None,
+                tco: None,
+                // Only `lower_main` reads this; harmless to carry on every Ctx.
+                apply_config: config_go_name.clone(),
+                device_regs: device_regs.clone(),
+            };
+            let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
+            // determinism (L4): `discovered` is a Vec (ordered), and the two set
+            // drains below are order-INDEPENDENT — they only union into another
+            // set/BTreeSet, so the resulting membership is identical regardless of the
+            // (randomized) HashSet iteration order. `used_go_types` is sorted before it
+            // drives emission (see `tqueue.sort()`); `ffi_used` is a BTreeSet.
+            for r in cx.discovered {
+                if !seen.contains(&r) {
+                    work.push(r);
+                }
+            }
+            for t in cx.used_types {
+                used_go_types.insert(t);
+            }
+            for m in cx.ffi_used {
+                ffi_used.insert(m);
+            }
+            if view_memo_copy {
+                view_memo_regions += cx.view_memo_regions;
+                for item in def_items {
+                    if let GoItem::Func(f) = item {
+                        view_memo_funcs.push(f);
+                    }
+                }
+            } else {
+                warnings.extend(cx.warnings);
+                errors.extend(cx.errors);
+                funcs.extend(def_items);
             }
         }
-        for t in cx.used_types {
-            used_go_types.insert(t);
-        }
-        for m in cx.ffi_used {
-            ffi_used.insert(m);
-        }
-        warnings.extend(cx.warnings);
-        errors.extend(cx.errors);
-        funcs.extend(def_items);
     }
 
     // ---- type-decl reachability: BFS over Go type names used in emitted code ----
@@ -1010,6 +1094,16 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // deterministic: sort type groups by module then name (declaration proxy).
     type_items.sort_by(|a, b| a.0.cmp(&b.0));
 
+    if let Some(plan) = &view_memo_plan {
+        view_memo::finish(
+            plan,
+            &defs,
+            view_memo_funcs,
+            &mut funcs,
+            &type_items,
+            view_memo_regions,
+        );
+    }
     // ---- assemble the module ----
     let mut items = Vec::new();
     items.push(prologue_init(cfg));
@@ -2404,6 +2498,8 @@ fn ty_refs_ambiguous(t: &Ty, ambiguous: &HashSet<String>, declares: &dyn Fn(&str
 // `tqueue` / `type_items`. `used_types` is drained only via a set-union that a
 // later `.sort()` re-orders. So `HashMap` is sound here despite randomized order.
 struct Ctx<'a> {
+    view_memo_sites: Option<&'a Vec<view_memo::Site>>,
+    view_memo_regions: usize,
     trusted_auto_codec: Option<(DefId, DefId)>,
     db: &'a dyn SkyDb,
     defs: &'a BTreeMap<DefId, DefEntry>,
@@ -2435,6 +2531,8 @@ struct Ctx<'a> {
     def_effect: &'a HashMap<DefId, EffectKind>,
     body: &'a Body,
     types: &'a BodyTypes,
+    /// Logical effect classification only; never used to choose a Go representation.
+    task_discards: &'a BTreeSet<ExprId>,
     numeric: &'a ty::numeric::NumericElaboration,
     numeric_scope: Vec<ty::numeric::NumericBinder>,
     local_names: HashMap<LocalId, String>,
@@ -2744,6 +2842,9 @@ impl<'a> Ctx<'a> {
     /// for a call to an unannotated def whose result the caller inferred as a
     /// flex var — the callee's own inferred result type.
     fn expr_is_task(&self, e: ExprId) -> bool {
+        if self.task_discards.contains(&e) {
+            return true;
+        }
         if let Some(n) = self.types.expr_app_name(e) {
             if ty::nominal::base(n.as_str()) == "Task" {
                 return true;
@@ -6714,6 +6815,9 @@ impl<'a> Ctx<'a> {
             if args.len() == 2 {
                 let f = self.lower_expr(args[0], &GoTy::Any);
                 let xs = self.lower_expr(args[1], &GoTy::Any);
+                if let Some(memo) = self.try_view_memo_hof(hof, go, args, &f, &xs, actual) {
+                    return memo;
+                }
                 return self.list_hof_typed(hof, go, f, xs, actual);
             }
         }
@@ -8311,7 +8415,7 @@ impl<'a> Ctx<'a> {
             fn lookup(&self, d: DefId) -> Option<(&str, &str, &Body)> {
                 self.0
                     .get(&d)
-                    .map(|e| (e.module_name.as_str(), e.name.as_str(), &e.body))
+                    .map(|e| (e.module_name.as_str(), e.name.as_str(), &*e.body))
             }
         }
         let findings = crate::store_lint::lint(self.body, &Defs(self.defs));
@@ -11974,5 +12078,77 @@ mod canonical_header_name_tests {
         ] {
             assert_eq!(canonical_header_name(input), want, "{input}");
         }
+    }
+}
+
+#[cfg(test)]
+mod shared_body_owner_tests {
+    use super::*;
+
+    #[test]
+    fn reached_bodies_share_resolved_arenas_and_preserve_expression_ids() {
+        let mut db = hir::SourceDb::new();
+        let parsed = syntax::parse(
+            "module Main exposing (..)\nhelper x = (x, [x, x])\nmain = helper 7\n",
+            base::FileId(0),
+        );
+        assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+        let module = db.add_module("Main", parsed);
+        let resolved = db.resolve(module);
+        let ids: Vec<_> = resolved.top_defs.iter().map(|d| d.def).collect();
+        let body_count = resolved.bodies.len();
+        let entries: Vec<_> = ids
+            .iter()
+            .map(|def| {
+                assert!(resolved.bodies.contains_key(def));
+                DefBody {
+                    owner: std::sync::Arc::clone(&resolved),
+                    def: *def,
+                }
+            })
+            .collect();
+        for entry in &entries {
+            let original = &resolved.bodies[&entry.def];
+            assert!(
+                std::ptr::eq(&**entry, original),
+                "share the actual Body allocation"
+            );
+            assert_eq!(entry.root, original.root);
+            for (id, expression) in entry.exprs.iter() {
+                assert!(
+                    std::ptr::eq(expression, &original.exprs[id]),
+                    "every ExprId must resolve to the original arena allocation"
+                );
+            }
+        }
+        // Dropping a temporary owner must not invalidate entries retained by
+        // lowering; a later source revision must not retarget their arenas.
+        let first = &entries[0];
+        let address = &**first as *const Body;
+        let old_root = first.root;
+        drop(resolved);
+        db.add_module(
+            "Main",
+            syntax::parse(
+                "module Main exposing (..)\nhelper x = 11\nmain = 12\n",
+                base::FileId(0),
+            ),
+        );
+        let current = db.resolve(module);
+        assert!(!std::sync::Arc::ptr_eq(&current, &first.owner));
+        assert_eq!(&**first as *const Body, address);
+        assert_eq!(first.root, old_root);
+        assert_eq!(first.owner.bodies.len(), body_count);
+
+        // The negative-domain fixture's test-only mutation cannot edit the
+        // source snapshot or any other entry sharing that resolved module.
+        let mut edited = DefBody {
+            owner: std::sync::Arc::clone(&first.owner),
+            def: first.def,
+        };
+        let replacement = edited.exprs.alloc(Expr::Int(99));
+        edited.root = Some(replacement);
+        assert_eq!(first.root, old_root);
+        assert!(!std::ptr::eq(&*edited, &**first));
     }
 }

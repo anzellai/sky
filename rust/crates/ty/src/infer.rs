@@ -541,6 +541,43 @@ impl<'a> Infer<'a> {
         (out_e, out_l)
     }
 
+    /// Same solved inference as annotated tables, but only Task head booleans
+    /// for selected expressions. No type readback or table drain is needed.
+    pub(crate) fn infer_def_task_heads(
+        &mut self,
+        body: &Body,
+        selected: &std::collections::BTreeSet<ExprId>,
+    ) -> std::collections::BTreeSet<ExprId> {
+        if selected.is_empty() || self.infer_def_vars(body).is_none() {
+            return Default::default();
+        }
+        self.selected_task_heads(selected)
+    }
+
+    fn selected_task_heads(
+        &mut self,
+        selected: &std::collections::BTreeSet<ExprId>,
+    ) -> std::collections::BTreeSet<ExprId> {
+        let mut tasks = std::collections::BTreeSet::new();
+        for (expr, var) in std::mem::take(&mut self.expr_vars) {
+            if !selected.contains(&expr) {
+                continue;
+            }
+            if self
+                .uf
+                .app_name(var)
+                .is_some_and(|name| crate::nominal::base(name.as_str()) == "Task")
+            {
+                tasks.insert(expr);
+            } else {
+                // Match infer_def_tables' last-write-wins ExprId map, even
+                // when a later record replaces an earlier Task classification.
+                tasks.remove(&expr);
+            }
+        }
+        tasks
+    }
+
     /// The inference half of [`Infer::infer_def_typed`]: type the params, seed
     /// them from the expected scheme (tooling path), infer the body, and unify
     /// the expected result. Returns the body's result var and the param vars;
@@ -3564,6 +3601,31 @@ mod tests {
     use super::*;
     use hir::SourceDb;
     use std::collections::HashSet;
+
+    #[test]
+    fn selected_task_heads_use_last_record_for_duplicate_expression_ids() {
+        let db = SourceDb::new();
+        let world = World::build(&db);
+        let mut infer = Infer::new(&world, &db);
+        let mut body = Body::default();
+        let expr = body.exprs.alloc(Expr::Int(0));
+        let selected = std::collections::BTreeSet::from([expr]);
+        let error = infer
+            .uf
+            .fresh(Content::Structure(FlatTy::App(Name::new("Error"), vec![])));
+        let value = infer
+            .uf
+            .fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let task = infer.uf.fresh(Content::Structure(FlatTy::App(
+            Name::new("Task"),
+            vec![error, value],
+        )));
+        let unknown = infer.uf.fresh_flex();
+        infer.expr_vars = vec![(expr, task), (expr, unknown)];
+        assert!(infer.selected_task_heads(&selected).is_empty());
+        infer.expr_vars = vec![(expr, unknown), (expr, task)];
+        assert_eq!(infer.selected_task_heads(&selected), selected);
+    }
 
     const SRC: &str = "module Main exposing (main)\n\
         type alias P = { name : String, tags : List String, inner : { a : String, b : ( String, String ) } }\n\

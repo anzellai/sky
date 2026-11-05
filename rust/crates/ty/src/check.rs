@@ -237,6 +237,21 @@ impl<'a> Typer<'a> {
         BodyTypes::from_tables(infer.infer_def_tables(body))
     }
 
+    /// Logical Task heads at selected sites, with exactly the signature/self
+    /// seeding of body_types_annotated but no owned types or tables read back.
+    pub fn task_typed_expressions(
+        &self,
+        def: DefId,
+        body: &Body,
+        selected: &std::collections::BTreeSet<ExprId>,
+    ) -> std::collections::BTreeSet<ExprId> {
+        let mut infer = Infer::new(&self.world, self.db.as_sky_db())
+            .with_self_def(Some(def))
+            .with_inferred(true)
+            .with_expected(self.world.value_sigs.get(&def).cloned());
+        infer.infer_def_task_heads(body, selected)
+    }
+
     /// The declared/derived scheme for a top-level value def, if known.
     pub fn value_sig(&self, def: DefId) -> Option<&Scheme> {
         self.world.value_sigs.get(&def)
@@ -1289,6 +1304,9 @@ pub fn check_modules_with_world(
             // list is computed once. The scans below look types up by `ExprId`
             // (last recording wins) and rebuild only what they read.
             let (recorded, table) = infer.recorded_expr_table();
+            // The solved snapshot owns its data. No scan below needs the UF,
+            // inference environments or local/generalisation scratch.
+            drop(infer);
             let mut key_memo = HashMap::new();
             for (e, r) in &recorded {
                 let keys = dictkey::unsupported_keys_ref(&table, *r, &mut key_memo);
@@ -1296,6 +1314,7 @@ pub fn check_modules_with_world(
                     dict_keys.add_keys(&keys, &dname, body.expr_span(*e), false);
                 }
             }
+            drop(key_memo);
 
             // ---- [E2009] un-derivable codec element ---------------------
             //

@@ -76,7 +76,7 @@ impl Ctx<'_> {
             return false;
         };
         eligible(&encoder.body, trusted, &|d| {
-            self.defs.get(&d).map(|e| &e.body)
+            self.defs.get(&d).map(|e| &*e.body)
         })
     }
 }
@@ -207,7 +207,7 @@ impl Ctx<'_> {
                 return false;
             };
             prepared_eligible(full, prepare, finish, trusted, &|d| {
-                self.defs.get(&d).map(|v| &v.body)
+                self.defs.get(&d).map(|v| &*v.body)
             })
         };
         proven && self.validated_prepared_model_abi(full, prepare, finish)

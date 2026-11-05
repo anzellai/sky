@@ -401,8 +401,11 @@ users. The app code does not change — only the DSN does.
 Every observable side effect returns `Task Error a` (`File.*`, `Http.*`, `Db.*`,
 `Time.now`, `Random.*`, `Log.*`, `System.*` except `getenvOr`). Pure stays bare
 (`String.*`, `List.*`, `Crypto.sha256`); fallible-pure returns `Result e a` /
-`Maybe a` (`String.toInt`, JSON decoders). A discarded `let _ = TaskExpr` is
-auto-forced. Bridge with `Task.fromResult` / `Task.andThenResult` /
+`Maybe a` (`String.toInt`, JSON decoders). A root `let _ = TaskExpr` runs the
+Task once when its type is known statically, including from an annotation. A wildcard inside a tuple pattern
+discards Task data without running it. Ordinary function values and
+unconstrained polymorphic discards stay latent. Bridge with `Task.fromResult` /
+`Task.andThenResult` /
 `Task.onError`. Top-level `apiKey = System.getenv "K" |> Task.run |> Result.withDefault ""`
 still needs the explicit `Task.run`. Every `File.*` failure has its kind
 (v0.29.1): a missing path is `NotFound`, a refused one `PermissionDenied`, a

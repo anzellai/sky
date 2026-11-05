@@ -148,3 +148,34 @@ fn assert_division_by_zero(source: &str) {
     assert!(output.contains("DivisionByZero"), "{output}");
     assert!(!output.contains("UNREACHABLE"), "{output}");
 }
+
+#[test]
+fn tuple_discard_keeps_task_data_latent_and_root_wildcard_forces_once() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fixture = Fixture::new(include_str!("fixtures/tuple-task-discard/Main.sky"));
+    let built = Command::new(env!("CARGO_BIN_EXE_sky"))
+        .args(["build", "-o", "stage-test", "src/Main.sky"])
+        .current_dir(&fixture.0)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "typed tuple Task discard fixture must build"
+    );
+    let out = Command::new(fixture.0.join("stage-test/app"))
+        .env_clear()
+        .current_dir(&fixture.0)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "typed tuple Task discard fixture must execute"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.trim(), "TUPLE_TASK_LATENT_ROOT_TASK_FORCED");
+    assert!(!stdout.contains("TUPLE_TASK_DISCARD_WRONG"));
+}

@@ -27,9 +27,12 @@ var (
 	// invoked directly (a plain Go call), NOT via reflect.Value.Call, so the
 	// steady-state TEA loop carries no reflection. spaInit/spaUpdate repack
 	// their ( model, Cmd ) tuple result into SkyTuple2 (V0=model, V1=cmd).
-	spaInit   func(any) SkyTuple2
-	spaUpdate func(any, any) SkyTuple2
-	spaView   func(any) any
+	spaInit                       func(any) SkyTuple2
+	spaUpdate                     func(any, any) SkyTuple2
+	spaView                       func(any) any
+	spaViewMemoState              *spaViewMemoApp
+	spaViewMemoLifecycleInstalled bool
+	spaViewMemoPageHide           js.Func
 	// spaSubs is the config's `subscriptions : model -> Sub msg` (nil when the
 	// config omits it). Evaluated after every dispatch to reconcile timers.
 	spaSubs func(any) any
@@ -109,6 +112,9 @@ func spaRun(cfg any) any {
 	spaInit = fns.Init
 	spaUpdate = fns.Update
 	spaView = fns.View
+	spaResetViewMemo()
+	spaViewMemoState = newSpaViewMemoApp(fns)
+	spaInstallViewMemoLifecycle()
 	// subscriptions is a required config field as of P3, but SpaFns.Subs is nil
 	// when the config omits it so an older/partial config degrades to "no subs"
 	// rather than trapping.
@@ -792,69 +798,74 @@ func spaReportPanic(stage string, r any) {
 // preserved across updates.
 func renderCurrent() {
 	started := spaProfileBeginPhase()
-	html := spaView(spaModel)
-	spaProfileEndPhase(started, spaProfileView)
-	started = spaProfileBeginPhase()
-	vn := HtmlToVNode(html)
-	spaProfileEndPhase(started, spaProfileVNode)
-	started = spaProfileBeginPhase()
-	assignSkyIDs(&vn, "r")
-	// Parity with the server (HtmlRenderWithHandlers): hoist media-query /
-	// pseudo-class (:hover/:focus) / transition / animation markers into scoped
-	// <style> children. Without this pass `Ui.breakpoint` / `Ui.onPseudo` etc.
-	// are INERT in the wasm client (their data-sky-mq/pc markers are never
-	// consumed) — responsive + hover styling silently do nothing.
-	applyStyleInjections(&vn)
-	spaProfileEndPhase(started, spaProfileStyle)
-	started = spaProfileBeginPhase()
-	defer spaProfileEndPhase(started, spaProfilePatch)
-	if spaPrev == nil {
-		// SSR first paint (design §4.4): when the mount was server-rendered
-		// (data-sky-ssr) AND the freshly-computed tree is provably hydratable,
-		// ATTACH handlers to the existing server DOM in place instead of wiping +
-		// rebuilding — preserving node identity so there is no flash. Otherwise
-		// (no SSR, or a server DOM that spaCanHydrate refused) fall back
-		// to today's full spaMount, which is always correct.
-		if spaShouldHydrate(spaRoot, vn) {
-			spaHydrate(spaRoot, vn)
+	app := spaViewMemoState
+	if app == nil {
+		app = newSpaViewMemoApp(SpaFns{View: spaView})
+	}
+	app.render(spaModel, spaStepReference, func(html any) {
+		spaProfileEndPhase(started, spaProfileView)
+		started = spaProfileBeginPhase()
+		vn := HtmlToVNode(html)
+		spaProfileEndPhase(started, spaProfileVNode)
+		started = spaProfileBeginPhase()
+		assignSkyIDs(&vn, "r")
+		// Parity with the server (HtmlRenderWithHandlers): hoist media-query /
+		// pseudo-class (:hover/:focus) / transition / animation markers into scoped
+		// <style> children. Without this pass `Ui.breakpoint` / `Ui.onPseudo` etc.
+		// are INERT in the wasm client (their data-sky-mq/pc markers are never
+		// consumed) — responsive + hover styling silently do nothing.
+		applyStyleInjections(&vn)
+		spaProfileEndPhase(started, spaProfileStyle)
+		started = spaProfileBeginPhase()
+		defer spaProfileEndPhase(started, spaProfilePatch)
+		if spaPrev == nil {
+			// SSR first paint (design §4.4): when the mount was server-rendered
+			// (data-sky-ssr) AND the freshly-computed tree is provably hydratable,
+			// ATTACH handlers to the existing server DOM in place instead of wiping +
+			// rebuilding — preserving node identity so there is no flash. Otherwise
+			// (no SSR, or a server DOM that spaCanHydrate refused) fall back
+			// to today's full spaMount, which is always correct.
+			if spaShouldHydrate(spaRoot, vn) {
+				spaHydrate(spaRoot, vn)
+			} else {
+				spaMount(spaRoot, vn)
+			}
+			// Every listener is bound: widget events held until now go out.
+			spaIslandHostReady()
 		} else {
-			spaMount(spaRoot, vn)
+			// clientState tells diffTrees what the focused input actually shows
+			// right now, so it skips emitting a value patch that would only
+			// re-assert (and caret-reset) the user's own in-flight typing. This is
+			// what keeps the typing case a MINIMAL patch set.
+			//
+			// spaPlanRender also holds back the patches that would close an open
+			// <select>'s picker, and returns the tree the DOM really holds after
+			// the rest: the new tree, with each held region keeping its old
+			// subtree. That tree is what spaPrev records, so the next render once
+			// the select is closed re-sends what was held. Recording &vn here
+			// lost those patches for good.
+			spaInstallSelectTracker()
+			NativeInstallCaretTracker()
+			plan := spaPlanRender(spaPrev, &vn, snapshotFocusedInput(), spaCurrentSelect())
+			// While a control's own input Msgs wait behind a hold RPC, the model
+			// is behind what the control shows: leave its value alone until they
+			// have run (spa_typing.go).
+			plan.Apply = spaKeepTyped(plan.Apply, spaTypingIDs())
+			missing := spaApplyPatches(plan.Apply, spaPrev, &vn)
+			spaNoteHeld(plan)
+			spaResyncMissing(missing, *plan.DOM)
+			// The diff compares handlers by constructor name, so a payload-only
+			// change emits no patch and no rebind. Refresh every element's handler
+			// slot from the recorded tree so its listener dispatches the CURRENT
+			// payload (a held region keeps the handlers its DOM was built with).
+			spaNodeHandlers.refresh(plan.DOM)
+			spaPrev = plan.DOM
+			return
 		}
-		// Every listener is bound: widget events held until now go out.
-		spaIslandHostReady()
-	} else {
-		// clientState tells diffTrees what the focused input actually shows
-		// right now, so it skips emitting a value patch that would only
-		// re-assert (and caret-reset) the user's own in-flight typing. This is
-		// what keeps the typing case a MINIMAL patch set.
-		//
-		// spaPlanRender also holds back the patches that would close an open
-		// <select>'s picker, and returns the tree the DOM really holds after
-		// the rest: the new tree, with each held region keeping its old
-		// subtree. That tree is what spaPrev records, so the next render once
-		// the select is closed re-sends what was held. Recording &vn here
-		// lost those patches for good.
 		spaInstallSelectTracker()
 		NativeInstallCaretTracker()
-		plan := spaPlanRender(spaPrev, &vn, snapshotFocusedInput(), spaCurrentSelect())
-		// While a control's own input Msgs wait behind a hold RPC, the model
-		// is behind what the control shows: leave its value alone until they
-		// have run (spa_typing.go).
-		plan.Apply = spaKeepTyped(plan.Apply, spaTypingIDs())
-		missing := spaApplyPatches(plan.Apply, spaPrev, &vn)
-		spaNoteHeld(plan)
-		spaResyncMissing(missing, *plan.DOM)
-		// The diff compares handlers by constructor name, so a payload-only
-		// change emits no patch and no rebind. Refresh every element's handler
-		// slot from the recorded tree so its listener dispatches the CURRENT
-		// payload (a held region keeps the handlers its DOM was built with).
-		spaNodeHandlers.refresh(plan.DOM)
-		spaPrev = plan.DOM
-		return
-	}
-	spaInstallSelectTracker()
-	NativeInstallCaretTracker()
-	spaPrev = &vn
+		spaPrev = &vn
+	})
 }
 
 // spaReplayHeldInput calls the boot loader's `__skyHydrated` (spa_boot.go)
@@ -1505,4 +1516,21 @@ func spaFreshTick(ms int) {
 		return
 	}
 	spaSch.dispatchTick(spaTickMsg(t.msg, nowMillis()), ms, step)
+}
+
+// Reboot, sign-out and page teardown invalidate active epochs and owners.
+// The event listener is page-owned and reads the current app, retaining no old
+// model, frame or source callback from a prior boot.
+func spaResetViewMemo() {
+	if spaViewMemoState != nil {
+		spaViewMemoState.reset()
+	}
+}
+func spaInstallViewMemoLifecycle() {
+	if spaViewMemoLifecycleInstalled {
+		return
+	}
+	spaViewMemoPageHide = js.FuncOf(func(js.Value, []js.Value) any { spaResetViewMemo(); return nil })
+	js.Global().Call("addEventListener", "pagehide", spaViewMemoPageHide)
+	spaViewMemoLifecycleInstalled = true
 }

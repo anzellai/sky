@@ -17,9 +17,10 @@ const (
 )
 
 type spaStepMetrics struct {
-	Calls   [spaProfilePhases]int
-	Nanos   [spaProfilePhases]int64
-	Persist spaPersistMetrics
+	Calls    [spaProfilePhases]int
+	Nanos    [spaProfilePhases]int64
+	Persist  spaPersistMetrics
+	ViewMemo spaViewMemoMetrics
 }
 
 var spaActiveStepMetrics *spaStepMetrics

@@ -45,7 +45,11 @@ type SpaFns struct {
 	Init   func(any) SkyTuple2
 	Update func(any, any) SkyTuple2
 	View   func(any) any
-	Subs   func(any) any
+	// Optional compiler-proven source-value regions. View remains the exact
+	// reference entry; memo contexts are owned by one app render lifecycle.
+	ViewMemo      func(any, any) any
+	ViewMemoTypes []any
+	Subs          func(any) any
 }
 
 // Spa_config materialises the config into a map[string]any that the withX
