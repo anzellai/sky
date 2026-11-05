@@ -293,6 +293,12 @@ jobs:
       - name: Sky.Spa mixed-model step cost and reference semantics
         timeout-minutes: 5
         run: scripts/spa-step-cost-mixed-e2e.sh
+      - name: Sky.Spa typed Dict step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-collections-e2e.sh --collection dict
+      - name: Sky.Spa tuple-list step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-collections-e2e.sh --collection tuple
       # Std.Nav: `update` moves the address bar without a reload (pushUrl,
       # replaceUrl, clearFragment, a server arm's navigation, an off-site URL
       # refused), on Sky.Live and the Sky.Spa client. Chromium + WebKit.

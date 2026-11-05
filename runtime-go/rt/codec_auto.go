@@ -476,10 +476,10 @@ func codecAutoEncodeTypedAt(rv reflect.Value, declaredType string, snake bool, s
 // The full canonical dispatch prefix remains below and executes per value.
 // Direct callers and supplied mutable TupleAt args retain their original paths.
 func codecAutoEncodeTypedTupleArgsAt(rv reflect.Value, declaredType string, snake bool, snapshot *codecEnumRegistrySnapshot, tupleArgs []string) (any, error) {
-	return codecAutoEncodeTypedMemoAt(rv, declaredType, snake, snapshot, tupleArgs, nil)
+	return codecAutoEncodeTypedMemoAt(rv, declaredType, snake, snapshot, tupleArgs, nil, nil)
 }
 
-func codecAutoEncodeTypedMemoAt(rv reflect.Value, declaredType string, snake bool, snapshot *codecEnumRegistrySnapshot, tupleArgs []string, ownerMemo *codecDeclaredOwnerMemo) (any, error) {
+func codecAutoEncodeTypedMemoAt(rv reflect.Value, declaredType string, snake bool, snapshot *codecEnumRegistrySnapshot, tupleArgs []string, ownerMemo *codecDeclaredOwnerMemo, fieldMemo *codecTupleFieldMemo) (any, error) {
 	if err := codecAutoCheckDeclaredOwner(rv, codecAutoDeclaredOwnerMemoAt(declaredType, snapshot, ownerMemo)); err != nil {
 		return nil, err
 	}
@@ -549,7 +549,7 @@ func codecAutoEncodeTypedMemoAt(rv reflect.Value, declaredType string, snake boo
 			args = codecDeclaredTupleArgs(declaredType)
 		}
 		if args != nil && rv.Kind() == reflect.Struct && !isSkyAdtType(rv.Type()) && rv.NumField() == len(args) {
-			return codecAutoEncodeTupleAt(rv, args, snake, snapshot)
+			return codecAutoEncodeTupleMemoAt(rv, args, snake, snapshot, fieldMemo)
 		}
 		if elem, ok := strings.CutPrefix(declaredType, "[]"); ok && rv.Kind() == reflect.Slice {
 			// elem is a by-value string fixed for this invocation. Parse its
@@ -558,9 +558,10 @@ func codecAutoEncodeTypedMemoAt(rv reflect.Value, declaredType string, snake boo
 			elemTupleArgs := codecDeclaredTupleArgs(elem)
 			// Only this fixed list-element declaration owns this one-entry memo.
 			elemOwnerMemo := codecDeclaredOwnerMemo{declared: elem}
+			var elemFieldMemo codecTupleFieldMemo
 			out := make([]any, rv.Len())
 			for i := 0; i < rv.Len(); i++ {
-				e, err := codecAutoEncodeTypedMemoAt(rv.Index(i), elem, snake, snapshot, elemTupleArgs, &elemOwnerMemo)
+				e, err := codecAutoEncodeTypedMemoAt(rv.Index(i), elem, snake, snapshot, elemTupleArgs, &elemOwnerMemo, &elemFieldMemo)
 				if err != nil {
 					return nil, err
 				}
@@ -1090,10 +1091,14 @@ func codecAutoEncodeTuple(rv reflect.Value, args []string, snake bool) (any, err
 }
 
 func codecAutoEncodeTupleAt(rv reflect.Value, args []string, snake bool, snapshot *codecEnumRegistrySnapshot) (any, error) {
+	return codecAutoEncodeTupleMemoAt(rv, args, snake, snapshot, nil)
+}
+
+func codecAutoEncodeTupleMemoAt(rv reflect.Value, args []string, snake bool, snapshot *codecEnumRegistrySnapshot, memo *codecTupleFieldMemo) (any, error) {
 	if isSkyAdtType(rv.Type()) {
 		return nil, fmt.Errorf("Codec.auto: an ADT is not a tuple")
 	}
-	plan := codecAutoFields(rv.Type(), snake)
+	plan := codecAutoTupleFieldsMemo(rv.Type(), snake, memo)
 	obj := plan.newObject()
 	for ordinal, field := range plan.fields {
 		// args are invocation data, not schema: read by ORIGINAL physical

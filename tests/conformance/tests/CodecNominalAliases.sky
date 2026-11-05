@@ -3,12 +3,17 @@ module CodecNominalAliases exposing (Amount, AmountChain, Exact, Coin, Nested)
 import Std.Decimal as Decimal
 import Std.Money as Money
 
-type alias Amount = Money.Money
+type alias Amount =
+    Money.Money
 
-type alias AmountChain = Amount
+type alias AmountChain =
+    Amount
 
-type alias Exact = Decimal.Decimal
+type alias Exact =
+    Decimal.Decimal
 
-type alias Coin = Money.Currency
+type alias Coin =
+    Money.Currency
 
-type alias Nested = List (Maybe ( Exact, Coin ))
+type alias Nested =
+    List (Maybe ( Exact, Coin ))

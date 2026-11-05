@@ -1,0 +1,114 @@
+{
+  "status": "PASS",
+  "cases": 12,
+  "pairs": [
+    {
+      "collection": "dict",
+      "browser": "chromium",
+      "checkpoints": 8,
+      "equal": true
+    },
+    {
+      "collection": "dict",
+      "browser": "webkit",
+      "checkpoints": 8,
+      "equal": true
+    },
+    {
+      "collection": "dict",
+      "browser": "firefox",
+      "checkpoints": 8,
+      "equal": true
+    },
+    {
+      "collection": "tuple",
+      "browser": "chromium",
+      "checkpoints": 8,
+      "equal": true
+    },
+    {
+      "collection": "tuple",
+      "browser": "webkit",
+      "checkpoints": 8,
+      "equal": true
+    },
+    {
+      "collection": "tuple",
+      "browser": "firefox",
+      "checkpoints": 8,
+      "equal": true
+    }
+  ],
+  "cpuRate": 1,
+  "domain": "MIXED",
+  "collections": [
+    "Dict String String",
+    "List (Int, String)"
+  ],
+  "retainedEntryCounts": [
+    1000,
+    10000,
+    100000
+  ],
+  "syntheticValue": "x",
+  "syntheticValueASCIIBytes": 1,
+  "editorProducts": "empty",
+  "budgets": {
+    "persistenceBytes": 1500000,
+    "rawRetentionBytes": 1500000,
+    "nodeLimit": 4096,
+    "depthLimit": 64
+  },
+  "pressurePaddingASCIIBytes": [
+    1000000,
+    480000
+  ],
+  "canonicalCollectionBytes": {
+    "dict": {
+      "1000": 13894,
+      "10000": 148895,
+      "100000": 1588896
+    },
+    "tuple": {
+      "1000": 19894,
+      "10000": 208895,
+      "100000": 2188896
+    }
+  },
+  "typing": {
+    "transitions": 20,
+    "incrementalFieldBytes": 1390,
+    "incrementalConversions": 60,
+    "incrementalStrictPreparations": 40,
+    "referenceFullEncoderInvocations": 40
+  },
+  "visibleRows": 200,
+  "viewportWidths": [
+    390,
+    820,
+    1180,
+    1440
+  ],
+  "viewportHeight": 960,
+  "reportSHA256": {
+    "dict-reference-chromium.json": "0d9300ecec121474155853e2a0ec99ee5f719cdad698bcaed76ca00d4a7f1bac",
+    "dict-incremental-chromium.json": "790e12673e40306fdde9d2b554f25c793ba7e3f7359e3562a28f2e46b8385485",
+    "dict-reference-webkit.json": "77251ed8ed1018c4bb46b677fdd756dc8a403d0c7d3a9856dc3f705f2802e419",
+    "dict-incremental-webkit.json": "976f2e6a812c8adb2ea35c5d4b8d6f7f363bf8c0a94c7faa594891c0d6f1b5c5",
+    "dict-reference-firefox.json": "dc13215346eea9af8f039d77ccbd0b649d7c7782d2d742f04cc7fc6b57096e10",
+    "dict-incremental-firefox.json": "2ccad88435162262b90a2ac7b70b908ab53dd6c05def400abd54c8c61092ca01",
+    "tuple-reference-chromium.json": "89d3fdf157a894f8a1156204b6c4f9a0a217eaa608440b2822ee864489c036b4",
+    "tuple-incremental-chromium.json": "5b16e425061eddab59f74043e5266775aefad4686f82019ea903ac04785897cd",
+    "tuple-reference-webkit.json": "ea79cb56b4ce6695895b60843553bfb9206215b0657943253d264407dc75963f",
+    "tuple-incremental-webkit.json": "42de0d56dbc540b8fd4b40a02ae9fffd772eae825d75f7ff161cdb5e284ee81f",
+    "tuple-reference-firefox.json": "a45167d70b311442cdf7160c873809d7e77e6e4510faf4292dc503daafe3ce7b",
+    "tuple-incremental-firefox.json": "4ee47c67ba1ac24b59cfde62caf0cc1814453bd1a33b483c56990fbe795edd32"
+  },
+  "deadlinePerBrowserSeconds": 300,
+  "viewMemoActive": false,
+  "gateExitCode": 0,
+  "task": "tuple-field-memo-all-browsers",
+  "session": 34653,
+  "sourceManifestSHA256": "55287ce01f35bcd75c467190b27f990d51953a4f2a09ffe19ecda55e0c6eb6f9",
+  "scope": "Synthetic functional/canonical-byte parity and operation-count observations only; no latency, changed-key delta, throughput, memory or general complexity guarantee."
+}

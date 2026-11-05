@@ -531,7 +531,7 @@ capacity introduced a demonstrated race, and sharing key/value allocation would
 retain replaced values through the existing plain-null key-slice path. The
 passing implementation preserves the ordered-object layout and ownership.
 
-## Collection integration: validation in progress
+## Collection integration: local browser validation complete
 
 Mixed-model reuse now admits exact runtime T2/T3 tuples and SkyDict values when
 their children qualify. It reuses unchanged roots. A changed root still takes
@@ -539,19 +539,25 @@ the complete canonical conversion; this is not a changed-key delta algorithm.
 The original Full/projection gate remains in place.
 
 The new public Dict/tuple fixture uses one-byte string values and the unchanged
-1.5 MiB persistence cap. Ten of twelve current-owner browser reports pass, but
-the complete gate exits 124 after the Firefox tuple reference reaches its
-300-second deadline. A separate cached diagnostic also times out, reaching
-step 29 at 290 seconds after completing typing. Both current-owner Firefox
-tuple reports are therefore still required. No cycle8 success bundle is
-published. Earlier passing Firefox reports from before owner integration do
-not validate this candidate.
+1.5 MiB persistence cap. The complete current-owner gate now exits successfully:
+twelve reports cover Chromium, WebKit and Firefox, and all six reference /
+incremental pairs match exactly at eight stored checkpoints. The
+[cycle8 evidence bundle](runs/step-cost-20261104/cycle8-collections/conditions.json)
+binds the actual compiler, production runtime, generated code, served Wasm and
+fixture sources. Every original message, assertion and 300-second browser
+deadline remains in place. Earlier attempts timed out in Firefox tuple
+reference; the invocation-local metadata optimizations below resolve that
+measured gate failure. This is a single instrumented correctness/work-count
+repeat, not a production latency or general scaling claim.
 
 An invocation-local owner memo preserves each original live atomic registry
 read and supplied pin, while reusing the owner map result only for the same
 fixed list-element declaration and immutable metadata epoch. It retains one
 epoch and no model values. Its candidate passes 298 selected native tests and
-23 targeted race tests with no skips. The fresh Firefox tuple reference still
-exceeds its unchanged deadline, so these runtime results do not establish
-browser throughput. A separate invocation-local tuple field-plan optimization
-is being validated before adoption.
+23 targeted race tests with no skips. An invocation-local tuple field-plan
+optimization also passes 302 native tests and 35 targeted race tests without
+skips. Its exact actual type and naming mode select an immutable layout only
+at the original tuple-conversion boundary. Mutable argument/value reads,
+canonical guards, metadata observations and independent output buffers remain
+unchanged. Both the fresh Firefox pair and the subsequent full twelve-report
+matrix pass with those changes.
