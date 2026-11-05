@@ -401,6 +401,12 @@ func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
 		}
 		rv = rv.Elem()
 	}
+	if rv.CanInterface() {
+		if handle, ok := rv.Interface().(ffiGoFuncHandle); ok {
+			rv = handle.function
+		}
+	}
+
 	switch rv.Kind() {
 	case reflect.Bool:
 		if rv.Bool() {

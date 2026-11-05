@@ -45,6 +45,11 @@ var spaProjectionVariantType = reflect.TypeOf((*SkyVariant)(nil)).Elem()
 // any instance data. Back-edges are rejected, not assumed safe: foreign code can
 // construct a cyclic slice graph even for Node{children: []Node}.
 func spaProjectionTypeClosed(t reflect.Type, states map[reflect.Type]uint8, depth int) (ok bool) {
+	// Named Go containers are opaque FFI references, not immutable Sky data.
+	if t.Name() != "" && t.PkgPath() != "" &&
+		(t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map) {
+		return false
+	}
 	if depth > 64 || t.Implements(spaProjectionVariantType) {
 		return false
 	}
@@ -92,6 +97,10 @@ func spaProjectionTypeClosed(t reflect.Type, states map[reflect.Type]uint8, dept
 // representations, excessive depth and large session graphs retain reference
 // execution. This inspects SELECTED fields only, never unrelated model fields.
 func spaProjectionClosed(v reflect.Value, depth int, budget *int) bool {
+	if v.IsValid() && v.Type().Name() != "" && v.Type().PkgPath() != "" &&
+		(v.Kind() == reflect.Slice || v.Kind() == reflect.Array || v.Kind() == reflect.Map) {
+		return false
+	}
 	if !v.IsValid() || depth > 64 || *budget <= 0 {
 		return false
 	}

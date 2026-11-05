@@ -40,6 +40,7 @@ package rt
 // crash and never a wrong value.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -139,7 +140,8 @@ func ffiOpaqueUncached(t reflect.Type) bool {
 }
 
 // ffiSameRep: a type whose Go value IS its Sky value (string, int, float64,
-// bool, and slices / String-keyed maps of those), so no copy is needed.
+// bool, and slices / String-keyed maps of those). Shape equality does not
+// imply ownership: Go-to-Sky returns detach the mutable container tree.
 func ffiSameRep(t reflect.Type) bool {
 	if v, ok := ffiSameRepCache.Load(t); ok {
 		return v.(bool)
@@ -168,6 +170,57 @@ func ffiIsByte(t reflect.Type) bool {
 	return t.Kind() == reflect.Uint8 && !ffiDefined(t)
 }
 
+// A Go OUTPUT func is opaque, while a Go INPUT func slot is a Sky callback.
+// Their reflect types can be identical, so retain explicit output provenance
+// instead of guessing origin from signature equality. The carrier is private
+// and always unwrapped when handed back to Go (including interface slots).
+type ffiGoFuncHandle struct{ function reflect.Value }
+
+func (ffiGoFuncHandle) String() string { return "<function>" }
+
+// Do not let the private struct representation turn an unencodable Go func
+// into an apparently valid empty JSON object.
+func (h ffiGoFuncHandle) MarshalJSON() ([]byte, error) {
+	return json.Marshal(h.function.Interface())
+}
+func ffiUnwrapGoFunc(v any) any {
+	if handle, ok := v.(ffiGoFuncHandle); ok {
+		return handle.function.Interface()
+	}
+	return v
+}
+
+// True when callback arguments or results cross a mutable data boundary. Opaque named
+// containers/structs remain intentional handles; ordinary list/map/array data
+// (including nested trees) must cross an ownership copy even at exact func ABI.
+func ffiCallbackNeedsOwnership(t reflect.Type) bool {
+	if t.Kind() != reflect.Func {
+		return false
+	}
+	for i := 0; i < t.NumIn(); i++ {
+		if ffiConvertibleContainer(t.In(i)) {
+			return true
+		}
+	}
+	for i := 0; i < t.NumOut(); i++ {
+		if ffiConvertibleContainer(t.Out(i)) {
+			return true
+		}
+	}
+	return false
+}
+
+func ffiConvertibleContainer(t reflect.Type) bool {
+	if ffiOpaque(t) {
+		return false
+	}
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map, reflect.Ptr:
+		return true
+	}
+	return false
+}
+
 // FfiRet converts a Go value of static type T to its Sky representation.
 func FfiRet[T any](v T) any {
 	return ffiToSky(reflect.ValueOf(&v).Elem())
@@ -186,11 +239,20 @@ func FfiCommaOk(v any, ok bool) SkyMaybe[any] {
 func FfiArg[T any](v any) T {
 	var zero T
 	t := reflect.TypeOf(&zero).Elem()
+	if handle, ok := v.(ffiGoFuncHandle); ok {
+		return ffiOpaqueToGoMode(handle.function, t, false).Interface().(T)
+	}
 	ffiRefuseSkyOwned(v, t)
 	if tv, ok := v.(T); ok && !ffiNeedsDeepCheck(t) {
 		return tv
 	}
 	out := ffiToGo(v, t)
+	// A nil Go interface is a valid converted argument, but Interface()
+	// flattens it to nil: nil.(T) panics even when T itself is an interface.
+	// Preserve the typed zero instead of turning forwarding nil into Err.
+	if out.Kind() == reflect.Interface && out.IsNil() {
+		return zero
+	}
 	return out.Interface().(T)
 }
 
@@ -226,6 +288,9 @@ func ffiRefuseSkyOwned(v any, t reflect.Type) {
 // convertible elements always arrives from Sky in Sky's own shape, so the
 // fast path is only taken for a type whose Go and Sky shapes coincide.
 func ffiNeedsDeepCheck(t reflect.Type) bool {
+	if ffiCallbackNeedsOwnership(t) {
+		return true
+	}
 	if ffiSameRep(t) || ffiOpaque(t) {
 		return false
 	}
@@ -240,12 +305,23 @@ func ffiNeedsDeepCheck(t reflect.Type) bool {
 func ffiToSky(v reflect.Value) any {
 	t := v.Type()
 	if ffiSameRep(t) {
-		return v.Interface()
+		return ffiSnapshotSameRep(v).Interface()
 	}
 	if ffiOpaque(t) {
 		if (t.Kind() == reflect.Interface || t.Kind() == reflect.Ptr || t.Kind() == reflect.Func ||
 			t.Kind() == reflect.Map || t.Kind() == reflect.Slice || t.Kind() == reflect.Chan) && v.IsNil() {
 			return nil
+		}
+		if v.Kind() == reflect.Func && v.CanInterface() {
+			return ffiGoFuncHandle{function: v}
+		}
+		if v.Kind() == reflect.Interface && v.CanInterface() && !v.IsNil() && v.Elem().Kind() == reflect.Func && v.Elem().CanInterface() {
+			// Preserve the pre-carrier representation of an interface holding
+			// a typed nil func: flatten it without turning nil into a handle.
+			if v.Elem().IsNil() {
+				return v.Interface()
+			}
+			return ffiGoFuncHandle{function: v.Elem()}
 		}
 		return v.Interface()
 	}
@@ -308,6 +384,41 @@ func ffiToSky(v reflect.Value) any {
 	return v.Interface()
 }
 
+// ffiSnapshotSameRep detaches data containers whose Go and Sky types are
+// already identical. It is used ONLY on Go-to-Sky ingress; FfiArg's existing
+// read-only argument contract and opaque Go handle identities are unchanged.
+// ffiSameRep admits only unnamed primitive/slice/string-keyed-map trees, so
+// this walk cannot encounter private fields, handles, pointers or cycles.
+func ffiSnapshotSameRep(v reflect.Value) reflect.Value {
+	switch v.Kind() {
+	case reflect.Slice:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		if kind := v.Type().Elem().Kind(); kind != reflect.Slice && kind != reflect.Map {
+			reflect.Copy(out, v)
+		} else {
+			for i := 0; i < v.Len(); i++ {
+				out.Index(i).Set(ffiSnapshotSameRep(v.Index(i)))
+			}
+		}
+		return out
+	case reflect.Map:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		out := reflect.MakeMapWithSize(v.Type(), v.Len())
+		it := v.MapRange()
+		for it.Next() {
+			out.SetMapIndex(it.Key(), ffiSnapshotSameRep(it.Value()))
+		}
+		return out
+	default:
+		return v
+	}
+}
+
 // ffiDictKey: a Go map key kind a Sky Dict can carry.
 func ffiDictKey(k reflect.Type) bool {
 	switch k.Kind() {
@@ -329,6 +440,9 @@ func ffiTypeName(v any) string {
 
 // ffiToGo: the Go value of type t for a Sky value v.
 func ffiToGo(v any, t reflect.Type) reflect.Value {
+	if handle, ok := v.(ffiGoFuncHandle); ok {
+		return ffiOpaqueToGoMode(handle.function, t, false)
+	}
 	if v == nil {
 		// Sky holds a nil Go value (a nil pointer, interface, map, …) as an
 		// opaque value it cannot test. It passes on only where Go has a nil.
@@ -567,6 +681,15 @@ func ffiResultParts(rv reflect.Value) (int, any, any, bool) {
 // ffiOpaqueToGo passes an opaque Go value to a parameter of opaque type t:
 // the same type, an interface it implements, or the `T` / `*T` of it.
 func ffiOpaqueToGo(rv reflect.Value, t reflect.Type) reflect.Value {
+	return ffiOpaqueToGoMode(rv, t, true)
+}
+
+func ffiOpaqueToGoMode(rv reflect.Value, t reflect.Type, callback bool) reflect.Value {
+	// This must precede AssignableTo: a compiled Sky func([]int) int has
+	// exactly the Go callback type but still needs ingress ownership copies.
+	if callback && t.Kind() == reflect.Func && rv.Kind() == reflect.Func && !rv.IsNil() && ffiCallbackNeedsOwnership(t) {
+		return ffiCallback(rv, t)
+	}
 	if rv.Type().AssignableTo(t) {
 		out := reflect.New(t).Elem()
 		out.Set(rv)
@@ -591,6 +714,12 @@ func ffiOpaqueToGo(rv reflect.Value, t reflect.Type) reflect.Value {
 	}
 	// A Sky function given for a named Go func type (`http.HandlerFunc`).
 	if t.Kind() == reflect.Func && rv.Kind() == reflect.Func {
+		if !callback {
+			if rv.Type().ConvertibleTo(t) {
+				return rv.Convert(t)
+			}
+			ffiFail("opaque Go function %s cannot be passed as %s", rv.Type(), t)
+		}
 		return ffiCallback(rv, t)
 	}
 	if t.Kind() == reflect.Interface {
@@ -611,7 +740,7 @@ func ffiOpaqueToGo(rv reflect.Value, t reflect.Type) reflect.Value {
 //	T                → Sky T
 //	(A, B) / (A,B,C) → a Sky tuple
 func ffiCallback(sky reflect.Value, t reflect.Type) reflect.Value {
-	if sky.Type() == t {
+	if sky.Type() == t && (sky.IsNil() || !ffiCallbackNeedsOwnership(t)) {
 		return sky
 	}
 	// A zero-parameter Go callback calls a Sky `() -> r` with the unit.
@@ -677,6 +806,9 @@ func ffiCallback(sky reflect.Value, t reflect.Type) reflect.Value {
 
 var ffiErrorType = reflect.TypeOf((*error)(nil)).Elem()
 
+// All successful data-result arms use ffiToGo, which allocates convertible
+// slices/maps/arrays/pointers recursively. Exact signatures must still reach
+// this boundary: Go owns its callback results and may mutate their data.
 func ffiCallbackResults(res any, t reflect.Type) []reflect.Value {
 	n := t.NumOut()
 	outs := make([]reflect.Value, n)

@@ -194,6 +194,13 @@ func spaClosedSpecialStruct(t reflect.Type) bool {
 }
 
 func spaClosedOwnDomain(t reflect.Type, seen map[reflect.Type]uint8, depth int) (ok bool) {
+	// Named Go containers remain opaque references at the FFI boundary.
+	// Actual Sky lists/array aliases are unnamed; trusted runtime Dict/tuple
+	// representations pass their separate nominal checks below.
+	if t.Name() != "" && t.PkgPath() != "" &&
+		(t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map) {
+		return false
+	}
 	if depth > spaClosedEncodingDepthLimit || spaClosedSpecialStruct(t) {
 		return false
 	}

@@ -1,0 +1,230 @@
+module Main exposing (main)
+
+import Example.Test.Reusedbuffers as Foreign
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Std.Sync as Sync
+import Sky.Core.Task as Task
+
+
+retainedList : () -> Bool
+retainedList _ =
+    case Foreign.read 1 of
+
+        Err _ ->
+            False
+
+        Ok first ->
+            case Foreign.read 2 of
+
+                Err _ ->
+                    False
+
+                Ok second ->
+                    List.head first == Just 1 && List.head second == Just 2
+
+
+retainedNested : () -> Bool
+retainedNested _ =
+    case Foreign.readNested 1 of
+
+        Err _ ->
+            False
+
+        Ok first ->
+            case Foreign.read 2 of
+
+                Err _ ->
+                    False
+
+                Ok _ ->
+                    Maybe.andThen List.head (List.head first) == Just 1
+
+
+retainedStructField : () -> Bool
+retainedStructField _ =
+    case Foreign.getHolder 1 of
+
+        Err _ ->
+            False
+
+        Ok holder ->
+            case Foreign.holderValues holder of
+
+                Err _ ->
+                    False
+
+                Ok first ->
+                    case Foreign.read 2 of
+
+                        Err _ ->
+                            False
+
+                        Ok _ ->
+                            Maybe.andThen List.head (List.head first) == Just 1
+
+
+captureFirst : Sync.Ref (List Int) -> List Int -> Int
+captureFirst ref values =
+    case Task.run
+             (Sync.update
+                 (\old ->
+                     if List.isEmpty old then
+                         values
+
+                     else
+                         old)
+                 ref) of
+
+        Ok _ ->
+            0
+
+        Err _ ->
+            -1
+
+
+retainedExactCallback : () -> Bool
+retainedExactCallback _ =
+    case Task.run (Sync.newRef []) of
+
+        Err _ ->
+            False
+
+        Ok ref ->
+            case Foreign.feed (captureFirst ref) of
+
+                Err _ ->
+                    False
+
+                Ok _ ->
+                    case Task.run (Sync.get ref) of
+
+                        Err _ ->
+                            False
+
+                        Ok first ->
+                            List.head first == Just 1
+
+
+opaqueFunctionRoundTrip : () -> Bool
+opaqueFunctionRoundTrip _ =
+    case Foreign.function () of
+
+        Err _ ->
+            False
+
+        Ok function ->
+            case Foreign.functionIsOriginal function of
+
+                Err _ ->
+                    False
+
+                Ok kept ->
+                    kept
+
+
+retainedCallbackResult : () -> Bool
+retainedCallbackResult _ =
+    case Foreign.read 1 of
+
+        Err _ ->
+            False
+
+        Ok values ->
+            case Foreign.consume (\_ -> values) of
+
+                Err _ ->
+                    False
+
+                Ok changed ->
+                    changed == 99 && List.head values == Just 1
+
+
+nilFunctionRoundTrip : () -> Bool
+nilFunctionRoundTrip _ =
+    case Foreign.nilFunction () of
+
+        Err _ ->
+            False
+
+        Ok direct ->
+            case Foreign.functionIsNil direct of
+
+                Err _ ->
+                    False
+
+                Ok directNil ->
+                    case Foreign.nilFunctionAny () of
+
+                        Err _ ->
+                            False
+
+                        Ok boxed ->
+                            case Foreign.functionIsNil boxed of
+
+                                Err _ ->
+                                    False
+
+                                Ok boxedNil ->
+                                    directNil && boxedNil
+
+
+arrayFirstValue : List (List Int) -> Maybe Int
+arrayFirstValue rows =
+    Maybe.andThen List.head (List.head rows)
+
+
+retainedArrayFallback : () -> Bool
+retainedArrayFallback _ =
+    case Foreign.readArray 1 of
+
+        Err _ ->
+            False
+
+        Ok first ->
+            case Foreign.read 2 of
+
+                Err _ ->
+                    False
+
+                Ok _ ->
+                    arrayFirstValue first == Just 1
+
+
+main =
+    println
+        (if retainedList () then
+            if retainedNested () then
+                if retainedStructField () then
+                    if retainedExactCallback () then
+                        if opaqueFunctionRoundTrip () then
+                            if retainedCallbackResult () then
+                                if nilFunctionRoundTrip () then
+                                    if retainedArrayFallback () then
+                                        "FFI_OWNERSHIP_PASS"
+
+                                    else
+                                        "FFI_OWNERSHIP_MUTATED:retainedArrayFallback"
+
+                                else
+                                    "FFI_OWNERSHIP_MUTATED:nilFunctionRoundTrip"
+
+                            else
+                                "FFI_OWNERSHIP_MUTATED:retainedCallbackResult"
+
+                        else
+                            "FFI_OWNERSHIP_MUTATED:opaqueFunctionRoundTrip"
+
+                    else
+                        "FFI_OWNERSHIP_MUTATED:retainedExactCallback"
+
+                else
+                    "FFI_OWNERSHIP_MUTATED:retainedStructField"
+
+            else
+                "FFI_OWNERSHIP_MUTATED:retainedNested"
+
+        else
+            "FFI_OWNERSHIP_MUTATED:retainedList")

@@ -411,7 +411,10 @@ path that already exists `Conflict`, anything else `Io`. Match the kind, never
 
 **Go FFI (`sky add`) is the one exception, on purpose: it returns `Result
 Error a`, not a Task.** The Go call runs where the expression is evaluated, and
-the Result is its outcome (a Go error, a nil or a recovered panic is `Err`).
+the Result reports Go errors, conversion failures, nil-receiver access and
+recovered panics as `Err`. Pointers to plain data use `Maybe`; opaque Go nil
+handles may be returned and forwarded to another Go binding. Accessing a nil
+handle through a method or field yields `Err`.
 Handling it at each call site marks where the code leaves Sky's guarantees, so
 prefer the stdlib and keep FFI for what it does not cover. To run a call later,
 off `update` (for example with `Cmd.perform`), wrap it yourself:

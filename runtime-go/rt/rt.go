@@ -3038,6 +3038,7 @@ func structHasUnexportedField(t reflect.Type) bool {
 }
 
 func deepEq(a, b any) bool {
+	a, b = ffiUnwrapGoFunc(a), ffiUnwrapGoFunc(b)
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}

@@ -242,6 +242,26 @@ func codecDerefStruct(v any) reflect.Value {
 	return rv
 }
 
+// Only ordinary records have columns eligible for field overrides. Runtime
+// wrappers and sealed variants must retain the canonical encoder's semantics.
+// Keep this local to autoWith: isRecordType has unrelated legacy callers.
+func codecAutoOverrideRecord(rv reflect.Value) bool {
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return false
+	}
+	t := rv.Type()
+	if isSkyAdtType(t) || isSkyValueContainerType(t) || isSkyDictType(t) ||
+		t == reflect.TypeOf(SkySet{}) || t == reflect.TypeOf(JsonValue{}) || codecOpaqueStruct(t) {
+		return false
+	}
+	if rv.CanInterface() {
+		if _, ok := rv.Interface().(SkyVariant); ok {
+			return false
+		}
+	}
+	return true
+}
+
 // Codec_autoEncOverrides is `Codec.autoWith`'s encoder: like Codec_autoEnc, but a
 // top-level field whose column is in `encs` is encoded by CALLING that field's
 // override enc-closure (`b -> Value`) instead of the reflection default.
@@ -249,7 +269,9 @@ func Codec_autoEncOverrides(snakeArg, encsArg, record any) any {
 	snake := AsBool(snakeArg)
 	ov := codecOverrideMap(encsArg)
 	rv := codecDerefStruct(record)
-	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+	// An empty override set is exactly the canonical writer for every value,
+	// including wrappers added in future versions of the runtime.
+	if len(ov) == 0 || !codecAutoOverrideRecord(rv) {
 		return Codec_autoEnc(snakeArg, record)
 	}
 	t := rv.Type()
