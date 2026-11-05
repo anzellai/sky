@@ -30,7 +30,7 @@ Never print dotenv contents or environment values. Use synthetic fixtures.
 | 3 | Conservative change evidence and safe reuse | Unknown mutation/effects, commands, handlers, context and panic boundaries | Restricted cache and automatic view-region implementation validated locally; final integration pending |
 | 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Bounded synchronous v2 closed-field path validated in all three browser engines. Mixed and recursive closed record/Maybe paths validated in all three browser engines; pinned lazy reconstruction for raw-budget eviction validated locally. General incremental storage remains pending |
 | 5 | Automatic view-region reuse and collection changes | Reference UI/effect traces, bounded cache retention and dependent work counters | Whole-region implementation and native/Wasm/compiler proofs validated; full-app browser gate pending |
-| 6 | Cross-target end-to-end gates and independent review | Runtime/compiler suites, full examples, real app, browsers and available native/terminal targets | Pending |
+| 6 | Cross-target end-to-end gates and independent review | Runtime/compiler suites, full examples, real app, browsers and available native/terminal targets | Six target builds, native execution checks, full TUI gate and all 40 hosted CI jobs pass; private whole-app browser matrix remains pending |
 
 Cycle boundaries record the exact implementation, evidence, failures and
 remaining limitations. A completed cycle is not a claim that all model sizes
@@ -712,5 +712,65 @@ before assertions, whose sender remains unclassified. The subsequent passing
 run does not establish who sent those signals. Original 600-second fixture
 build, 300-second PTY and 30-second CLI limits remain unchanged.
 
-Checkpoint `e64206553` passes all forty hosted Rust CI jobs
-(run `42120228995`). The private whole-application browser gate remains pending.
+Checkpoint `0391bb063` passes all forty hosted Rust CI jobs
+(run `42124193018`), as do the three preceding checkpoints. The private whole-application browser gate remains pending.
+
+
+Source review found a mismatch in the private stress fixture: the original
+application report varies the number of distinct source identifiers in its seed,
+whereas the attempted fixture seeded many product rows under one identifier.
+The retained model shape must be established from the original loading flow;
+the seed dimension alone does not identify a model field.
+A candidate editor DTO collection also has
+an application-imposed 500-row query limit and cannot establish the required
+larger retained-model case. Those attempts are not equivalent to the original
+benchmark. The original benchmark source has been recovered read-only and is
+being used to establish the correct fixture and observation binding. The
+unsuccessful snapshot-reset experiment is not an application fix or passing
+performance evidence; requested model-size assertions will not be silently
+reduced to fit the mistaken collection.
+
+
+## Next proposed PIV slice: changed primitive Dict summaries
+
+This is a scoped plan, not implemented or validated behavior. Keep synchronous
+v2 publication and summarize exact nominal string/int/bool Dict leaves along
+their persistent HAMT structure. Shared subtries may reuse successful summaries;
+changed paths must derive exact canonical JSON size and validity. Retain the
+five-field Dict layout and existing mutation APIs. Charge all reachable summary
+nodes and slots to the existing global 4096-unit ledger, retain only the current
+model owner, and use canonical fallback on admission failure. No global pointer
+cache or chain of previous models is permitted.
+
+The initial regression warms 256 keys with 128-character ASCII values, then
+replaces one value with 129 characters under a 4096-byte persistence cap. The
+single-field selected payload grows from 35597 to 35598 bytes; both outcomes
+must preserve NoWrite, zero storage calls and one strict preparation. The
+candidate work assertion requires one encoded entry and 131 value JSON bytes,
+without whole-Dict conversion or payload/bridge materialization. The current
+path instead converts the complete 35586-byte Dict leaf. The temporary overlay test now reaches this exact RED: both existing encoded-byte
+counters report 35586 rather than 131, after all preceding correctness checks
+pass. It ran under locked Nix and the unchanged guard in 128 seconds, with the
+test itself taking 0.036 seconds. No runtime source was changed. Validate exact
+reference bytes and work independently when implementing the optimization.
+
+Cover insertion, removal, cap crossings, no-op replacement, flat/HAMT
+transitions, collisions, metadata changes and budget exhaustion. Float, ADTs,
+aliases and custom methods remain canonical until separately proven. Preserve
+construction callbacks, unknown-field phase ordering, pinned metadata and
+protected identity materialization. Under-cap publication still emits the
+complete payload; this slice does not implement general chunk storage or prove
+arbitrary-model scaling.
+
+
+The source-faithful private discovery experiment now completes all 24 checks in
+105 seconds with cleanup reported successful. Exact input counts are verified
+at 0, 1000 and 10000 buckets (0, 27448 and 276023 rows). Nevertheless the saved
+model after typing is 19896 bytes at every scale, with the largest observed
+array containing six entries. All eight keydown and eight input messages arrive
+at each scale; the previously selected mapped-view site receives no calls.
+This establishes that the experiment ran, but does **not** reproduce the reported
+large-model workload or pass its acceptance gate. Current loader behavior and the
+original setup are under investigation. The numeric discovery receipt is
+`runs/incremental-final-validation-20261105/source-workload-discovery.json`;
+private values and schema names are excluded.

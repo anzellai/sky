@@ -1,7 +1,9 @@
 # Incremental execution final validation continuation
 
 Measured compiler source checkpoint: `dadf2a0df3305380f8975df00ddbba13df4c1e0c`.
-These receipts cover public fixtures only and contain no private application data.
+Build and execution receipts cover public fixtures. The separate private-app
+discovery receipt contains numeric observations only, with no application values
+or schema names.
 
 - `core-target-builds.json`: one identical public Std.App fixture builds for web,
   web:app, terminal:cli and terminal:tui; actual CLI execution with EOF succeeds.
@@ -12,6 +14,13 @@ These receipts cover public fixtures only and contain no private application dat
 - `std-app-execution-tests.json`: six individually selected existing tests pass
   with exactly one passed and zero ignored per invocation, including native HTTP
   startup/configuration and desktop failure-to-listen handling.
+
+- `source-workload-discovery.json`: the source-derived private setup executes,
+  but its retained model stays constant despite verified database growth. This
+  does not reproduce the large-model workload or pass its acceptance gate.
+- `changed-dict-red.json`: an executed temporary regression confirms whole-Dict
+  re-encoding after one value changes. Correctness checks pass before the
+  intended performance assertion fails; no implementation fix is claimed.
 
 The canonical compiler and generated artifacts are hash-bound in the build
 receipts. Cargo integration tests build their own current compiler; they are
