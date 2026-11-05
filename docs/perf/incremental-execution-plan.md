@@ -27,9 +27,9 @@ Never print dotenv contents or environment values. Use synthetic fixtures.
 | 0 | Architecture consultation and executable invariants | Source review against released baseline | Complete |
 | 1 | Public large-model fixture, phase counters and reference path | Reference runs pass Chromium/WebKit/Firefox at 1K/10K retained entries, fixed small view; other size/context dimensions remain for later gates | Complete |
 | 2 | Internal model descriptors and protected-field projections | Compiler/provenance and focused runtime tests; Chromium/WebKit/Firefox both modes, identical correctness journey | Complete; broad compiler/example/hosted gates passed at 2365815 |
-| 3 | Conservative change evidence and safe reuse | Unknown mutation/effects, commands, handlers, context and panic boundaries | Restricted cache validated; automatic view reuse remains pending |
+| 3 | Conservative change evidence and safe reuse | Unknown mutation/effects, commands, handlers, context and panic boundaries | Restricted cache and automatic view-region implementation validated locally; final integration pending |
 | 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Bounded synchronous v2 closed-field path validated in all three browser engines. Mixed and recursive closed record/Maybe paths validated in all three browser engines; pinned lazy reconstruction for raw-budget eviction validated locally. General incremental storage remains pending |
-| 5 | Automatic view-region reuse and collection changes | Reference UI/effect traces, bounded cache retention and dependent work counters | Pending |
+| 5 | Automatic view-region reuse and collection changes | Reference UI/effect traces, bounded cache retention and dependent work counters | Whole-region implementation and native/Wasm/compiler proofs validated; full-app browser gate pending |
 | 6 | Cross-target end-to-end gates and independent review | Runtime/compiler suites, full examples, real app, browsers and available native/terminal targets | Pending |
 
 Cycle boundaries record the exact implementation, evidence, failures and
@@ -621,3 +621,31 @@ the memory guard separately records three Go compiler terminations. The gate
 helper omits compiler stderr, so the captured harness diagnostics do not prove
 that every failure has the same cause. Improving that diagnostic and validating
 the remaining gates are required before a complete-green claim or merge.
+
+
+## World ownership follow-up: compiler and local contract checks pass
+
+Checkpoint `0f4b8346` passes all forty hosted CI jobs (run `42027583420`).
+The subsequent world-assembly patch retains immutable resolved-module owners
+instead of copying target HIR in wildcard/bounds passes, and releases solved
+inference scratch before call-site record harvesting. All 195 selected type
+checker tests pass; one existing diagnostic census remains ignored. A new
+subprocess regression first fails for omitted compiler stderr, then passes with
+bounded diagnostics retaining both streams without counting stderr assertions.
+
+The final eight local contract gates also all pass after explicit local Go
+compiler controls reach the gates that intentionally clear `GOFLAGS`. The
+original toolchain, inner deadlines, assertions, memory guard and caches remain
+in place. This is a local execution shim, not an application/compiler feature.
+
+A fresh complete private application build now succeeds: 142 seconds rebuilding
+the canonical compiler and 211 seconds building the application in this run.
+The world-query high-water marker is 873693184 bytes; the complete frontend
+process reaches 2872901632 bytes. The guard is unchanged and responds to machine
+pressure, so this is not evidence of a strict 1 GiB peak bound or a complete
+before/after peak-memory comparison.
+
+Private browser validation remains in progress. Exact fresh generated-schema
+binding has passed; the diagnostic Wasm rebuild needs its compiler controls
+passed explicitly through its isolated context. No application browser
+comparison or complete performance-solution claim follows from the build alone.

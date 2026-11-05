@@ -4183,7 +4183,20 @@ fn go_runtime_gate(ctx: &GateCtx, pkg: &str, test: &str, expected: u64) -> GateO
             )
         }
     };
+    go_runtime_output(test, expected, o)
+}
+
+/// Preserve both diagnostic streams while counting assertions only on stdout.
+fn go_runtime_output(test: &str, expected: u64, o: std::process::Output) -> GateOutcome {
     let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    let failure_output = |limit| {
+        format!(
+            "stdout:\n{}\nstderr:\n{}",
+            super::layer2::tail(&stdout, limit),
+            super::layer2::tail(&stderr, limit)
+        )
+    };
     let counted = stdout
         .lines()
         .find_map(|l| l.trim().strip_prefix("ASSERTIONS:"))
@@ -4197,7 +4210,7 @@ fn go_runtime_gate(ctx: &GateCtx, pkg: &str, test: &str, expected: u64) -> GateO
                 "{test} printed no `ASSERTIONS: <n>` line, so no count could be \
                  established (exit {:?}):\n{}",
                 o.status.code(),
-                super::layer2::tail(&stdout, 25)
+                failure_output(25)
             ),
         );
     };
@@ -4208,7 +4221,8 @@ fn go_runtime_gate(ctx: &GateCtx, pkg: &str, test: &str, expected: u64) -> GateO
             format!(
                 "{test} reported {n} assertions, expected EXACTLY {expected}. If an \
                  assertion was deliberately added or removed, update the gate's \
-                 `expected` in harness/registry.rs in the same commit."
+                 `expected` in harness/registry.rs in the same commit.\n{}",
+                failure_output(30)
             ),
         );
     }
@@ -4221,7 +4235,7 @@ fn go_runtime_gate(ctx: &GateCtx, pkg: &str, test: &str, expected: u64) -> GateO
             format!(
                 "{test} failed (exit {:?}):\n{}",
                 o.status.code(),
-                super::layer2::tail(&stdout, 30)
+                failure_output(30)
             ),
         )
     }
@@ -4841,5 +4855,53 @@ mod spa_diff_fuzz_dir {
         assert!(spa_diff_fuzz_out_dir("fixture")
             .to_string_lossy()
             .contains(&std::process::id().to_string()));
+    }
+}
+
+#[cfg(test)]
+mod go_runtime_diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn failing_runtime_subprocess_reports_both_streams_without_counting_stderr() {
+        for (script, stdout_marker, stderr_marker, expected_count) in [
+            (
+                "printf 'build-start\\n'; printf 'compile-error-sentinel\\n' >&2; exit 1",
+                "build-start", "compile-error-sentinel", 0,
+            ),
+            (
+                "printf 'ASSERTIONS: 3\\n'; printf 'runtime-error-sentinel\\n' >&2; exit 1",
+                "ASSERTIONS: 3", "runtime-error-sentinel", 3,
+            ),
+            (
+                "printf 'ASSERTIONS: 2\\n'; printf 'count-error-sentinel\\n' >&2; exit 1",
+                "ASSERTIONS: 2", "count-error-sentinel", 2,
+            ),
+            (
+                "printf 'build-start\\n'; printf 'ASSERTIONS: 3\\ncompile-error-sentinel\\n' >&2; exit 1",
+                "build-start", "compile-error-sentinel", 0,
+            ),
+        ] {
+            let output = Command::new("sh").args(["-c", script]).output()
+                .expect("run synthetic failing subprocess");
+            assert!(!output.status.success());
+            assert!(!output.stderr.is_empty(), "exercise real captured stderr");
+            let result = go_runtime_output("SyntheticRuntimeTest", 3, output);
+            assert!(!result.passed);
+            assert_eq!(result.assertions, expected_count);
+            assert!(result.detail.contains(stdout_marker), "preserve stdout diagnostics");
+            assert!(result.detail.contains(stderr_marker), "preserve stderr diagnostics");
+        }
+        let output = Command::new("sh")
+            .args([
+                "-c",
+                "printf 'ASSERTIONS: 3\\n'; printf 'ASSERTIONS: 99\\n' >&2; exit 0",
+            ])
+            .output()
+            .unwrap();
+        let result = go_runtime_output("SyntheticRuntimeTest", 3, output);
+        assert!(result.passed);
+        assert_eq!(result.assertions, 3);
+        assert_eq!(result.detail, "SyntheticRuntimeTest: 3 assertions green");
     }
 }

@@ -347,6 +347,9 @@ impl World {
                 }
                 let mut infer = Infer::new(self, db).with_inferred(true);
                 let (exprs, locals) = infer.infer_def_selected(body, &want_e, &want_l);
+                // Selected types own their readbacks; release solved UF scratch
+                // before the harvest retains or compares record type trees.
+                drop(infer);
                 for (_eid, expr) in body.exprs.iter() {
                     let (callee, args) = match expr {
                         hir::Expr::Call(c, a) => (*c, a),
@@ -463,6 +466,9 @@ pub fn callsite_param_records_for(db: &dyn SkyDb, world: &World, callee: DefId) 
             let (want_e, want_l) = call_arg_ids(body, |f| f == callee);
             let mut infer = Infer::new(world, db).with_inferred(true);
             let (exprs, locals) = infer.infer_def_selected(body, &want_e, &want_l);
+            // Selected types own their readbacks; release solved UF scratch
+            // before the harvest retains or compares record type trees.
+            drop(infer);
             for (_eid, expr) in body.exprs.iter() {
                 let (c, args) = match expr {
                     hir::Expr::Call(c, a) => (*c, a),
@@ -573,6 +579,9 @@ pub fn caller_param_records(
     }
     let mut infer = Infer::new(world, db).with_inferred(true);
     let (exprs, locals) = infer.infer_def_selected(body, &want_e, &want_l);
+    // Selected types own their readbacks; release solved UF scratch
+    // before the harvest retains or compares record type trees.
+    drop(infer);
     let mut index: HashMap<DefId, usize> = HashMap::new();
     for (_eid, expr) in body.exprs.iter() {
         let (c, args) = match expr {
@@ -1069,7 +1078,7 @@ impl World {
     /// only ever narrows a scheme, so it converges; the bound is a backstop.
     fn infer_any_result_check_sigs(&mut self, db: &dyn SkyDb) {
         use crate::infer::Infer;
-        let mut targets: Vec<(DefId, Scheme, hir::Body)> = Vec::new();
+        let mut targets: Vec<(DefId, Scheme, crate::retained_body::RetainedBody)> = Vec::new();
         for m in db.module_ids() {
             let mname = db.module_name(m).to_string();
             if KERNEL_MODULES.iter().any(|(p, _)| *p == mname)
@@ -1079,14 +1088,19 @@ impl World {
                 continue;
             }
             let resolved = db.resolve(m);
-            for (def, body) in &resolved.bodies {
+            for (def, _) in &resolved.bodies {
                 let Some(anno) = self.value_sigs.get(def) else {
                     continue;
                 };
                 if !crate::infer::ty_contains_any(&anno.ty) {
                     continue;
                 }
-                targets.push((*def, anno.clone(), body.clone()));
+                targets.push((
+                    *def,
+                    anno.clone(),
+                    crate::retained_body::RetainedBody::new(&resolved, *def)
+                        .expect("iterated wildcard target belongs to its resolved owner"),
+                ));
             }
         }
         for _round in 0..4 {
