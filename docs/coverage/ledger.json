@@ -22465,8 +22465,8 @@
       "id": "e2e:scripts/spa-step-cost-mixed-e2e.sh",
       "modules_imported": 8,
       "path": "scripts/spa-step-cost-mixed-e2e.sh",
-      "refs_generous": 22,
-      "refs_qualified": 21,
+      "refs_generous": 23,
+      "refs_qualified": 22,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []

@@ -28,7 +28,7 @@ Never print dotenv contents or environment values. Use synthetic fixtures.
 | 1 | Public large-model fixture, phase counters and reference path | Reference runs pass Chromium/WebKit/Firefox at 1K/10K retained entries, fixed small view; other size/context dimensions remain for later gates | Complete |
 | 2 | Internal model descriptors and protected-field projections | Compiler/provenance and focused runtime tests; Chromium/WebKit/Firefox both modes, identical correctness journey | Complete; broad compiler/example/hosted gates passed at 2365815 |
 | 3 | Conservative change evidence and safe reuse | Unknown mutation/effects, commands, handlers, context and panic boundaries | Restricted cache validated; automatic view reuse remains pending |
-| 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Bounded synchronous v2 closed-field path validated in all three browser engines. Mixed and recursive closed record/Maybe paths validated in all three browser engines; lazy reconstruction for raw-budget eviction under implementation. General incremental storage remains pending |
+| 4 | Generated encoding and transactional incremental persistence | Differential codec tests, crash/fault injection, reload, migration, identity fencing and readers | Bounded synchronous v2 closed-field path validated in all three browser engines. Mixed and recursive closed record/Maybe paths validated in all three browser engines; pinned lazy reconstruction for raw-budget eviction validated locally. General incremental storage remains pending |
 | 5 | Automatic view-region reuse and collection changes | Reference UI/effect traces, bounded cache retention and dependent work counters | Pending |
 | 6 | Cross-target end-to-end gates and independent review | Runtime/compiler suites, full examples, real app, browsers and available native/terminal targets | Pending |
 
@@ -439,7 +439,42 @@ assumes codec construction total from convenience alone.
 
 The preceding mixed checkpoint, including its canonical-format follow-up at
 `76a7b7512`, passed all 39 hosted CI jobs (run 41920407390). Hosted validation for
-this recursive checkpoint remains pending. Many individually small lists can
-still exhaust retained raw bytes and trigger unchanged-leaf reconstruction;
-pinned-metadata lazy reconstruction is the next separate PIV. Automatic
-view/collection reuse and broader storage/cross-target work remain pending.
+the recursive checkpoint passed all 40 hosted CI jobs (run 41926388460).
+
+## Pinned reconstruction: validated checkpoint
+
+An unchanged, previously successful closed leaf whose raw bytes were evicted
+can now defer reconstruction until a selected payload actually needs those
+bytes. Invocation-local plans pin the original enum metadata, reserve bounded
+raw capacity and fill only a new cache node. Published caches retain neither
+reflection values nor deferred plans. Changed or uncertified leaves retain
+canonical eager conversion and error order. Ordinary codecs still perform
+their original global metadata reads; only certified deferred work uses a
+pinned context. Unknown conversion/marshal effects and strict preparation
+remain observable on every required invocation.
+
+The public mixed journey now fills the shared raw budget with unrelated lists,
+types while the model exceeds the persistence cap, removes those lists, and
+reloads. Across Chromium, WebKit and Firefox, two typing messages convert 150
+field bytes with zero deferred conversions or writes. Shrinking performs
+exactly one deferred product-list conversion and one write; the recovered
+ignored key performs no deferred conversion, payload join or bridge copy.
+[Twelve passing reports and exact source hashes](runs/step-cost-20261104/cycle7-pinned/conditions.json)
+cover both closed and mixed fixtures with unchanged browser deadlines. These
+are single instrumented repeats, not production latency measurements.
+
+Local validation also passes 33 focused runtime/codec test source files against
+all production runtime sources (with the unchanged shared helper), a canonical
+compiler build, and three Sky codec suites totaling 154 assertions. Private
+wasm probes using previously generated real model/update code pass normal
+typing and ignored-key checks at 1K/10K products, plus natural budget eviction
+at 500/1K products. Evicted leaves of 239,501/479,001 bytes require no deferred
+conversion during oversized typing, exactly one on shrink, then none on an
+ignored key. Typing/ignored field work remains 44/20 bytes. This does not replace
+a fresh private application build or application browser E2E.
+
+Automatic view/collection reuse, the separately discovered nominal codec
+constructor collision, broader storage and final cross-target/application
+validation remain in the active PIV. Changed under-cap v2 payloads still need
+their selected payload join/copy. Hosted validation for the pinned checkpoint
+will follow its commit; no release or main merge is implied.

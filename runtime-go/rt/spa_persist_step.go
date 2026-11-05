@@ -5,24 +5,28 @@ import "time"
 // spaPersistMetrics contains counts and timings only. It never carries model,
 // session, field values or encoded data. The observer is nil in normal use.
 type spaPersistMetrics struct {
-	PreparedEncodes   int
-	PreparedFallbacks int
-	FieldMarshals     int
-	ClosedFieldReuses int
-	Encodes           int
-	EncodedBytes      int
-	EncodeNanos       int64
-	WriteNanos        int64
-	SessionNanos      int64
-	ProjectionFields  int
-	ProjectionBytes   int
-	EncodingReuses    int
-	EncodingCompared  int
-	FieldModelSteps   int
-	FieldEncodes      int
-	FieldEncodedBytes uint64
-	MaterializedBytes uint64
-	BridgeBytes       int
+	DeferredFieldEncodes      int
+	DeferredFieldMarshals     int
+	DeferredFieldEncodedBytes uint64
+	DeferredEncodeNanos       int64 // diagnostic subrange of write/session assembly, never a second phase total
+	PreparedEncodes           int
+	PreparedFallbacks         int
+	FieldMarshals             int
+	ClosedFieldReuses         int
+	Encodes                   int
+	EncodedBytes              int
+	EncodeNanos               int64
+	WriteNanos                int64
+	SessionNanos              int64
+	ProjectionFields          int
+	ProjectionBytes           int
+	EncodingReuses            int
+	EncodingCompared          int
+	FieldModelSteps           int
+	FieldEncodes              int
+	FieldEncodedBytes         uint64
+	MaterializedBytes         uint64
+	BridgeBytes               int
 }
 
 // spaPersistStep is the portable persistence decision. The browser supplies

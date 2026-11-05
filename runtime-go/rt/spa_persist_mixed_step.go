@@ -32,6 +32,10 @@ func (p *spaMixedPersistence) step(prev, next any, full func(any) string, st spa
 	options := spaMixedEncodeOptions{Exclude: exclude, Protected: protected, CapBytes: capBytes, Profile: p.profiling}
 	addWork := func(result spaMixedEncoded, previous bool) {
 		work := result.Work
+		metrics.DeferredFieldEncodes += work.DeferredConversions
+		metrics.DeferredFieldMarshals += work.DeferredMarshals
+		metrics.DeferredFieldEncodedBytes = spaSizeAdd(metrics.DeferredFieldEncodedBytes, work.DeferredEncodedBytes)
+		metrics.DeferredEncodeNanos += work.DeferredNanos
 		metrics.PreparedEncodes += work.Prepares
 		metrics.PreparedFallbacks += work.PreparedFallbacks
 		metrics.Encodes += work.PreparedFallbacks

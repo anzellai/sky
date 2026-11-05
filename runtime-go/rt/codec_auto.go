@@ -85,6 +85,10 @@ func isRecordType(t reflect.Type) bool {
 // ── Encode: value → JSON raw ─────────────────────────────────────────────────
 
 func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
+	return codecAutoEncodeValAt(rv, snake, nil)
+}
+
+func codecAutoEncodeValAt(rv reflect.Value, snake bool, snapshot *codecEnumRegistrySnapshot) (any, error) {
 	switch rv.Kind() {
 	case reflect.String:
 		return rv.String(), nil
@@ -99,7 +103,7 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 	case reflect.Slice, reflect.Array:
 		out := make([]any, rv.Len())
 		for i := 0; i < rv.Len(); i++ {
-			e, err := codecAutoEncodeVal(rv.Index(i), snake)
+			e, err := codecAutoEncodeValAt(rv.Index(i), snake, snapshot)
 			if err != nil {
 				return nil, err
 			}
@@ -122,7 +126,7 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 		sort.Slice(pairs, func(i, j int) bool { return pairs[i].k < pairs[j].k })
 		obj := jsonOrderedObject{}
 		for _, p := range pairs {
-			ev, err := codecAutoEncodeVal(p.v, snake)
+			ev, err := codecAutoEncodeValAt(p.v, snake, snapshot)
 			if err != nil {
 				return nil, err
 			}
@@ -136,12 +140,12 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 			if rv.FieldByName("Tag").Int() != 0 { // Nothing
 				return nil, nil
 			}
-			return codecAutoJust(codecAutoEncodeVal(rv.FieldByName("JustValue"), snake))
+			return codecAutoJust(codecAutoEncodeValAt(rv.FieldByName("JustValue"), snake, snapshot))
 		}
 		// Dict k v → JSON object, keyed by the runtime's encoded keys exactly
 		// as the Go map it replaced was (sorted for determinism).
 		if isSkyDictType(t) && rv.CanInterface() {
-			return codecAutoEncodeDict(rv.Interface().(skyDictAny), "", snake)
+			return codecAutoEncodeDictAt(rv.Interface().(skyDictAny), "", snake, snapshot)
 		}
 		// Set a → JSON array (sorted, deterministic via Set_toList). Before this
 		// its sole unexported `items` field was skipped by codecAutoEncodeStruct
@@ -150,7 +154,7 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 			elems := AsList(Set_toList(rv.Interface()))
 			out := make([]any, len(elems))
 			for i, e := range elems {
-				ev, err := codecAutoEncodeVal(reflect.ValueOf(e), snake)
+				ev, err := codecAutoEncodeValAt(reflect.ValueOf(e), snake, snapshot)
 				if err != nil {
 					return nil, err
 				}
@@ -186,7 +190,7 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 			// data-carrying encoding, which previously did not round-trip at all.)
 			obj := jsonOrderedObject{keys: []string{"tag"}, vals: []any{name}}
 			for i, f := range fields {
-				ev, err := codecAutoEncodeVal(reflect.ValueOf(f), snake)
+				ev, err := codecAutoEncodeValAt(reflect.ValueOf(f), snake, snapshot)
 				if err != nil {
 					return nil, err
 				}
@@ -202,14 +206,14 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 		if codecOpaqueStruct(t) {
 			return nil, codecUnencodableError(codecOpaqueTypeName(t))
 		}
-		return codecAutoEncodeStruct(rv, snake)
+		return codecAutoEncodeStructAt(rv, snake, snapshot)
 	case reflect.Func:
 		return nil, codecUnencodableError("a function")
 	case reflect.Interface:
 		if rv.IsNil() {
 			return nil, nil
 		}
-		return codecAutoEncodeVal(rv.Elem(), snake)
+		return codecAutoEncodeValAt(rv.Elem(), snake, snapshot)
 	default:
 		return nil, fmt.Errorf("Codec.auto: cannot encode kind %s", rv.Kind())
 	}
@@ -426,6 +430,10 @@ func codecNarrowOverride(v reflect.Value, target reflect.Type) (reflect.Value, b
 }
 
 func codecAutoEncodeStruct(rv reflect.Value, snake bool) (any, error) {
+	return codecAutoEncodeStructAt(rv, snake, nil)
+}
+
+func codecAutoEncodeStructAt(rv reflect.Value, snake bool, snapshot *codecEnumRegistrySnapshot) (any, error) {
 	t := rv.Type()
 	obj := jsonOrderedObject{}
 	for i := 0; i < t.NumField(); i++ {
@@ -433,7 +441,7 @@ func codecAutoEncodeStruct(rv reflect.Value, snake bool) (any, error) {
 		if f.PkgPath != "" { // unexported
 			continue
 		}
-		raw, err := codecAutoEncodeTyped(rv.Field(i), skyTagType(f), snake)
+		raw, err := codecAutoEncodeTypedAt(rv.Field(i), skyTagType(f), snake, snapshot)
 		if err != nil {
 			return nil, err
 		}
@@ -447,6 +455,10 @@ func codecAutoEncodeStruct(rv reflect.Value, snake bool) (any, error) {
 // field tag): a registered enum → its readable name; Maybe[T]/[]T unwrap the
 // inner type; everything else falls back to value-based encoding.
 func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (any, error) {
+	return codecAutoEncodeTypedAt(rv, declaredType, snake, nil)
+}
+
+func codecAutoEncodeTypedAt(rv reflect.Value, declaredType string, snake bool, snapshot *codecEnumRegistrySnapshot) (any, error) {
 	// A Currency is its code (`"GBP"`), as Codec.isoCurrency writes it
 	// (v0.29.2 sixth Judge: the tagged object it was written as never read).
 	if declaredType == "Std_Money_Currency" && rv.IsValid() && rv.CanInterface() {
@@ -457,7 +469,7 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 	if declaredType != "" {
 		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyDict["); ok && rv.IsValid() && rv.CanInterface() {
 			if d, ok := rv.Interface().(skyDictAny); ok {
-				return codecAutoEncodeDict(d, strings.TrimSuffix(inner, "]"), snake)
+				return codecAutoEncodeDictAt(d, strings.TrimSuffix(inner, "]"), snake, snapshot)
 			}
 		}
 		if inner, ok := strings.CutPrefix(declaredType, "map["); ok && rv.IsValid() && rv.Kind() == reflect.Map {
@@ -467,11 +479,11 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 				values := map[string]any{}
 				keys := make([]string, 0, rv.Len())
 				for _, key := range rv.MapKeys() {
-					k, err := codecAutoEncodeTyped(key, inner[:close], snake)
+					k, err := codecAutoEncodeTypedAt(key, inner[:close], snake, snapshot)
 					if err != nil {
 						return nil, err
 					}
-					v, err := codecAutoEncodeTyped(rv.MapIndex(key), inner[close+1:], snake)
+					v, err := codecAutoEncodeTypedAt(rv.MapIndex(key), inner[close+1:], snake, snapshot)
 					if err != nil {
 						return nil, err
 					}
@@ -490,10 +502,10 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 				return out, nil
 			}
 		}
-		if isRegisteredEnum(declaredType) {
+		if codecAutoEnumRegisteredAt(declaredType, snapshot) {
 			switch rv.Kind() {
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				if name, ok := enumNameForOrdinal(declaredType, int(rv.Int())); ok {
+				if name, ok := codecAutoEnumNameAt(declaredType, int(rv.Int()), snapshot); ok {
 					return name, nil
 				}
 			}
@@ -502,15 +514,15 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 			if rv.FieldByName("Tag").Int() != 0 {
 				return nil, nil
 			}
-			return codecAutoJust(codecAutoEncodeTyped(rv.FieldByName("JustValue"), strings.TrimSuffix(inner, "]"), snake))
+			return codecAutoJust(codecAutoEncodeTypedAt(rv.FieldByName("JustValue"), strings.TrimSuffix(inner, "]"), snake, snapshot))
 		}
 		if args := codecDeclaredTupleArgs(declaredType); args != nil && rv.Kind() == reflect.Struct && rv.NumField() == len(args) {
-			return codecAutoEncodeTuple(rv, args, snake)
+			return codecAutoEncodeTupleAt(rv, args, snake, snapshot)
 		}
 		if elem, ok := strings.CutPrefix(declaredType, "[]"); ok && rv.Kind() == reflect.Slice {
 			out := make([]any, rv.Len())
 			for i := 0; i < rv.Len(); i++ {
-				e, err := codecAutoEncodeTyped(rv.Index(i), elem, snake)
+				e, err := codecAutoEncodeTypedAt(rv.Index(i), elem, snake, snapshot)
 				if err != nil {
 					return nil, err
 				}
@@ -519,7 +531,7 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 			return out, nil
 		}
 	}
-	return codecAutoEncodeVal(rv, snake)
+	return codecAutoEncodeValAt(rv, snake, snapshot)
 }
 
 // currencyCodeOf renders a `Std.Money.Currency` value as its code string: a
@@ -1036,6 +1048,10 @@ func codecTupleFieldDeclared(t reflect.Type, i int, declared string) string {
 // codecAutoEncodeTuple writes a tuple as the object the value encoder writes
 // (`{"v0":…,"v1":…}`), each element by its declared type.
 func codecAutoEncodeTuple(rv reflect.Value, args []string, snake bool) (any, error) {
+	return codecAutoEncodeTupleAt(rv, args, snake, nil)
+}
+
+func codecAutoEncodeTupleAt(rv reflect.Value, args []string, snake bool, snapshot *codecEnumRegistrySnapshot) (any, error) {
 	t := rv.Type()
 	obj := jsonOrderedObject{}
 	for i := 0; i < t.NumField(); i++ {
@@ -1043,7 +1059,7 @@ func codecAutoEncodeTuple(rv reflect.Value, args []string, snake bool) (any, err
 		if f.PkgPath != "" {
 			continue
 		}
-		raw, err := codecAutoEncodeTyped(rv.Field(i), args[i], snake)
+		raw, err := codecAutoEncodeTypedAt(rv.Field(i), args[i], snake, snapshot)
 		if err != nil {
 			return nil, err
 		}
@@ -1482,6 +1498,10 @@ func codecSameJSON(a, b any) bool {
 // codecAutoEncodeDict writes a Dict as a JSON object keyed by its encoded
 // keys, sorted (the shape the Go map it replaced produced).
 func codecAutoEncodeDict(d skyDictAny, valType string, snake bool) (any, error) {
+	return codecAutoEncodeDictAt(d, valType, snake, nil)
+}
+
+func codecAutoEncodeDictAt(d skyDictAny, valType string, snake bool, snapshot *codecEnumRegistrySnapshot) (any, error) {
 	type kv struct {
 		k string
 		v any
@@ -1499,7 +1519,7 @@ func codecAutoEncodeDict(d skyDictAny, valType string, snake bool) (any, error) 
 		if !rv.IsValid() {
 			rv = reflect.Zero(vt)
 		}
-		ev, err := codecAutoEncodeTyped(rv, valType, snake)
+		ev, err := codecAutoEncodeTypedAt(rv, valType, snake, snapshot)
 		if err != nil {
 			return nil, err
 		}

@@ -151,7 +151,7 @@ func TestSpaClosedRecursiveDeclaredEnumAndTupleDispatch(t *testing.T) {
 	}
 }
 
-func TestSpaClosedRecursiveMissingSmallRawReconstructsInPhaseA(t *testing.T) {
+func TestSpaClosedRecursiveMissingSmallRawUsesPinnedReconstruction(t *testing.T) {
 	type record struct {
 		First  string `sky:"first,string"`
 		Second string `sky:"second,string"`
@@ -165,13 +165,17 @@ func TestSpaClosedRecursiveMissingSmallRawReconstructsInPhaseA(t *testing.T) {
 	}
 	next := m
 	next.First = "small"
-	got := spaClosedTestEncode(next, m, warm.Cache, epoch, options, spaNewClosedEncodingBudget(spaPersistMaxBytes))
-	if got.Work.Conversions != 2 {
-		t.Fatal("missing possible-small leaf was not reconstructed during A")
+	deferredBudget := spaNewClosedEncodingBudget(spaPersistMaxBytes)
+	got := spaClosedTestEncode(next, m, warm.Cache, epoch, options, deferredBudget)
+	if got.Work.Conversions != 1 || deferredBudget.Deferred.Conversions != 0 {
+		t.Fatal("missing possible-small leaf was reconstructed eagerly")
 	}
 	payload, ok := got.materialize(spaPersistMaxBytes)
 	if !ok || payload != spaClosedCanonical(next) {
 		t.Fatal("now-small nested JSON changed")
+	}
+	if deferredBudget.Deferred.Conversions != 1 || deferredBudget.Deferred.Marshals != 1 || warm.Cache.children[1].raw != "" || got.Cache.children[1].raw == "" {
+		t.Fatal("deferred reconstruction did not fill exactly the reserved NEW node")
 	}
 }
 
@@ -310,9 +314,14 @@ func TestSpaClosedRecursiveProtectedAndExcludedMissingRawPolicies(t *testing.T) 
 	if warm.Cache.children[0].raw != "" {
 		t.Fatal("oversized leaf raw retained")
 	}
-	protected := spaClosedTestEncode(m, m, warm.Cache, epoch, spaClosedEncodingOptions{NeedRaw: true}, spaNewClosedEncodingBudget(spaPersistMaxBytes))
-	if protected.Work.Conversions != 1 || protected.Plan.children[0].missing {
-		t.Fatal("protected identity skipped required oversized raw reconstruction")
+	protectedBudget := spaNewClosedEncodingBudget(spaPersistMaxBytes)
+	protected := spaClosedTestEncode(m, m, warm.Cache, epoch, spaClosedEncodingOptions{NeedRaw: true}, protectedBudget)
+	if protected.Work.Conversions != 0 || protected.Plan.children[0].lazy == nil {
+		t.Fatal("protected identity did not retain a pinned lazy reconstruction")
+	}
+	encoded, ok := protected.materialize(protected.Size)
+	if !ok || encoded != spaClosedCanonical(m) || protectedBudget.Deferred.Conversions != 1 || protectedBudget.Deferred.Marshals != 1 || protected.Cache.children[0].raw != "" || warm.Cache.children[0].raw != "" {
+		t.Fatal("protected pinned reconstruction changed bytes/order or exceeded raw retention")
 	}
 	excluded := spaClosedTestEncode(m, m, warm.Cache, epoch, spaClosedEncodingOptions{NeedRaw: false, DiscardRawRetention: true}, spaNewClosedEncodingBudget(spaPersistMaxBytes))
 	if excluded.Work.Conversions != 0 || excluded.Work.RetainedBytes != 0 || !excluded.Plan.children[0].missing {

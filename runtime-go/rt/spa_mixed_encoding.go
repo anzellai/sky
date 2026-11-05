@@ -22,12 +22,15 @@ type spaMixedEncodeOptions struct {
 }
 
 type spaMixedEncodingWork struct {
-	Prepares, PreparedFallbacks     int
-	Conversions, Marshals           int
-	ClosedReuses, ComparedNodes     int
-	EncodedBytes, MaterializedBytes uint64
-	RetainedBytes                   int
-	EncodeNanos, BuildNanos         int64
+	Prepares, PreparedFallbacks           int
+	Conversions, Marshals                 int
+	ClosedReuses, ComparedNodes           int
+	EncodedBytes, MaterializedBytes       uint64
+	RetainedBytes                         int
+	EncodeNanos, BuildNanos               int64
+	DeferredConversions, DeferredMarshals int
+	DeferredEncodedBytes                  uint64
+	DeferredNanos                         int64
 }
 
 type spaMixedEncoded struct {
@@ -122,10 +125,23 @@ type spaMixedInvocationField struct {
 // cache; the caller can still invoke the previous encoder after publication.
 func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, model any, options spaMixedEncodeOptions) (out spaMixedEncoded) {
 	var encodeStart, buildStart time.Time
+	var closedBudget *spaClosedEncodingBudget
 	if options.Profile {
 		encodeStart = time.Now()
 	}
 	defer func() {
+		// Merge ONCE, including a resolution panic. BuildNanos already
+		// includes DeferredNanos; the latter is a diagnostic subrange only.
+		if closedBudget != nil {
+			d := closedBudget.Deferred
+			out.Work.Conversions += d.Conversions
+			out.Work.Marshals += d.Marshals
+			out.Work.EncodedBytes = spaSizeAdd(out.Work.EncodedBytes, d.EncodedBytes)
+			out.Work.DeferredConversions = d.Conversions
+			out.Work.DeferredMarshals = d.Marshals
+			out.Work.DeferredEncodedBytes = d.EncodedBytes
+			out.Work.DeferredNanos = d.Nanos
+		}
 		if !encodeStart.IsZero() {
 			if buildStart.IsZero() {
 				out.Work.EncodeNanos = time.Since(encodeStart).Nanoseconds()
@@ -182,7 +198,8 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 			generation++
 		}
 	}
-	closedBudget := spaNewClosedEncodingBudget(options.CapBytes)
+	closedBudget = spaNewClosedEncodingBudget(options.CapBytes)
+	closedBudget.Profile = options.Profile
 	fields := make([]spaMixedInvocationField, len(d.fields))
 	canCompare := previous != nil && reflect.TypeOf(previous.model) == value.Type() && len(previous.fields) == len(fields)
 	var old reflect.Value

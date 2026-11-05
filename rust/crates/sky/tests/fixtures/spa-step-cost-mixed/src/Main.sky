@@ -32,6 +32,8 @@ type alias Editor =
 type alias Model =
     { page : Page
     , session : Maybe Session
+    , pressureA : List String
+    , pressureB : List String
     , editor : Maybe Editor
     , text : String
     , completed : Int
@@ -44,6 +46,8 @@ type Msg
     = IgnoredKey
     | Type String
     | Load Int
+    | AddPressure
+    | DropPressure
     | ShowRows Int
     | Dispatch
     | Done (Result Error ())
@@ -57,6 +61,8 @@ init : () -> ( Model, Cmd Msg )
 init _ =
     ( { page = Home "synthetic"
       , session = Nothing
+      , pressureA = []
+      , pressureB = []
       , editor = Nothing
       , text = ""
       , completed = 0
@@ -129,6 +135,17 @@ update msg model =
                   }
                 , Cmd.none
                 )
+
+        AddPressure ->
+            ( { model
+                  | pressureA = [ String.repeat 1000000 "a" ]
+                  , pressureB = [ String.repeat 480000 "b" ]
+              }
+            , Cmd.none
+            )
+
+        DropPressure ->
+            ( { model | pressureA = [], pressureB = [] }, Cmd.none )
 
         ShowRows count ->
             ( { model | visibleRows = count }, Cmd.none )
@@ -210,6 +227,8 @@ view model =
               }
         , button "small" "60 KB" (Load 1000)
         , button "large" "600 KB" (Load 10000)
+        , button "pressure" "Add unrelated data" AddPressure
+        , button "unpressure" "Remove unrelated data" DropPressure
         , button "huge" "6 MB" (Load 100000)
         , button "rows" "200 visible rows" (ShowRows 200)
         , button "dispatch" "Start async work" Dispatch

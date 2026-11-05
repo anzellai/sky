@@ -163,6 +163,45 @@ try {
   assert.equal(await page.locator("#typing").inputValue(), "abcdefghij", "Reload lost typed state");
   assert.equal(await page.locator("#items").textContent(), "10000", "Reload lost unrelated data");
   if (mixed) assert.equal(await page.locator("#brand").textContent(), "abcdefghij", "Reload lost nested form state");
+  if (mixed) {
+    await page.locator("#pressure").click();
+    const pressureInput = page.locator("#typing");
+    const priorText = await pressureInput.inputValue();
+    await pressureInput.focus();
+    const pressure = await measure("raw-pressure-typing", 10000, () => pressureInput.pressSequentially("X"));
+    assert.equal(pressure.steps, 2, "Pressure typing lost key/input messages");
+    assert.equal(pressure.storageWrites, 0, "Aggregate oversized model exceeded the unchanged cap");
+    assert.equal(pressure.modelEncodes, mode === "reference" ? 4 : 0, "Pressure typing used unexpected Full execution");
+    if (mode === "incremental") {
+      assert.equal(pressure.fieldEncodes, 6, "Evicted unchanged products were converted before publication");
+      assert.equal(pressure.fieldEncodedBytes, 150, "Evicted unchanged products increased typing work");
+      assert.equal(pressure.deferredFieldEncodes, 0, "Oversized snapshot reconstructed unneeded bytes");
+      assert.equal(pressure.materializedBytes, 0, "Oversized pressure snapshot was joined");
+      assert.equal(pressure.bridgeBytes, 0, "Oversized pressure snapshot crossed the browser bridge");
+    }
+    assert.equal(await pressureInput.inputValue(), priorText + "X", "Pressure typing lost input");
+    assert.equal(await page.locator("#brand").textContent(), priorText + "X", "Pressure typing lost nested form state");
+    const shrink = await measure("raw-pressure-shrink", 10000, () => page.locator("#unpressure").click());
+    assert.equal(shrink.steps, 1, "Pressure removal dispatched multiple messages");
+    assert.equal(shrink.storageWrites, 1, "Under-cap state was not published after shrink");
+    if (mode === "incremental") {
+      assert.equal(shrink.deferredFieldEncodes, 1, "Shrink must reconstruct exactly the evicted products leaf");
+      assert(shrink.deferredFieldEncodedBytes > 500000 && shrink.deferredFieldEncodedBytes < 1500000, "Shrink did not reconstruct the intended bounded products leaf");
+    }
+    const recovered = await measure("raw-pressure-recovered-key", 10000, () => pressureInput.dispatchEvent("keydown", { key: "ArrowLeft" }));
+    assert.equal(recovered.steps, 1, "Recovered ignored key did not execute once");
+    assert.equal(recovered.storageWrites, 1, "Recovered ignored key did not reassert storage");
+    if (mode === "incremental") {
+      assert.equal(recovered.deferredFieldEncodes, 0, "Resolved products were not retained in the new cache");
+      assert.equal(recovered.materializedBytes, 0, "Recovered ignored key rebuilt the unchanged snapshot");
+      assert.equal(recovered.bridgeBytes, 0, "Recovered ignored key copied the existing browser string");
+    }
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForFunction(() => globalThis.__skyStepProfileReady === true);
+    assert.equal(await page.locator("#items").textContent(), "10000", "Shrink/reload lost products");
+    assert.equal(await page.locator("#typing").inputValue(), priorText + "X", "Shrink/reload lost typed state");
+    assert.equal(await page.locator("#brand").textContent(), priorText + "X", "Shrink/reload lost nested state");
+  }
   await page.locator("#huge").click();
   await page.waitForFunction(() => document.querySelector("#items")?.textContent === "100000");
   const hugeInput = page.locator("#typing");

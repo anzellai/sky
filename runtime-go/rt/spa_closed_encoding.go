@@ -44,6 +44,9 @@ type spaClosedEncodingNode struct {
 type spaClosedEncodingBudget struct {
 	NodesLeft, BytesLeft, DepthLimit int
 	CapBytes                         int
+	Profile                          bool
+	Pins                             spaClosedLazyPins
+	Deferred                         spaClosedDeferredWork
 }
 
 func spaNewClosedEncodingBudget(capBytes int) *spaClosedEncodingBudget {
@@ -65,18 +68,26 @@ type spaClosedEncodingWork struct {
 	EncodedBytes                                 uint64
 }
 
-// Plans are invocation-local. They contain only captured encoded bytes and
-// structural metadata, NEVER model references, new conversions or callbacks.
+// Plans are invocation-local. Lazy leaves may capture CURRENT values/pinned
+// metadata, but cache nodes NEVER point to plans, values or snapshots.
 type spaClosedBytePlan struct {
 	raw      string
 	keys     []string
 	children []*spaClosedBytePlan
 	missing  bool
+	lazy     *spaClosedLazyLeaf
 }
 
 func (p *spaClosedBytePlan) appendTo(b *strings.Builder) bool {
 	if p == nil || p.missing {
 		return false
+	}
+	if p.lazy != nil {
+		if !p.lazy.resolve() {
+			return false
+		}
+		p.raw = p.lazy.raw
+		p.lazy = nil // resolved plans release captured values/snapshots early
 	}
 	if p.raw != "" {
 		b.WriteString(p.raw)
@@ -110,8 +121,8 @@ type spaClosedEncodingResult struct {
 	Work          spaClosedEncodingWork
 }
 
-// Materialization performs NO conversion, marshaling, metadata lookup or user
-// callback. It can run after unknown Phase-B effects using the captured plan.
+// Materialization may resolve certified lazy CLOSED leaves through pinned
+// canonical encoding. It never invokes unknown callbacks or global enum reads.
 func (r spaClosedEncodingResult) materialize(limit uint64) (string, bool) {
 	if !r.Supported || r.ConversionErr != nil || r.MarshalErr != nil || r.Size > limit || r.Size > uint64(^uint(0)>>1) {
 		return "", false
@@ -353,6 +364,25 @@ func (c *spaClosedEncodeContext) atomicWithOld(value, old reflect.Value, prior *
 		same := spaModelValueSame(old, value, &budget)
 		c.work.ComparedNodes += spaModelWitnessBudget - budget
 		missingAllowed := !c.options.NeedRaw || (c.options.AllowOversizeWithoutRaw && prior.size > uint64(c.budget.CapBytes))
+		if same && prior.raw == "" && !missingAllowed && c.budget.Pins.claim(c.epoch) {
+			// Prior overall success and the current immutable witness certify
+			// validity/size. Only raw bytes are missing, not validation.
+			c.work.Reuses++
+			out.Size, out.Null, out.RawKind, out.SameJSON = prior.size, prior.null, prior.rawKind, true
+			node.size, node.null, node.rawKind = prior.size, prior.null, prior.rawKind
+			lazy := &spaClosedLazyLeaf{
+				value: value, declared: declared, snapshot: c.epoch, budget: c.budget,
+				size: prior.size, null: prior.null, rawKind: prior.rawKind,
+			}
+			if !c.options.DiscardRawRetention && prior.size <= uint64(c.budget.BytesLeft) {
+				c.budget.BytesLeft -= int(prior.size)
+				c.work.RetainedBytes += int(prior.size) // reserved capacity
+				lazy.target = node                      // NEVER the prior node
+			}
+			out.Plan = &spaClosedBytePlan{lazy: lazy}
+			out.Cache = node
+			return out
+		}
 		if same && (prior.raw != "" || missingAllowed) {
 			c.work.Reuses++
 			out.Size, out.Null, out.RawKind, out.SameJSON = prior.size, prior.null, prior.rawKind, true

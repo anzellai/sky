@@ -26,6 +26,8 @@ for changing runtime decisions.
 | preparedEncodes, preparedFallbacks | Strict codec preparation invocations and already-prepared Full-equivalent fallbacks |
 | fieldMarshals, closedFieldReuses | Mixed-field marshals and proven closed-field/recursive atomic-leaf reuse |
 | fieldEncodes, fieldEncodedBytes | Field conversions and marshaled field bytes, including unknown fields on every logical invocation |
+| deferredFieldEncodes, deferredFieldMarshals, deferredFieldEncodedBytes | Subset of field work reconstructed on demand after raw-cache eviction |
+| deferredEncodeNanos | Deferred reconstruction within payload/identity assembly; a subset of write/session time, never added again to phase totals |
 | materializedBytes, bridgeBytes | Whole selected payload bytes joined and bytes copied into browser strings |
 | modelEncodes, encodedBytes | Actual full model encoder calls and output bytes |
 | encodeNanos | Encoding decisions, bounded identity checks and full encoder work |
