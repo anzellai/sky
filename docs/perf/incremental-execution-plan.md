@@ -700,3 +700,17 @@ while the generated asset path and canonical Sky CLI require the backend project
 directory. The retry will correct that directory and verify asset bindings;
 readiness requirements remain unchanged. Real application browser comparisons
 still have no passing result.
+
+
+The unchanged full `scripts/tui-e2e.sh` gate now passes, including its actual PTY
+screen assertions and CLI effect, guard and exit checks. The test dependency is
+provided by a Python closure from the existing locked Nix input, without a pip
+fallback or repository lock change. The successful run preserves the original
+clean Nix context and prefixes only that Python executable; non-Python tool
+identity hashes remain equal. Earlier nested-launch attempts received SIGTERM
+before assertions, whose sender remains unclassified. The subsequent passing
+run does not establish who sent those signals. Original 600-second fixture
+build, 300-second PTY and 30-second CLI limits remain unchanged.
+
+Checkpoint `e64206553` passes all forty hosted Rust CI jobs
+(run `42120228995`). The private whole-application browser gate remains pending.

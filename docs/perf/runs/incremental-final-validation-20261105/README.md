@@ -7,6 +7,8 @@ These receipts cover public fixtures only and contain no private application dat
   web:app, terminal:cli and terminal:tui; actual CLI execution with EOF succeeds.
 - `desktop-target-builds.json`: the same fixture builds for desktop and
   desktop:mac with the matched locked Nix toolchain. This is compilation only.
+- `tui-pty-execution.json`: the unchanged complete terminal gate passes, including
+  real PTY screen assertions and the terminal CLI effect/guard/exit assertions.
 - `std-app-execution-tests.json`: six individually selected existing tests pass
   with exactly one passed and zero ignored per invocation, including native HTTP
   startup/configuration and desktop failure-to-listen handling.
@@ -20,5 +22,5 @@ locked Nix context resolved them without a compiler-source change.
 
 The small public fixture contains no indexedMap region. These results therefore
 do not prove view-cache activation, private application parity, physical-device
-IME behavior, terminal PTY screen behavior or successful desktop GUI operation.
+IME behavior or successful desktop GUI operation.
 Real private-app browser validation remains a separate required gate.
