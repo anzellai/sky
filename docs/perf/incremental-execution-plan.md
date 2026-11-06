@@ -1078,3 +1078,23 @@ A real cumulative-RUSAGE_CHILDREN fault fails the intended independence
 assertion. Restoring the per-child reporter passes, as do all six memory-module
 tests, all ten unchanged static skip-policy tests and the config census. New
 Linux hosted validation remains pending. See the [receipt](runs/incremental-final-validation-20261105/child-rss-oracle.json).
+
+
+## Query-world aggregate harvest removal
+
+The query world now runs passes 5–7 and leaves aggregate pass 8 to the unchanged
+eager/shared-world oracle. Query-world consumers do not read those aggregate
+param-record/conflict maps; lowering already requests per-definition summaries.
+Pass 7 remains available for caller inference of CAF record updates.
+
+The accepted-fixture regression fails the old aggregate-work assertion, then
+passes with complete channel, harvest, body-table, numeric and checker parity.
+A further guard covers caller Bool-field edits, CAF String-field edits and a
+revert against fresh/eager output. The full compiler validation passes 561 tests
+with two existing ignores. No counter, golden, timeout or memory guard changes.
+
+Local broad and coerce compiler attempts were separately interrupted by the
+external pressure watchdog before running tests/the coerce gate. The full broad
+suite passed after measured headroom recovery; existing Linux and macOS hosted
+coerce gates remain required. Fresh compiler/private-app memory evidence is
+pending. See the [receipt](runs/incremental-final-validation-20261105/query-world-harvest.json).

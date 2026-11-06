@@ -237,22 +237,23 @@ pub fn type_world_query(db: &dyn ResolveDb) -> std::sync::Arc<ty::World> {
 /// def's body (passes 5-6), so it does NOT backdate on a body edit — which is
 /// fine because it is demanded only by the whole-program checker + the per-def
 /// [`record_result_sig_query`], never by the per-def lowering `infer_query` whose
-/// backdating the incremental harness asserts. Value-identical to the pre-split
-/// `World::build` the checker read directly.
+/// backdating the incremental harness asserts. Passes 1-7 match the eager
+/// world; aggregate pass-8 maps are omitted because lowering demands the
+/// equivalent per-def harvest below.
 #[salsa::tracked]
 pub fn check_world_query(db: &dyn ResolveDb) -> std::sync::Arc<ty::World> {
     // Dependency direction stays check -> declarations: body-derived channels
     // must never enter the backdatable declaration query. Clone only the World
     // shell/body maps; its immutable declaration core remains shared.
     let mut world = type_world_query(db).as_ref().clone();
-    world.extend_bodies(db.sky_db());
+    world.extend_query_bodies(db.sky_db());
     std::sync::Arc::new(world)
 }
 
 /// The D2 record-result scheme for one def (pass 7), demanded LAZILY by the
 /// lowering `infer_query` only for defs that appear as a record-update base in the
-/// body under inference (`ty::update_base_defs`). Built against the FULL
-/// [`check_world_query`] (passes 1-6) so the inferred field types are
+/// body under inference (`ty::update_base_defs`). Built against
+/// [`check_world_query`] (passes 1-7) so the inferred field types are
 /// byte-identical to the pre-split bulk pass. Because `infer_query` demands this
 /// ONLY when the body actually has such an update, a body with none creates no
 /// dependency on any other def's body — preserving backdating for the common case

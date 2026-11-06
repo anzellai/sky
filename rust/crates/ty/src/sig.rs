@@ -290,6 +290,17 @@ impl World {
     /// a whole-program fold; it merges rather than assigns (see
     /// [`World::harvest_callsite_param_records`]).
     pub fn extend_bodies(&mut self, db: &dyn SkyDb) {
+        self.extend_query_bodies(db);
+        // Eager/shared-world oracle retains the whole-program fold and sticky
+        // conflicts. Query lowering instead demands its per-def harvest.
+        self.harvest_callsite_param_records(db);
+    }
+
+    /// Query-world passes 5-7. Keep D2 for caller inference, but do not run the
+    /// aggregate pass-8 harvest: no query-world consumer reads that channel.
+    /// Intended for a declaration-world fork; existing aggregate maps are not
+    /// cleared or otherwise changed by this additive extension.
+    pub fn extend_query_bodies(&mut self, db: &dyn SkyDb) {
         // ---- pass 5: precise CHECK-ONLY schemes for UNANNOTATED app defs ----
         // (F1c narrow subset — see `infer_app_check_sigs`.) Runs on top of the
         // decls world so it can consult every declaration channel + its own prior
@@ -308,23 +319,15 @@ impl World {
 
         // ---- pass 7: full record result types (D2, lowering-path only) ----
         self.infer_record_result_sigs(db);
-
-        // ---- pass 8: call-site param records for UNANNOTATED defs (#166,
-        // lowering-path only) — the concrete record each caller passes, so the
-        // record-update close can pin an unannotated `{ model | … }` base. ----
-        self.harvest_callsite_param_records(db);
     }
 
     /// Is `name` a BARE alias name already declared in this world?
     ///
-    /// The shared-world runner consults this to detect the one declaration-pass
-    /// interaction a prebuilt world cannot represent: the bare `aliases` table is
-    /// last-writer-wins and is completed (pass 1a) *before* any signature is
-    /// expanded (pass 2), so in a whole-program build a case-module alias that
-    /// collides on a bare name can change how a **stdlib** signature expands. A
-    /// world whose stdlib pass 2 has already run cannot reproduce that, so such a
-    /// case falls back to a full rebuild rather than being checked against a
-    /// world that is subtly wrong for it.
+    /// The shared-world runner conservatively rebuilds on a bare alias-name
+    /// collision. Alias-key collection precedes signature expansion, and the
+    /// first-writer-wins bare fallback depends on module load order. The guard
+    /// avoids assuming that extending a prebuilt world reproduces every
+    /// declaration-pass interaction.
     pub fn has_bare_alias(&self, name: &str) -> bool {
         self.aliases.contains_key(name)
     }
@@ -797,7 +800,7 @@ impl World {
     /// for the already-built ones **provided the added modules cannot change
     /// them**. A stdlib module never imports an app module, so the app→stdlib
     /// direction is empty; the one channel that does flow backwards is the BARE,
-    /// last-writer-wins `aliases` table read as a fallback during pass-2
+    /// load-order-sensitive `aliases` table read as a fallback during pass-2
     /// expansion. `crate::shared` detects that collision and rebuilds instead.
     pub fn extend_decls(&mut self, db: &dyn SkyDb, seed_static: bool) {
         let world = self;
@@ -1776,7 +1779,7 @@ impl World {
     pub fn expand_ty(&self, ty: &Ty) -> Ty {
         // Lowering path: field types arrive as BARE names (`collect_types` uses
         // `ast_type_to_ty_qualified`, not `resolve_type_names`), so the bare
-        // last-writer-wins `aliases` fallback IS needed to expand e.g. a bare
+        // first-writer-wins `aliases` fallback IS needed to expand e.g. a bare
         // `Point` field to its tuple. No union-protection here — behaviour is
         // byte-identical to before the #164-follow-up fix.
         self.expand(ty, 0, &HashSet::new(), None)
@@ -1784,7 +1787,7 @@ impl World {
 
     /// Module-aware `expand_ty` for the lowering DECL path. A bare field-type
     /// name is first resolved against the DECLARING module's own alias
-    /// (`alias_by_mod["{cur_mod}.{name}"]`) before the bare last-writer-wins
+    /// (`alias_by_mod["{cur_mod}.{name}"]`) before the bare first-writer-wins
     /// `aliases` fallback. Without this a record-alias field annotated with a
     /// bare `Message` expands through the bare table — where the stdlib
     /// `Std.Ai.Provider.Message` (loaded first) sits under the same key — so a
@@ -1801,7 +1804,7 @@ impl World {
     /// aliases). Guarded against runaway recursion (aliases are non-recursive in
     /// Sky, but a malformed corpus must not hang — L7).
     /// `protect`: bare type names that must NOT be alias-expanded via the
-    /// last-writer-wins bare `aliases` fallback, because in the CURRENT module's
+    /// first-writer-wins bare `aliases` fallback, because in the CURRENT module's
     /// view they name a UNION (their `type_refs` entry resolves to a `TypeCon`).
     /// Without this, a local union `Model` would be hijacked by a DIFFERENT
     /// module's same-named alias `Model` sitting in the global `aliases` table
@@ -2170,7 +2173,7 @@ pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
 /// The set of bare type names module `m` sees as UNIONS — every name in its
 /// `type_refs` (own decls + `exposing`-imported types) whose def is a
 /// `DefKind::TypeCon`. Used as the `protect` set for `expand`: a name here must
-/// not be alias-expanded through the last-writer-wins bare `aliases` table, so a
+/// not be alias-expanded through the first-writer-wins bare `aliases` table, so a
 /// local union `Model` can't be hijacked by a different module's same-named alias
 /// (#164 follow-up). Aliases stay OUT of the set, so genuine bare-alias leniency
 /// (an un-imported alias resolving only through the global table) is preserved.
