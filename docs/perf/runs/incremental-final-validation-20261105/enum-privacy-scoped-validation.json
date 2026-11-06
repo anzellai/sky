@@ -1,0 +1,185 @@
+{
+  "code_checkpoint": "913c97184",
+  "source_files_sha256": {
+    "runtime-go/rt/spa_view_memo.go": "0880a2a5583fbc0ad207a549d7aebdc79c073e0057e8b29309f153aa2c0c8a2c",
+    "runtime-go/rt/spa_view_memo_enum_test.go": "9913af2efa877bdf5aa3828fa0d91bc027cadbb84ab2139d7c82f83c1c49622c",
+    "runtime-go/rt/spa_view_memo_metadata_test.go": "269ff95f084708043aa89c84360225b83965832b1d323b70b77641b0552630a5",
+    "rust/crates/lower/src/lower/view_memo.rs": "b3e41aacb230e76385b6cf5f1ed5e8132e51a0c56cacab14d768d6d67da828e2",
+    "rust/crates/project/src/build.rs": "7091a90940e0d59110d0d37c52ff75d997f014ea1ccb4a6bacc711e9541b6ab8",
+    "rust/crates/project/src/go_get_memo.rs": "17c58b5d21ad4a69098cb7ed6536f6e3abc890909fc3f7912ba546e7f777b419",
+    "rust/crates/project/src/go_tool_metadata.rs": "a19bea3473b05e46472ec5df1ebf0b367d7a63dde0e21f175b62dac8ca6b7dcc",
+    "rust/crates/project/src/lib.rs": "d7e666451c437e4cfd060c34db6a1020f48fb650259098a4d5607ede301b9bd6",
+    "rust/crates/project/src/spa_split.rs": "78b388d24d7b3d6dbe6bd205748cbe5e9cda32838fbc42a3dfa1fe620dc82552",
+    "rust/crates/project/tests/spa_view_memo_proof.rs": "4ef490cec50a7053551b8e6806517c7a47831c5dfa3fb221f9b12abe3ecfbffd"
+  },
+  "scope": "Local compiler/runtime proof, derived cached-application core comparison and public automatic-build smoke; no full private-application or performance claim",
+  "enum_v2": {
+    "production_patch_sha256": "7a5c3f8893db66b341a93a3f0ab503ff2a1f8206d7c8c4edff92b4af57dc5907",
+    "grant_authority": "actual emitted IotaEnum declarations",
+    "runtime_validation": "exact named-int method interface; no reflected method extraction or invocation",
+    "native": {
+      "passed": 18,
+      "failed": 0,
+      "elapsed_seconds": 47,
+      "log_sha256": "008ca99816f83a4aae0e95d28848b09afde27cea48241a1d47139507cfd46754"
+    },
+    "wasm": {
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "parent_elapsed_seconds": 28,
+      "explicit_pinned_sdk_and_loader": true,
+      "settings_query_used": false,
+      "log_sha256": "95b446c678f6e5eaee7d6be955619e549665e5e1d29b3078142634cc7edeefd0"
+    },
+    "lower": {
+      "passed": 47,
+      "failed": 0,
+      "elapsed_seconds": 74,
+      "log_sha256": "7c6cb1eb620d18a2127c987ff92b8b804975415f0b20e266781365da1269f0f6"
+    }
+  },
+  "observer_ast_proof": {
+    "passed": true,
+    "negative_mutations_rejected": 8,
+    "observer_helper_bodies_exact": 6,
+    "metadata_epoch_checks_preserved": true,
+    "elapsed_seconds": 10,
+    "raw_source_emitted": false,
+    "log_sha256": "18897e7dbe29f4cd92af4cf68fcd65d10275bd524aa3a5b90103c6b48030387a",
+    "receipt_sha256": "ae8e152f21d499a6247ab4bad9b5bd1f506f382b85cbd734913951e3ab8afdfa"
+  },
+  "split_report_release": {
+    "red": {
+      "failed": 1,
+      "passed": 0,
+      "elapsed_seconds": 66,
+      "class": "actual split release boundary assertion",
+      "log_sha256": "da67a2b3552dfca0913c8c3a9cd5efe5003efd3f370776d398e018a8373340bf"
+    },
+    "green": {
+      "passed": 2,
+      "failed": 0,
+      "elapsed_seconds": 56,
+      "log_sha256": "57b8765ecf4d7b4fdbf3b2b0c3436dbfd1d5a8d86cdeca7b0b15b7c8348e75a5"
+    },
+    "verdict_and_diagnostic_storage_preserved": true,
+    "scope": "explicit disposal of reporting type allocation before partition; not a child-process live-owner or measured memory-saving claim"
+  },
+  "go_metadata_privacy": {
+    "production_patch_sha256": "e226e85809a173c92b9cae2398dc17f259ec940ff6fd2485acfdfc8f68063d00",
+    "settings_queries_removed": 2,
+    "replacement": "public tool version and compiler-installation dry-run metadata",
+    "legacy_red": {
+      "fake_tool_only": true,
+      "real_settings_query_executed": false,
+      "failed_intended_assertions": 2,
+      "passed_negative": 1,
+      "elapsed_seconds": 102,
+      "log_sha256": "9ae02056883244cc4cfb2b05b879dba66bdcc362d7a2febe0a8f5f45c12a45dd"
+    },
+    "green": {
+      "passed": 6,
+      "failed": 0,
+      "elapsed_seconds": 59,
+      "log_sha256": "3cfdf1cd95929fad5fd8365a2e516ac12edea58fbb8d80111a114581bbe37e95"
+    },
+    "memo_regressions": {
+      "passed": 4,
+      "failed": 0,
+      "elapsed_seconds": 10,
+      "log_sha256": "ba77a4654c44c39fc8e322997c13874005c755cbfab6cc2b3cd651fcff032666"
+    }
+  },
+  "project_suite": {
+    "passed": 519,
+    "failed": 0,
+    "ignored": 2,
+    "test_summaries": 49,
+    "elapsed_seconds": 249,
+    "log_sha256": "2ec155620de6505c073fb5ad6f2e30941959cc8f7c37734e617dc0b55766179d",
+    "scope": "full project crate test suite; not full workspace or full runtime suite"
+  },
+  "derived_cached_application_core": {
+    "passed": true,
+    "comparisons": 2,
+    "elapsed_seconds": 92,
+    "all_cleanup_confirmed": true,
+    "unexpected_exit": false,
+    "same_wasm_both_modes": true,
+    "wasm_sha256": "7d78f419518739cd3b2381e3d4af3f84ee689483145b9d7a17d024d42d44934f",
+    "reference_report_sha256": "3495bfd6e363679f0600ae480b707216962605d017b4c16d2afcfdac63d59f7b",
+    "candidate_report_sha256": "1cb1b711d1cee6ddd09b5a9fc3b320e963ab24f7f3607d61afaedb5df20998b9",
+    "receipt_sha256": "d8fc8689af2b3cd2531271023513d313fa80e327c953bbbed7b5cd05559eb16c",
+    "log_sha256": "db420c9dd1d568925d5206218f084e88920b63a774e436f93e972e1df87248c5",
+    "strict_assertions_changed": false,
+    "diagnostic_no_inlining": true,
+    "full_app_rebuilt": false,
+    "current_head_runtime_validation_claimed": false,
+    "physical_identity_parity_claimed": false,
+    "latency_performance_claimed": false
+  },
+  "canonical_build": {
+    "passed": true,
+    "elapsed_seconds": 192,
+    "compiler_sha256": "302824927bb4cc6c722bc78ef9b193e8fe82f624d5d93d2b725fde191f658b0a",
+    "log_sha256": "0a850b0f78ad2fcb01a1147e0ca9b7c51367923891ea98584a2a1eddea321b3e",
+    "built_before_code_checkpoint_commit": true,
+    "build_stamp_base_commit": "a703e3cb0",
+    "code_content_matches_checkpoint": true,
+    "checkpoint_913_build_stamp_claimed": false
+  },
+  "public_app50_automatic_smoke": {
+    "passed": true,
+    "elapsed_seconds": 46,
+    "original_sky_source_files": 8,
+    "wasm_artifact_copies": 2,
+    "matching_sdk_loader_copies": 2,
+    "sdk_loader_sha256": "0c949f4996f9a89698e4b5c586de32249c3b69b7baadb64d220073cc04acba14",
+    "compiler_sha256": "302824927bb4cc6c722bc78ef9b193e8fe82f624d5d93d2b725fde191f658b0a",
+    "result_sha256": "cd30397ee276324ede7367a2a609456488fd31d1ecc90e01f78c2dae6c46a9ca",
+    "log_sha256": "d1254a4514df892919c7a0e4614146cc3584a1a807c694c0eded99d4cb80e7b7",
+    "automatic_web_app_build": true,
+    "wasm_headers_checked": true,
+    "performance_claimed": false,
+    "full_private_app_claimed": false
+  },
+  "format": {
+    "passed": true,
+    "elapsed_seconds": 16,
+    "checks": [
+      "cargo fmt",
+      "gofmt",
+      "git diff --check"
+    ],
+    "log_sha256": "18bf957dd335c6068b94bdff0657db617f70ca1943db234509884ca209529b52"
+  },
+  "scope_limits": [
+    "Selected runtime tests do not constitute full runtime-suite validation.",
+    "Two ignored project tests remain visible; no denominator or assertion was reduced.",
+    "The derived cached-application core pair is not a full application rebuild, six-browser journey, physical-identity or latency proof.",
+    "The public app50 automatic smoke is not the build-performance median gate and establishes no performance improvement.",
+    "Canonical binary content matches the checkpoint but retains its precommit base stamp.",
+    "Historical large-model build and benchmark validation remain incomplete.",
+    "CI42238182751 and the current public browser gate were running at receipt preparation; no completed result is claimed.",
+    "All resource guards, quality requirements and gate budgets remain unchanged."
+  ],
+  "config_surface_census": {
+    "original_check": "stale line witnesses after settings-query removal",
+    "source_only_check_reproduced": true,
+    "file_line_witnesses_updated": 2,
+    "locations_before": [
+      2910,
+      2916
+    ],
+    "locations_after": [
+      2893,
+      2899
+    ],
+    "summary_counts_changed": false,
+    "ratchet_changed": false,
+    "direct_green_exit": 0,
+    "green_log_sha256": "fb2d21c9c93980bf9a0e049dae13042d59d8b1a3a462d0ff1a9b583d7852d4c9",
+    "product_source_changed": false
+  }
+}

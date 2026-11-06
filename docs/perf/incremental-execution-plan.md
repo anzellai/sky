@@ -915,10 +915,10 @@ Subsequent hosted run 42215098140 passed both full runtime and macOS jobs;
 the overall run remains red on two other functional jobs and its aggregate.
 See [the receipt](runs/incremental-final-validation-20261105/ingest-readiness-synchronization.json).
 
-Current application browser validation remains incomplete. One explicit cached
-baseline reference core report passed; the candidate reached a result-admission
-guard failure and is under diagnosis. That old-artifact run is not current-head
-runtime validation, and no completed reference/candidate comparison or historical
+Full current-application browser validation remains incomplete. The earlier cached
+reference-only result and candidate admission failure are preserved. The later
+scoped derived-artifact core comparison below passes both modes; it is not a full
+current-head application rebuild or historical
 large-model performance result is claimed.
 
 
@@ -970,3 +970,45 @@ epoch checks are being prepared. Observational diagnostic compilation disabled
 app-package inlining under unchanged resource bounds; five public fixtures have
 identical numeric rejection/accounting results with and without that option.
 These observations do not establish hit-rate, latency or current-head validation.
+
+
+## Enum capability, metadata privacy and scoped validation checkpoint
+
+Code checkpoint `913c97184` grants view-memo enum capabilities only for actual
+compiler-emitted enum declarations. Runtime validation uses an exact typed
+interface without extracting or invoking reflected methods. Metadata snapshots
+invalidate cached results when the enum/owner registry changes. The split now
+explicitly drops reporting type storage before partition analysis. Two internal
+Go settings queries are replaced with public version and dry-run installation
+metadata, using the actual output module directory.
+
+Executed local evidence is: 18 selected native runtime tests, the same 18 in
+actual Wasm, 47 lower tests, and the complete project suite with 519 passed and
+2 ignored. The observer AST proof preserves metadata checks and rejects all
+8 negative mutations. Fake-only legacy metadata RED fails its 2 intended
+assertions with 1 negative pass; final metadata tests pass 6, with 4 memo
+regressions. Split disposal has actual boundary RED followed by 2 GREEN tests.
+No real legacy settings query was used for the RED proof.
+
+A strict saved-plan core comparison passes in 92 seconds with 2 comparisons
+and confirmed cleanup. Both modes use the same derived Wasm. This diagnostic
+uses cached application inputs and a no-inlining intervention; it is not a full
+application rebuild, current-head runtime validation, full browser journey,
+physical-identity or latency proof. Earlier admission failures remain preserved.
+
+A fresh canonical compiler builds in 192 seconds. Its bytes match the checkpoint's
+code content, while its embedded stamp retains the precommit `a703e3cb0` base.
+The original 8-file public app50 automatic `web:app` smoke then passes in
+46 seconds, verifying Wasm headers and both artifact/SDK-loader copies. That
+smoke does not establish build-performance medians or a performance improvement.
+Formatting and source checks pass in 16 seconds.
+
+The [scoped receipt](runs/incremental-final-validation-20261105/enum-privacy-scoped-validation.json)
+binds source and evidence hashes. CI `42238182751` and the current public browser
+gate were running when this receipt was prepared. Historical large-model build
+and performance validation remain incomplete; guards and budgets are unchanged.
+
+The checkpoint CI config gate exposed stale source-line census witnesses after
+the settings-query removal. Updating two line witnesses leaves all summary counts
+and the ratchet unchanged; the original direct check then exits successfully.
+This is a metadata refresh, with no product-source or budget change.
