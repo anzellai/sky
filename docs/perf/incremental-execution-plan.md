@@ -910,8 +910,9 @@ The test now waits for captured-payload readiness with the same two-second
 deadline and unchanged payload assertions. Exporter production code is unchanged.
 A standard-library-only exact-source helper proof executed deterministic RED
 then GREEN: both GREEN tests pass, including an AST check tying the real helper,
-barrier and original test predicate together. This proves helper synchronization;
-full hosted runtime and macOS validation of the applied fix remain required.
+barrier and original test predicate together. This proves helper synchronization.
+Subsequent hosted run 42215098140 passed both full runtime and macOS jobs;
+the overall run remains red on two other functional jobs and its aggregate.
 See [the receipt](runs/incremental-final-validation-20261105/ingest-readiness-synchronization.json).
 
 Current application browser validation remains incomplete. One explicit cached
@@ -919,3 +920,53 @@ baseline reference core report passed; the candidate reached a result-admission
 guard failure and is under diagnosis. That old-artifact run is not current-head
 runtime validation, and no completed reference/candidate comparison or historical
 large-model performance result is claimed.
+
+
+## Hosted follow-up: static naming and edit compression
+
+[Run 42215098140](https://github.com/anzellai/sky/actions/runs/42215098140) completed
+with 37 successful functional jobs. The static skip-helper policy matched the new
+private logical-ID reservation method name. Its method and sole call have been
+renamed to describe reserved unreachable IDs; the policy remains unchanged.
+All ten tests in the unchanged static policy suite now pass.
+
+The other failure is the existing app50 web:app edit build budget: median 16.82s
+against a 9.57s reference. Its ratio 1.75758 exceeds 1.72225; the combined
+unchanged ratio and absolute-slack conditions give an effective 16.4819325s
+wall bound. Three uncached Brotli(max) calls take 13.71/13.93/13.71s, dominating
+parent precompression. Cold builds reuse the already compressed pristine bytes;
+the benchmark deliberately gives each edit unique content. The complete-content
+cache miss is expected. These timings do not demonstrate a declaration-world
+regression. See the [classification receipt](runs/incremental-final-validation-20261105/ci-42215098140-classification.json).
+
+A source-only measurement candidate compares deterministic 6 MiB and 3 MiB Brotli
+partitions using the same pinned encoder, quality 11, window 24 and maximum 8 parts.
+It requires a fresh source-bound public benchmark asset, exact decoding through
+independent decoders, the unchanged compression-size oracle and memory accounting.
+No candidate encoding measurements or performance improvement are claimed. No
+budget, timeout, quality or memory guard is relaxed. Historical application
+validation and the current application's browser proof remain incomplete.
+
+
+## Open-record Access: model work is linear in the measured growth check
+
+Repeated access to an expanding open record previously copied its accumulated
+fields and built a complement for a fresh row that never escaped. The new narrow
+path consumes only that unpublished singleton constraint. Existing row aliases,
+held content copies, ranks, late constraints and errors match the general unifier.
+Updates and unsupported row shapes retain reference unification.
+
+The original regression observed 24,768 copied fields instead of zero. All six
+focused tests and 540 broad compiler tests pass, with two unchanged ignores.
+The explicitly executed growth diagnostic now reports 2.00 doubling ratios for
+all four model-app unifier counters. Codec-chain ratios remain 3.87–3.92, so the
+unchanged overall growth test still fails. No bound or ignore is widened. See
+[the receipt](runs/incremental-final-validation-20261105/open-access-consumption.json).
+
+The private application's diagnostic also identified an exact missing capability:
+compiler-emitted integer enums such as canonical `Std.Ui.VAlign` have a generated
+method but receive no view token. A provenance-backed enum token and metadata
+epoch checks are being prepared. Observational diagnostic compilation disabled
+app-package inlining under unchanged resource bounds; five public fixtures have
+identical numeric rejection/accounting results with and without that option.
+These observations do not establish hit-rate, latency or current-head validation.

@@ -1,0 +1,74 @@
+{
+  "run": 42215098140,
+  "functional_jobs_succeeded": 37,
+  "functional_jobs_failed": 2,
+  "aggregate_conclusion": "failure",
+  "test_rest": {
+    "job": 127883007302,
+    "failed_test": "no_file_defines_its_own_skip_helper",
+    "test_source": "rust/crates/xtask/tests/live_tests_are_not_silently_skipped.rs",
+    "assertion_line": 234,
+    "matched_source": "rust/crates/ty/src/unify.rs",
+    "class": "private logical reservation method matched forbidden test skip-helper name",
+    "repair": "rename private reservation method and its sole call; preserve static policy",
+    "parent_applied": true,
+    "log_sha256": "bc9020e89ea9ff19299ea22c8cd48755cf1ea007b3bb7496d8d0aa944abca330",
+    "repair_validation": {
+      "passed": 10,
+      "failed": 0,
+      "elapsed_seconds": 170,
+      "policy_unchanged": true,
+      "log_sha256": "de2fef1b0a91a508e85f8a536c7cb0ce1766c12827242fd50255526c48b2052a"
+    }
+  },
+  "build_perf_2": {
+    "job": 127883007452,
+    "class": "wall ratio budget exceeded",
+    "case": "app50-web:app/edit",
+    "reps": 3,
+    "wall_seconds": [
+      16.82,
+      16.86,
+      16.74
+    ],
+    "median_seconds": 16.82,
+    "reference_seconds": [
+      10.51,
+      9.56,
+      9.57
+    ],
+    "reference_median_seconds": 9.57,
+    "ratio": 1.7575757575757576,
+    "budget_ratio": 1.3778,
+    "factor": 1.25,
+    "ratio_ceiling": 1.7222499999999998,
+    "slack_seconds": 2,
+    "absolute_ceiling_seconds": 15.185546,
+    "effective_ceiling_seconds": 16.4819325,
+    "uncached_brotli_max_seconds": [
+      13.71,
+      13.93,
+      13.71
+    ],
+    "uncached_gzip_max_seconds": [
+      2.33,
+      2.37,
+      2.28
+    ],
+    "parent_precompression_seconds": [
+      13.78,
+      14.0,
+      13.78
+    ],
+    "compression_in_parallel_frontend_branch": true,
+    "cold_assets_compression_cached": true,
+    "edit_uses_unique_source_token_each_rep": true,
+    "whole_content_cache_miss_expected": true,
+    "world_regression_demonstrated": false,
+    "budget_or_gate_changed": false,
+    "log_sha256": "2e2b6b7359282eb4ca12da61bb6ea5935ceb3c5002e85eae0f1f3a6a3e3154a0",
+    "artifact_sha256": "929e0010e9600a25ebaa6993ca6468a740f097f26f7fd014261d8a58ae33d205",
+    "next_step": "Source-only 6MiB versus3MiB deterministic partition measurement candidate; no encoding/performance evidence yet and no gate limit change."
+  },
+  "scope": "classification only; no successful benchmark rerun or performance repair claimed"
+}

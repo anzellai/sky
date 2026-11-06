@@ -41,8 +41,29 @@
   "runtime_test_patch_sha256": "eebe528159afa46831cf75503987dbdd54190a995ded3d9788ad779d4449c2fd",
   "scope_limits": [
     "No full runtime package or exporter production test is claimed by the helper-only proof.",
-    "Hosted full runtime and macOS validation of the applied test fix remain required.",
     "The failed CI run is not reclassified as green.",
-    "No timing budget, memory guard, worker cap or payload assertion was relaxed."
-  ]
+    "No timing budget, memory guard, worker cap or payload assertion was relaxed.",
+    "The later hosted runtime and macOS jobs succeeded; its two other failed functional jobs and aggregate remain red."
+  ],
+  "hosted_validation": {
+    "run": 42215098140,
+    "jobs": [
+      {
+        "job": 127883007314,
+        "job_name": "runtime-rt",
+        "conclusion": "success"
+      },
+      {
+        "job": 127883007521,
+        "job_name": "macos-determinism",
+        "conclusion": "success"
+      }
+    ],
+    "overall_run_conclusion": "failure",
+    "remaining_failed_functional_jobs": [
+      "test-rest",
+      "build-perf-2"
+    ],
+    "ci_green_aggregator": "failure"
+  }
 }
