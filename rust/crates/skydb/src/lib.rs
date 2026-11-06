@@ -582,8 +582,19 @@ pub struct GoProgram {
 /// captured through the `db.ty_db()` reads the lowerer performs while executing.
 #[salsa::tracked(no_eq)]
 pub fn go_program(db: &dyn LowerDb, entry: ModuleId, config: BuildConfig) -> GoProgram {
-    let cfg = config.cfg(db);
-    let out = lower::lower_program_cfg(db.ty_db(), entry, cfg);
+    compute_go_program(db.ty_db(), entry, config.cfg(db))
+}
+
+/// The exact shared lower+emit computation, with an owned result. A single-use
+/// build can move its output without creating a whole-program source/config
+/// memo. The tracked wrapper above still records every read performed here.
+/// No inference, diagnostics, output ordering or incremental query policy differs.
+pub fn compute_go_program(
+    db: &dyn ty::TyDb,
+    entry: ModuleId,
+    cfg: &lower::LowerConfig,
+) -> GoProgram {
+    let out = lower::lower_program_cfg(db, entry, cfg);
     // Emit only when lowering yielded a buildable program — otherwise the driver
     // reports `errors`/`entry_ok` and never writes/`go build`s (unchanged from
     // the eager path).

@@ -253,6 +253,13 @@ impl<'a> Typer<'a> {
         infer.infer_def_task_heads(body, selected)
     }
 
+    /// Share the exact immutable declaration owner already held by this typer.
+    /// This performs no database query and does not deep-copy any scheme. A
+    /// lowering signature can retain this owner instead of cloning its Ty.
+    pub fn declaration_world_owner(&self) -> Arc<World> {
+        Arc::clone(&self.world)
+    }
+
     /// The declared/derived scheme for a top-level value def, if known.
     pub fn value_sig(&self, def: DefId) -> Option<&Scheme> {
         self.world.value_sigs.get(&def)

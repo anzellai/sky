@@ -303,6 +303,19 @@ fn check_modules_profiled(db: &dyn ty::TyDb, modules: &[base::ModuleId]) -> ty::
     ty::check_modules_with_world_without_report_types(db, world, modules)
 }
 
+/// Single-use CLI assembly owns its final output. Per-def Salsa memos still
+/// serve lowering, while the complete source/config are not retained in a new
+/// whole-program memo through later split/build work.
+fn single_use_go_program(
+    db: &skydb::SkyDatabase,
+    entry: base::ModuleId,
+    cfg: lower::LowerConfig,
+) -> skydb::GoProgram {
+    let result = skydb::compute_go_program(db, entry, &cfg);
+    drop(cfg);
+    result
+}
+
 /// Assemble the source db (stdlib + example src), lower, and emit the Go source.
 /// Returns `Err(note)` for every non-emit outcome (no stdlib, no src, no entry,
 /// no `main`) so callers surface the same diagnostics. Deterministic: no wall
@@ -918,13 +931,10 @@ fn assemble_and_emit_loaded(
     // its currying arity from the declared Sky signature instead (see
     // `LowerConfig.variadic_kernels`); every non-variadic alias keeps the scan.
     cfg.variadic_kernels = crate::abi_guard::runtime_variadic_kernels(repo_root).clone();
-    // Stage E (doc 01 bottom-of-DAG): route lowering + codegen through the salsa
-    // `go_program` tracked query, closing the query DAG below `infer`. The config
-    // is a salsa **input** created once for this build; `go_program` reads the
-    // whole module set's `type_world`/`resolve`/per-def `infer` through the db, so
-    // it is memoised (re-demand is a cache hit) and invalidated natively by any
-    // `SourceFile` edit (the LSP/incremental path). Emitted bytes are byte-for-byte
-    // the prior eager `lower_program_cfg` + `emit_program` pair.
+    // Single-use CLI assembly runs the exact lower+emit computation directly.
+    // Per-def/world/resolve queries remain memoised; incremental consumers keep
+    // the Stage-E tracked go_program wrapper and its complete dependency DAG.
+    // This CLI does not retain a second complete source/config in that memo.
     // The Std.Ai device slots (`Endpoint.withDevice`): rooted and registered
     // by the lowering (`LowerConfig.device_slots`). A misuse is a build error
     // (ai_slots::device_slots_for_entry). A generated Sky.Spa half is checked
@@ -1099,8 +1109,7 @@ fn assemble_and_emit_loaded(
             }
         }
     }
-    let config = skydb::BuildConfig::new(&db, cfg);
-    let prog = skydb::go_program(&db, entry, config);
+    let mut prog = single_use_go_program(&db, entry, cfg);
     if !prog.entry_ok {
         return Err("lowering found no entry `main`".into());
     }
@@ -1119,11 +1128,11 @@ fn assemble_and_emit_loaded(
                 .collect(),
         });
     }
-    // `entry_ok && errors.is_empty()` guarantees `go_program` emitted the source.
-    // `go_program` returns a reference into the salsa memo, so clone the fields out.
+    // The owned result carries exactly the source that passed lowering.
+    // Transfer its allocation into Emitted rather than cloning it again.
     let source = prog
         .source
-        .clone()
+        .take()
         .ok_or_else(|| "lowering produced no Go source".to_string())?;
     // ABI-symbol guard: reject any emitted `rt.X` the runtime does not export
     // BEFORE `go build`, so a codegen hole surfaces as a clean `[E4005]`
@@ -1175,7 +1184,7 @@ fn assemble_and_emit_loaded(
     let emitted = Emitted {
         source,
         registry,
-        ffi_used: prog.ffi_used.clone(),
+        ffi_used: prog.ffi_used,
         warnings,
         located_warnings,
         migration_hint,
@@ -5843,7 +5852,7 @@ mod checker_report_lifetime_tests {
             .unwrap();
         assert!(assembly.find("if !exhaustive_diags.is_empty()").unwrap() < release);
         assert!(release < assembly.find("let mut cfg = read_sky_toml_config").unwrap());
-        assert!(release < assembly.find("skydb::go_program(").unwrap());
+        assert!(release < assembly.find("single_use_go_program(").unwrap());
     }
 
     #[test]
@@ -6097,6 +6106,115 @@ mod assembly_source_owner_tests {
             // Reports are owned values and remain stable after their source
             // revision; no borrowed diagnostic text escapes into LoadedProgram.
             assert_eq!(before, after);
+        }
+    }
+}
+
+#[cfg(test)]
+mod single_use_go_program_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn fixture(source: &str) -> (skydb::SkyDatabase, base::ModuleId, Arc<Mutex<Vec<String>>>) {
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let mut db = skydb::SkyDatabase::with_kernel_events(logs.clone());
+        let file = db.new_source(0, source.to_string());
+        let parsed = skydb::parse(&db, file);
+        assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+        let module = db.add_module("Main", file);
+        (db, module, logs)
+    }
+
+    // Tracked reference remains public and independently exercises the query
+    // route. Skydb's additional regression retains the original lower+emit pair.
+    fn tracked_reference(
+        db: &skydb::SkyDatabase,
+        entry: base::ModuleId,
+        cfg: &lower::LowerConfig,
+    ) -> skydb::GoProgram {
+        let config = skydb::BuildConfig::new(db, cfg.clone());
+        skydb::go_program(db, entry, config).clone()
+    }
+
+    fn same(actual: &skydb::GoProgram, expected: &skydb::GoProgram) {
+        assert_eq!(actual.source, expected.source);
+        let diagnostics = |ds: &[lower::LowerDiag]| {
+            ds.iter()
+                .map(|d| (d.message.clone(), d.span))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            diagnostics(&actual.warnings),
+            diagnostics(&expected.warnings)
+        );
+        assert_eq!(diagnostics(&actual.errors), diagnostics(&expected.errors));
+        assert_eq!(actual.entry_ok, expected.entry_ok);
+        assert_eq!(actual.ffi_used, expected.ffi_used);
+        assert_eq!(actual.console_needed, expected.console_needed);
+    }
+
+    #[test]
+    fn actual_single_use_assembly_produces_owned_source_without_whole_program_memo() {
+        let (db, module, logs) =
+            fixture("module Main exposing (main)\nmain = \"owned program source\"\n");
+        let cfg = lower::LowerConfig::default();
+        let expected = tracked_reference(&db, module, &cfg);
+        assert!(expected.entry_ok && expected.errors.is_empty());
+        assert!(
+            expected.source.as_ref().is_some_and(|s| s.len() > 64),
+            "real nonempty emitted source premise"
+        );
+        logs.lock().unwrap().clear();
+        let mut actual = single_use_go_program(&db, module, cfg);
+        let events = std::mem::take(&mut *logs.lock().unwrap());
+        same(&actual, &expected);
+        // BASE extraction still executes the actual original Stage-E query,
+        // storing the complete source/config in Salsa before returning its copy.
+        assert!(
+            !events
+                .iter()
+                .any(|e| e.starts_with("WillExecute") && e.contains("go_program")),
+            "single-use CLI retained output through the whole-program query"
+        );
+        // The returned owned allocation is moved, not cloned, into Emitted.
+        let before = actual.source.as_ref().unwrap().as_ptr();
+        let moved = actual.source.take().unwrap();
+        assert_eq!(before, moved.as_ptr());
+        assert!(actual.source.is_none());
+        // Structural route check ties this real helper to actual CLI assembly.
+        let source = include_str!("build.rs");
+        let assembly = source.split_once("fn assemble_and_emit_loaded(").unwrap().1;
+        let assembly = assembly
+            .split_once("\n/// Resolve a lowering diagnostic")
+            .unwrap()
+            .0;
+        assert!(assembly.contains("single_use_go_program(&db, entry, cfg)"));
+        assert!(!assembly.contains("skydb::go_program("));
+        assert!(!assembly.contains("ffi_used: prog.ffi_used.clone()"));
+    }
+
+    #[test]
+    fn single_use_and_tracked_programs_preserve_all_original_pair_fields() {
+        for source in [
+            "module Main exposing (main)\nmain = \"owned program source\"\n",
+            "module Main exposing (x)\nx = 1\n",
+            "module Main exposing (main)\nmain = missing\n",
+        ] {
+            for port in [None, Some("8751".to_string())] {
+                let (db, module, _) = fixture(source);
+                let mut cfg = lower::LowerConfig::default();
+                cfg.port = port;
+                let expected = tracked_reference(&db, module, &cfg);
+                let actual = single_use_go_program(&db, module, cfg.clone());
+                same(&actual, &expected);
+                let config = skydb::BuildConfig::new(&db, cfg);
+                same(skydb::go_program(&db, module, config), &expected);
+                if source.contains("owned program") {
+                    assert!(actual.entry_ok && actual.errors.is_empty() && actual.source.is_some());
+                } else {
+                    assert!(actual.source.is_none(), "missing main/error emitted source");
+                }
+            }
         }
     }
 }

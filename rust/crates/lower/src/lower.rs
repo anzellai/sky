@@ -139,6 +139,8 @@ impl FfiTable {
 
 mod closure;
 mod numeric;
+mod retained_types;
+use retained_types::{ParamTypes, ResultTypes, SignatureTy};
 mod spa_capability_domain;
 mod spa_model;
 mod task_discard;
@@ -179,7 +181,7 @@ struct DefEntry {
     task_discards: BTreeSet<ExprId>,
     numeric: std::sync::Arc<ty::numeric::NumericElaboration>,
     /// The declared/derived scheme type (peeled for param types), if any.
-    sig: Option<Ty>,
+    sig: Option<SignatureTy>,
 }
 
 /// A collected type declaration (union or record alias) awaiting emission.
@@ -313,7 +315,24 @@ pub fn lower_program(db: &dyn TyDb, entry: ModuleId) -> LowerOutput {
 }
 
 pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> LowerOutput {
+    #[cfg(test)]
+    {
+        lower_program_impl(db, entry, cfg, None)
+    }
+    #[cfg(not(test))]
+    {
+        lower_program_impl(db, entry, cfg)
+    }
+}
+
+fn lower_program_impl(
+    db: &dyn TyDb,
+    entry: ModuleId,
+    cfg: &LowerConfig,
+    #[cfg(test)] observer: Option<&mut dyn FnMut(Vec<retained_types::Snapshot>)>,
+) -> LowerOutput {
     let typer = Typer::new(db);
+    let signature_world = typer.declaration_world_owner();
     let mut warnings: Vec<LowerDiag> = Vec::new();
     let mut errors: Vec<LowerDiag> = Vec::new();
     // Each top-level definition's name span: where a lowering diagnostic points
@@ -412,7 +431,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         let types = db.body_types_of(*m, *d);
         let task_discards = task_discard::logical_task_discards(&typer, *d, body, &types);
         let numeric = db.numeric_elaboration_of(*m, *d);
-        let sig = typer.value_sig(*d).map(|s| numeric.signature.apply(&s.ty));
+        let sig = retained_types::signature(&signature_world, *d, &numeric.signature);
         defs.insert(
             *d,
             DefEntry {
@@ -653,131 +672,17 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // (e.g. `Result Error String`) that a caller's argument (`Result any String`)
     // must be coerced to at the call site (the cross-def unification the global
     // solver would do — recovered here as an explicit boundary coercion).
-    let mut def_param_tys: HashMap<DefId, Vec<Ty>> = HashMap::new();
-    for (d, e) in &defs {
-        // Prefer the DECLARED signature's param types (nominal, e.g.
-        // `RetryPolicy e`) over the body-INFERRED local types. Independent
-        // per-def inference of a record param that a body only field-updates
-        // (`{ p | shouldRetry = … }`) produces a *subset* structural record
-        // (`{ shouldRetry }`), which `sky_ty_to_go` renders as an anonymous
-        // `struct{ ShouldRetry … }`. The caller then passes the full nominal
-        // `RetryPolicy_R` and the boundary-coercion forces a
-        // `rt.Coerce[struct{…}]` between a named struct and a different
-        // anonymous struct — which `go build` rejects. Using the annotated
-        // param type keeps both sides on the nominal `_R` type, so `from == to`
-        // and the coercion elides (doc 07 §3 subset-record case).
-        let sig_ptys = e.sig.as_ref().map(peel_params);
-        // Row-polymorphic params (row var shared param↔result) must present to
-        // callers as `any` — matching the `any` Go signature `lower_def` emits —
-        // so the caller widens its argument instead of coercing it DOWN to a
-        // closed struct (which would drop the row-carried fields).
-        let collides = |t: &Ty| match &sky_ty_to_go(t, &env) {
-            GoTy::Named(n, _) => goty_names_non_model_record(n, &record_fields, &env),
-            _ => false,
-        };
-        let (rp_params, _rp_result) = row_poly_flags(&e.body, &e.types, &collides);
-        let mut ptys = Vec::new();
-        for (i, p) in e.body.params.iter().enumerate() {
-            let inferred = || match &e.body.pats[*p] {
-                Pattern::Var(lid) => e.types.local(*lid).unwrap_or(Ty::Var(Name::new("any"))),
-                _ => Ty::Var(Name::new("any")),
-            };
-            // Take the sig param type when it is concrete enough to be useful
-            // (not a bare type variable — a rigid `msg`/`a` gives no more than
-            // the inferred type and would erase to `any` anyway).
-            let t = match sig_ptys.as_ref().and_then(|ps| ps.get(i)) {
-                Some(st) if !matches!(st, Ty::Var(_)) => st.clone(),
-                // Row-poly + no concrete annotation → `any`.
-                _ if *rp_params.get(i).unwrap_or(&false) => Ty::Var(Name::new("any")),
-                _ => inferred(),
-            };
-            let t = e
-                .numeric
-                .signature
-                .parameter(i)
-                .map_or_else(|| t.clone(), |shape| shape.apply(&t));
-            ptys.push(t);
-        }
-        def_param_tys.insert(*d, ptys);
-    }
-    // per-def result type — the callee's Go return type as seen by a caller (for
-    // arg→param coercion of the return, partial-application closure return, and
-    // Task-returning detection). MUST agree with the type `lower_def` actually
-    // emits as the func's Go return: `lower_def` prefers the DECLARED sig result
-    // (`sig_result_after`) when concrete over the body-inferred one. A body that
-    // only field-updates its record param (`{ post | upvoters = … }`) infers a
-    // *subset* open record (`{ Downvoters, Id, Upvoters | row }` → anon
-    // `struct{…}`), but the func returns the annotated nominal (`State_Post_R`).
-    // If `def_result_tys` reported the subset, a partial-app closure would be
-    // typed `func(_p any) struct{…}` while its body returns the nominal — which
-    // `go build` rejects (19-skyforum toggle map). Mirroring the sig-first rule
-    // keeps both sides on the nominal `_R`. Bare-var / unannotated results fall
-    // back to the body-inferred type, unchanged.
-    let mut def_result_tys: HashMap<DefId, Ty> = HashMap::new();
-    for (d, e) in &defs {
-        let sig_ret = e
-            .sig
-            .as_ref()
-            .map(|s| sig_result_after(s, e.body.params.len()));
-        let collides = |t: &Ty| match &sky_ty_to_go(t, &env) {
-            GoTy::Named(n, _) => goty_names_non_model_record(n, &record_fields, &env),
-            _ => false,
-        };
-        let (_rp_params, rp_result) = row_poly_flags(&e.body, &e.types, &collides);
-        let t = match sig_ret {
-            Some(st) if !matches!(st, Ty::Var(_)) => Some(st),
-            // Row-poly result + no concrete annotation → `any` (matches the `any`
-            // Go return `lower_def` emits + the reflective `rt.RecordUpdate` body).
-            _ if rp_result => Some(Ty::Var(Name::new("any"))),
-            // A row-polymorphic lambda CAF presents its erased function type —
-            // the same one `lower_def` emits (see `caf_lambda_row_poly_ty`).
-            None => caf_lambda_row_poly_ty(&e.body, &e.types).or_else(|| e.types.result.clone()),
-            _ => e.types.result.clone(),
-        };
-        if let Some(t) = t {
-            let t = e
-                .numeric
-                .signature
-                .result_after(e.body.params.len())
-                .map_or_else(|| t.clone(), |shape| shape.apply(&t));
-            def_result_tys.insert(*d, t);
-        }
-    }
-    // A zero-parameter ALIAS of another def (`alias2 = (add2)`) whose own
-    // per-def inference could not see the target's type (an unannotated target
-    // reads back as a bare var) takes the TARGET's result type. `lower_def`
-    // already emits the alias with the target's Go func type (recovered from the
-    // lowered body), so a caller that read the bare var saw `any` and emitted a
-    // curried call on it (`Main_alias2()(3)(4)`) that `go build` rejects while
-    // `sky check` passed. Iterated so an alias of an alias resolves too.
-    for _ in 0..8 {
-        let mut changed = false;
-        for (d, e) in &defs {
-            if !e.body.params.is_empty() || e.sig.is_some() {
-                continue;
-            }
-            let Some(root) = e.body.root else { continue };
-            let Expr::Var(Res::Def(target)) = &e.body.exprs[root] else {
-                continue;
-            };
-            let own_unresolved = match def_result_tys.get(d) {
-                None => true,
-                Some(Ty::Var(_)) | Some(Ty::Error) => true,
-                Some(_) => false,
-            };
-            if !own_unresolved || target == d {
-                continue;
-            }
-            if let Some(tt) = def_result_tys.get(target).cloned() {
-                if !matches!(tt, Ty::Var(_) | Ty::Error) && def_result_tys.get(d) != Some(&tt) {
-                    def_result_tys.insert(*d, tt);
-                    changed = true;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
+    let (def_param_tys, def_result_tys) = retained_types::build_caches(&defs, &env, &record_fields);
+    #[cfg(test)]
+    if let Some(observer) = observer {
+        observer(retained_types::inspect(
+            &typer,
+            &defs,
+            &def_param_tys,
+            &def_result_tys,
+            &env,
+            &record_fields,
+        ));
     }
 
     // ---- kernel-alias map (defs whose body is `Ffi.kernel "X"`) ----
@@ -876,7 +781,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         if !e.body.params.is_empty() {
             return None;
         }
-        let ty = e.sig.clone().or_else(|| e.types.result.clone());
+        let ty = e.sig.as_deref().or(e.types.result.as_ref());
         // Recognise ONLY the stdlib `Sky.Config.Config`, by CONFIDENT nominal
         // identity — never by the bare base `"Config"`. `ty::nominal` qualifies a
         // user-declared type with its DECLARING module (`ty::sig`), so the genuine
@@ -1029,7 +934,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
                 apply_config: config_go_name.clone(),
                 device_regs: device_regs.clone(),
             };
-            let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
+            let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_deref(), d == main_def);
             // determinism (L4): `discovered` is a Vec (ordered), and the two set
             // drains below are order-INDEPENDENT — they only union into another
             // set/BTreeSet, so the resulting membership is identical regardless of the
@@ -1524,7 +1429,7 @@ fn def_reference_is_forced(
     d: DefId,
     applied_here: bool,
     defs: &BTreeMap<DefId, DefEntry>,
-    def_result_tys: &HashMap<DefId, Ty>,
+    def_result_tys: &ResultTypes<'_>,
 ) -> bool {
     if applied_here {
         return true;
@@ -1538,7 +1443,7 @@ fn def_reference_is_forced(
         return false;
     }
     // Zero-arity: forced, unless the memoised value is itself a function.
-    !matches!(def_result_tys.get(&d), Some(Ty::Fun(_, _)))
+    !matches!(def_result_tys.get(&d).map(|t| &**t), Some(Ty::Fun(_, _)))
 }
 
 /// Whole-program pre-pass: per def, the freeze-unsafe effect kernel (fresh-value
@@ -1559,7 +1464,7 @@ fn def_reference_is_forced(
 fn compute_def_effect(
     defs: &BTreeMap<DefId, DefEntry>,
     kernel_alias: &HashMap<DefId, String>,
-    def_result_tys: &HashMap<DefId, Ty>,
+    def_result_tys: &ResultTypes<'_>,
 ) -> HashMap<DefId, EffectKind> {
     // Per-def direct kernel effect + outgoing def references (call-graph edges,
     // including references that appear inside lambda bodies).
@@ -2523,8 +2428,8 @@ struct Ctx<'a> {
     ctor_field_gotys: &'a HashMap<(String, String), Vec<GoTy>>,
     /// Go names of ADT unions emitted as sealed interfaces (typed variant dispatch).
     sealed_unions: &'a HashSet<String>,
-    def_param_tys: &'a HashMap<DefId, Vec<Ty>>,
-    def_result_tys: &'a HashMap<DefId, Ty>,
+    def_param_tys: &'a ParamTypes<'a>,
+    def_result_tys: &'a ResultTypes<'a>,
     /// Whole-program: the freeze-unsafe effect (fresh-value / mutable-store read)
     /// reachable from each def's body. The memoised-CAF lint uses it to catch a
     /// LAUNDERED effect the direct-kernel scan misses.
@@ -2852,7 +2757,7 @@ impl<'a> Ctx<'a> {
         }
         if let Expr::Call(callee, _) = &self.body.exprs[e] {
             if let Expr::Var(Res::Def(d)) = &self.body.exprs[*callee] {
-                if let Some(Ty::App(n, _)) = self.def_result_tys.get(d) {
+                if let Some(Ty::App(n, _)) = self.def_result_tys.get(d).map(|t| &**t) {
                     return ty::nominal::base(n.as_str()) == "Task";
                 }
             }
@@ -2922,7 +2827,7 @@ impl<'a> Ctx<'a> {
         let (rp_params, rp_result) = row_poly_flags(&self.body, &self.types, &collides);
 
         for (i, p) in param_pats.iter().enumerate() {
-            let (pname, mut pty, binds) = self.bind_param(*p, sig_params.get(i));
+            let (pname, mut pty, binds) = self.bind_param(*p, sig_params.get(i).copied());
             // Erase a genuinely row-polymorphic param to `any`, and re-register
             // the local so the body's reads (`r.age` → `rt.Field`) and updates
             // (`{ r | … }` → `rt.RecordUpdate`) take the reflective any-typed
@@ -3110,7 +3015,7 @@ impl<'a> Ctx<'a> {
                         let is_data = self
                             .def_result_tys
                             .get(&self.cur_def)
-                            .is_some_and(is_stale_data_result);
+                            .is_some_and(|t| is_stale_data_result(t));
                         if is_data {
                             let what = match kind {
                                 EffectKind::Fresh => "a clock/entropy read",
@@ -10844,11 +10749,11 @@ fn tag_eq(subj: &GoExpr, tag: usize) -> GoExpr {
 
 // ---- free helpers -------------------------------------------------------
 
-fn peel_params(sig: &Ty) -> Vec<Ty> {
+fn peel_params(sig: &Ty) -> Vec<&Ty> {
     let mut out = Vec::new();
     let mut cur = sig;
     while let Ty::Fun(a, b) = cur {
-        out.push((**a).clone());
+        out.push(&**a);
         cur = b;
     }
     out
@@ -12150,5 +12055,96 @@ mod shared_body_owner_tests {
         edited.root = Some(replacement);
         assert_eq!(first.root, old_root);
         assert!(!std::ptr::eq(&*edited, &**first));
+    }
+}
+
+#[cfg(test)]
+mod borrowed_parameter_owner_tests {
+    use super::*;
+    use std::borrow::Borrow;
+
+    // Works unchanged for the old Vec<Ty> and candidate Vec<&Ty> APIs.
+    fn as_type<T: Borrow<Ty>>(value: &T) -> &Ty {
+        value.borrow()
+    }
+
+    fn wide() -> Ty {
+        Ty::Record(
+            (0..96)
+                .map(|i| {
+                    (
+                        Name::new(&format!("field{i}")),
+                        Ty::Tuple(vec![Ty::app("Int", vec![]), Ty::app("String", vec![])]),
+                    )
+                })
+                .collect(),
+            None,
+        )
+    }
+
+    #[test]
+    fn peeled_parameters_borrow_signature_nodes_without_recursive_copies() {
+        let first = wide();
+        let second = Ty::app("List", vec![wide()]);
+        let signature = Ty::Fun(
+            Box::new(first),
+            Box::new(Ty::Fun(Box::new(second), Box::new(Ty::app("Bool", vec![])))),
+        );
+        let Ty::Fun(first, rest) = &signature else {
+            unreachable!()
+        };
+        let Ty::Fun(second, _) = &**rest else {
+            unreachable!()
+        };
+        let parameters = peel_params(&signature);
+        assert_eq!(parameters.len(), 2);
+        assert!(
+            matches!(&**first, Ty::Record(fields, None) if fields.len() == 96),
+            "fixture must carry a real wide nested parameter"
+        );
+        assert_eq!(as_type(&parameters[0]), &**first);
+        assert_eq!(as_type(&parameters[1]), &**second);
+        // Both signature and peeled results remain alive. Old recursive clones
+        // have equal values but distinct owners; no allocator reuse can mask it.
+        assert!(
+            std::ptr::eq(as_type(&parameters[0]), &**first),
+            "peeling cloned the first full parameter type"
+        );
+        assert!(
+            std::ptr::eq(as_type(&parameters[1]), &**second),
+            "peeling cloned the second nested parameter type"
+        );
+    }
+
+    #[test]
+    fn borrowed_peeling_keeps_original_values_order_arity_and_owned_selection() {
+        for signature in [
+            Ty::Unit,
+            Ty::var("a"),
+            Ty::Fun(Box::new(wide()), Box::new(Ty::Unit)),
+            Ty::Fun(
+                Box::new(Ty::var("a")),
+                Box::new(Ty::Fun(
+                    Box::new(wide()),
+                    Box::new(Ty::app("Task", vec![Ty::app("Error", vec![]), Ty::Unit])),
+                )),
+            ),
+        ] {
+            // Exact original helper is an independent value/order oracle.
+            let original = |sig: &Ty| {
+                let mut out = Vec::new();
+                let mut current = sig;
+                while let Ty::Fun(a, b) = current {
+                    out.push((**a).clone());
+                    current = b;
+                }
+                out
+            };
+            let expected = original(&signature);
+            let actual = peel_params(&signature);
+            assert_eq!(actual.len(), expected.len());
+            let selected_owned: Vec<Ty> = actual.iter().map(|t| as_type(t).clone()).collect();
+            assert_eq!(selected_owned, expected);
+        }
     }
 }

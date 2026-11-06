@@ -1224,3 +1224,62 @@ existing user exclusion), adapters remain exactly zero and no dispatch/narrow
 count rises. The newly rebuilt census detector passes all 53 assertions after
 the two line-witness updates. Workspace formatting passes. Fresh canonical,
 current private-app and new hosted validation remain pending.
+
+
+## e54 fresh compiler and actual integration
+
+The fresh canonical compiler passes in 238 seconds with all 2,416 framework
+inputs verified unchanged before/after. Its automatic app50 build passes in
+22 seconds. The current public step-cost gate passes in 294 seconds: all six
+reference/incremental runs across Chromium, WebKit and Firefox, eight scenarios
+each, with the cache disabled. See the [integration receipt](runs/incremental-final-validation-20261105/e54-integration.json).
+
+The fresh normal-inlining private build still stops at the original swap guard
+during lowering after 29 seconds, sampled at 1,048 MiB. Check-world/check peaks
+are 401,145,856 / 668,254,208 bytes; lowering begins at 672,137,216 peak bytes
+and never reports completion. There are no Sky error codes; cleanup and all
+671 donor/destination hashes pass. These observed peaks do not establish a
+controlled memory saving. No unchanged retry or relaxed limit follows.
+
+The next PIV cycle targets concrete lower-phase ownership copies: signature
+parameter peeling, retained signature/parameter/result caches, and single-use
+CLI output/config memo retention. The CLI source copy occurs after initial
+lowering returns, so it is not presumed to explain an earlier stop inside it.
+Full private-runtime and historical workload goals remain incomplete.
+
+
+## Lowering ownership follow-up
+
+The isolated PIV cycle has reproduced three ownership problems before applying
+fixes. Borrowed parameter peeling passes all 49 original lower unit tests after
+its intended pointer regression. The single-use CLI computation passes two
+output-parity tests and all 15 incremental query tests after reproducing the
+unwanted whole-program memo. Incremental consumers retain their tracked query;
+the CLI takes an owned result from the identical lower/emit computation.
+
+The retained signature/cache candidate passes all 53 lower unit tests, including
+four new actual-path ownership/value tests and both peeling tests. It retains
+the exact existing immutable World owner for signatures with no numeric rewrite,
+borrows selected immutable signature subtrees, and shares owned fallback values.
+Numeric reapplication, row erasure, CAF handling, structural alias equality and
+module-specific Go conversion remain covered by the original-value oracle.
+The baseline failed only after the wide fixture passed parse/check/lower and
+complete value comparisons. See the [ownership receipt](runs/incremental-final-validation-20261105/lower-retained-ownership.json).
+
+The combined compiler suites and final emitted-Go/resource integration are still
+pending. Ownership assertions establish which allocation is retained; they do
+not establish RSS savings or private-application success. A proposed names-only
+record catalog was withdrawn during source review because real consumers need
+field types for coercions, constructors, updates and patterns. Any further
+catalog optimization must retain those authoritative types and conversion rules.
+
+
+The six verified source files are now adopted byte-for-byte from the tested
+packets. The combined ty/lower/skydb/project run passes 1,126 tests with three
+existing ignores (117 summaries, 698 seconds). The explicit original unifier
+growth run passes in 77 seconds with all eight ratios 2.00. Workspace formatting
+passes. The freshly rebuilt census initially reports stale source witnesses;
+regeneration and recheck pass all 53 assertions, and the complete diff changes
+only two project/build.rs line locations. Canonical/private builds and the
+current-source coercion sweep remain pending; the prior resource guard and
+retry headroom condition remain unchanged.

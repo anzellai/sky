@@ -1071,3 +1071,64 @@ fn numeric_adapter_returns_actual_salsa_owner_with_send_sync_metadata() {
     let consumer = fx.db.numeric_elaboration_of(fx.app_id, def);
     assert!(Arc::ptr_eq(&memo, &consumer));
 }
+
+#[test]
+fn owned_go_computation_preserves_original_pair_and_tracked_revisions() {
+    fn original(db: &dyn ty::TyDb, entry: ModuleId, cfg: &LowerConfig) -> skydb::GoProgram {
+        let out = lower::lower_program_cfg(db, entry, cfg);
+        let source = if out.entry_ok && out.errors.is_empty() {
+            Some(codegen::emit_program(&out.items, out.console_needed))
+        } else {
+            None
+        };
+        skydb::GoProgram {
+            source,
+            warnings: out.warnings,
+            errors: out.errors,
+            entry_ok: out.entry_ok,
+            ffi_used: out.ffi_used,
+            console_needed: out.console_needed,
+        }
+    }
+    fn same(a: &skydb::GoProgram, b: &skydb::GoProgram) {
+        assert_eq!(a.source, b.source);
+        let diagnostics = |ds: &[lower::LowerDiag]| {
+            ds.iter()
+                .map(|d| (d.message.clone(), d.span))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(diagnostics(&a.warnings), diagnostics(&b.warnings));
+        assert_eq!(diagnostics(&a.errors), diagnostics(&b.errors));
+        assert_eq!(a.entry_ok, b.entry_ok);
+        assert_eq!(a.ffi_used, b.ffi_used);
+        assert_eq!(a.console_needed, b.console_needed);
+    }
+    let mut fx = Fixture::build(LIB_V1, APP, OTHER_V1);
+    let cfg = LowerConfig::default();
+    let config = BuildConfig::new(&fx.db, cfg.clone());
+    let mut first = None;
+    for (revision, source) in [LIB_V1, LIB_BODY_EDIT, LIB_V1].into_iter().enumerate() {
+        if revision != 0 {
+            fx.lib.set_text(&mut fx.db).to(source.to_string());
+        }
+        let expected = original(&fx.db, fx.app_id, &cfg);
+        assert!(expected.entry_ok && expected.errors.is_empty() && expected.source.is_some());
+        let actual = skydb::compute_go_program(&fx.db, fx.app_id, &cfg);
+        same(&actual, &expected);
+        same(go_program(&fx.db, fx.app_id, config), &expected);
+        let fresh = Fixture::build(source, APP, OTHER_V1);
+        same(
+            &actual,
+            &skydb::compute_go_program(&fresh.db, fresh.app_id, &cfg),
+        );
+        if revision == 0 {
+            first = actual.source.clone();
+        }
+        if revision == 1 {
+            assert_ne!(actual.source, first);
+        }
+        if revision == 2 {
+            assert_eq!(actual.source, first);
+        }
+    }
+}
