@@ -33,3 +33,6 @@ The small public fixture contains no indexedMap region. These results therefore
 do not prove view-cache activation, private application parity, physical-device
 IME behavior or successful desktop GUI operation.
 Real private-app browser validation remains a separate required gate.
+
+`dict-summary-validation-attempts.json` records guard-stopped prototype
+compilations. No prototype test executed locally; hosted validation is pending.

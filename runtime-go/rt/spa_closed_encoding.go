@@ -8,8 +8,9 @@ import (
 )
 
 // This prototype decomposes only the existing closed codec domain. Lists and
-// special declared-type dispatch remain canonical atomic leaves. It owns no
-// model: the enclosing mixed cache must retain the CURRENT root owner.
+// special declared-type dispatch remain canonical atomic leaves. Primitive Dict
+// summaries derive oversize NoWrite decisions; under-cap output stays canonical.
+// The enclosing mixed cache must retain the CURRENT root owner.
 const spaClosedEncodingNodeLimit = 4096
 const spaClosedEncodingDepthLimit = 64
 
@@ -39,6 +40,7 @@ type spaClosedEncodingNode struct {
 	null     bool
 	raw      string // atomic raw ONLY, charged against the single global byte ledger
 	children []*spaClosedEncodingNode
+	dict     *spaClosedDictSummary
 }
 
 type spaClosedEncodingBudget struct {
@@ -69,7 +71,8 @@ type spaClosedEncodingWork struct {
 }
 
 // Plans are invocation-local. Lazy leaves may capture CURRENT values/pinned
-// metadata, but cache nodes NEVER point to plans, values or snapshots.
+// metadata, but cache nodes NEVER point to plans or snapshots. Dict summaries
+// may retain typed private subtrees only when reachable from the CURRENT owner.
 type spaClosedBytePlan struct {
 	raw      string
 	keys     []string
@@ -306,7 +309,7 @@ func (c *spaClosedEncodeContext) encode(value, old reflect.Value, prior *spaClos
 		// Choose atomic fallback BEFORE traversing this subtree. No partially
 		// converted subtree is restarted and no new public proof is granted.
 		c.work.BudgetFallbacks++
-		return c.atomicWithOld(value, reflect.Value{}, nil, declared, false)
+		return c.atomicWithOld(value, reflect.Value{}, nil, declared, false, depth)
 	}
 	c.budget.NodesLeft -= 1 + slots
 	c.work.Nodes++
@@ -320,7 +323,7 @@ func (c *spaClosedEncodeContext) encode(value, old reflect.Value, prior *spaClos
 		prior = nil
 	}
 	if kind == spaClosedAtomic {
-		return c.atomicWithOld(value, old, prior, declared, true)
+		return c.atomicWithOld(value, old, prior, declared, true, depth)
 	}
 	if kind == spaClosedMaybe {
 		tag := value.FieldByName("Tag").Int()
@@ -387,7 +390,7 @@ func (c *spaClosedEncodeContext) encode(value, old reflect.Value, prior *spaClos
 	return out
 }
 
-func (c *spaClosedEncodeContext) atomicWithOld(value, old reflect.Value, prior *spaClosedEncodingNode, declared string, cacheable bool) (out spaClosedEncodingResult) {
+func (c *spaClosedEncodeContext) atomicWithOld(value, old reflect.Value, prior *spaClosedEncodingNode, declared string, cacheable bool, depth int) (out spaClosedEncodingResult) {
 	out.Supported = true
 	node := &spaClosedEncodingNode{type_: value.Type(), declared: declared, kind: spaClosedAtomic}
 	if prior != nil && old.IsValid() {
@@ -395,6 +398,9 @@ func (c *spaClosedEncodeContext) atomicWithOld(value, old reflect.Value, prior *
 		same := spaClosedMixedValueSame(old, value, &budget)
 		c.work.ComparedNodes += spaModelWitnessBudget - budget
 		missingAllowed := !c.options.NeedRaw || (c.options.AllowOversizeWithoutRaw && prior.size > uint64(c.budget.CapBytes))
+		if same {
+			c.keepDictSummary(node, prior, depth)
+		}
 		if same && prior.raw == "" && !missingAllowed && c.budget.Pins.claim(c.epoch) {
 			// Prior overall success and the current immutable witness certify
 			// validity/size. Only raw bytes are missing, not validation.
@@ -424,6 +430,21 @@ func (c *spaClosedEncodeContext) atomicWithOld(value, old reflect.Value, prior *
 			return out
 		}
 	}
+	marker := c.primitiveDict(value, declared, cacheable)
+	var summary *spaClosedDictSummary
+	if marker != nil && prior != nil && prior.dict != nil && old.IsValid() && old.CanInterface() {
+		summary = marker.spaClosedDictSummaryBuild(c, old.Interface(), prior.dict, depth+1)
+		if summary == nil {
+			c.work.BudgetFallbacks++
+		}
+		if summary != nil && summary.jsonSize() > uint64(c.budget.CapBytes) && c.epoch == codecEnumRegistry() {
+			out.Size, out.RawKind = summary.jsonSize(), spaClosedRawOther
+			out.Plan = &spaClosedBytePlan{missing: true}
+			node.size, node.rawKind, node.dict = out.Size, out.RawKind, summary
+			out.Cache = node
+			return out
+		}
+	}
 	c.work.Conversions++
 	raw, err := codecAutoEncodeTyped(value, declared, true)
 	if err != nil {
@@ -442,6 +463,15 @@ func (c *spaClosedEncodeContext) atomicWithOld(value, old reflect.Value, prior *
 	c.work.EncodedBytes = spaSizeAdd(c.work.EncodedBytes, uint64(len(encoded)))
 	out.Plan = &spaClosedBytePlan{raw: string(encoded)}
 	if err == nil && cacheable {
+		if marker != nil && summary == nil && node.dict == nil && out.Size > uint64(c.budget.CapBytes) {
+			summary = marker.spaClosedDictSummaryBuild(c, nil, nil, depth+1)
+			if summary == nil {
+				c.work.BudgetFallbacks++
+			}
+		}
+		if summary != nil && summary.jsonSize() == out.Size {
+			node.dict = summary
+		}
 		node.size, node.null, node.rawKind = out.Size, out.Null, out.RawKind
 		c.retain(node, out.Plan.raw)
 		out.Cache = node

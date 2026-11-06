@@ -774,3 +774,37 @@ large-model workload or pass its acceptance gate. Current loader behavior and th
 original setup are under investigation. The numeric discovery receipt is
 `runs/incremental-final-validation-20261105/source-workload-discovery.json`;
 private values and schema names are excluded.
+
+
+## Primitive Dict prototype: hosted validation checkpoint
+
+The reviewed prototype adds bounded summaries of immutable Dict subtrees for
+exact string/int/bool values. It can derive an exact oversized NoWrite decision
+after a changed primitive without rebuilding unchanged entries. Writable
+snapshots, protected fields, metadata-sensitive declarations and unsupported or
+unaffordable summaries retain canonical conversion. Leaves retain only numeric
+metadata; branch pointers must remain reachable from the current Dict. The
+4096-unit ledger bounds each retained cache graph, not all concurrent graphs or
+process memory. Cold summary construction and cap-crossing fallback add real
+work, which remains counted.
+
+The unchanged RED and seven further tests accompany this implementation. Local
+prototype tests have **not executed**: the unchanged pressure-sensitive memory
+guard stopped compilation with two workers, one worker, tighter compiler heap
+controls, and an independently reviewed focused source closure. That closure
+retains all production files and the complete selected tests, helper and init
+behavior; it is not a full-suite substitute. No local performance or correctness
+PASS is claimed for the new prototype. The draft feature-branch checkpoint is
+being submitted to the existing hosted full runtime and race jobs for validation.
+Main, release tags and deployed applications remain untouched.
+
+Current-app browser work is also still pending. The original typing fixture
+requires twelve products: the UI hides its search below that threshold. Restoring
+the original count allowed typing/caret/replacement/composition assertions to
+complete. A strict diagnostic then proved that the old semantic projection
+attempted to dereference an inactive optional record. Its correction must follow
+the actual handler's unconditional root write and rendered collection, including
+an assertion equating persisted edited text with the controlled input. No missing
+path is being normalized to null and no completed browser comparison is claimed.
+The isolated historical benchmark build separately stopped during lowering under
+the same pressure guard, so its large-model reproduction remains unvalidated.
