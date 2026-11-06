@@ -71,22 +71,24 @@ mod tests {
             .iter()
             .filter_map(|d| {
                 r.bodies.get(&d.def).map(|_| {
-                    (
-                        d.def,
-                        DefEntry {
-                            module_name: "Main".into(),
-                            name: d.name.as_str().into(),
-                            body: DefBody {
-                                owner: std::sync::Arc::clone(&r),
-                                def: d.def,
+                        (
+                            d.def,
+                            DefEntry {
+                                module_name: "Main".into(),
+                                name: d.name.as_str().into(),
+                                body: DefBody {
+                                    owner: std::sync::Arc::clone(&r),
+                                    def: d.def,
+                                },
+                                types: std::sync::Arc::new(BodyTypes::default()),
+                                task_discards: BTreeSet::new(),
+                                numeric: std::sync::Arc::new(
+                                    ty::numeric::NumericElaboration::default(),
+                                ),
+                                sig: None,
                             },
-                            types: std::sync::Arc::new(BodyTypes::default()),
-                            task_discards: BTreeSet::new(),
-                            numeric: std::rc::Rc::new(ty::numeric::NumericElaboration::default()),
-                            sig: None,
-                        },
-                    )
-                })
+                        )
+                    })
             })
             .collect();
         let aliases = defs

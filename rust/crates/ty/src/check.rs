@@ -910,6 +910,28 @@ pub fn check_modules_with_world(
     world: std::sync::Arc<crate::sig::World>,
     to_check: &[ModuleId],
 ) -> CheckOutput {
+    check_modules_with_world_reporting(db, world, to_check, true)
+}
+
+/// The build driver consumes the verdict and diagnostics, then discards all
+/// reporting-only DefType trees before lowering. Avoid collecting those trees
+/// at all; inference, authoritative scans, world and diagnostic ordering are
+/// exactly the same as the reporting API. Tooling/reporting callers retain the
+/// original check_modules_with_world behavior.
+pub fn check_modules_with_world_without_report_types(
+    db: &dyn TyDb,
+    world: std::sync::Arc<crate::sig::World>,
+    to_check: &[ModuleId],
+) -> CheckOutput {
+    check_modules_with_world_reporting(db, world, to_check, false)
+}
+
+fn check_modules_with_world_reporting(
+    db: &dyn TyDb,
+    world: std::sync::Arc<crate::sig::World>,
+    to_check: &[ModuleId],
+    report_types: bool,
+) -> CheckOutput {
     let sky = db.as_sky_db();
     let mut out = CheckOutput::default();
 
@@ -1353,21 +1375,23 @@ pub fn check_modules_with_world(
             out.exhaustiveness_warnings += warns.len();
             out.diagnostics.extend(warns);
 
-            // per-def type entry: declared annotation wins, else inferred body.
-            let name = names.get(def).cloned().unwrap_or_default();
-            if name.is_empty() {
-                continue;
+            if report_types {
+                // per-def type entry: declared annotation wins, else inferred body.
+                let name = names.get(def).cloned().unwrap_or_default();
+                if name.is_empty() {
+                    continue;
+                }
+                let (ty, declared) = match world.value_sigs.get(def) {
+                    Some(s) => (s.ty.clone(), true),
+                    None => (inferred.unwrap_or(Ty::Error), false),
+                };
+                out.def_types.push(DefType {
+                    module: mname.clone(),
+                    name,
+                    ty,
+                    declared,
+                });
             }
-            let (ty, declared) = match world.value_sigs.get(def) {
-                Some(s) => (s.ty.clone(), true),
-                None => (inferred.unwrap_or(Ty::Error), false),
-            };
-            out.def_types.push(DefType {
-                module: mname.clone(),
-                name,
-                ty,
-                declared,
-            });
         }
 
         // One `[E2008]` per distinct offending key type in this module.

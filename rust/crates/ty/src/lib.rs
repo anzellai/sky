@@ -39,7 +39,8 @@ mod unify;
 pub mod variance;
 
 pub use check::{
-    check_modules, check_modules_with_world, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
+    check_modules, check_modules_with_world, check_modules_with_world_without_report_types,
+    BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
 };
 pub use db::{compute_body_types, compute_body_types_with, TyDb};
 pub use infer::RecordOverlay;

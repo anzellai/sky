@@ -1125,3 +1125,33 @@ still fails: the two Codec occurs ratios are 3.43 and 3.45 against the unchanged
 ordinary record-field traversal as the remaining route. The temporary counters
 were removed, and the representation is not part of the tracked implementation.
 Full private-app, historical workload and persistence goals remain incomplete.
+
+The current query-world compiler also passes the unchanged public step-cost
+browser gate in 271 seconds: six reference/incremental runs across Chromium,
+WebKit and Firefox, each with all eight scenarios. The build cache is explicitly
+disabled so its settings/environment cache-key probes do not execute. This is
+public fixture evidence, not the blocked private-application matrix.
+
+
+## Build allocation ownership checkpoint
+
+Build checking now omits only the final reporting-type collector, rather than
+cloning declared type trees into a vector that the build later discards. The
+reporting APIs, inference and authoritative scans remain unchanged. Two genuine
+report-allocation regressions fail on the previous implementation and pass with
+the build mode, including a valid fixture with at least 1,920 reported fields.
+
+Numeric elaboration now shares the tracked immutable owner through `Arc` rather
+than deep-cloning it at the lowering adapter. The strengthened accepted-program
+regression fails on the previous adapter. All 14 incremental cases then pass,
+including body-only, caller-only, imported-signature-only and revert stages with
+retained-owner, eager/fresh and tooling-clone checks. All 32 existing arithmetic,
+cross-module numeric and rigid-number tests pass. The fixture correction retains
+the Int/Float refusal and separates edits instead of weakening the type checker.
+
+The [scoped receipt](runs/incremental-final-validation-20261105/build-allocation-ownership.json)
+binds source and executed evidence. Full compiler/project and hosted checks are
+still pending, and the prior compiler is stale for these sources. No measured
+memory saving or successful private-application rebuild is claimed. The discovered
+raw-ID authority regressions and remaining Codec occurs growth are separate fixes
+in progress. No guard, counter limit, golden or release policy changes.

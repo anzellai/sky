@@ -300,7 +300,7 @@ fn check_modules_profiled(db: &dyn ty::TyDb, modules: &[base::ModuleId]) -> ty::
     let world_phase = crate::timings::phase("check world");
     let world = ty::TyDb::check_world(db);
     world_phase.end();
-    ty::check_modules_with_world(db, world, modules)
+    ty::check_modules_with_world_without_report_types(db, world, modules)
 }
 
 /// Assemble the source db (stdlib + example src), lower, and emit the Go source.
@@ -5848,7 +5848,7 @@ mod check_world_checkpoint_tests {
     use super::*;
 
     #[test]
-    fn profiled_check_preserves_full_checker_result_and_cached_world() {
+    fn profiled_check_preserves_verdict_and_world_without_collecting_report_types() {
         for source in [
             "module Main exposing (..)\nid : a -> a\nid x = x\nmain = id 7\n",
             "module Main exposing (..)\nmain : Int\nmain = \"bad\"\n",
@@ -5873,7 +5873,66 @@ mod check_world_checkpoint_tests {
             let signatures = |out: &ty::CheckOutput| out.def_types.iter()
                 .map(|d| (d.module.clone(), d.name.clone(), d.ty.clone(), d.declared))
                 .collect::<Vec<_>>();
-            assert_eq!(signatures(&actual), signatures(&expected));
+            let reporting = ty::check_modules_with_world(&db, first_world, &[module]);
+            assert_eq!(signatures(&reporting), signatures(&expected), "reporting API changed");
+            assert!(actual.def_types.is_empty(), "build checker collected reporting-only type trees");
         }
+    }
+
+    #[test]
+    fn build_check_never_collects_wide_declared_type_reports() {
+        let fields: Vec<_> = (0..80).map(|i| format!("f{i} : Int")).collect();
+        let values: Vec<_> = (0..80).map(|i| format!("f{i} = 0")).collect();
+        let mut source = format!(
+            "module Main exposing (..)\n\ntype alias Wide = {{ {} }}\n\n",
+            fields.join(", ")
+        );
+        for i in 0..24 {
+            source.push_str(&format!(
+                "value{i} : Wide\nvalue{i} = {{ {} }}\n\n",
+                values.join(", ")
+            ));
+        }
+        source.push_str("main = value0.f0\n");
+        let mut db = skydb::SkyDatabase::with_kernel();
+        let file = db.new_source(0, source);
+        let parsed = skydb::parse(&db, file);
+        assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+        let module = db.add_module("Main", file);
+        let world = ty::TyDb::check_world(&db);
+        let expected = ty::check_modules_with_world(&db, world.clone(), &[module]);
+        assert_eq!(
+            (
+                expected.type_errors,
+                expected.name_errors,
+                expected.exhaustiveness_warnings
+            ),
+            (0, 0, 0)
+        );
+        let report_fields: usize = expected
+            .def_types
+            .iter()
+            .map(|d| match &d.ty {
+                ty::Ty::Record(fields, None) => fields.len(),
+                _ => 0,
+            })
+            .sum();
+        assert!(
+            report_fields >= 24 * 80,
+            "fixture must materialize many owned reporting fields"
+        );
+        let actual = check_modules_profiled(&db, &[module]);
+        assert_eq!(actual.type_errors, expected.type_errors);
+        assert_eq!(actual.name_errors, expected.name_errors);
+        assert_eq!(
+            actual.exhaustiveness_warnings,
+            expected.exhaustiveness_warnings
+        );
+        assert_eq!(actual.diagnostics, expected.diagnostics);
+        assert!(std::sync::Arc::ptr_eq(&world, &ty::TyDb::check_world(&db)));
+        assert!(
+            actual.def_types.is_empty(),
+            "build collected type-report trees only to discard them later"
+        );
     }
 }

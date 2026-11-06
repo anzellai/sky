@@ -864,3 +864,210 @@ fn annotated_param_update_does_not_demand_the_callsite_harvest() {
         "unannotated update lost field b: {unannotated}"
     );
 }
+
+/// Numeric query values are immutable outputs: consumers must receive the
+/// memo's actual owner, and an edit must replace that owner rather than mutate
+/// a handle retained by lowering/tooling from an earlier revision.
+#[test]
+fn numeric_queries_share_owner_and_keep_revision_results_isolated() {
+    const GENERIC: &str =
+        "module Lib exposing (pick)\n\npick : number -> number\npick _ = 9007199254740993\n";
+    const BODY_EDIT: &str = "module Lib exposing (pick)\n\npick : number -> number\npick x = x\n";
+    const MONOMORPHIC: &str = "module Lib exposing (pick)\n\npick : Float -> Float\npick x = x\n";
+    const CALLER: &str =
+        "module App exposing (main)\n\nimport Lib exposing (pick)\n\nmain = (pick 1, pick 1.0)\n";
+    let mut fx = Fixture::build(GENERIC, CALLER, OTHER_V1);
+    for file in [fx.lib, fx.app, fx.other] {
+        let parsed = skydb::parse(&fx.db, file);
+        assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+    }
+    // A valid actual program is required BEFORE the ownership RED, not
+    // merely after it in the revision loop.
+    let initial_eager = ty::World::build(&fx.db);
+    let initial_checked =
+        ty::check_modules_with_world(&fx.db, Arc::new(initial_eager), &[fx.lib_id, fx.app_id]);
+    assert_eq!(
+        (
+            initial_checked.type_errors,
+            initial_checked.name_errors,
+            initial_checked.exhaustiveness_warnings
+        ),
+        (0, 0, 0),
+        "initial fixture must be accepted before owner identity assertions",
+    );
+    let pick = def_of(&fx.db, fx.lib_id, "pick");
+    let main = def_of(&fx.db, fx.app_id, "main");
+    let first_pick = fx.db.numeric_elaboration_of(fx.lib_id, pick);
+    let first_main = fx.db.numeric_elaboration_of(fx.app_id, main);
+    assert_eq!(
+        first_pick.top_params, 1,
+        "fixture must carry a numeric dictionary"
+    );
+    assert!(first_pick.errors.is_empty() && first_main.errors.is_empty());
+    assert!(first_main
+        .references
+        .values()
+        .any(|args| args == &[ty::numeric::NumberEvidence::Int]));
+    assert!(first_main
+        .references
+        .values()
+        .any(|args| args == &[ty::numeric::NumberEvidence::Float]));
+    let saved_pick = (*first_pick).clone();
+    let saved_main = (*first_main).clone();
+    fx.clear_log();
+    let repeated_pick = fx.db.numeric_elaboration_of(fx.lib_id, pick);
+    let repeated_main = fx.db.numeric_elaboration_of(fx.app_id, main);
+    assert_eq!(*first_pick, *repeated_pick);
+    assert_eq!(*first_main, *repeated_main);
+    assert!(!executed(&fx.take_log(), "numeric_elaboration_query"));
+    // Genuine original-API ownership RED: old code returns a fresh deep-cloned
+    // Rc per demand even when the tracked query itself hits its memo.
+    assert!(
+        std::ptr::eq(&*first_pick, &*repeated_pick),
+        "numeric callee result was cloned out of the memo"
+    );
+    assert!(
+        std::ptr::eq(&*first_main, &*repeated_main),
+        "numeric caller result was cloned out of the memo"
+    );
+
+    let mut previous_pick = first_pick.clone();
+    let mut previous_main = first_main.clone();
+    let mut history = vec![(
+        first_pick.clone(),
+        saved_pick.clone(),
+        first_main.clone(),
+        saved_main.clone(),
+    )];
+    const FLOAT_CALLER: &str =
+        "module App exposing (main)\n\nimport Lib exposing (pick)\n\nmain = (pick 1.0, pick 2.0)\n";
+    // First isolate the callee body edit, then caller body edit, then import
+    // signature-only edit. Int literals cannot be passed to a Float function.
+    for (revision, (source, caller)) in [
+        (GENERIC, CALLER),
+        (BODY_EDIT, CALLER),
+        (BODY_EDIT, FLOAT_CALLER),
+        (MONOMORPHIC, FLOAT_CALLER),
+        (GENERIC, CALLER),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if revision != 0 {
+            // Avoid artificial input writes: signature-only revision3 must
+            // invalidate the unchanged caller through real query dependencies.
+            if revision != 2 {
+                fx.lib.set_text(&mut fx.db).to(source.to_string());
+            }
+            if revision == 2 || revision == 4 {
+                fx.app.set_text(&mut fx.db).to(caller.to_string());
+            }
+        }
+        let current_pick = fx.db.numeric_elaboration_of(fx.lib_id, pick);
+        let current_main = fx.db.numeric_elaboration_of(fx.app_id, main);
+        let eager = ty::World::build(&fx.db);
+        let checked =
+            ty::check_modules_with_world(&fx.db, Arc::new(eager.clone()), &[fx.lib_id, fx.app_id]);
+        assert_eq!(
+            (
+                checked.type_errors,
+                checked.name_errors,
+                checked.exhaustiveness_warnings
+            ),
+            (0, 0, 0),
+            "revision {revision} must remain valid"
+        );
+        assert_eq!(
+            *current_pick,
+            ty::numeric::compute_numeric_elaboration(&eager, &fx.db, fx.lib_id, pick)
+        );
+        assert_eq!(
+            *current_main,
+            ty::numeric::compute_numeric_elaboration(&eager, &fx.db, fx.app_id, main)
+        );
+        let fresh = Fixture::build(source, caller, OTHER_V1);
+        let fresh_pick = fresh
+            .db
+            .numeric_elaboration_of(fresh.lib_id, def_of(&fresh.db, fresh.lib_id, "pick"));
+        let fresh_main = fresh
+            .db
+            .numeric_elaboration_of(fresh.app_id, def_of(&fresh.db, fresh.app_id, "main"));
+        assert_eq!(
+            *current_pick, *fresh_pick,
+            "callee numeric output differs from fresh revision {revision}"
+        );
+        assert_eq!(
+            *current_main, *fresh_main,
+            "imported annotation/body change left stale caller evidence"
+        );
+        let repeat = fx.db.numeric_elaboration_of(fx.app_id, main);
+        assert!(std::ptr::eq(&*current_main, &*repeat));
+        // Compare with the actual preceding revision, not the original
+        // owner. Only direct body changes or changed imported signature force
+        // a new owner; unrelated value-equal check-world backdating is allowed.
+        if matches!(revision, 1 | 3 | 4) {
+            assert!(
+                !std::ptr::eq(&*previous_pick, &*current_pick),
+                "changed callee body/signature reused previous owner at {revision}"
+            );
+        }
+        if matches!(revision, 2 | 3 | 4) {
+            assert!(
+                !std::ptr::eq(&*previous_main, &*current_main),
+                "changed caller body/imported signature reused previous owner at {revision}"
+            );
+        }
+        if revision == 3 {
+            assert_eq!(current_pick.top_params, 0);
+            assert!(
+                current_main.references.is_empty(),
+                "monomorphic import retained generic dictionaries"
+            );
+        }
+        if revision == 4 {
+            assert_eq!(*current_pick, saved_pick);
+            assert_eq!(*current_main, saved_main);
+        }
+        assert_eq!(
+            *first_pick, saved_pick,
+            "old callee owner changed across revision"
+        );
+        assert_eq!(
+            *first_main, saved_main,
+            "old caller owner changed across revision"
+        );
+        for (old_pick, old_pick_value, old_main, old_main_value) in &history {
+            assert_eq!(**old_pick, *old_pick_value, "retained callee owner mutated");
+            assert_eq!(**old_main, *old_main_value, "retained caller owner mutated");
+        }
+        history.push((
+            current_pick.clone(),
+            (*current_pick).clone(),
+            current_main.clone(),
+            (*current_main).clone(),
+        ));
+        previous_pick = current_pick.clone();
+        previous_main = current_main.clone();
+        // The owned Clone API remains available for tooling changes; changing
+        // that independent value must never mutate a shared memo result.
+        let mut tooling = (*current_main).clone();
+        tooling.errors.push("tooling-only clone".into());
+        assert_ne!(tooling, *current_main);
+        assert_eq!(*current_main, *repeat);
+    }
+}
+
+#[test]
+fn numeric_adapter_returns_actual_salsa_owner_with_send_sync_metadata() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Arc<ty::numeric::NumericElaboration>>();
+    let fx = Fixture::build(
+        "module Lib exposing (pick)\npick : number -> number\npick _ = 7\n",
+        "module App exposing (main)\nimport Lib exposing (pick)\nmain = pick 1.0\n",
+        OTHER_V1,
+    );
+    let def = def_of(&fx.db, fx.app_id, "main");
+    let memo = skydb::numeric_elaboration_query(&fx.db, def, fx.app_id, fx.app);
+    let consumer = fx.db.numeric_elaboration_of(fx.app_id, def);
+    assert!(Arc::ptr_eq(&memo, &consumer));
+}

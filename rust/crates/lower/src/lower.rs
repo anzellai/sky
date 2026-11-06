@@ -177,7 +177,7 @@ struct DefEntry {
     body: DefBody,
     types: std::sync::Arc<BodyTypes>,
     task_discards: BTreeSet<ExprId>,
-    numeric: std::rc::Rc<ty::numeric::NumericElaboration>,
+    numeric: std::sync::Arc<ty::numeric::NumericElaboration>,
     /// The declared/derived scheme type (peeled for param types), if any.
     sig: Option<Ty>,
 }

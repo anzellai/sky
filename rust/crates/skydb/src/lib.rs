@@ -402,8 +402,13 @@ pub fn numeric_elaboration_query(
     def: DefId,
     module: ModuleId,
     _file: SourceFile,
-) -> ty::numeric::NumericElaboration {
-    ty::numeric::compute_numeric_elaboration(&check_world_query(db), db.sky_db(), module, def)
+) -> std::sync::Arc<ty::numeric::NumericElaboration> {
+    std::sync::Arc::new(ty::numeric::compute_numeric_elaboration(
+        &check_world_query(db),
+        db.sky_db(),
+        module,
+        def,
+    ))
 }
 
 /// `infer(DefId)` as a `#[salsa::tracked]` query (doc 01 `infer(DefId) -> types,
@@ -840,8 +845,8 @@ impl ty::TyDb for SkyDatabase {
         &self,
         module: ModuleId,
         def: DefId,
-    ) -> Rc<ty::numeric::NumericElaboration> {
-        Rc::new(numeric_elaboration_query(self, def, module, self.source_file(module)).clone())
+    ) -> std::sync::Arc<ty::numeric::NumericElaboration> {
+        numeric_elaboration_query(self, def, module, self.source_file(module)).clone()
     }
     fn as_sky_db(&self) -> &dyn SkyDb {
         self

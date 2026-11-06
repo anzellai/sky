@@ -24,7 +24,6 @@ use crate::infer::{Infer, RecordOverlay};
 use crate::sig::World;
 use base::{DefId, ModuleId};
 use hir::SkyDb;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// The type-layer database: [`SkyDb`] plus the memoisable typed artefacts.
@@ -61,13 +60,16 @@ pub trait TyDb: SkyDb {
     /// those recursive trees at each bridge.
     fn body_types_of(&self, module: ModuleId, def: DefId) -> Arc<BodyTypes>;
 
-    /// CHECK-derived numeric dictionaries. Ordinary BodyTypes are unchanged.
+    /// CHECK-derived immutable numeric dictionaries. The Salsa query and its
+    /// consumers share the complete owner; no recursive metadata clone at the
+    /// bridge. Eager SourceDb still computes a fresh independent owner per call.
+    /// Ordinary BodyTypes and numeric inference are unchanged.
     fn numeric_elaboration_of(
         &self,
         module: ModuleId,
         def: DefId,
-    ) -> Rc<crate::numeric::NumericElaboration> {
-        Rc::new(crate::numeric::compute_numeric_elaboration(
+    ) -> Arc<crate::numeric::NumericElaboration> {
+        Arc::new(crate::numeric::compute_numeric_elaboration(
             &self.check_world(),
             self.as_sky_db(),
             module,

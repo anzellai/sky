@@ -138,5 +138,50 @@
     },
     "lower_end_observed": false,
     "memory_saving_claimed": false
+  },
+  "public_step_cost_browser_gate": {
+    "passed": true,
+    "elapsed_seconds": 271,
+    "log_sha256": "bb0c0752a6d2d01e246cf7cacd660d5854ccae853eee191c8693008f49f5d06b",
+    "reports": [
+      {
+        "browser": "chromium",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "chromium",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "webkit",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "webkit",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "firefox",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "firefox",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      }
+    ],
+    "cache": "off: settings and environment cache-key probes not executed",
+    "thresholds_changed": false
   }
 }
