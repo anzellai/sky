@@ -1098,3 +1098,30 @@ external pressure watchdog before running tests/the coerce gate. The full broad
 suite passed after measured headroom recovery; existing Linux and macOS hosted
 coerce gates remain required. Fresh compiler/private-app memory evidence is
 pending. See the [receipt](runs/incremental-final-validation-20261105/query-world-harvest.json).
+
+
+## Query-world checkpoint validation and remaining resource blocker
+
+Hosted [run 42260996734](https://github.com/anzellai/sky/actions/runs/42260996734)
+passes all 40 jobs at `885219bda`, including the unchanged Linux and macOS
+coerce gates. The preceding RSS-oracle checkpoint also passes hosted CI.
+A fresh canonical compiler passes in 189 seconds, with all 2,415 tracked
+framework inputs verified unchanged before and after the build. The automatic
+public app50 smoke passes in 19 seconds, verifying Wasm headers and matching
+SDK loaders. No build-performance improvement is inferred from this smoke.
+
+The fresh private application build still stops at the original swap guard
+during lowering, after 27 seconds, with no checker error codes and successful
+cleanup. Both the 671-file donor and destination snapshots remain unchanged.
+The sampled process RSS is 1,140 MiB. This is a resource stop, not a successful
+application build or a measured memory improvement. A production change is
+required before another equivalent attempt.
+
+A separate, unadopted immutable constructor representation passes its genuine
+equal-work baseline RED, all 14 focused checks, all 17 unchanged accessor checks
+and 575 broad compiler tests (two existing ignores). The original growth test
+still fails: the two Codec occurs ratios are 3.43 and 3.45 against the unchanged
+2.3 bound; the other six counters remain 2.00. Temporary classification identifies
+ordinary record-field traversal as the remaining route. The temporary counters
+were removed, and the representation is not part of the tracked implementation.
+Full private-app, historical workload and persistence goals remain incomplete.

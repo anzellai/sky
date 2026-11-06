@@ -93,8 +93,50 @@
   "resource_limits_changed": false,
   "goldens_changed": false,
   "remaining": [
-    "Existing Linux and macOS hosted coerce gates must pass for this checkpoint.",
-    "Fresh canonical/private-app compilation remains pending; no memory-saving or runtime performance claim.",
-    "Constructor-tail representation is a separate unadopted candidate."
-  ]
+    "Full current-source private-app compilation remains blocked by unchanged resource guard; no runtime or memory-saving claim.",
+    "Original growth diagnostic still fails two Codec occurs counters; constructor representation experiment remains unadopted.",
+    "Historical retained-model workload, full private browser matrix and general changed-key persistence remain pending."
+  ],
+  "hosted_ci": {
+    "run": 42260996734,
+    "commit": "885219bda609d79eb048eb75c8251c7c11c4ff70",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": 40
+  },
+  "canonical_build": {
+    "passed": true,
+    "elapsed_seconds": 189,
+    "compiler_sha256": "551d5ae770f47c747c59bab3f8a4d3a1cb59c935b9921855aede6a1783702a0d",
+    "framework_files": 2415,
+    "before_after_source_equal": true,
+    "framework_snapshot_sha256": "c617871575ccd7b698023eb24015535d2110dc602e26f22c6d8518df3df7dd07"
+  },
+  "automatic_public_app50_smoke": {
+    "passed": true,
+    "freshCompilerSha256": "551d5ae770f47c747c59bab3f8a4d3a1cb59c935b9921855aede6a1783702a0d",
+    "sourceSkyFiles": 8,
+    "wasmArtifacts": 2,
+    "matchingSdkScripts": 2,
+    "sdkScriptSha256": "0c949f4996f9a89698e4b5c586de32249c3b69b7baadb64d220073cc04acba14",
+    "fullPrivateAppClaimed": false,
+    "performanceClaimed": false,
+    "elapsed_seconds": 19
+  },
+  "private_current_source_build": {
+    "passed": false,
+    "elapsed_seconds": 27,
+    "classification": "original owned resource guard: swap ceiling",
+    "sampled_process_rss_mib": 1140,
+    "compiler_error_codes": 0,
+    "cleanup": true,
+    "donor_and_destination_files_each_verified": 671,
+    "phase_peaks_bytes": {
+      "check-world-end": 403750912,
+      "check-end": 936804352,
+      "lower-begin": 936804352
+    },
+    "lower_end_observed": false,
+    "memory_saving_claimed": false
+  }
 }
