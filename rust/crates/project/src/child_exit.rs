@@ -98,7 +98,44 @@ pub fn install_sigterm_notice() {
 
 #[cfg(unix)]
 mod unix {
-    extern "C" fn on_sigterm(_sig: libc::c_int) {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) fn process_sender_code(code: libc::c_int) -> bool {
+        #[cfg(target_os = "linux")]
+        return matches!(code, libc::SI_USER | libc::SI_QUEUE | libc::SI_TKILL);
+        // XNU kern_sig.c records ordinary caught signals with code 0 and the
+        // current process PID; arm/unix_signal.c copies those dedicated fields
+        // to siginfo. Darwin's header also defines SI_USER/SI_QUEUE below (not
+        // exported by libc). SI_TIMER (0x10003) is deliberately excluded.
+        #[cfg(target_os = "macos")]
+        return matches!(code, 0 | 0x10001 | 0x10002);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) fn sender_notice(mut pid: u32) -> ([u8; 64], usize) {
+        const PREFIX: &[u8] = b"sky: SIGTERM sender pid=";
+        let mut message = [0u8; 64];
+        message[..PREFIX.len()].copy_from_slice(PREFIX);
+        let mut digits = [0u8; 10];
+        let mut start = digits.len();
+        loop {
+            start -= 1;
+            digits[start] = b'0' + (pid % 10) as u8;
+            pid /= 10;
+            if pid == 0 {
+                break;
+            }
+        }
+        let end = PREFIX.len() + digits.len() - start;
+        message[PREFIX.len()..end].copy_from_slice(&digits[start..]);
+        message[end] = b'\n';
+        (message, end + 1)
+    }
+
+    extern "C" fn on_sigterm(
+        _sig: libc::c_int,
+        _info: *mut libc::siginfo_t,
+        _context: *mut libc::c_void,
+    ) {
         let msg = super::SIGTERM_NOTICE.as_bytes();
         // SAFETY: only async-signal-safe calls (POSIX.1-2017 §2.4.3): `write`,
         // `signal` and `raise`. `msg` is a 'static byte string. SA_RESETHAND
@@ -108,6 +145,17 @@ mod unix {
         // action as soon as it returns, which ends the process with status 143.
         unsafe {
             libc::write(2, msg.as_ptr().cast(), msg.len());
+            // SA_SIGINFO supplies the sender without consulting process state
+            // or the environment. Format on the stack: no allocator, locking,
+            // stdio formatting or other non-async-signal-safe operations.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if !_info.is_null() && process_sender_code((*_info).si_code) {
+                let pid = (*_info).si_pid();
+                if pid > 0 {
+                    let (line, len) = sender_notice(pid as u32);
+                    libc::write(2, line.as_ptr().cast(), len);
+                }
+            }
             libc::signal(libc::SIGTERM, libc::SIG_DFL);
             libc::raise(libc::SIGTERM);
         }
@@ -127,9 +175,11 @@ mod unix {
                 return;
             }
             let mut act: libc::sigaction = std::mem::zeroed();
-            act.sa_sigaction = on_sigterm as extern "C" fn(libc::c_int) as libc::sighandler_t;
+            act.sa_sigaction = on_sigterm
+                as extern "C" fn(libc::c_int, *mut libc::siginfo_t, *mut libc::c_void)
+                as libc::sighandler_t;
             libc::sigemptyset(&mut act.sa_mask);
-            act.sa_flags = libc::SA_RESETHAND;
+            act.sa_flags = libc::SA_RESETHAND | libc::SA_SIGINFO;
             libc::sigaction(libc::SIGTERM, &act, std::ptr::null_mut());
         }
     }
@@ -138,6 +188,39 @@ mod unix {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sender_notice_formats_every_pid_width_without_heap_storage() {
+        for pid in [0, 1, 9, 10, 99, 100, i32::MAX as u32, u32::MAX] {
+            let (line, len) = unix::sender_notice(pid);
+            assert_eq!(
+                &line[..len],
+                format!("sky: SIGTERM sender pid={pid}\n").as_bytes()
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sender_notice_rejects_timer_and_unknown_signal_payloads() {
+        #[cfg(target_os = "linux")]
+        {
+            assert!(unix::process_sender_code(libc::SI_USER));
+            assert!(unix::process_sender_code(libc::SI_QUEUE));
+            assert!(unix::process_sender_code(libc::SI_TKILL));
+            assert!(!unix::process_sender_code(libc::SI_TIMER));
+            assert!(!unix::process_sender_code(libc::SI_KERNEL));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert!(unix::process_sender_code(0));
+            assert!(unix::process_sender_code(0x10001));
+            assert!(unix::process_sender_code(0x10002));
+            assert!(!unix::process_sender_code(0x10003));
+        }
+        assert!(!unix::process_sender_code(i32::MAX));
+    }
 
     #[test]
     fn a_sigterm_names_the_signal_its_source_and_the_knobs() {
