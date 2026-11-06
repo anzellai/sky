@@ -110,6 +110,9 @@ fn canonical_mapped_rows_get_explicit_context_only_after_all_proofs() {
             assert!(emitted.contains("ViewMemoTypes:"));
             assert!(emitted.contains("rt.SpaViewMemoCapture["));
             assert!(emitted.contains("rt.SpaViewMemoType[Main_Msg_Pick_V]"));
+            assert!(emitted.contains("type Std_Ui_VAlign int"), "fixture must actually emit canonical enum");
+            assert!(emitted.contains("rt.SpaViewMemoEnumType[Std_Ui_VAlign]"), "canonical result enum needs its exact emitted witness");
+            assert!(!emitted.contains("rt.SpaViewMemoType[Std_Ui_VAlign]"), "raw named-int reflection tokens remain refused");
             assert!(emitted.contains("Main_products_sky_view_memo_private_"));
             assert!(emitted.contains("Main_editor_sky_view_memo_private_"));
             assert!(emitted.contains("Main_view_sky_view_memo_private_"));

@@ -12492,18 +12492,16 @@ fn analyze_for_split(
     // One check serves both analyses: the db is not written between them, so
     // a second `check_modules` over the same modules returns the same value.
     let check_phase = crate::timings::phase("split typecheck");
-    let checked = match checked {
+    let mut checked = match checked {
         Some(c) => c,
         None => spa_partition::check_program(db, check_ids),
     };
     check_phase.end();
+    // The analyses read the verdict and diagnostics, never per-def report types.
+    // Explicitly drop their allocation; a partial struct update leaves the
+    // omitted original field live until the end of this scope.
+    crate::build::release_checker_report_types(&mut checked);
     let _partition_phase = crate::timings::phase("split analysis");
-    // The analyses read the verdict and the diagnostics, never the per-def
-    // types: free those now rather than hold them through both analyses.
-    let checked = ty::CheckOutput {
-        def_types: Vec::new(),
-        ..checked
-    };
     let none = BTreeSet::new();
     let report =
         spa_partition::analyze_checked(db, entry, check_ids, project.clone(), &none, &checked)?;

@@ -20,6 +20,29 @@ const (
 
 func SpaViewMemoType[T any]() any { return reflect.TypeOf((*T)(nil)).Elem() }
 
+// Compiler-issued IotaEnum capability, distinct from raw reflection tokens.
+// The lowerer emits it only for actual resolved IotaEnum declarations. Shape
+// validation is defensive; neither type spelling nor registry entries confer
+// authority, and no enum method is invoked during minting or admission.
+type spaViewMemoEnumToken struct{ typ reflect.Type }
+
+type spaViewMemoEnumValue interface{ SkyEnumName() string }
+
+var spaViewMemoEnumValueType = reflect.TypeOf((*spaViewMemoEnumValue)(nil)).Elem()
+
+func spaViewMemoEnumTypeValid(t reflect.Type) bool {
+	return t != nil && t.Kind() == reflect.Int && t.Name() != "" && t.PkgPath() != "" &&
+		t.NumMethod() == 1 && t.Implements(spaViewMemoEnumValueType)
+}
+
+func SpaViewMemoEnumType[T any]() any {
+	t := reflect.TypeOf((*T)(nil)).Elem()
+	if !spaViewMemoEnumTypeValid(t) {
+		return nil
+	}
+	return spaViewMemoEnumToken{typ: t}
+}
+
 // A second nonzero-width field prevents Go's sole-component interface boxing
 // optimization from discarding an empty string's actual data owner.
 type spaViewMemoCaptureBox[T any] struct {
@@ -68,6 +91,7 @@ type spaViewMemoCache struct {
 	epoch    *spaViewMemoEpoch
 	current  map[spaViewMemoKey]spaViewMemoEntry
 	accepted map[reflect.Type]bool
+	metadata *codecEnumRegistrySnapshot
 }
 
 type spaViewMemoFrame struct {
@@ -78,6 +102,7 @@ type spaViewMemoFrame struct {
 	next                    map[spaViewMemoKey]spaViewMemoEntry
 	visits                  map[int]int
 	accepted                map[reflect.Type]bool
+	metadata                *codecEnumRegistrySnapshot
 	open, aborted, finished bool
 	valuesLeft, stringsLeft int
 	hits, builds            int
@@ -87,8 +112,13 @@ func (c *spaViewMemoCache) begin(tokens []any) *spaViewMemoFrame {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.epoch = &spaViewMemoEpoch{}
+	metadata := codecEnumRegistry()
+	if c.metadata != metadata {
+		c.current = nil
+	}
+	c.metadata = metadata
 	f := &spaViewMemoFrame{
-		cache: c, epoch: c.epoch, previous: c.current,
+		cache: c, epoch: c.epoch, previous: c.current, metadata: metadata,
 		next: map[spaViewMemoKey]spaViewMemoEntry{}, visits: map[int]int{},
 		accepted: map[reflect.Type]bool{}, open: true,
 		valuesLeft: spaViewMemoValueBudget, stringsLeft: spaViewMemoStringBudget,
@@ -98,10 +128,20 @@ func (c *spaViewMemoCache) begin(tokens []any) *spaViewMemoFrame {
 		return f
 	}
 	for _, token := range tokens {
-		t, ok := token.(reflect.Type)
-		if !ok || t == nil || reflect.TypeOf(token) != reflect.TypeOf(reflect.TypeOf(0)) || t.Kind() != reflect.Struct {
-			f.open = false
-			return f
+		var t reflect.Type
+		if enum, ok := token.(spaViewMemoEnumToken); ok {
+			t = enum.typ
+			if !spaViewMemoEnumTypeValid(t) {
+				f.open = false
+				return f
+			}
+		} else {
+			var ok bool
+			t, ok = token.(reflect.Type)
+			if !ok || t == nil || reflect.TypeOf(token) != reflect.TypeOf(reflect.TypeOf(0)) || t.Kind() != reflect.Struct {
+				f.open = false
+				return f
+			}
 		}
 		f.accepted[t] = true
 	}
@@ -138,6 +178,8 @@ func (f *spaViewMemoFrame) finish(success bool) {
 		f.aborted = true
 	}
 	next := f.next
+	metadata := f.metadata
+	f.metadata = nil
 	f.previous = nil
 	f.next = nil
 	f.visits = nil
@@ -145,6 +187,10 @@ func (f *spaViewMemoFrame) finish(success bool) {
 	f.cache.mu.Lock()
 	defer f.cache.mu.Unlock()
 	if f.cache.epoch != f.epoch {
+		return
+	}
+	if f.cache.metadata != metadata || metadata != codecEnumRegistry() {
+		f.cache.current = nil
 		return
 	}
 	if success && !f.aborted {
@@ -157,7 +203,7 @@ func (f *spaViewMemoFrame) finish(success bool) {
 func (f *spaViewMemoFrame) liveEpoch() bool {
 	f.cache.mu.Lock()
 	defer f.cache.mu.Unlock()
-	return f.cache.epoch == f.epoch
+	return f.cache.epoch == f.epoch && f.cache.metadata == f.metadata && f.metadata == codecEnumRegistry()
 }
 
 func (c *spaViewMemoCache) reset() {
@@ -165,6 +211,7 @@ func (c *spaViewMemoCache) reset() {
 	defer c.mu.Unlock()
 	c.epoch = &spaViewMemoEpoch{}
 	c.current = nil
+	c.metadata = nil
 }
 
 // The compiler authenticates a pure, canonical map call and freezes every
@@ -219,6 +266,12 @@ func SpaViewMemoRegion(ctx any, site int, captures any, build func() any) any {
 			}
 		}
 		if same {
+			if !f.liveEpoch() {
+				f.open = false
+				f.aborted = true
+				f.mu.Unlock()
+				return build()
+			}
 			f.hits++
 			if old.valueCost <= f.valuesLeft && old.stringCost <= f.stringsLeft {
 				f.valuesLeft -= old.valueCost

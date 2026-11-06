@@ -386,7 +386,7 @@ impl LoadedProgram {
 }
 
 /// These owned trees serve reporting, not the lowerer's independent type tables.
-fn release_checker_report_types(checked: &mut ty::CheckOutput) {
+pub(crate) fn release_checker_report_types(checked: &mut ty::CheckOutput) {
     drop(std::mem::take(&mut checked.def_types));
 }
 
@@ -1761,27 +1761,10 @@ fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     if !out.status.is_some_and(|s| s.success()) {
         return Err(out.stderr);
     }
-    let goroot = Command::new("go")
-        .args(["env", "GOROOT"])
-        .output()
-        .map_err(|e| format!("`go env GOROOT`: {e}"))?;
-    let goroot = String::from_utf8_lossy(&goroot.stdout).trim().to_string();
-    // Go 1.21+ ships wasm_exec.js under lib/wasm; older toolchains, misc/wasm.
-    let candidates = [
-        Path::new(&goroot)
-            .join("lib")
-            .join("wasm")
-            .join("wasm_exec.js"),
-        Path::new(&goroot)
-            .join("misc")
-            .join("wasm")
-            .join("wasm_exec.js"),
-    ];
-    let src = candidates.iter().find(|p| p.exists()).ok_or_else(|| {
-        format!("wasm_exec.js not found under GOROOT ({goroot}); looked in lib/wasm and misc/wasm")
-    })?;
+    let src = crate::go_tool_metadata::wasm_exec_using(std::ffi::OsStr::new("go"), out_dir)
+        .map_err(str::to_owned)?;
     let dest = out_dir.join("wasm_exec.js");
-    // The GOROOT copy is read-only (0444); a prior build left a read-only dest,
+    // The SDK source copy is read-only (0444); a prior build left a read-only dest,
     // so overwriting it would EPERM. Remove it first (best-effort).
     let _ = std::fs::remove_file(&dest);
     std::fs::copy(src, &dest)
@@ -3330,7 +3313,7 @@ fn inject_ffi_deps(
     // go.sum these `go get`s produce are known from their inputs: reuse them
     // (go_get_memo.rs). A floating spec re-resolves on every build, as before.
     let memo_key = (all_exact && local.is_empty())
-        .then(crate::go_get_memo::go_version)
+        .then(|| crate::go_get_memo::go_version_in(out_dir))
         .flatten()
         .map(|v| {
             // The starting go.sum is an input too: `go get` keeps its lines.
@@ -5838,6 +5821,25 @@ mod checker_report_lifetime_tests {
         assert!(assembly.find("if !exhaustive_diags.is_empty()").unwrap() < release);
         assert!(release < assembly.find("let mut cfg = read_sky_toml_config").unwrap());
         assert!(release < assembly.find("skydb::go_program(").unwrap());
+    }
+
+    #[test]
+    fn split_report_types_release_precedes_partition_allocations() {
+        // Runtime storage/verdict/diagnostic preservation is checked by the
+        // existing release helper test above. Check its actual split call site.
+        let source = include_str!("spa_split.rs");
+        let function = source.split_once("fn analyze_for_split(").unwrap().1;
+        let function = function.split_once("\n}\n").unwrap().0;
+        let release = function
+            .find("crate::build::release_checker_report_types(&mut checked);")
+            .expect("split must explicitly dispose report types");
+        assert!(function.find("check_phase.end();").unwrap() < release);
+        assert!(release < function.find("let _partition_phase").unwrap());
+        assert!(release < function.find("spa_partition::analyze_checked(").unwrap());
+        assert!(
+            !function.contains("def_types: Vec::new()"),
+            "a partial struct update is not explicit disposal"
+        );
     }
 }
 

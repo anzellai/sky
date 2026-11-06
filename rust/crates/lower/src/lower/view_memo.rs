@@ -455,28 +455,9 @@ pub(super) fn finish(
     else {
         return;
     };
-    // Tokens come ONLY from actually emitted compiler sealed-interface types;
-    // no constructor registry/type-name recognition/foreign method invocation.
-    let mut tokens = Vec::new();
-    for (_, group) in types {
-        for item in group {
-            if let GoItem::Type(parent, GoTypeDef::SealedIface(variants)) = item {
-                for (ctor, _, _) in variants {
-                    tokens.push(GoExpr::new(
-                        GoExprKind::GenericCall(
-                            "rt.SpaViewMemoType".into(),
-                            vec![GoTy::Named(format!("{parent}_{ctor}_V"), vec![])],
-                            vec![],
-                        ),
-                        GoTy::Any,
-                    ));
-                }
-            }
-        }
-    }
-    if tokens.len() > 4096 {
+    let Some(tokens) = emitted_type_tokens(types) else {
         return;
-    }
+    };
     // Preflight only the small existing SPA adapters; do not clone the entire
     // application IR (large real apps already have a strict compiler budget).
     let mut adaptations = Vec::new();
@@ -525,4 +506,102 @@ pub(super) fn finish(
         });
     }
     funcs.extend(cloned.into_iter().map(GoItem::Func));
+}
+
+/// Authority comes from actual compiler-emitted type IR, never a Go type name
+/// or mutable constructor registry. Preserve the existing sealed-token sequence,
+/// then append only real IotaEnums in actual emitted declaration order.
+fn emitted_type_tokens(types: &[(String, Vec<GoItem>)]) -> Option<Vec<GoExpr>> {
+    let mut tokens = Vec::new();
+    let token = |factory: &str, name: String| {
+        GoExpr::new(
+            GoExprKind::GenericCall(factory.into(), vec![GoTy::Named(name, vec![])], vec![]),
+            GoTy::Any,
+        )
+    };
+    for (_, group) in types {
+        for item in group {
+            if let GoItem::Type(parent, GoTypeDef::SealedIface(variants)) = item {
+                for (ctor, _, _) in variants {
+                    tokens.push(token("rt.SpaViewMemoType", format!("{parent}_{ctor}_V")));
+                    if tokens.len() > 4096 {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    for (_, group) in types {
+        for item in group {
+            if let GoItem::Type(parent, GoTypeDef::IotaEnum(_)) = item {
+                tokens.push(token("rt.SpaViewMemoEnumType", parent.clone()));
+                if tokens.len() > 4096 {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(tokens)
+}
+
+#[cfg(test)]
+mod type_witness_tests {
+    use super::*;
+    #[test]
+    fn enum_witnesses_use_only_actual_iota_ir_after_existing_sealed_tokens() {
+        let types = vec![(
+            "fixture".into(),
+            vec![
+                GoItem::Type(
+                    "RealEnum".into(),
+                    GoTypeDef::IotaEnum(vec!["A".into(), "B".into()]),
+                ),
+                GoItem::Type(
+                    "Variants".into(),
+                    GoTypeDef::SealedIface(vec![("V".into(), 0, vec![])]),
+                ),
+                GoItem::Type(
+                    "ForeignAlias".into(),
+                    GoTypeDef::RuntimeAlias("foreign.Enum".into()),
+                ),
+                GoItem::Type(
+                    "LooksLikeEnum".into(),
+                    GoTypeDef::Alias(GoTy::Bare(Prim::Int)),
+                ),
+                GoItem::Raw("type Forged int".into()),
+            ],
+        )];
+        let tokens = emitted_type_tokens(&types).unwrap();
+        assert_eq!(tokens.len(), 2);
+        for (actual, factory, name) in [
+            (&tokens[0], "rt.SpaViewMemoType", "Variants_V_V"),
+            (&tokens[1], "rt.SpaViewMemoEnumType", "RealEnum"),
+        ] {
+            assert!(
+                matches!(&actual.kind, GoExprKind::GenericCall(f, ts, args) if f==factory && ts==&vec![GoTy::Named(name.into(),vec![])] && args.is_empty())
+            );
+        }
+    }
+    #[test]
+    fn enum_and_struct_witnesses_share_the_original_combined_limit() {
+        let types = |count| {
+            vec![(
+                "fixture".into(),
+                (0..count)
+                    .map(|i| GoItem::Type(format!("E{i}"), GoTypeDef::IotaEnum(vec!["A".into()])))
+                    .collect(),
+            )]
+        };
+        assert_eq!(emitted_type_tokens(&types(4096)).unwrap().len(), 4096);
+        assert!(emitted_type_tokens(&types(4097)).is_none());
+        let mut mixed = types(4095);
+        mixed[0].1.push(GoItem::Type(
+            "TwoVariants".into(),
+            GoTypeDef::SealedIface(vec![("A".into(), 0, vec![]), ("B".into(), 1, vec![])]),
+        ));
+        assert!(
+            emitted_type_tokens(&mixed).is_none(),
+            "one combined enum/struct budget"
+        );
+    }
 }
