@@ -776,7 +776,7 @@ original setup are under investigation. The numeric discovery receipt is
 private values and schema names are excluded.
 
 
-## Primitive Dict prototype: hosted validation checkpoint
+## Primitive Dict prototype: initial hosted validation checkpoint
 
 The reviewed prototype adds bounded summaries of immutable Dict subtrees for
 exact string/int/bool values. It can derive an exact oversized NoWrite decision
@@ -789,14 +789,14 @@ none is stored in a certificate. The 4096-unit ledger bounds each retained cache
 process memory. Cold summary construction and cap-crossing fallback add real
 work, which remains counted.
 
-The unchanged RED and seven further tests accompany this implementation. Local
-prototype tests have **not executed**: the unchanged pressure-sensitive memory
+The unchanged RED and seven further tests accompanied this checkpoint. Local
+prototype tests had **not executed**: the unchanged pressure-sensitive memory
 guard stopped compilation with two workers, one worker, tighter compiler heap
 controls, and an independently reviewed focused source closure. That closure
 retains all production files and the complete selected tests, helper and init
 behavior; it is not a full-suite substitute. No local performance or correctness
-PASS is claimed for the new prototype. The draft feature-branch checkpoint is
-being submitted to the existing hosted full runtime and race jobs for validation.
+PASS was claimed for that local attempt. The draft feature-branch checkpoint was
+submitted to the existing hosted full runtime and race jobs for validation.
 Main, release tags and deployed applications remain untouched.
 
 [Hosted run 42136087088](https://github.com/anzellai/sky/actions/runs/42136087088) reached the existing cache-reachability
@@ -806,8 +806,9 @@ which violated that invariant even when the branches belonged to the current
 model. The source correction removes them, keeps scalar shape validation and
 extends the exact-type reachability guard without admitting model, value, plan,
 interface or snapshot pointers. It adds a contradictory-certificate regression;
-the original 131-byte RED assertion remains unchanged. This correction has not
-been compiled locally; further hosted validation is required.
+the original 131-byte RED assertion remains unchanged. At this checkpoint the
+correction had not been compiled locally; later hosted and browser results are
+recorded below.
 
 Current-app browser work is also still pending. The original typing fixture
 requires twelve products: the UI hides its search below that threshold. Restoring
@@ -877,3 +878,44 @@ with one existing ignored diagnostic; complete lower/skydb suites pass 118
 with one existing ignored growth test. That growth test was already explicitly
 executed and remains unresolved. CPU/RSS savings on the private app are not
 yet measured. See [the receipt](runs/incremental-final-validation-20261105/sparse-uf-reservations.json).
+
+## Shared declaration-core validation
+
+Declaration and checker queries previously built separate copies of the same
+declaration maps. They now share 15 immutable declaration containers through one
+`Arc` core. Eight body-derived channels remain independent, including the
+bound-check map that has both static seeds and later body-pass writes.
+Declaration-building forks detach with copy-on-write. The checker still runs
+the same body passes; declaration equality and body-edit backdating remain
+structural.
+
+An executed original-source RED failed the actual Scheme-address sharing
+assertion. The complete Rust validation passes 534 tests with two unchanged
+ignored diagnostics. Tests cover whole-core sharing, body-channel isolation,
+declaration mutation, revision retention, unrelated inference memo reuse and
+equality with eager construction. Subsequent formatting and a targeted type
+check pass, and a fresh canonical compiler builds in 206 seconds. This does not
+establish application peak-memory savings or a successful historical workload
+build. See [the receipt](runs/incremental-final-validation-20261105/declaration-core-sharing.json).
+
+## Latest hosted failure and readiness correction
+
+[Hosted run 42204965045](https://github.com/anzellai/sky/actions/runs/42204965045)
+completed with 38 successful jobs and a macOS runtime test failure; the aggregate
+gate consequently failed too. The failed `TestPushExporter_BatchedDelivery`
+waited for the fake server's request-start counter, which advances before its
+body is decoded and published. It could then inspect an empty payload.
+
+The test now waits for captured-payload readiness with the same two-second
+deadline and unchanged payload assertions. Exporter production code is unchanged.
+A standard-library-only exact-source helper proof executed deterministic RED
+then GREEN: both GREEN tests pass, including an AST check tying the real helper,
+barrier and original test predicate together. This proves helper synchronization;
+full hosted runtime and macOS validation of the applied fix remain required.
+See [the receipt](runs/incremental-final-validation-20261105/ingest-readiness-synchronization.json).
+
+Current application browser validation remains incomplete. One explicit cached
+baseline reference core report passed; the candidate reached a result-admission
+guard failure and is under diagnosis. That old-artifact run is not current-head
+runtime validation, and no completed reference/candidate comparison or historical
+large-model performance result is claimed.
