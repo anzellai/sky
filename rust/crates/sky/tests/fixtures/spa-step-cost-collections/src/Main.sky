@@ -50,6 +50,7 @@ type Msg
     = IgnoredKey
     | Type String
     | Load Int
+    | LoadOversizedDict
     | ChooseCollection String
     | NoopCollection
     | ChangeCollection
@@ -147,6 +148,23 @@ loadEditor collection count brand =
     }
 
 
+oversizedEditor : String -> Editor
+oversizedEditor brand =
+    { products = []
+    , lookup =
+        Dict.insert
+            "key-1"
+            (String.repeat 128 "x")
+            (Dict.fromList
+                (List.map
+                    (\n ->
+                        ( "key-" ++ String.fromInt n, String.repeat 32768 "x" ))
+                    (List.range 2 64)))
+    , pairs = []
+    , productForm = { brand = brand }
+    }
+
+
 noopCollection : Editor -> Editor
 noopCollection editor =
     { editor | lookup = Dict.remove "absent-key" editor.lookup }
@@ -206,6 +224,9 @@ update msg model =
               }
             , Cmd.none
             )
+
+        LoadOversizedDict ->
+            ( { model | editor = Just (oversizedEditor model.text) }, Cmd.none )
 
         NoopCollection ->
             ( { model | editor = Maybe.map noopCollection model.editor }
@@ -317,6 +338,10 @@ view model =
               ChangeCollection
         , button "small" "1K entries" (Load 1000)
         , button "large" "10K entries" (Load 10000)
+        , button
+              "oversized-dict"
+              "64 oversized dictionary values"
+              LoadOversizedDict
         , button "pressure" "Add unrelated data" AddPressure
         , button "unpressure" "Remove unrelated data" DropPressure
         , button "huge" "100K entries" (Load 100000)

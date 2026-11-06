@@ -72,6 +72,8 @@ assert(reference.passed && incremental.passed, "collection browser run failed");
 assert.equal(reference.collection, incremental.collection);
 assert.equal(reference.checkpoints.length, 8, "missing canonical collection checkpoints");
 assert.deepEqual(reference.checkpoints, incremental.checkpoints, "reference/incremental stored canonical bytes diverged");
+assert.equal(reference.oversizedCheckpoints.length, reference.collection === "dict" ? 3 : 0, "Missing oversized Dict checkpoints");
+assert.deepEqual(reference.oversizedCheckpoints, incremental.oversizedCheckpoints, "Oversized Dict publication/reload diverged");
 NODE
     done
 done

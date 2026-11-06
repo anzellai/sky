@@ -837,3 +837,28 @@ signatures. Memory savings remain unmeasured. The ignored unifier-growth test
 was then explicitly executed: it fails with near-quadratic work and is being
 investigated separately. It is not counted as passing or silently skipped.
 See [the receipt](runs/incremental-final-validation-20261105/inference-owner-sharing.json).
+
+## Oversized primitive Dict browser validation
+
+The corrected Dict certificate checkpoint passes all 40 jobs in hosted run
+[42197690937](https://github.com/anzellai/sky/actions/runs/42197690937).
+The existing public Dict browser gate now also exercises a changed entry in a
+64-entry Dict with 63 unchanged 32KiB values. Its load warms the certificate;
+replacing the remaining 128-byte value keeps the model above the unchanged
+1.5MB persistence cap.
+
+All six reference/candidate runs pass in Chromium, WebKit and Firefox, including
+the original eight canonical checkpoints and three additional oversized
+publication/reload checkpoints. For the measured change, reference execution
+encodes 4,130,961 bytes across its logical invocations; candidate execution
+encodes 71 bytes in total. Both retain the previous stored snapshot, make zero
+storage Set/Remove calls, copy zero bytes across the storage bridge, and restore
+the same previous snapshot on reload. Strict codec preparation and update/view/
+post counts remain asserted. Cold summary work is separately measured, not
+removed from the report.
+
+The complete gate passes in 661 seconds under the unchanged memory guard and
+300-second per-browser-run deadlines. This is exact oversized NoWrite evidence;
+under-cap whole-model publication and general changed-key storage remain open.
+No cross-device latency claim follows from these diagnostic runs. See the
+[cycle 9 evidence](runs/step-cost-20261104/cycle9-dict-summary/conditions.json).

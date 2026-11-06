@@ -69,6 +69,7 @@ child.stderr.resume();
 let browser;
 const measurements = [];
 const checkpoints = [];
+const oversizedCheckpoints = [];
 try {
   let ready = false;
   for (let n = 0; n < 300; n++) {
@@ -84,10 +85,16 @@ try {
     globalThis.__skyStepProfileEnabled = true;
     globalThis.__skyStepReference = reference;
     globalThis.__fixtureStorageWrites = 0;
+    globalThis.__fixtureStorageRemoves = 0;
     const original = Storage.prototype.setItem;
     Storage.prototype.setItem = function(key, value) {
       if (key.startsWith("sky:spa:model")) globalThis.__fixtureStorageWrites++;
       return original.call(this, key, value);
+    };
+    const remove = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function(key) {
+      if (key.startsWith("sky:spa:model")) globalThis.__fixtureStorageRemoves++;
+      return remove.call(this, key);
     };
   }, mode === "reference");
   const page = await context.newPage();
@@ -111,6 +118,7 @@ try {
   const snapshot = () => page.evaluate(() => ({
     ...globalThis.__skyStepProfile, steps: globalThis.__skyStepProfile?.steps || 0,
     storageWrites: globalThis.__fixtureStorageWrites,
+    storageRemoves: globalThis.__fixtureStorageRemoves,
   }));
   // DOM paint precedes persistence. Wait for the whole TEA step to publish
   // its counters before issuing another automation action. The outer 300s
@@ -136,6 +144,7 @@ try {
     "raw-pressure-typing": 2, "raw-pressure-shrink": 1,
     "raw-pressure-recovered-key": 1, "oversized-typing": 20,
     "visible-rows-typing": 2,
+    "oversized-dict-load": 1, "oversized-dict-change": 1,
   };
   async function measure(scenario, items, action) {
     mark("start-" + scenario, items);
@@ -323,6 +332,52 @@ try {
     assert.equal(await page.locator("#brand").textContent(), priorText + "X", "Shrink/reload lost nested state");
     assert.equal(await page.locator("#sample").textContent(), "changed", "Shrink/reload lost the collection update");
   }
+  if (collection === "dict") {
+    const storedProof = () => page.evaluate(async () => {
+      const raw = localStorage.getItem("sky:spa:model:v2");
+      if (!raw) return { present: false };
+      const bytes = new TextEncoder().encode(raw);
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
+      return { present: true, bytes: bytes.length, digest: Array.from(new Uint8Array(digest), n => n.toString(16).padStart(2, "0")).join("") };
+    });
+    const stored = await storedProof();
+    assert(stored.present && stored.bytes < 1500000, "Missing under-cap baseline snapshot");
+    const loaded = await measure("oversized-dict-load", 64, () => page.locator("#oversized-dict").click());
+    assert.equal(await page.locator("#items").textContent(), "64");
+    assert.equal(await page.locator("#sample").textContent(), "x".repeat(128));
+    assert.equal(loaded.storageWrites, 0, "Oversized Dict load published a snapshot");
+    assert.equal(loaded.storageRemoves, 0, "Oversized Dict load removed the previous snapshot");
+    assert.deepEqual(await storedProof(), stored, "Oversized Dict load changed persisted state");
+    oversizedCheckpoints.push({ name: "loaded", ...stored });
+
+    // The completed load warms the certificate; only this one-entry change is
+    // measured below. Sixty-three 32KiB values remain above the unchanged cap.
+    const changed = await measure("oversized-dict-change", 64, () => page.locator("#change-collection").click());
+    assert.equal(await page.locator("#sample").textContent(), "changed");
+    assert.equal(await page.locator("#items").textContent(), "64");
+    for (const phase of ["updateCalls", "viewCalls", "postCalls"]) assert.equal(changed[phase], 1);
+    assert.equal(changed.storageWrites, 0, "Changed oversized Dict published a snapshot");
+    assert.equal(changed.storageRemoves, 0, "Changed oversized Dict removed persisted state");
+    assert.equal(changed.bridgeBytes, 0, "Changed oversized Dict crossed the storage bridge");
+    if (mode === "incremental") {
+      assert.equal(changed.modelEncodes, 0, "Changed primitive Dict fell back to the full model encoder");
+      assert.equal(changed.preparedEncodes, 2, "Changed primitive Dict skipped strict preparations");
+      assert.equal(changed.preparedFallbacks, 0);
+      assert.equal(changed.materializedBytes, 0);
+      assert(changed.encodedBytes + changed.fieldEncodedBytes + changed.deferredFieldEncodedBytes < 1024, "Changed primitive Dict encoded unchanged large values");
+    } else {
+      assert.equal(changed.modelEncodes, 2);
+      assert(changed.encodedBytes > 1500000, "Reference did not encode the oversized model");
+    }
+    assert.deepEqual(await storedProof(), stored, "Changed oversized Dict changed persisted state");
+    oversizedCheckpoints.push({ name: "changed", ...stored });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForFunction(() => globalThis.__skyStepProfileReady === true);
+    assert.equal(await page.locator("#items").textContent(), "10000", "NoWrite reload did not restore the previous snapshot");
+    assert.equal(await page.locator("#sample").textContent(), "changed");
+    assert.deepEqual(await storedProof(), stored, "NoWrite reload changed persisted state");
+    oversizedCheckpoints.push({ name: "reloaded", ...stored });
+  }
   mark("huge-load-start", 100000);
   const beforeHuge = (await snapshot()).steps;
   await page.locator("#huge").click();
@@ -396,7 +451,7 @@ try {
     assert.equal(typingRuns.length, 3, "Missing scaling measurements");
     assert(typingRuns.every(m => m.fieldEncodedBytes === typingRuns[0].fieldEncodedBytes), "Encoding work grew with unchanged retained data");
   }
-  const report = { collection, checkpoints, modelDomain: mixed ? "mixed" : "closed", browser: engineName, cpuRate: throttle, mode, passed: true, measurements };
+  const report = { collection, checkpoints, oversizedCheckpoints, modelDomain: mixed ? "mixed" : "closed", browser: engineName, cpuRate: throttle, mode, passed: true, measurements };
   if (output) await fs.writeFile(output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify(report));
 } finally {
