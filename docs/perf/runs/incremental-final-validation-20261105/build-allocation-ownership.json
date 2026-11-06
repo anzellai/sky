@@ -64,6 +64,15 @@
       "ignored": 0,
       "summaries": 3,
       "log_sha256": "8fadc03710c1fd1b1226d7d29454d1fc19d30ccd54043f8775c440c0adc788c0"
+    },
+    {
+      "task": "allocation-checkpoint-full-project",
+      "elapsed_seconds": 286,
+      "passed": 520,
+      "failed": 0,
+      "ignored": 2,
+      "summaries": 49,
+      "log_sha256": "67daf64b9b2009df68780ee8112754e16cf219b65cc27a23066c0d21b299be3c"
     }
   ],
   "fixture_correction": "The initial revision test incorrectly passed Int to Float. The five-stage replacement retains initial Int/Float evidence, separates caller-only and imported-signature-only edits, and proves initial eager acceptance before RED. Production code is unchanged by the correction.",
@@ -73,8 +82,15 @@
   "resource_limits_changed": false,
   "goldens_changed": false,
   "remaining": [
-    "Full compiler/project and hosted validation for this checkpoint.",
+    "Subsequent authority and source-provider refinements have separate validation; allocation checkpoint full project/hosted checks pass.",
     "Fresh canonical and current private application build; prior compiler is stale.",
     "Shared invalid-ID authority repair and original Codec occurs growth repair."
-  ]
+  ],
+  "hosted_ci": {
+    "run": 42269060167,
+    "commit": "01de151a7cc13e6d6cf1fc4ac243b473da738cda",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": 40
+  }
 }

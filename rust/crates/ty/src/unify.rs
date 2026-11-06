@@ -23,6 +23,11 @@ use std::sync::{
     Arc, OnceLock,
 };
 
+#[path = "unify_ground.rs"]
+mod ground;
+pub(crate) use ground::GroundShape;
+use ground::{FrozenRef, GroundNode};
+
 /// The bounds a type variable can carry: Elm's four built-in super-vars
 /// (`Type.hs:62`) plus `Encodable` (v0.27.0, B-1). NOT typeclasses (doc 03
 /// §5): a fixed set, decided structurally.
@@ -212,8 +217,21 @@ pub enum FlatTy {
 
 #[derive(Clone, Debug)]
 enum Slot {
+    Frozen { frozen: FrozenRef, rank: u32 },
     Root { content: Content, rank: u32 },
     Link(TyVarId),
+}
+
+/// Private movement only; never returned by public content().
+enum RootPayload {
+    Ordinary(Content),
+    Frozen(FrozenRef),
+}
+
+/// Local, one-use continuation capability. Never stored in UF, cloned,
+/// returned, or passed through parameter unification/callbacks.
+struct OwnedApplicationResult {
+    result: TyVarId,
 }
 
 /// One interval of intentionally unreachable logical IDs. No live UF edge,
@@ -279,6 +297,25 @@ impl Slots {
         }
         self.skipped_len += count;
         self.logical_len = end;
+    }
+
+    fn is_live_id(&self, id: TyVarId) -> bool {
+        let id = id.0 as usize;
+        if id >= self.logical_len {
+            return false;
+        }
+        let Some(first) = self.skipped.first() else {
+            return true;
+        };
+        if id < first.start {
+            return true;
+        }
+        let last = self.skipped.last().unwrap();
+        if id >= last.end {
+            return true;
+        }
+        let index = self.skipped.partition_point(|range| range.start <= id);
+        id >= self.skipped[index - 1].end
     }
 
     fn dense_index(&self, id: usize) -> usize {
@@ -390,6 +427,13 @@ impl AccessorRowGrants {
 pub struct UnionFind {
     slots: Slots,
     accessor_rows: AccessorRowGrants,
+    /// Presence guard only: false means this UF has NEVER allocated Frozen
+    /// slots. Never reset on rewrite/thaw; this is not a per-root ground fact.
+    ground_created: bool,
+    /// Monotonic graph-ingress deny: public Content has contained a future,
+    /// self-at-birth, or reserved-hole child. Clones carry this history even
+    /// after that edge is removed. Never infer ownership from newest ID alone.
+    unproven_raw_edge: bool,
     /// Bound obligations the unifier cannot decide on its own (v0.27.0,
     /// C-11/B-1): a bounded variable met a nominal type (a custom type, an
     /// opaque stdlib type) or a record. Whether a custom type is comparable
@@ -430,6 +474,10 @@ pub struct UnionFind {
     /// that binding a variable moves a structure instead of copying it.
     #[cfg(test)]
     record_copies: u64,
+    #[cfg(test)]
+    occurs_steps: u64,
+    #[cfg(test)]
+    ground_materializations: u64,
 }
 
 /// The occurs check's visited marks and work stack, kept between calls so a
@@ -469,6 +517,141 @@ impl UnionFind {
         self.slots.len()
     }
 
+    /// All descriptor nodes get the original dense LIVE IDs, in postorder.
+    /// No ID is a reservation/hole, and only the root is returned at birth.
+    pub(crate) fn fresh_ground_constructor(&mut self, shape: Arc<GroundShape>) -> TyVarId {
+        let start = self.slots.len();
+        let end = start
+            .checked_add(shape.nodes.len())
+            .expect("type-variable ID limit exceeded");
+        assert!(
+            end > start && end - 1 <= u32::MAX as usize,
+            "type-variable ID limit exceeded"
+        );
+        let origin = TyVarId(start as u32);
+        self.ground_created = true;
+        for node in 0..shape.nodes.len() {
+            self.slots.push(Slot::Frozen {
+                frozen: FrozenRef {
+                    shape: shape.clone(),
+                    origin,
+                    node,
+                },
+                rank: 0,
+            });
+        }
+        TyVarId((end - 1) as u32)
+    }
+
+    /// A raw interior-ID use exposes its owner ancestors before any read,
+    /// alias, rewrite or content publication. Only still-frozen matching
+    /// ancestors need thawing: an ordinary/rewritten ancestor has no immutable
+    /// semantic dependency on this hidden child anymore. Root moves preserve
+    /// the exact origin/node locator, so inspect its CURRENT representative.
+    fn expose_ground_id(&mut self, id: TyVarId) {
+        if !self.ground_created || !self.slots.is_live_id(id) {
+            return;
+        }
+        let mut cursor = self.root_raw(id);
+        let mut ancestors = Vec::new();
+        loop {
+            let (origin, parent) = match &self.slots[cursor.0 as usize] {
+                Slot::Frozen { frozen, .. } => match frozen.shape.parents[frozen.node] {
+                    Some(parent) => (frozen.origin, parent),
+                    None => break,
+                },
+                _ => break,
+            };
+            let parent_id = TyVarId(
+                origin
+                    .0
+                    .checked_add(u32::try_from(parent).expect("ground node limit"))
+                    .expect("ground ID limit"),
+            );
+            let root = self.root_raw(parent_id);
+            if !matches!(&self.slots[root.0 as usize],Slot::Frozen { frozen,.. } if frozen.origin==origin && frozen.node==parent)
+            {
+                break;
+            }
+            ancestors.push(root);
+            cursor = root;
+        }
+        for parent in ancestors.into_iter().rev() {
+            self.materialize_ground(parent);
+        }
+    }
+
+    /// Thaw ONE level at the existing representative, preserving its rank
+    /// and all original child IDs. Never allocate new logical UF variables.
+    fn materialize_ground(&mut self, root: TyVarId) {
+        let replacement = match &self.slots[root.0 as usize] {
+            Slot::Frozen { frozen, rank } => Some((frozen.content(), *rank)),
+            _ => None,
+        };
+        if let Some((content, rank)) = replacement {
+            self.slots[root.0 as usize] = Slot::Root { content, rank };
+            #[cfg(test)]
+            {
+                self.ground_materializations += 1;
+            }
+        }
+    }
+    /// Scan ONLY new public graph ingress, never previously-published maps
+    /// moved by row/function helpers. Fail closed without dereferencing invalid
+    /// children, preserving the old ordinary-unifier panic timing.
+    fn note_raw_children(&mut self, content: &Content) {
+        if self.unproven_raw_edge {
+            return;
+        }
+        let Content::Structure(flat) = content else {
+            return;
+        };
+        let slots = &self.slots;
+        let valid = |id: &TyVarId| slots.is_live_id(*id);
+        self.unproven_raw_edge = !match flat {
+            FlatTy::App(_, xs) | FlatTy::Tuple(xs) => xs.iter().all(valid),
+            FlatTy::Fun(a, b) => valid(a) && valid(b),
+            FlatTy::Record(fields, ext) => {
+                fields.values().all(valid) && ext.as_ref().is_none_or(valid)
+            }
+            FlatTy::Unit => true,
+        };
+    }
+
+    /// Public/raw Content can carry guessed or snapshot-held interior IDs.
+    /// Expose each direct child before a new ordinary edge can be installed.
+    fn expose_ground_children(&mut self, content: &Content) {
+        if !self.ground_created {
+            return;
+        }
+        if let Content::Structure(flat) = content {
+            match flat {
+                FlatTy::App(_, xs) | FlatTy::Tuple(xs) => {
+                    for &x in xs {
+                        self.expose_ground_id(x)
+                    }
+                }
+                FlatTy::Fun(a, b) => {
+                    self.expose_ground_id(*a);
+                    self.expose_ground_id(*b)
+                }
+                FlatTy::Record(fs, ext) => {
+                    for &x in fs.values() {
+                        self.expose_ground_id(x)
+                    }
+                    if let Some(x) = ext {
+                        self.expose_ground_id(*x)
+                    }
+                }
+                FlatTy::Unit => {}
+            }
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn occurs_steps_for_test(&self) -> u64 {
+        self.occurs_steps
+    }
+
     /// The new row never escapes its birth scope: only the complete function
     /// root is returned. No annotation, callback or owned content copy occurs
     /// between allocation and minting this singleton's authority.
@@ -487,7 +670,7 @@ impl UnionFind {
             Some(row),
         )));
         let function = self.fresh(Content::Structure(FlatTy::Fun(rec, value)));
-        if grant {
+        if grant && !self.unproven_raw_edge {
             self.accessor_rows.grant(row);
         }
         function
@@ -566,6 +749,8 @@ impl UnionFind {
             .len()
             .checked_add(1)
             .expect("type-variable ID limit exceeded");
+        self.note_raw_children(&content);
+        self.expose_ground_children(&content);
         self.revoke_accessor_children(&content);
         let id = TyVarId(self.slots.len() as u32);
         let is_int_literal = matches!(&content, Content::FlexSuper(s) if s.has(SuperType::IntLit));
@@ -582,7 +767,22 @@ impl UnionFind {
     }
 
     /// `repr` (`UnionFind.hs:47`) — path compression, by index.
-    pub fn find(&mut self, mut v: TyVarId) -> TyVarId {
+    pub fn find(&mut self, v: TyVarId) -> TyVarId {
+        self.expose_ground_id(v);
+        self.find_raw(v)
+    }
+
+    /// Read-only ownership bookkeeping. Do not move path-compression earlier
+    /// merely because a fresh Content publishes an already-ordinary child.
+    fn root_raw(&self, mut v: TyVarId) -> TyVarId {
+        while let Slot::Link(parent) = self.slots[v.0 as usize] {
+            v = parent;
+        }
+        v
+    }
+
+    /// Original path compression; called only AFTER ownership exposure.
+    fn find_raw(&mut self, mut v: TyVarId) -> TyVarId {
         let root = {
             let mut r = v;
             while let Slot::Link(p) = self.slots[r.0 as usize] {
@@ -599,7 +799,7 @@ impl UnionFind {
 
     fn rank(&self, root: TyVarId) -> u32 {
         match &self.slots[root.0 as usize] {
-            Slot::Root { rank, .. } => *rank,
+            Slot::Root { rank, .. } | Slot::Frozen { rank, .. } => *rank,
             Slot::Link(_) => 0,
         }
     }
@@ -607,6 +807,7 @@ impl UnionFind {
     /// Content of `v`'s representative (cloned — cheap, ids inside).
     pub fn content(&mut self, v: TyVarId) -> Content {
         let r = self.find(v);
+        self.materialize_ground(r);
         // Revoke BEFORE an owned Record/row copy can be held across later
         // unification, even when this reader is internal to the unifier.
         self.revoke_accessor_owner(r);
@@ -622,6 +823,7 @@ impl UnionFind {
                 content.clone()
             }
             Slot::Link(_) => Content::Flex,
+            Slot::Frozen { .. } => unreachable!("content materialized the root"),
         }
     }
 
@@ -634,6 +836,10 @@ impl UnionFind {
                 content: Content::Structure(FlatTy::App(name, _)),
                 ..
             } => Some(name),
+            Slot::Frozen { frozen, .. } => match &frozen.shape.nodes[frozen.node] {
+                GroundNode::App(name, _) => Some(name),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -659,7 +865,7 @@ impl UnionFind {
                 ..
             }
             | Slot::Link(_) => Kind::Flex,
-            Slot::Root { .. } => Kind::Other,
+            Slot::Root { .. } | Slot::Frozen { .. } => Kind::Other,
         }
     }
 
@@ -667,13 +873,35 @@ impl UnionFind {
     /// [`Self::union`] overwrites next, before anything reads it.
     fn take_content(&mut self, root: TyVarId) -> Content {
         self.revoke_accessor_root(root);
+        self.materialize_ground(root);
         match &mut self.slots[root.0 as usize] {
             Slot::Root { content, .. } => std::mem::replace(content, Content::Flex),
             Slot::Link(_) => Content::Flex,
+            Slot::Frozen { .. } => unreachable!("take_content materialized root"),
+        }
+    }
+
+    /// The two Flex/Other arms move a private representation payload.
+    /// Do not public-content thaw an entire constructor tail before occurs.
+    fn take_payload(&mut self, root: TyVarId) -> RootPayload {
+        self.revoke_accessor_root(root);
+        let rank = self.rank(root);
+        match std::mem::replace(
+            &mut self.slots[root.0 as usize],
+            Slot::Root {
+                content: Content::Flex,
+                rank,
+            },
+        ) {
+            Slot::Root { content, .. } => RootPayload::Ordinary(content),
+            Slot::Frozen { frozen, .. } => RootPayload::Frozen(frozen),
+            Slot::Link(_) => unreachable!("take root payload"),
         }
     }
 
     fn set_content(&mut self, v: TyVarId, content: Content) {
+        self.note_raw_children(&content);
+        self.expose_ground_children(&content);
         self.revoke_accessor_owner(v);
         self.revoke_accessor_root(v);
         self.revoke_accessor_children(&content);
@@ -686,9 +914,8 @@ impl UnionFind {
         self.revoke_accessor_owner(v);
         self.revoke_accessor_root(v);
         let r = self.find(v);
-        if let Slot::Root { content: c, .. } = &mut self.slots[r.0 as usize] {
-            *c = content;
-        }
+        let rank = self.rank(r);
+        self.slots[r.0 as usize] = Slot::Root { content, rank };
     }
 
     /// `union` by rank, carrying merged content (`UnionFind.hs:106`).
@@ -702,11 +929,20 @@ impl UnionFind {
     /// the same edge moves within one logical class, without an owned copy or
     /// intervening callback. Other union callers revoke owners first.
     fn union_moved_content(&mut self, a: TyVarId, b: TyVarId, content: Content) {
+        self.union_moved_payload(a, b, RootPayload::Ordinary(content));
+    }
+    fn union_moved_payload(&mut self, a: TyVarId, b: TyVarId, payload: RootPayload) {
         self.revoke_accessor_root(a);
         self.revoke_accessor_root(b);
         let (ra, rb) = (self.find(a), self.find(b));
         if ra == rb {
-            self.set_content(ra, content);
+            let rank = self.rank(ra);
+            match payload {
+                RootPayload::Ordinary(content) => self.set_content(ra, content),
+                RootPayload::Frozen(frozen) => {
+                    self.slots[ra.0 as usize] = Slot::Frozen { frozen, rank }
+                }
+            }
             return;
         }
         let (rank_a, rank_b) = (self.rank(ra), self.rank(rb));
@@ -719,7 +955,10 @@ impl UnionFind {
             rank += 1;
         }
         self.slots[child.0 as usize] = Slot::Link(root);
-        self.slots[root.0 as usize] = Slot::Root { content, rank };
+        self.slots[root.0 as usize] = match payload {
+            RootPayload::Ordinary(content) => Slot::Root { content, rank },
+            RootPayload::Frozen(frozen) => Slot::Frozen { frozen, rank },
+        };
     }
 
     // ---- occurs check (Occurs.hs) ---------------------------------------
@@ -753,6 +992,10 @@ impl UnionFind {
         let mut found = false;
         while let Some(x) = sc.stack.pop() {
             crate::counters::OCCURS_NODES.bump();
+            #[cfg(test)]
+            {
+                self.occurs_steps += 1;
+            }
             let r = self.find(x);
             if r == target {
                 found = true;
@@ -796,6 +1039,148 @@ impl UnionFind {
         base::ensure_stack(|| self.unify_vars(a, b))
     }
 
+    /// Original pipeline allocation order, completed before b can escape.
+    /// Scalar entry validation is eligibility ONLY: malformed roots follow
+    /// ordinary allocation/unify/panic ordering, never eager refusal.
+    pub(crate) fn unify_application(
+        &mut self,
+        function: TyVarId,
+        argument: TyVarId,
+    ) -> (TyVarId, Result<(), Mismatch>) {
+        let eligible = !self.unproven_raw_edge
+            && self.slots.is_live_id(function)
+            && self.slots.is_live_id(argument);
+        let result = self.fresh_flex();
+        let wrapper = self.fresh(Content::Structure(FlatTy::Fun(argument, result)));
+        let answer = if eligible && !self.unproven_raw_edge {
+            base::ensure_stack(|| self.unify_owned_application(function, wrapper, result))
+        } else {
+            self.unify(function, wrapper)
+        };
+        (result, answer)
+    }
+
+    fn unify_owned_application(
+        &mut self,
+        function: TyVarId,
+        wrapper: TyVarId,
+        result: TyVarId,
+    ) -> Result<(), Mismatch> {
+        // Same initial metadata revocation/find order as ordinary unify_vars.
+        self.revoke_accessor_root(function);
+        self.revoke_accessor_root(wrapper);
+        let ra = self.find(function);
+        let rb = self.find(wrapper);
+        if ra == rb {
+            return self.unify(function, wrapper);
+        }
+        let is_fun = match &self.slots[ra.0 as usize] {
+            Slot::Root {
+                content: Content::Structure(FlatTy::Fun(..)),
+                ..
+            } => true,
+            Slot::Frozen { frozen, .. } => {
+                matches!(&frozen.shape.nodes[frozen.node], GroundNode::Fun(..))
+            }
+            _ => false,
+        };
+        if !is_fun {
+            return self.unify(function, wrapper);
+        }
+        // content materialises at most one level. The expected wrapper's
+        // only b edge remains local and is removed by f1 publication below.
+        let Content::Structure(f1 @ FlatTy::Fun(..)) = self.content(ra) else {
+            unreachable!()
+        };
+        let Content::Structure(f2 @ FlatTy::Fun(_, r2)) = self.content(rb) else {
+            unreachable!()
+        };
+        if r2 != result
+            || rb != wrapper
+            || !matches!(
+                &self.slots[result.0 as usize],
+                Slot::Root {
+                    content: Content::Flex,
+                    rank: 0
+                }
+            )
+        {
+            return self.unify(function, wrapper);
+        }
+        self.unify_function_pair(ra, rb, f1, f2, Some(OwnedApplicationResult { result }))
+    }
+
+    /// Consume the local permit before any return binding. It is valid only
+    /// for the untouched literal b after the top wrapper lost its sole edge;
+    /// history denial guarantees no old graph could have predicted that ID.
+    fn unify_owned_result(
+        &mut self,
+        value: TyVarId,
+        result: TyVarId,
+        permit: OwnedApplicationResult,
+    ) -> Result<(), Mismatch> {
+        if permit.result != result
+            || self.unproven_raw_edge
+            || !matches!(
+                &self.slots[result.0 as usize],
+                Slot::Root {
+                    content: Content::Flex,
+                    rank: 0
+                }
+            )
+        {
+            return self.unify(value, result);
+        }
+        self.revoke_accessor_root(value);
+        self.revoke_accessor_root(result);
+        let ra = self.find(value);
+        let rb = self.find(result);
+        if ra != rb
+            && rb == result
+            && matches!(
+                &self.slots[rb.0 as usize],
+                Slot::Root {
+                    content: Content::Flex,
+                    rank: 0
+                }
+            )
+            && matches!(self.kind(ra), Kind::Other)
+        {
+            // Exactly the original Other/Flex move, minus its impossible
+            // occurs search. No type content or logical allocation is elided.
+            let payload = self.take_payload(ra);
+            self.union_moved_payload(ra, rb, payload);
+            Ok(())
+        } else {
+            self.unify(value, result)
+        }
+    }
+
+    /// Shared with the unchanged ordinary Fun branch. f1 is published BEFORE
+    /// contravariant parameters; their failure precedes all result binding.
+    fn unify_function_pair(
+        &mut self,
+        ra: TyVarId,
+        rb: TyVarId,
+        f1: FlatTy,
+        f2: FlatTy,
+        owned: Option<OwnedApplicationResult>,
+    ) -> Result<(), Mismatch> {
+        let (FlatTy::Fun(a1, r1), FlatTy::Fun(a2, r2)) = (&f1, &f2) else {
+            unreachable!()
+        };
+        let (a1, r1, a2, r2) = (*a1, *r1, *a2, *r2);
+        self.union(ra, rb, Content::Structure(f1));
+        self.contravariant = !self.contravariant;
+        let params = self.unify(a1, a2);
+        self.contravariant = !self.contravariant;
+        params?;
+        match owned {
+            Some(permit) if permit.result == r2 => self.unify_owned_result(r1, r2, permit),
+            _ => self.unify(r1, r2),
+        }
+    }
+
     fn unify_vars(&mut self, a: TyVarId, b: TyVarId) -> Result<(), Mismatch> {
         self.revoke_accessor_root(a);
         self.revoke_accessor_root(b);
@@ -823,16 +1208,16 @@ impl UnionFind {
                 if self.occurs(rb, ra) {
                     return self.infinite(ra, rb);
                 }
-                let other = self.take_content(rb);
-                self.union_moved_content(ra, rb, other);
+                let other = self.take_payload(rb);
+                self.union_moved_payload(ra, rb, other);
                 return Ok(());
             }
             (Kind::Other, Kind::Flex) => {
                 if self.occurs(ra, rb) {
                     return self.infinite(ra, rb);
                 }
-                let other = self.take_content(ra);
-                self.union_moved_content(ra, rb, other);
+                let other = self.take_payload(ra);
+                self.union_moved_payload(ra, rb, other);
                 return Ok(());
             }
             (Kind::Other, Kind::Other) => {}
@@ -1346,18 +1731,7 @@ impl UnionFind {
                 self.union(ra, rb, Content::Structure(FlatTy::Unit));
                 Ok(())
             }
-            (FlatTy::Fun(a1, r1), FlatTy::Fun(a2, r2)) => {
-                let (a1, r1, a2, r2) = (*a1, *r1, *a2, *r2);
-                self.union(ra, rb, Content::Structure(f1.clone()));
-                // The parameter is contravariant: flip which side is the
-                // declared type for the record wording, and restore it before
-                // the result (covariant) or an early return.
-                self.contravariant = !self.contravariant;
-                let params = self.unify(a1, a2);
-                self.contravariant = !self.contravariant;
-                params?;
-                self.unify(r1, r2)
-            }
+            (FlatTy::Fun(..), FlatTy::Fun(..)) => self.unify_function_pair(ra, rb, f1, f2, None),
             (FlatTy::Tuple(xs), FlatTy::Tuple(ys)) => {
                 if xs.len() != ys.len() {
                     return Err(Mismatch::new(format!(
@@ -1454,6 +1828,11 @@ impl UnionFind {
         mut fields: BTreeMap<Name, TyVarId>,
         ext: Option<TyVarId>,
     ) -> (BTreeMap<Name, TyVarId>, Option<TyVarId>) {
+        // The supplied map can itself contain raw or snapshot-held interior
+        // IDs; expose them before returning this owned normalized map.
+        for &value in fields.values() {
+            self.expose_ground_id(value);
+        }
         let mut cur = ext;
         let mut seen = std::collections::HashSet::new();
         loop {
@@ -1461,6 +1840,7 @@ impl UnionFind {
                 None => return (fields, None),
                 Some(e) => {
                     let r = self.find(e);
+                    self.materialize_ground(r);
                     // The returned row/map is a raw-ID export, not just a read.
                     self.revoke_accessor_root(e);
                     if !seen.insert(r) {
@@ -1526,11 +1906,22 @@ impl UnionFind {
         fields: &BTreeMap<Name, TyVarId>,
         fresh_values: bool,
     ) -> Option<Result<(), Mismatch>> {
+        // Only new constraint fields/row: never scan the growing base map.
+        if !self.unproven_raw_edge {
+            self.unproven_raw_edge = fields
+                .values()
+                .chain(std::iter::once(&row))
+                .any(|id| !self.slots.is_live_id(*id));
+        }
+        if self.unproven_raw_edge {
+            return None;
+        }
         let ra = self.find(base);
         let rb = self.find(rec);
         if ra == rb {
             return None;
         }
+        self.materialize_ground(ra);
         if fresh_values {
             if let Some(result) = self.unify_open_record_fresh_access(ra, rb, row, fields) {
                 return Some(result);
@@ -1659,8 +2050,9 @@ impl UnionFind {
         debug_assert_ne!(root, child);
         debug_assert_eq!(self.rank(child), 0, "link_fresh: child must be rank 0");
         if self.rank(root) == 0 {
-            if let Slot::Root { rank, .. } = &mut self.slots[root.0 as usize] {
-                *rank = 1;
+            match &mut self.slots[root.0 as usize] {
+                Slot::Root { rank, .. } | Slot::Frozen { rank, .. } => *rank = 1,
+                Slot::Link(_) => unreachable!("fresh link root"),
             }
         }
         self.slots[child.0 as usize] = Slot::Link(root);
@@ -1674,9 +2066,11 @@ impl UnionFind {
         ra: TyVarId,
         rb: TyVarId,
     ) -> Option<Result<(), Mismatch>> {
-        if !self.accessor_rows.active() {
+        if self.unproven_raw_edge || !self.accessor_rows.active() {
             return None;
         }
+        self.materialize_ground(ra);
+        self.materialize_ground(rb);
         let owned = |root: TyVarId| -> Option<(Name, TyVarId, TyVarId)> {
             let Slot::Root {
                 content: Content::Structure(FlatTy::Record(fields, Some(row))),
@@ -1830,12 +2224,18 @@ impl UnionFind {
     /// A match is finite, as `ty` is: every leaf of `ty` matches only a class
     /// with no children, so a cyclic graph never matches.
     pub(crate) fn ground_instance_nodes(&mut self, v: TyVarId, ty: &crate::Ty) -> Option<usize> {
+        // Elided instance IDs must truly be unreachable, including old edges
+        // that could have predicted them before allocation/reservation.
+        if self.unproven_raw_edge {
+            return None;
+        }
         use crate::Ty;
         let mut nodes = 0usize;
         let mut stack: Vec<(TyVarId, &Ty)> = vec![(v, ty)];
         while let Some((x, t)) = stack.pop() {
             nodes += 1;
             let r = self.find(x);
+            self.materialize_ground(r);
             let Slot::Root {
                 content: Content::Structure(ft),
                 ..
@@ -3551,5 +3951,1095 @@ mod accessor_export_tests {
             }
             assert_eq!(runs[0], runs[1]);
         }
+    }
+}
+
+#[cfg(test)]
+mod ground_constructor_tests {
+    use super::*;
+    use crate::Ty;
+    fn app(name: &str) -> Ty {
+        Ty::App(Name::new(name), vec![])
+    }
+    fn fun(a: Ty, b: Ty) -> Ty {
+        Ty::Fun(Box::new(a), Box::new(b))
+    }
+    fn sample() -> Ty {
+        fun(
+            app("Int"),
+            fun(
+                app("String"),
+                Ty::Record(
+                    vec![
+                        (Name::new("a"), app("Int")),
+                        (
+                            Name::new("pair"),
+                            Ty::Tuple(vec![app("Float"), app("Domain.Color")]),
+                        ),
+                    ],
+                    None,
+                ),
+            ),
+        )
+    }
+    fn eager(uf: &mut UnionFind, ty: &Ty) -> TyVarId {
+        let flat = match ty {
+            Ty::App(name, args) => {
+                FlatTy::App(name.clone(), args.iter().map(|t| eager(uf, t)).collect())
+            }
+            Ty::Fun(a, b) => {
+                let a = eager(uf, a);
+                let b = eager(uf, b);
+                FlatTy::Fun(a, b)
+            }
+            Ty::Record(fields, None) => FlatTy::Record(
+                fields
+                    .iter()
+                    .map(|(n, t)| (n.clone(), eager(uf, t)))
+                    .collect(),
+                None,
+            ),
+            Ty::Tuple(xs) => FlatTy::Tuple(xs.iter().map(|t| eager(uf, t)).collect()),
+            Ty::Unit => FlatTy::Unit,
+            _ => panic!("non-ground test input"),
+        };
+        uf.fresh(Content::Structure(flat))
+    }
+    fn instance(uf: &mut UnionFind, ty: &Ty, fast: bool) -> TyVarId {
+        if fast {
+            uf.fresh_ground_constructor(GroundShape::constructor(ty).unwrap())
+        } else {
+            eager(uf, ty)
+        }
+    }
+    fn ids(uf: &UnionFind) -> Vec<TyVarId> {
+        (0..uf.var_count()).map(|i| TyVarId(i as u32)).collect()
+    }
+    fn snapshot(uf: &UnionFind, ids: &[TyVarId]) -> String {
+        // Observing a separate snapshot must not thaw the measured SOURCE.
+        let mut uf = uf.clone();
+        for &id in ids {
+            let _ = uf.content(id);
+        }
+        let mut out = format!(
+            "count={} stored={} pending={:?} needs={:?} missing={:?} literals={:?}",
+            uf.var_count(),
+            uf.slots.stored_len(),
+            uf.pending,
+            uf.rigid_needs,
+            uf.rigid_missing,
+            uf.int_literals
+        );
+        for &id in ids {
+            let root = uf.find(id);
+            out.push_str(&format!(
+                "|{id:?}:{root:?}:{}:{:?}",
+                uf.rank(root),
+                uf.content(id)
+            ));
+        }
+        out
+    }
+    fn result(r: Result<(), Mismatch>) -> Result<(), String> {
+        r.map_err(|e| e.message)
+    }
+    #[test]
+    fn ground_factory_keeps_dense_live_ids_postorder_and_every_node() {
+        let mut runs = Vec::new();
+        for fast in [true, false] {
+            let mut uf = UnionFind::new();
+            let prefix = uf.fresh_flex();
+            let root = instance(&mut uf, &sample(), fast);
+            assert_eq!(root.0 as usize, uf.var_count() - 1);
+            let next = uf.fresh_flex();
+            assert_eq!(next.0, root.0 + 1);
+            assert_eq!(
+                uf.slots.stored_len(),
+                uf.var_count(),
+                "children are LIVE, not reserved holes"
+            );
+            assert_eq!(uf.rank(prefix), 0);
+            runs.push(snapshot(&uf, &ids(&uf)));
+        }
+        assert_eq!(runs[0], runs[1]);
+    }
+    #[test]
+    fn raw_interior_rewrite_thaws_ancestors_before_late_infinite_type() {
+        let mut runs = Vec::new();
+        for fast in [true, false] {
+            let mut uf = UnionFind::new();
+            let root = instance(&mut uf, &sample(), fast);
+            let child = TyVarId(0);
+            uf.set_content_for_test(child, Content::Flex);
+            let error = result(uf.unify(child, root));
+            assert!(error.as_ref().is_err_and(|e| e.contains("infinite type")));
+            runs.push((error, snapshot(&uf, &ids(&uf))));
+        }
+        assert_eq!(runs[0], runs[1]);
+    }
+    #[test]
+    fn private_payload_moves_keep_both_orientations_and_rank_winners() {
+        for reverse in [false, true] {
+            for ranked in [false, true] {
+                let mut runs = Vec::new();
+                for fast in [true, false] {
+                    let mut uf = UnionFind::new();
+                    let alias = uf.fresh_flex();
+                    if ranked {
+                        let other = uf.fresh_flex();
+                        uf.unify(alias, other).unwrap();
+                    }
+                    let child = TyVarId(uf.var_count() as u32);
+                    let root = instance(&mut uf, &sample(), fast);
+                    if reverse {
+                        uf.unify(root, alias).unwrap()
+                    } else {
+                        uf.unify(alias, root).unwrap()
+                    }
+                    uf.set_content_for_test(child, Content::Flex);
+                    let error = result(uf.unify(child, alias));
+                    assert!(error.is_err());
+                    runs.push((error, snapshot(&uf, &ids(&uf))));
+                }
+                assert_eq!(runs[0], runs[1], "reverse={reverse} ranked={ranked}");
+            }
+        }
+    }
+    #[test]
+    fn fresh_and_set_raw_child_publication_expose_before_semantic_rewrite() {
+        for via_set in [false, true] {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let root = instance(&mut uf, &sample(), fast);
+                let raw = Content::Structure(FlatTy::Tuple(vec![TyVarId(0)]));
+                let edge = if via_set {
+                    let x = uf.fresh_flex();
+                    uf.set_content_for_test(x, raw);
+                    x
+                } else {
+                    uf.fresh(raw)
+                };
+                uf.set_content_for_test(TyVarId(0), Content::Flex);
+                let error = result(uf.unify(TyVarId(0), edge));
+                assert!(error.is_err());
+                let other = result(uf.unify(TyVarId(0), root));
+                runs.push((error, other, snapshot(&uf, &ids(&uf))));
+            }
+            assert_eq!(runs[0], runs[1], "via_set={via_set}");
+        }
+    }
+    #[test]
+    fn old_snapshot_content_republished_after_source_root_move_is_not_stale() {
+        for reverse in [false, true] {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let root = instance(&mut uf, &sample(), fast);
+                let mut old = uf.clone();
+                let moved = uf.fresh_flex();
+                if reverse {
+                    uf.unify(root, moved).unwrap()
+                } else {
+                    uf.unify(moved, root).unwrap()
+                }
+                let held = old.content(root);
+                let alias = uf.fresh(held);
+                uf.set_content_for_test(TyVarId(0), Content::Flex);
+                let error = result(uf.unify(TyVarId(0), alias));
+                assert!(error.is_err());
+                // Old snapshot still has its own unchanged ground meaning.
+                let fresh = old.fresh_flex();
+                old.unify(fresh, root).unwrap();
+                runs.push((error, snapshot(&uf, &ids(&uf)), snapshot(&old, &ids(&old))));
+            }
+            assert_eq!(runs[0], runs[1], "reverse={reverse}");
+        }
+    }
+    #[test]
+    fn failed_unify_ground_ancestor_counterexample_remains_an_occurs_error() {
+        let mut runs = Vec::new();
+        for fast in [true, false] {
+            let mut uf = UnionFind::new();
+            let ground = instance(&mut uf, &fun(app("Int"), app("Int")), fast);
+            let parent = uf.fresh(Content::Structure(FlatTy::Tuple(vec![ground])));
+            let b = uf.fresh_flex();
+            let other = uf.fresh(Content::Structure(FlatTy::Fun(ground, b)));
+            let first = result(uf.unify(other, ground));
+            assert!(first.is_err());
+            let later = result(uf.unify(b, parent));
+            assert!(later.as_ref().is_err_and(|e| e.contains("infinite type")));
+            runs.push((first, later, snapshot(&uf, &ids(&uf))));
+        }
+        assert_eq!(runs[0], runs[1]);
+    }
+    #[test]
+    fn bounds_rigids_nominals_and_error_recovery_have_dense_failure_state() {
+        for mode in 0..6 {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let root = instance(&mut uf, &sample(), fast);
+                let constraint = uf.fresh(match mode {
+                    0 => Content::FlexSuper(SuperType::Number),
+                    1 => Content::FlexSuper(SuperType::Encodable),
+                    2 => Content::FlexSuper(SuperType::Comparable),
+                    3 => Content::Rigid(Name::new("r")),
+                    4 => Content::Error,
+                    _ => Content::Structure(FlatTy::App(Name::new("Foreign.Other"), vec![])),
+                });
+                let error = result(uf.unify(root, constraint));
+                assert_eq!(error.is_ok(), mode == 4);
+                let b = uf.fresh_flex();
+                let follow = result(uf.unify(b, root));
+                runs.push((error, follow, snapshot(&uf, &ids(&uf))));
+            }
+            assert_eq!(runs[0], runs[1], "mode={mode}");
+        }
+    }
+    #[test]
+    fn normalizer_export_keeps_original_children_and_late_alias_occurs() {
+        let ty = sample();
+        let shape = GroundShape::constructor(&ty).unwrap();
+        let record = shape
+            .nodes
+            .iter()
+            .position(|n| matches!(n, GroundNode::Record(_)))
+            .unwrap();
+        for raw_fields in [false, true] {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let root = instance(&mut uf, &ty, fast);
+                let (fields, ext) = if raw_fields {
+                    uf.normalize_record(BTreeMap::from([(Name::new("a"), TyVarId(0))]), None)
+                } else {
+                    uf.normalize_record(BTreeMap::new(), Some(TyVarId(record as u32)))
+                };
+                // BEFORE fresh can mask a missing normalizer publication
+                // barrier: the immutable owner ancestor must already be gone.
+                assert!(matches!(&uf.slots[root.0 as usize], Slot::Root { .. }));
+                assert!(ext.is_none());
+                let child = fields[&Name::new("a")];
+                let alias = uf.fresh(Content::Structure(FlatTy::Record(fields, ext)));
+                uf.set_content_for_test(child, Content::Flex);
+                let error = result(uf.unify(child, alias));
+                assert!(error.is_err());
+                runs.push((error, snapshot(&uf, &ids(&uf))));
+            }
+            assert_eq!(runs[0], runs[1], "raw_fields={raw_fields}");
+        }
+    }
+    #[test]
+    fn sparse_prefix_and_overflow_keep_live_children_and_reject_before_publication() {
+        let shape = GroundShape::constructor(&sample()).unwrap();
+        let mut runs = Vec::new();
+        for fast in [true, false] {
+            let mut uf = UnionFind::new();
+            let first = uf.fresh_flex();
+            uf.reserve_unreachable(100);
+            let start = uf.var_count();
+            let root = instance(&mut uf, &sample(), fast);
+            let after = uf.fresh_flex();
+            let mut live = vec![first];
+            live.extend((start..uf.var_count()).map(|i| TyVarId(i as u32)));
+            assert_eq!(after.0, root.0 + 1);
+            assert_eq!(uf.slots.stored_len(), shape.nodes.len() + 2);
+            runs.push(snapshot(&uf, &live));
+        }
+        assert_eq!(runs[0], runs[1]);
+        let mut uf = UnionFind::new();
+        uf.reserve_unreachable(u32::MAX as usize);
+        let before = (uf.var_count(), uf.slots.stored_len(), uf.int_literals.len());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || uf.fresh_ground_constructor(shape)
+        ))
+        .is_err());
+        assert_eq!(
+            before,
+            (uf.var_count(), uf.slots.stored_len(), uf.int_literals.len())
+        );
+    }
+    #[test]
+    fn descriptors_refuse_vars_errors_open_rows_and_duplicate_record_fields() {
+        for ty in [
+            Ty::Var(Name::new("a")),
+            Ty::Error,
+            Ty::Record(vec![], Some(Name::new("r"))),
+            Ty::Record(
+                vec![
+                    (Name::new("a"), app("Int")),
+                    (Name::new("a"), app("String")),
+                ],
+                None,
+            ),
+        ] {
+            assert!(GroundShape::constructor(&fun(ty, Ty::Unit)).is_none());
+        }
+        assert!(GroundShape::constructor(&Ty::Unit).is_none());
+    }
+    #[test]
+    fn one_level_tails_bound_actual_occurs_and_materialization_work() {
+        let width = 128usize;
+        let mut ty = Ty::Record(
+            (0..width)
+                .map(|i| (Name::new(&format!("f{i}")), app("String")))
+                .collect(),
+            None,
+        );
+        for _ in 0..width {
+            ty = fun(app("String"), ty);
+        }
+        let count = GroundShape::constructor(&ty).unwrap().nodes.len();
+        let mut runs = Vec::new();
+        for fast in [true, false] {
+            let mut uf = UnionFind::new();
+            let mut cur = instance(&mut uf, &ty, fast);
+            let keep = uf.fresh(Content::Structure(FlatTy::Tuple(vec![cur])));
+            for i in 0..width {
+                let Content::Structure(FlatTy::Fun(_, tail)) = uf.content(cur) else {
+                    panic!("function tail")
+                };
+                let b = uf.fresh_flex();
+                if i % 2 == 0 {
+                    uf.unify(b, tail).unwrap()
+                } else {
+                    uf.unify(tail, b).unwrap()
+                }
+                cur = b;
+            }
+            let work = (uf.occurs_steps, uf.ground_materializations);
+            if fast {
+                assert!(
+                    work.1 <= count as u64,
+                    "a descriptor node materializes at most once"
+                );
+                assert!(work.0 <= width as u64);
+            }
+            let state = snapshot(&uf, &ids(&uf));
+            let _ = uf.content(keep);
+            runs.push((work, state));
+        }
+        assert_eq!(runs[0].1, runs[1].1);
+        assert!(
+            runs[0].0 .0 * 2 < runs[1].0 .0,
+            "fast={:?} reference={:?}",
+            runs[0].0,
+            runs[1].0
+        );
+    }
+    #[test]
+    fn public_raw_child_failed_unify_cannot_leave_a_frozen_ancestor_ground() {
+        let ty = fun(Ty::Unit, fun(app("Int"), app("Int")));
+        let shape = GroundShape::constructor(&ty).unwrap();
+        let nested = shape
+            .nodes
+            .iter()
+            .position(|n| matches!(n, GroundNode::Fun(..)))
+            .unwrap();
+        assert_ne!(nested, shape.nodes.len() - 1);
+        let mut runs = Vec::new();
+        for fast in [true, false] {
+            let mut uf = UnionFind::new();
+            let parent = instance(&mut uf, &ty, fast);
+            let b = uf.fresh_flex();
+            // Refers ONLY to the exposed root. The nested child remains
+            // hidden until the raw unify below; no test setter is involved.
+            let other = uf.fresh(Content::Structure(FlatTy::Fun(parent, b)));
+            let first = result(uf.unify(other, TyVarId(nested as u32)));
+            assert!(first.is_err());
+            let later = result(uf.unify(b, parent));
+            assert!(later.as_ref().is_err_and(|e| e.contains("infinite type")));
+            runs.push((first, later, snapshot(&uf, &ids(&uf))));
+        }
+        assert_eq!(runs[0], runs[1]);
+    }
+}
+
+#[cfg(test)]
+mod forward_fresh_authority_tests {
+    use super::*;
+    fn int(uf: &mut UnionFind) -> TyVarId {
+        uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])))
+    }
+    fn need_extra(uf: &mut UnionFind, record: TyVarId) -> Result<(), Mismatch> {
+        let value = uf.fresh_flex();
+        let row = uf.fresh_flex();
+        let need = uf.fresh(Content::Structure(FlatTy::Record(
+            BTreeMap::from([(Name::new("extra"), value)]),
+            Some(row),
+        )));
+        uf.unify(record, need)
+    }
+    #[test]
+    fn forward_accessor_row_keeps_preexisting_extra_field_alias() {
+        for fast in [false, true] {
+            let mut uf = UnionFind::new();
+            // Original public fresh accepts this forward row without reading
+            // it. Factory's value1,row2,record3,function4 make it live later.
+            let alias = uf.fresh(Content::Structure(FlatTy::Record(
+                BTreeMap::new(),
+                Some(TyVarId(2)),
+            )));
+            let f = if fast {
+                uf.fresh_accessor(Name::new("a"))
+            } else {
+                uf.fresh_accessor_reference(Name::new("a"))
+            };
+            let Content::Structure(FlatTy::Fun(rec, _)) = uf.content(f) else {
+                panic!("accessor")
+            };
+            let a = int(&mut uf);
+            let extra = int(&mut uf);
+            let wide = uf.fresh(Content::Structure(FlatTy::Record(
+                BTreeMap::from([(Name::new("a"), a), (Name::new("extra"), extra)]),
+                None,
+            )));
+            uf.unify(rec, wide).unwrap();
+            assert!(
+                need_extra(&mut uf, alias).is_ok(),
+                "forward row alias lost extra; fast={fast}"
+            );
+        }
+    }
+    #[test]
+    fn forward_direct_access_row_keeps_preexisting_extra_field_alias() {
+        for fast in [false, true] {
+            let mut uf = UnionFind::new();
+            let a = int(&mut uf);
+            let base = uf.fresh(Content::Structure(FlatTy::Record(
+                BTreeMap::from([(Name::new("a"), a), (Name::new("extra"), a)]),
+                None,
+            )));
+            // Next allocations are value3,row4,constraint5.
+            let alias = uf.fresh(Content::Structure(FlatTy::Record(
+                BTreeMap::new(),
+                Some(TyVarId(4)),
+            )));
+            let value = uf.fresh_flex();
+            let row = uf.fresh_flex();
+            let fields = BTreeMap::from([(Name::new("a"), value)]);
+            let rec = uf.fresh(Content::Structure(FlatTy::Record(
+                fields.clone(),
+                Some(row),
+            )));
+            if fast {
+                uf.unify_closed_record_fresh_row(base, rec, row, &fields, true)
+                    .unwrap_or_else(|| uf.unify(base, rec))
+                    .unwrap();
+            } else {
+                uf.unify(base, rec).unwrap();
+            }
+            assert!(
+                need_extra(&mut uf, alias).is_ok(),
+                "forward direct-access alias lost extra; fast={fast}"
+            );
+        }
+    }
+    #[test]
+    fn forward_ground_instance_child_is_not_replaced_by_reserved_hole() {
+        for fast in [false, true] {
+            let mut uf = UnionFind::new();
+            let a = int(&mut uf);
+            let base = uf.fresh(Content::Structure(FlatTy::Record(
+                BTreeMap::from([(Name::new("a"), a)]),
+                None,
+            )));
+            let _watch = uf.fresh(Content::Structure(FlatTy::Tuple(vec![TyVarId(3)])));
+            let ty = crate::Ty::Record(
+                vec![(Name::new("a"), crate::Ty::App(Name::new("Int"), vec![]))],
+                None,
+            );
+            let skipped = if fast {
+                match uf.ground_instance_nodes(base, &ty) {
+                    Some(n) => {
+                        uf.reserve_unreachable(n);
+                        true
+                    }
+                    None => false,
+                }
+            } else {
+                false
+            };
+            if !skipped {
+                let child = int(&mut uf);
+                assert_eq!(child, TyVarId(3));
+                let instance = uf.fresh(Content::Structure(FlatTy::Record(
+                    BTreeMap::from([(Name::new("a"), child)]),
+                    None,
+                )));
+                uf.unify(base, instance).unwrap();
+            }
+            assert!(
+                matches!(uf.content(TyVarId(3)),Content::Structure(FlatTy::App(name,_)) if name.as_str()=="Int"),
+                "forward watched child must remain live; fast={fast}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod shared_fresh_authority_state_tests {
+    use super::*;
+    fn int(uf: &mut UnionFind) -> TyVarId {
+        uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])))
+    }
+    fn request(uf: &mut UnionFind, base: TyVarId) -> Result<(), Mismatch> {
+        let v = uf.fresh_flex();
+        let row = uf.fresh_flex();
+        let rec = uf.fresh(Content::Structure(FlatTy::Record(
+            BTreeMap::from([(Name::new("extra"), v)]),
+            Some(row),
+        )));
+        uf.unify(base, rec)
+    }
+    fn state(uf: &UnionFind, live: &[TyVarId]) -> String {
+        let mut uf = uf.clone();
+        let mut out=format!("count={} stored={} bad={} pending={:?} needs={:?} missing={:?} literals={:?} contra={}",
+            uf.var_count(),uf.slots.stored_len(),uf.unproven_raw_edge,uf.pending,uf.rigid_needs,uf.rigid_missing,uf.int_literals,uf.contravariant);
+        for &id in live {
+            let r = uf.find(id);
+            out.push_str(&format!(
+                "|{id:?}:{r:?}:{}:{:?}",
+                uf.rank(r),
+                uf.content(id)
+            ));
+        }
+        out
+    }
+    fn all(uf: &UnionFind) -> Vec<TyVarId> {
+        (0..uf.var_count()).map(|i| TyVarId(i as u32)).collect()
+    }
+    #[test]
+    fn every_public_edge_domain_and_setter_keeps_full_reference_state() {
+        for domain in 0..5 {
+            for via_set in [false, true] {
+                let mut runs = Vec::new();
+                for fast in [true, false] {
+                    let mut uf = UnionFind::new();
+                    let future = TyVarId(2);
+                    let flat = match domain {
+                        0 => FlatTy::App(Name::new("Box"), vec![future]),
+                        1 => FlatTy::Tuple(vec![future]),
+                        2 => FlatTy::Fun(future, future),
+                        3 => FlatTy::Record(BTreeMap::from([(Name::new("child"), future)]), None),
+                        _ => FlatTy::Record(BTreeMap::new(), Some(future)),
+                    };
+                    let ingress = if via_set {
+                        let root = uf.fresh(Content::Structure(FlatTy::Unit));
+                        uf.set_content_for_test(root, Content::Structure(flat));
+                        root
+                    } else {
+                        uf.fresh(Content::Structure(flat))
+                    };
+                    assert_eq!(ingress, TyVarId(0));
+                    let fun = if fast {
+                        uf.fresh_accessor(Name::new("a"))
+                    } else {
+                        uf.fresh_accessor_reference(Name::new("a"))
+                    };
+                    let Content::Structure(FlatTy::Fun(rec, _)) = uf.content(fun) else {
+                        panic!("function")
+                    };
+                    let a = int(&mut uf);
+                    let extra = int(&mut uf);
+                    let wide = uf.fresh(Content::Structure(FlatTy::Record(
+                        BTreeMap::from([(Name::new("a"), a), (Name::new("extra"), extra)]),
+                        None,
+                    )));
+                    uf.unify(rec, wide).unwrap();
+                    request(&mut uf, future).unwrap();
+                    runs.push(state(&uf, &all(&uf)));
+                }
+                assert_eq!(runs[0], runs[1], "domain={domain} via_set={via_set}");
+            }
+        }
+    }
+    #[test]
+    fn denial_survives_discard_clone_and_two_preexisting_aliases() {
+        for cloned in [false, true] {
+            for fast in [true, false] {
+                let mut runs = Vec::new();
+                for direct in [fast, false] {
+                    let mut uf = UnionFind::new();
+                    let a = int(&mut uf);
+                    let base = uf.fresh(Content::Structure(FlatTy::Record(
+                        BTreeMap::from([(Name::new("a"), a), (Name::new("extra"), a)]),
+                        None,
+                    )));
+                    let discarded = uf.fresh(Content::Structure(FlatTy::Record(
+                        BTreeMap::new(),
+                        Some(TyVarId(5)),
+                    )));
+                    let alias = uf.fresh(Content::Structure(FlatTy::Record(
+                        BTreeMap::new(),
+                        Some(TyVarId(5)),
+                    )));
+                    uf.set_content_for_test(discarded, Content::Structure(FlatTy::Unit));
+                    if cloned {
+                        uf = uf.clone();
+                    }
+                    let value = uf.fresh_flex();
+                    let row = uf.fresh_flex();
+                    assert_eq!(row, TyVarId(5));
+                    let fields = BTreeMap::from([(Name::new("a"), value)]);
+                    let rec = uf.fresh(Content::Structure(FlatTy::Record(
+                        fields.clone(),
+                        Some(row),
+                    )));
+                    if direct {
+                        uf.unify_closed_record_fresh_row(base, rec, row, &fields, true)
+                            .unwrap_or_else(|| uf.unify(base, rec))
+                            .unwrap();
+                    } else {
+                        uf.unify(base, rec).unwrap();
+                    }
+                    request(&mut uf, alias).unwrap();
+                    runs.push(state(&uf, &all(&uf)));
+                }
+                assert_eq!(runs[0], runs[1], "cloned={cloned} fast={fast}");
+            }
+        }
+    }
+    #[test]
+    fn holes_are_not_eagerly_read_and_valid_sparse_prefix_keeps_authority() {
+        let ty = crate::Ty::Record(
+            vec![(Name::new("a"), crate::Ty::App(Name::new("Int"), vec![]))],
+            None,
+        );
+        let mut uf = UnionFind::new();
+        let a = int(&mut uf);
+        let base = uf.fresh(Content::Structure(FlatTy::Record(
+            BTreeMap::from([(Name::new("a"), a)]),
+            None,
+        )));
+        uf.reserve_unreachable(2);
+        assert_eq!(
+            uf.ground_instance_nodes(base, &ty),
+            Some(2),
+            "a valid sparse prefix alone must not disable matching"
+        );
+        let watch = uf.fresh(Content::Structure(FlatTy::Tuple(vec![TyVarId(2)])));
+        assert_eq!(uf.ground_instance_nodes(base, &ty), None);
+        // Publication above must not panic. Ordinary use retains the exact old
+        // sparse-hole failure, with no optimization silently swallowing it.
+        let fresh = uf.fresh_flex();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| uf.unify(fresh, watch)))
+                .is_err()
+        );
+        let live = [a, base, watch, fresh];
+        let _ = state(&uf, &live);
+    }
+    #[test]
+    fn self_edge_is_deferred_and_overflow_precedes_ingress_metadata() {
+        let mut uf = UnionFind::new();
+        let self_node = uf.fresh(Content::Structure(FlatTy::Tuple(vec![TyVarId(0)])));
+        assert_eq!(self_node, TyVarId(0));
+        assert!(uf.unproven_raw_edge);
+        let other = uf.fresh_flex();
+        assert!(
+            uf.unify(other, self_node).is_ok(),
+            "ordinary finite visited-set behavior unchanged"
+        );
+        let mut exhausted = UnionFind::new();
+        exhausted.reserve_unreachable(u32::MAX as usize);
+        #[cfg(target_pointer_width = "64")]
+        {
+            exhausted.fresh(Content::Structure(FlatTy::Unit));
+        }
+        let before = (
+            exhausted.var_count(),
+            exhausted.slots.stored_len(),
+            exhausted.int_literals.len(),
+        );
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || exhausted.fresh(Content::Structure(FlatTy::Tuple(vec![TyVarId(0)])))
+        ))
+        .is_err());
+        assert_eq!(
+            before,
+            (
+                exhausted.var_count(),
+                exhausted.slots.stored_len(),
+                exhausted.int_literals.len()
+            )
+        );
+        assert!(
+            !exhausted.unproven_raw_edge,
+            "failed allocation publishes no ingress authority change"
+        );
+    }
+}
+
+#[cfg(test)]
+mod owned_application_tests {
+    use super::*;
+    fn app(uf: &mut UnionFind, name: &str) -> TyVarId {
+        uf.fresh(Content::Structure(FlatTy::App(Name::new(name), vec![])))
+    }
+    fn ordinary(
+        uf: &mut UnionFind,
+        function: TyVarId,
+        arg: TyVarId,
+    ) -> (TyVarId, Result<(), Mismatch>) {
+        let b = uf.fresh_flex();
+        let expected = uf.fresh(Content::Structure(FlatTy::Fun(arg, b)));
+        (b, uf.unify(function, expected))
+    }
+    fn apply(
+        uf: &mut UnionFind,
+        f: TyVarId,
+        a: TyVarId,
+        fast: bool,
+    ) -> (TyVarId, Result<(), Mismatch>) {
+        if fast {
+            uf.unify_application(f, a)
+        } else {
+            ordinary(uf, f, a)
+        }
+    }
+    fn outcome(r: Result<(), Mismatch>) -> Result<(), String> {
+        r.map_err(|e| e.message)
+    }
+    fn state(uf: &UnionFind, live: &[TyVarId]) -> String {
+        let mut uf = uf.clone();
+        let mut out=format!("count={} stored={} bad={} pending={:?} needs={:?} missing={:?} literals={:?} contra={}",
+            uf.var_count(),uf.slots.stored_len(),uf.unproven_raw_edge,uf.pending,uf.rigid_needs,uf.rigid_missing,uf.int_literals,uf.contravariant);
+        for &id in live {
+            let r = uf.find(id);
+            out.push_str(&format!(
+                "|{id:?}:{r:?}:{}:{:?}",
+                uf.rank(r),
+                uf.content(id)
+            ));
+        }
+        out
+    }
+    fn all(uf: &UnionFind) -> Vec<TyVarId> {
+        (0..uf.var_count()).map(|i| TyVarId(i as u32)).collect()
+    }
+    #[test]
+    fn known_function_results_match_every_dense_node_rank_and_bound() {
+        for kind in 0..8 {
+            for wrong in [false, true] {
+                for ranked in [false, true] {
+                    let mut runs = Vec::new();
+                    for fast in [true, false] {
+                        let mut uf = UnionFind::new();
+                        let param = app(&mut uf, "Int");
+                        let result = match kind {
+                            0 => uf.fresh_flex(),
+                            1 => app(&mut uf, "Int"),
+                            2 => uf.fresh(Content::Structure(FlatTy::Record(
+                                BTreeMap::from([(Name::new("value"), param)]),
+                                None,
+                            ))),
+                            3 => uf.fresh(Content::Structure(FlatTy::Fun(param, param))),
+                            4 => uf.fresh(Content::Error),
+                            5 => uf.fresh(Content::Rigid(Name::new("r"))),
+                            6 => uf.fresh(Content::FlexSuper(SuperType::Number)),
+                            _ => param,
+                        };
+                        let function = uf.fresh(Content::Structure(FlatTy::Fun(param, result)));
+                        if ranked {
+                            let alias = uf.fresh_flex();
+                            uf.unify(alias, function).unwrap();
+                        }
+                        let arg = app(&mut uf, if wrong { "String" } else { "Int" });
+                        let (b, answer) = apply(&mut uf, function, arg, fast);
+                        let answer = outcome(answer);
+                        assert_eq!(answer.is_err(), wrong);
+                        runs.push((b, answer, state(&uf, &all(&uf))));
+                    }
+                    assert_eq!(
+                        runs[0], runs[1],
+                        "kind={kind} wrong={wrong} ranked={ranked}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn record_argument_failure_keeps_contravariance_and_unbound_result() {
+        for initial in [false, true] {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                uf.contravariant = initial;
+                let int = app(&mut uf, "Int");
+                let p = uf.fresh(Content::Structure(FlatTy::Record(
+                    BTreeMap::from([(Name::new("need"), int)]),
+                    None,
+                )));
+                let r = uf.fresh(Content::Structure(FlatTy::Record(
+                    BTreeMap::from([(Name::new("out"), int)]),
+                    None,
+                )));
+                let f = uf.fresh(Content::Structure(FlatTy::Fun(p, r)));
+                let a = uf.fresh(Content::Structure(FlatTy::Record(
+                    BTreeMap::from([(Name::new("other"), int)]),
+                    None,
+                )));
+                let before = uf.var_count();
+                let (b, result) = apply(&mut uf, f, a, fast);
+                let result = outcome(result);
+                assert!(result.is_err());
+                assert_eq!(uf.var_count(), before + 2);
+                assert!(matches!(uf.content(b), Content::Flex));
+                assert_eq!(uf.contravariant, initial);
+                runs.push((b, result, state(&uf, &all(&uf))));
+            }
+            assert_eq!(runs[0], runs[1]);
+        }
+    }
+    #[test]
+    fn function_argument_alias_and_existing_cycles_do_not_gain_a_false_result() {
+        for mode in 0..4 {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let p = uf.fresh_flex();
+                let r = uf.fresh_flex();
+                let f = uf.fresh(Content::Structure(FlatTy::Fun(p, r)));
+                let arg = match mode {
+                    0 => f,
+                    1 => p,
+                    2 => r,
+                    _ => {
+                        uf.set_content_for_test(r, Content::Structure(FlatTy::Fun(p, r)));
+                        app(&mut uf, "Int")
+                    }
+                };
+                let (b, result) = apply(&mut uf, f, arg, fast);
+                runs.push((b, outcome(result), state(&uf, &all(&uf))));
+            }
+            assert_eq!(runs[0], runs[1], "mode={mode}");
+        }
+    }
+    #[test]
+    fn original_forward_result_id_must_still_report_infinite_type() {
+        let mut runs = Vec::new();
+        for fast in [false, true] {
+            let mut uf = UnionFind::new();
+            let unit = uf.fresh(Content::Structure(FlatTy::Unit));
+            let tuple = uf.fresh(Content::Structure(FlatTy::Tuple(vec![TyVarId(3)])));
+            let f = uf.fresh(Content::Structure(FlatTy::Fun(unit, tuple)));
+            let (b, result) = apply(&mut uf, f, unit, fast);
+            assert_eq!(b, TyVarId(3));
+            let result = outcome(result);
+            assert!(
+                result.as_ref().is_err_and(|e| e.contains("infinite type")),
+                "forward result silently accepted; fast={fast}"
+            );
+            runs.push((b, result, state(&uf, &all(&uf))));
+        }
+        assert_eq!(runs[0], runs[1]);
+    }
+    #[test]
+    fn all_forward_edge_positions_setter_discard_and_clone_keep_error_state() {
+        for domain in 0..5 {
+            for via_set in [false, true] {
+                for cloned in [false, true] {
+                    let mut runs = Vec::new();
+                    for fast in [true, false] {
+                        let mut uf = UnionFind::new();
+                        let unit = uf.fresh(Content::Structure(FlatTy::Unit));
+                        let future = TyVarId(3);
+                        let flat = match domain {
+                            0 => FlatTy::Tuple(vec![future]),
+                            1 => FlatTy::App(Name::new("Box"), vec![future]),
+                            2 => FlatTy::Fun(unit, future),
+                            3 => {
+                                FlatTy::Record(BTreeMap::from([(Name::new("value"), future)]), None)
+                            }
+                            _ => FlatTy::Record(BTreeMap::new(), Some(future)),
+                        };
+                        let r = if via_set {
+                            let x = uf.fresh(Content::Structure(FlatTy::Unit));
+                            uf.set_content_for_test(x, Content::Structure(flat));
+                            x
+                        } else {
+                            uf.fresh(Content::Structure(flat))
+                        };
+                        let f = uf.fresh(Content::Structure(FlatTy::Fun(unit, r)));
+                        if cloned {
+                            uf = uf.clone();
+                        }
+                        let (b, result) = apply(&mut uf, f, unit, fast);
+                        let result = outcome(result);
+                        assert!(result.is_err());
+                        runs.push((b, result, state(&uf, &all(&uf))));
+                    }
+                    assert_eq!(
+                        runs[0], runs[1],
+                        "domain={domain} setter={via_set} clone={cloned}"
+                    );
+                }
+            }
+        }
+        for fast in [false, true] {
+            let mut uf = UnionFind::new();
+            let unit = uf.fresh(Content::Structure(FlatTy::Unit));
+            let gone = uf.fresh(Content::Structure(FlatTy::Tuple(vec![TyVarId(4)])));
+            let kept = uf.fresh(Content::Structure(FlatTy::Tuple(vec![TyVarId(4)])));
+            let f = uf.fresh(Content::Structure(FlatTy::Fun(unit, kept)));
+            uf.set_content_for_test(gone, Content::Structure(FlatTy::Unit));
+            uf = uf.clone();
+            let (_, result) = apply(&mut uf, f, unit, fast);
+            assert!(result.is_err(), "discard cannot clear another bad edge");
+        }
+    }
+    #[test]
+    fn reserved_holes_still_panic_at_ordinary_use_not_publication() {
+        for ground_prefix in [false, true] {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                if ground_prefix {
+                    let shape = GroundShape::constructor(&crate::Ty::Fun(
+                        Box::new(crate::Ty::Unit),
+                        Box::new(crate::Ty::Unit),
+                    ))
+                    .unwrap();
+                    uf.fresh_ground_constructor(shape);
+                }
+                let prefix = uf.var_count();
+                let unit = uf.fresh(Content::Structure(FlatTy::Unit));
+                let hole = TyVarId(uf.var_count() as u32);
+                uf.reserve_unreachable(1);
+                // This must return normally, including when Frozen slots exist.
+                let tuple = uf.fresh(Content::Structure(FlatTy::Tuple(vec![hole])));
+                let f = uf.fresh(Content::Structure(FlatTy::Fun(unit, tuple)));
+                let before = uf.var_count();
+                let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    apply(&mut uf, f, unit, fast)
+                }));
+                assert!(panic.is_err());
+                assert_eq!(uf.var_count(), before + 2);
+                let live: Vec<_> = (0..uf.var_count())
+                    .map(|i| TyVarId(i as u32))
+                    .filter(|id| *id != hole)
+                    .collect();
+                assert_eq!(prefix, if ground_prefix { 3 } else { 0 });
+                runs.push(state(&uf, &live));
+            }
+            assert_eq!(runs[0], runs[1], "ground prefix={ground_prefix}");
+        }
+    }
+    #[test]
+    fn malformed_scalar_entries_keep_original_allocations_success_and_panics() {
+        for mode in 0..4 {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let unit = uf.fresh(Content::Structure(FlatTy::Unit));
+                let f = match mode {
+                    0 => TyVarId(1),
+                    1 => TyVarId(2),
+                    2 => TyVarId(3),
+                    _ => unit,
+                };
+                let a = if mode == 3 { TyVarId(1) } else { unit };
+                let before = uf.var_count();
+                let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    apply(&mut uf, f, a, fast)
+                }));
+                assert_eq!(uf.var_count(), before + 2);
+                let result = match answer {
+                    Ok((b, r)) => Some((b, outcome(r))),
+                    Err(_) => None,
+                };
+                if mode == 1 {
+                    assert!(result.as_ref().is_some_and(|(_, r)| r.is_ok()));
+                }
+                if mode == 2 {
+                    assert!(result.is_none());
+                }
+                runs.push((result, state(&uf, &all(&uf))));
+            }
+            assert_eq!(runs[0], runs[1], "mode={mode}");
+        }
+        let mut runs = Vec::new();
+        for fast in [true, false] {
+            let mut uf = UnionFind::new();
+            let param = uf.fresh_flex();
+            let result = uf.fresh(Content::Structure(FlatTy::Record(
+                BTreeMap::from([(Name::new("value"), param)]),
+                None,
+            )));
+            let function = uf.fresh(Content::Structure(FlatTy::Fun(param, result)));
+            // No forward Content was published: argument scalar alone predicts
+            // private b. Ordinary argument unification aliases/touches it.
+            let argument = TyVarId(uf.var_count() as u32);
+            let (b, answer) = apply(&mut uf, function, argument, fast);
+            let answer = outcome(answer);
+            assert!(answer.as_ref().is_err_and(|e| e.contains("infinite type")));
+            runs.push((b, answer, state(&uf, &all(&uf))));
+        }
+        assert_eq!(runs[0], runs[1]);
+    }
+    #[test]
+    fn frozen_function_and_unknown_callee_keep_dense_identity() {
+        for kind in 0..3 {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let f = match kind {
+                    0 => {
+                        let shape = GroundShape::constructor(&crate::Ty::Fun(
+                            Box::new(crate::Ty::Unit),
+                            Box::new(crate::Ty::Unit),
+                        ))
+                        .unwrap();
+                        uf.fresh_ground_constructor(shape)
+                    }
+                    1 => uf.fresh_flex(),
+                    _ => uf.fresh(Content::Error),
+                };
+                let a = uf.fresh(Content::Structure(FlatTy::Unit));
+                let (b, result) = apply(&mut uf, f, a, fast);
+                runs.push((b, outcome(result), state(&uf, &all(&uf))));
+            }
+            assert_eq!(runs[0], runs[1], "kind={kind}");
+        }
+    }
+    #[test]
+    fn result_permit_removes_real_record_walk_and_never_survives_the_factory() {
+        let mut runs = Vec::new();
+        for fast in [true, false] {
+            let mut uf = UnionFind::new();
+            let unit = uf.fresh(Content::Structure(FlatTy::Unit));
+            let mut fields = BTreeMap::new();
+            let mut child = None;
+            for i in 0..128 {
+                let v = app(&mut uf, "Int");
+                child.get_or_insert(v);
+                fields.insert(Name::new(&format!("f{i}")), v);
+            }
+            let record = uf.fresh(Content::Structure(FlatTy::Record(fields, None)));
+            let function = uf.fresh(Content::Structure(FlatTy::Fun(unit, record)));
+            let before = uf.occurs_steps_for_test();
+            let (first, a) = apply(&mut uf, function, unit, fast);
+            a.unwrap();
+            let (_, b) = apply(&mut uf, function, unit, fast);
+            b.unwrap();
+            let work = uf.occurs_steps_for_test() - before;
+            let child = child.unwrap();
+            uf.set_content_for_test(child, Content::Flex);
+            // The old output is now ordinary/live. No saved result permit may
+            // hide a subsequent cycle through a mutated record field.
+            let later = outcome(uf.unify(child, first));
+            assert!(later.as_ref().is_err_and(|e| e.contains("infinite type")));
+            runs.push((work, later, state(&uf, &all(&uf))));
+        }
+        assert_eq!(runs[0].1, runs[1].1);
+        assert_eq!(runs[0].2, runs[1].2);
+        assert_eq!(runs[0].0, 0);
+        assert!(
+            runs[1].0 >= 2 * 129,
+            "ordinary real record visits: {}",
+            runs[1].0
+        );
     }
 }

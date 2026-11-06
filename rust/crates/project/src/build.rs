@@ -650,21 +650,8 @@ fn assemble_and_emit_loaded(
     // diagnostic span's `file.index()` is the module's `ModuleId` index, so the
     // map keys straight off `check_ids`.
     t_parse.end();
-    let src_map: std::collections::HashMap<base::FileId, String> = check_ids
-        .iter()
-        .map(|m| {
-            (
-                base::FileId(m.index()),
-                db.source_file(*m).text(&db).to_string(),
-            )
-        })
-        .collect();
-    // Combined source provider: text (for the caret excerpt) + display path (for
-    // the `path:line:col` header). Passed to every `render_diags` call below.
-    let sources = CliSources {
-        text: &src_map,
-        paths: &path_map,
-    };
+    // The facade uses the same FileId mapping and paths for every renderer.
+    let sources = assembly_sources(&db, &check_ids, &path_map);
 
     // Halt on any app-module parse error BEFORE entry detection, typecheck,
     // lower, and emit — a syntactically broken module can never be soundly
@@ -713,7 +700,11 @@ fn assemble_and_emit_loaded(
     let mut trust = ffi_trust(&db, repo_root, example_dir, &check_ids);
     trust.packages = registry_package_names(&db, &registry_files);
     surface.set_trust(trust);
+    // No DB-backed text reference may span this input mutation. Recreate
+    // the small diagnostic facade afterward against the same source handles.
+    drop(sources);
     db.set_ffi_surface(std::sync::Arc::new(surface));
+    let sources = assembly_sources(&db, &check_ids, &path_map);
     let t_check = crate::timings::phase("canonicalise + typecheck");
     let counters_start = ty::counters::snapshot();
     crate::timings::count_type_check();
@@ -4054,6 +4045,38 @@ fn display_path(project_dir: &Path, p: &Path) -> String {
     slash(&rel)
 }
 
+/// Non-self-referential diagnostic facade over the database's exact input
+/// owners. No source String or Parse is copied; the owned map contains stable
+/// SourceFile handles only. Returned text cannot outlive this shared DB borrow.
+struct AssemblySources<'a> {
+    db: &'a skydb::SkyDatabase,
+    files: std::collections::HashMap<base::FileId, skydb::SourceFile>,
+    paths: &'a std::collections::HashMap<base::FileId, String>,
+}
+
+fn assembly_sources<'a>(
+    db: &'a skydb::SkyDatabase,
+    modules: &[base::ModuleId],
+    paths: &'a std::collections::HashMap<base::FileId, String>,
+) -> AssemblySources<'a> {
+    let files = modules
+        .iter()
+        .map(|m| (base::FileId(m.index()), db.source_file(*m)))
+        .collect();
+    AssemblySources { db, files, paths }
+}
+
+impl diagnostics::SourceProvider for AssemblySources<'_> {
+    fn text(&self, file: base::FileId) -> Option<&str> {
+        self.files
+            .get(&file)
+            .map(|input| input.text(self.db).as_str())
+    }
+    fn path(&self, file: base::FileId) -> Option<&str> {
+        self.paths.get(&file).map(String::as_str)
+    }
+}
+
 /// A CLI source provider: the `FileId → text` map for the caret excerpt PLUS a
 /// `FileId → display path` map so the header shows `src/Main.sky:line:col`
 /// (matching the oracle) rather than a bare `line:col`.
@@ -5934,5 +5957,146 @@ mod check_world_checkpoint_tests {
             actual.def_types.is_empty(),
             "build collected type-report trees only to discard them later"
         );
+    }
+}
+
+#[cfg(test)]
+mod assembly_source_owner_tests {
+    use super::*;
+    use diagnostics::SourceProvider;
+
+    fn fixture(source: &str) -> (skydb::SkyDatabase, skydb::SourceFile, base::ModuleId) {
+        let mut db = skydb::SkyDatabase::with_kernel();
+        let input = db.new_source(0, source.to_string());
+        let module = db.add_module("Main", input);
+        (db, input, module)
+    }
+
+    fn assert_original_rendering(
+        db: &skydb::SkyDatabase,
+        modules: &[base::ModuleId],
+        paths: &std::collections::HashMap<base::FileId, String>,
+        diagnostics: &[diagnostics::Diagnostic],
+    ) {
+        // Independent exact pre-change implementation retained as the byte,
+        // label, path and ordering oracle; it deliberately owns its text.
+        let copied: std::collections::HashMap<base::FileId, String> = modules
+            .iter()
+            .map(|m| {
+                (
+                    base::FileId(m.index()),
+                    db.source_file(*m).text(db).to_string(),
+                )
+            })
+            .collect();
+        let old = CliSources {
+            text: &copied,
+            paths,
+        };
+        let actual = assembly_sources(db, modules, paths);
+        let a = render_diags(diagnostics, &actual);
+        let b = render_diags(diagnostics, &old);
+        assert_eq!(a.diagnostics, b.diagnostics);
+        assert_eq!(a.render(), b.render());
+        for file in modules
+            .iter()
+            .map(|m| base::FileId(m.index()))
+            .chain([base::FileId(999)])
+        {
+            assert_eq!(actual.text(file), old.text(file));
+            assert_eq!(actual.path(file), old.path(file));
+        }
+        assert_eq!(actual.text(base::FileId(999)), None);
+        assert_eq!(actual.path(base::FileId(999)), None);
+    }
+
+    #[test]
+    fn assembly_diagnostics_share_actual_nonempty_source_input_owner() {
+        let source =
+            "module Main exposing (main)\n\n-- λ and 雪 are UTF-8 source bytes\nmain = \"héllo\"\n";
+        let (db, input, module) = fixture(source);
+        let parsed = skydb::parse(&db, input);
+        assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+        let paths = std::collections::HashMap::from([(
+            base::FileId(module.index()),
+            "src/Unicode.sky".to_string(),
+        )]);
+        let provider = assembly_sources(&db, &[module], &paths);
+        let original = input.text(&db);
+        let supplied = provider.text(base::FileId(module.index())).unwrap();
+        assert_eq!(supplied, source);
+        assert_eq!(supplied.len(), original.len());
+        assert!(original.len() > 64, "nonempty actual source-byte premise");
+        // Both owners are alive: allocator address reuse cannot mask the
+        // original retained .to_string allocation. No asset bytes are counted.
+        assert!(
+            std::ptr::eq(supplied, original.as_str()),
+            "assembly diagnostics copied the database source text"
+        );
+    }
+
+    #[test]
+    fn assembly_diagnostic_bytes_labels_and_order_survive_ffi_and_source_revisions() {
+        for source in [
+            "module Main exposing (main)\n\n-- λ雪\nmain = \"héllo\"\n",
+            "module Main exposing (main)\n\n-- λ雪\nmain : Int\nmain = \"wrong\"\n",
+            "module Main exposing (main)\n\n-- λ雪\nmain = (\n",
+        ] {
+            let (mut db, input, module) = fixture(source);
+            let file = base::FileId(module.index());
+            let paths = std::collections::HashMap::from([(file, "src/Unicode.sky".to_string())]);
+            let parsed = skydb::parse(&db, input);
+            let malformed = source.ends_with("(\n");
+            assert_eq!(
+                !parsed.errors().is_empty() || parsed.error_node_count() > 0,
+                malformed
+            );
+            let offset = source.find('λ').unwrap() as u32;
+            let custom = diagnostics::Diagnostic::error("E2001", "first diagnostic")
+                .with_label(
+                    base::Span::new(file, offset, offset + 'λ'.len_utf8() as u32),
+                    "primary unicode",
+                )
+                .with_label(
+                    base::Span::new(base::FileId(999), 0, 1),
+                    "missing secondary source",
+                );
+            let unlocated = diagnostics::Diagnostic::error("E2007", "second diagnostic");
+            let mut diags = vec![custom, unlocated];
+            diags.extend(parsed.errors().iter().cloned());
+            if !malformed {
+                let checked = ty::check_modules(&db, &[module]);
+                assert_eq!(checked.name_errors, 0);
+                assert_eq!(checked.type_errors > 0, source.contains("main : Int"));
+                diags.extend(checked.diagnostics);
+            }
+            assert_original_rendering(&db, &[module], &paths, &diags);
+            let before = {
+                let facade = assembly_sources(&db, &[module], &paths);
+                render_diags(&diags, &facade).diagnostics
+            }; // all facade/text borrows end BEFORE the real FFI input mutation
+            db.set_ffi_surface(std::sync::Arc::new(hir::FfiSurface::default()));
+            let after = {
+                let facade = assembly_sources(&db, &[module], &paths);
+                assert_eq!(facade.text(file), Some(source));
+                assert_eq!(facade.path(file), Some("src/Unicode.sky"));
+                render_diags(&diags, &facade).diagnostics
+            };
+            assert_eq!(before, after, "FFI input mutation changed source rendering");
+            assert_original_rendering(&db, &[module], &paths, &diags);
+
+            let revised = "module Main exposing (main)\n\n-- λ revised 雪\nmain = \"updated\"\n";
+            db.set_source_text(input, revised.to_string());
+            let facade = assembly_sources(&db, &[module], &paths);
+            assert_eq!(facade.text(file), Some(revised));
+            assert!(
+                std::ptr::eq(facade.text(file).unwrap(), input.text(&db).as_str()),
+                "revised source owner was copied"
+            );
+            assert_original_rendering(&db, &[module], &paths, &diags);
+            // Reports are owned values and remain stable after their source
+            // revision; no borrowed diagnostic text escapes into LoadedProgram.
+            assert_eq!(before, after);
+        }
     }
 }

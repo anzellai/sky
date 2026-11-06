@@ -1155,3 +1155,72 @@ still pending, and the prior compiler is stale for these sources. No measured
 memory saving or successful private-application rebuild is claimed. The discovered
 raw-ID authority regressions and remaining Codec occurs growth are separate fixes
 in progress. No guard, counter limit, golden or release policy changes.
+
+Checkpoint `01de151a7` subsequently passes the full local project suite in
+286 seconds: 520 tests, two existing ignores, 49 result summaries. Full
+type/lower/database and hosted checks remain pending.
+
+Hosted [run 42269060167](https://github.com/anzellai/sky/actions/runs/42269060167)
+also passes all 40 jobs for allocation checkpoint `01de151a7`. This does not
+certify the subsequent authority or source-provider refinements.
+
+
+## Fresh-ID authority and assembly source ownership
+
+Three executed raw-UF counterexamples expose old row-complement loss and an
+incorrect dead-instance reservation after an earlier graph edge predicted a
+future ID. These are internal Rust API tests; no Sky-source trigger has been
+identified. A monotonic ingress history now denies the relevant shortcuts,
+including after edge discard or clone. Valid sparse prefixes remain eligible.
+The three regressions, four new state matrices and all original 17 accessor
+checks pass inside the complete type unit suite (116 passed, one existing
+ignore). The combined type/lower/database sweep passes 570 tests with two
+existing ignores. See the [authority receipt](runs/incremental-final-validation-20261105/shared-fresh-authority.json).
+
+Assembly diagnostics also borrow the database's exact source input text instead
+of retaining duplicate Strings through lowering. The honestly labeled baseline
+extraction preserves the real owned-copy factory before its ownership RED. The
+borrowed facade passes all 336 project unit tests (one existing ignore), including
+Unicode/multiline rendering, missing files, labels/order, FFI mutation and source
+revision parity. The generated config census changes only two source-line
+witnesses; all metrics and other details remain unchanged. Its source-only
+prebuilt detector is unchanged; a freshly rebuilt detector check remains queued.
+See the [source-owner receipt](runs/incremental-final-validation-20261105/assembly-source-owner.json).
+
+These scoped fixes establish neither measured RSS savings nor private-app build
+success. Fresh compiler/coerce/private-app validation and the separate original
+Codec growth repair remain required.
+
+
+## Constructor/pipeline growth repaired on the original fixture
+
+Immutable constructor descriptors preserve all original live IDs and materialize
+ordinary edges before observation or mutation. A separate synchronous pipeline
+operation owns its new result until the original expected-wrapper edge is
+removed and parameter unification succeeds. Its local, single-use permit avoids
+an impossible occurs walk; unsupported or uncertain cases retain ordinary
+unification. Ordinary Call is unchanged.
+
+The exact original growth test first fails with the constructor foundation and
+original pipeline at Codec occurs ratios 3.43/3.45. The candidate then passes all
+eight counters at exactly 2.00 for the original 100/200/400 sources and unchanged
+2.3 ceiling. The existing test is now active. All 140 type unit tests pass with
+one existing ignore, including 48 explicitly counted focused cases. The combined
+type/lower/database/project sweep passes 1,117 tests with three existing ignores,
+117 result summaries. No counter, fixture or golden was relaxed.
+
+An initial packaging omission produced a zero-test compile failure; it is
+retained as setup evidence, not a RED. The corrected packet validates the complete
+six-file inventory before execution. See the [source-bound receipt](runs/incremental-final-validation-20261105/constructor-pipeline-scaling.json).
+
+The candidate is adopted after independent source review and complete local
+sweep. Coerce, fresh compiler, private-app and hosted integration remain pending.
+The measured fixture result does not establish a general memory saving or a
+universal complexity bound for arbitrary programs.
+
+Final local checks for the adopted compiler source also pass: unchanged
+coerce-floor measures all 84 golden rows among 85 discovered projects (one
+existing user exclusion), adapters remain exactly zero and no dispatch/narrow
+count rises. The newly rebuilt census detector passes all 53 assertions after
+the two line-witness updates. Workspace formatting passes. Fresh canonical,
+current private-app and new hosted validation remain pending.

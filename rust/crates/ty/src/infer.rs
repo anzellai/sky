@@ -134,6 +134,10 @@ pub struct Infer<'a> {
     /// A skyType is parsed only when a reference to it is first instantiated,
     /// and at most once per run — never the whole surface.
     ffi_schemes: HashMap<(Name, Name), Scheme>,
+    /// Immutable declaration descriptors only, local to this fixed World run.
+    ground_constructors: HashMap<DefId, Option<std::sync::Arc<crate::unify::GroundShape>>>,
+    #[cfg(test)]
+    no_ground_constructor: bool,
     /// Let-generalisation (doc 06 §"Let-generalisation"): a let binder that
     /// passes the value restriction (a function, or a syntactic value),
     /// generalised over the flex vars its type does not share with the
@@ -220,6 +224,9 @@ impl<'a> Infer<'a> {
             pin_number: false,
             cur_span: None,
             ffi_schemes: HashMap::new(),
+            ground_constructors: HashMap::new(),
+            #[cfg(test)]
+            no_ground_constructor: false,
             poly_locals: HashMap::new(),
             poly_insts: Vec::new(),
             last_vr: None,
@@ -2406,7 +2413,7 @@ impl<'a> Infer<'a> {
                 // e.g. `SkyResult[any,any]` vs `SkyResult[any,[]any]`).
                 if let Some(s) = self.world.value_sigs.get(&def) {
                     let s = s.clone();
-                    return self.instantiate(&s);
+                    return self.instantiate_record_constructor(def, &s);
                 }
                 if self.self_def == Some(def) {
                     return self.recursive_type.unwrap_or_else(|| self.uf.fresh_flex());
@@ -2609,18 +2616,20 @@ impl<'a> Infer<'a> {
                 self.unify(tr, boolt);
                 self.con("Bool", vec![])
             }
-            // pipes: a |> (a -> b) => b   ;   (a -> b) <| a => b
-            "|>" => {
-                let b = self.uf.fresh_flex();
-                let f = self.fun(tl, b);
-                self.unify(tr, f);
-                b
-            }
-            "<|" => {
-                let b = self.uf.fresh_flex();
-                let f = self.fun(tr, b);
-                self.unify(tl, f);
-                b
+            // Pipes use the private synchronous fresh-result factory.
+            // Ordinary Call's diagnostic prepass remains on its original path.
+            "|>" | "<|" => {
+                let (function, argument) = if op == "|>" { (tr, tl) } else { (tl, tr) };
+                #[cfg(test)]
+                if self.no_fast_paths {
+                    let b = self.uf.fresh_flex();
+                    let f = self.fun(argument, b);
+                    self.unify(function, f);
+                    return b;
+                }
+                let (result, outcome) = self.uf.unify_application(function, argument);
+                self.finish_unify(outcome);
+                result
             }
             // composition: (a->b) >> (b->c) => a->c  ; (b->c) << (a->b) => a->c
             ">>" => {
@@ -2833,6 +2842,28 @@ impl<'a> Infer<'a> {
     }
 
     // ---- instantiation (doc 06 §"Generalisation & instantiation") -------
+
+    fn instantiate_record_constructor(&mut self, def: DefId, s: &Scheme) -> TyVarId {
+        #[cfg(test)]
+        if self.no_fast_paths || self.no_ground_constructor {
+            return self.instantiate(s);
+        }
+        if !s.vars.is_empty()
+            || !matches!(&s.ty, Ty::Fun(..))
+            || !self.world.is_record_constructor(self.db, def)
+        {
+            return self.instantiate(s);
+        }
+        let shape = self
+            .ground_constructors
+            .entry(def)
+            .or_insert_with(|| crate::unify::GroundShape::constructor(&s.ty))
+            .clone();
+        match shape {
+            Some(shape) => self.uf.fresh_ground_constructor(shape),
+            None => self.instantiate(s),
+        }
+    }
 
     pub(crate) fn instantiate(&mut self, s: &Scheme) -> TyVarId {
         let mut sub: HashMap<String, TyVarId> = HashMap::new();

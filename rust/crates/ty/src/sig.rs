@@ -200,6 +200,25 @@ impl std::ops::DerefMut for World {
 }
 
 impl World {
+    /// Exact resolved record-alias constructor declaration. Never consult the
+    /// ambiguous bare alias table or grant by a printed/name-shape heuristic.
+    pub(crate) fn is_record_constructor(&self, db: &dyn SkyDb, def: DefId) -> bool {
+        let Some(loc) = db.def_loc(def) else {
+            return false;
+        };
+        if loc.kind != DefKind::Value {
+            return false;
+        }
+        let key = format!("{}.{}", db.module_name(loc.module), loc.name.as_str());
+        matches!(
+            self.alias_by_mod.get(&key),
+            Some(AliasDef {
+                body: Ty::Record(..),
+                ..
+            })
+        )
+    }
+
     /// The (field-name, field-type) pairs of a record alias in DECLARATION order,
     /// with every field-type reference resolved through HIR in the DECLARING
     /// module's scope (`m`). A reference to a declared alias or union becomes its
