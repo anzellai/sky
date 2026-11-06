@@ -6,12 +6,12 @@ import (
 	"reflect"
 )
 
-// Summary identities are typed private node pointers, never uintptr. Shared
-// pointers are kept only when the CURRENT Dict contains that exact subtree.
-// Leaves store numbers only: no keys, values, parent roots or epoch history.
+// Retained certificates contain ONLY scalar shape/count/size metadata and
+// child certificates. They never hold model nodes, values, interfaces or epoch
+// history. Typed old/current Dict pointers are compared invocation-locally,
+// under spaEncodeClosed's existing prior-certificate/old-owner pairing contract.
 // units includes both node headers and every retained children slot.
 type spaClosedDictSummary struct {
-	kids                             any
 	bitmap                           uint32
 	flat                             bool
 	leaf                             bool
@@ -28,6 +28,47 @@ func (s *spaClosedDictSummary) jsonSize() uint64 {
 		size = spaSizeAdd(size, uint64(s.count-1))
 	}
 	return size
+}
+
+// Validate only retained scalar shape at this level. Descendant validity was
+// established when the successful old-owner certificate was constructed.
+// This bounded width check does not walk a physically unchanged old subtree.
+func spaDictSummaryLeafValid(s *spaClosedDictSummary) bool {
+	return s != nil && s.leaf && !s.flat && s.bitmap == 0 && s.count == 1 && s.units == 1 && s.nodes == 1 && s.height == 0 && len(s.children) == 0 && s.keyBytes >= 2 && s.valueBytes > 0 && s.entryBytes == spaSizeAdd(spaSizeAdd(s.keyBytes, 1), s.valueBytes)
+}
+func spaDictSummaryBranchValid(s *spaClosedDictSummary, bitmap uint32, flat bool, width int) bool {
+	if s == nil || s.leaf || s.bitmap != bitmap || s.flat != flat || len(s.children) != width || width > dictFlatMax || s.keyBytes != 0 || s.valueBytes != 0 || s.units < 1 || s.units > spaClosedEncodingNodeLimit || s.nodes < 1 || s.nodes > spaClosedEncodingNodeLimit || s.count < 0 || s.count > spaClosedEncodingNodeLimit {
+		return false
+	}
+	if flat {
+		if bitmap != 0 {
+			return false
+		}
+	} else if bits.OnesCount32(bitmap) != width || bitmap&^uint32((1<<(1<<dictBits))-1) != 0 {
+		return false
+	}
+	units, nodes, count, height := 1+width, 1, 0, 0
+	var entryBytes uint64
+	for _, child := range s.children {
+		if child == nil || child.units < 1 || child.units > spaClosedEncodingNodeLimit || child.nodes < 1 || child.nodes > spaClosedEncodingNodeLimit || child.count < 1 || child.count > spaClosedEncodingNodeLimit || child.height < 0 || child.height > spaClosedEncodingDepthLimit {
+			return false
+		}
+		if child.leaf {
+			if !spaDictSummaryLeafValid(child) {
+				return false
+			}
+		} else if flat {
+			return false
+		}
+		units += child.units
+		nodes += child.nodes
+		count += child.count
+		if child.height+1 > height {
+			height = child.height + 1
+		}
+		entryBytes = spaSizeAdd(entryBytes, child.entryBytes)
+	}
+	return s.units == units && s.nodes == nodes && s.count == count && s.height == height && s.entryBytes == entryBytes
 }
 
 type spaClosedDictSummaryMarker interface {
@@ -78,6 +119,9 @@ func (c *spaClosedEncodeContext) keepDictSummary(node, prior *spaClosedEncodingN
 	if prior == nil || prior.dict == nil || c.options.DiscardRawRetention {
 		return
 	}
+	if !spaDictSummaryBranchValid(prior.dict, prior.dict.bitmap, prior.dict.flat, len(prior.dict.children)) {
+		return
+	}
 	if prior.dict.units > c.budget.NodesLeft || depth+1+prior.dict.height > c.budget.DepthLimit {
 		return
 	}
@@ -115,9 +159,14 @@ func (d spaPrimitiveDictSummary[V]) spaClosedDictSummaryBuild(c *spaClosedEncode
 }
 func spaBuildPrimitiveDictSummary[V any](d SkyDict[V], c *spaClosedEncodeContext, previous any, prior *spaClosedDictSummary, depth int) *spaClosedDictSummary {
 	old, ok := previous.(SkyDict[V])
-	if !ok || prior == nil || prior.kids != any(old.kids) || prior.flat == old.trie || prior.bitmap != old.bm || prior.count != old.n || old.foreign != d.foreign {
+	if prior != nil && (!ok || prior.leaf || prior.flat == old.trie || prior.bitmap != old.bm || prior.count != old.n || old.foreign != d.foreign) {
+		// No retained pointer is needed to authenticate this association: the
+		// enclosing cache pairs prior with its exact immutable old model. Reject
+		// scalar/layout contradictions instead of borrowing an unrelated shape.
+		return nil
+	}
+	if prior == nil {
 		old = SkyDict[V]{}
-		prior = nil
 	}
 	builder := spaDictSummaryBuilder[V]{ctx: c}
 	var current, previousKids []dslot[V]
@@ -165,7 +214,7 @@ func (b spaDictSummaryBuilder[V]) slot(current dslot[V], old *dslot[V], prior *s
 	if !b.charge(1, 1, depth) {
 		return nil
 	}
-	sameKey := old != nil && old.kids == nil && old.key == current.key && prior != nil && prior.leaf
+	sameKey := old != nil && old.kids == nil && old.key == current.key && spaDictSummaryLeafValid(prior)
 	if sameKey && spaDictPrimitiveSame(any(current.val), any(old.val)) {
 		return prior
 	}
@@ -195,9 +244,9 @@ func (b spaDictSummaryBuilder[V]) slot(current dslot[V], old *dslot[V], prior *s
 }
 
 func (b spaDictSummaryBuilder[V]) branch(ptr *dslot[V], bitmap uint32, flat bool, current []dslot[V], oldPtr *dslot[V], oldBitmap uint32, oldFlat bool, old []dslot[V], prior *spaClosedDictSummary, depth int) *spaClosedDictSummary {
-	validPrior := prior != nil && !prior.leaf && prior.kids == any(oldPtr) && prior.bitmap == oldBitmap && prior.flat == oldFlat && len(prior.children) == len(old)
-	if !validPrior {
-		prior = nil
+	validPrior := spaDictSummaryBranchValid(prior, oldBitmap, oldFlat, len(old))
+	if prior != nil && !validPrior {
+		return nil
 	}
 	if prior != nil && ptr == oldPtr && bitmap == oldBitmap && flat == oldFlat && len(current) == len(old) {
 		if !b.charge(prior.units, prior.nodes, depth+prior.height) {
@@ -208,7 +257,7 @@ func (b spaDictSummaryBuilder[V]) branch(ptr *dslot[V], bitmap uint32, flat bool
 	if !b.charge(1+len(current), 1, depth) {
 		return nil
 	}
-	s := &spaClosedDictSummary{kids: ptr, bitmap: bitmap, flat: flat, units: 1 + len(current), nodes: 1, children: make([]*spaClosedDictSummary, 0, len(current))}
+	s := &spaClosedDictSummary{bitmap: bitmap, flat: flat, units: 1 + len(current), nodes: 1, children: make([]*spaClosedDictSummary, 0, len(current))}
 	bit := uint32(1)
 	for _, slot := range current {
 		index := -1

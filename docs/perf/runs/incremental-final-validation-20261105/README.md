@@ -35,4 +35,8 @@ IME behavior or successful desktop GUI operation.
 Real private-app browser validation remains a separate required gate.
 
 `dict-summary-validation-attempts.json` records guard-stopped prototype
-compilations. No prototype test executed locally; hosted validation is pending.
+compilations. No prototype test executed locally. Hosted run 42136087088 subsequently failed
+the same cache-retention invariant in three jobs; 36 of 40 jobs passed.
+`dict-scalar-ci-correction.json` records that failure and the reviewed source
+correction removing retained model pointers. The corrected checkpoint still
+requires hosted full-runtime and race validation.

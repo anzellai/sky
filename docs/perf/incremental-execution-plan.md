@@ -782,9 +782,10 @@ The reviewed prototype adds bounded summaries of immutable Dict subtrees for
 exact string/int/bool values. It can derive an exact oversized NoWrite decision
 after a changed primitive without rebuilding unchanged entries. Writable
 snapshots, protected fields, metadata-sensitive declarations and unsupported or
-unaffordable summaries retain canonical conversion. Leaves retain only numeric
-metadata; branch pointers must remain reachable from the current Dict. The
-4096-unit ledger bounds each retained cache graph, not all concurrent graphs or
+unaffordable summaries retain canonical conversion. Leaves and branches retain
+only scalar metadata and child certificates. Private Dict pointers are compared
+only during an invocation, under the existing old-owner/certificate pairing;
+none is stored in a certificate. The 4096-unit ledger bounds each retained cache graph, not all concurrent graphs or
 process memory. Cold summary construction and cap-crossing fallback add real
 work, which remains counted.
 
@@ -797,6 +798,16 @@ behavior; it is not a full-suite substitute. No local performance or correctness
 PASS is claimed for the new prototype. The draft feature-branch checkpoint is
 being submitted to the existing hosted full runtime and race jobs for validation.
 Main, release tags and deployed applications remain untouched.
+
+[Hosted run 42136087088](https://github.com/anzellai/sky/actions/runs/42136087088) reached the existing cache-reachability
+invariant: runtime-rt, macos-determinism and integration-postgres-2 all reported
+the same failure. The first prototype retained private Dict branch pointers,
+which violated that invariant even when the branches belonged to the current
+model. The source correction removes them, keeps scalar shape validation and
+extends the exact-type reachability guard without admitting model, value, plan,
+interface or snapshot pointers. It adds a contradictory-certificate regression;
+the original 131-byte RED assertion remains unchanged. This correction has not
+been compiled locally; further hosted validation is required.
 
 Current-app browser work is also still pending. The original typing fixture
 requires twelve products: the UI hides its search below that threshold. Restoring

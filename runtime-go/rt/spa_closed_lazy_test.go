@@ -191,6 +191,7 @@ func TestSpaClosedLazyResolutionClearsInvocationOwnersAndCacheCannotReachPlans(t
 	// Inspect actual cache-node type reachability. Only immutable type metadata,
 	// scalar certificates and recursive node pointers/slices are permitted.
 	nodeType := reflect.TypeOf(spaClosedEncodingNode{})
+	dictType := reflect.TypeOf(spaClosedDictSummary{})
 	typeInterface := reflect.TypeOf((*reflect.Type)(nil)).Elem()
 	seen := map[reflect.Type]bool{}
 	var inspect func(reflect.Type) bool
@@ -203,14 +204,14 @@ func TestSpaClosedLazyResolutionClearsInvocationOwnersAndCacheCannotReachPlans(t
 		}
 		seen[typ] = true
 		switch typ.Kind() {
-		case reflect.String, reflect.Bool, reflect.Uint8, reflect.Uint64:
+		case reflect.String, reflect.Bool, reflect.Int, reflect.Uint8, reflect.Uint32, reflect.Uint64:
 			return true
 		case reflect.Pointer:
-			return typ.Elem() == nodeType && inspect(typ.Elem())
+			return (typ.Elem() == nodeType || typ.Elem() == dictType) && inspect(typ.Elem())
 		case reflect.Slice:
-			return typ.Elem() == reflect.PointerTo(nodeType) && inspect(typ.Elem())
+			return (typ.Elem() == reflect.PointerTo(nodeType) || typ.Elem() == reflect.PointerTo(dictType)) && inspect(typ.Elem())
 		case reflect.Struct:
-			if typ != nodeType {
+			if typ != nodeType && typ != dictType {
 				return false
 			}
 			for i := 0; i < typ.NumField(); i++ {
@@ -225,6 +226,24 @@ func TestSpaClosedLazyResolutionClearsInvocationOwnersAndCacheCannotReachPlans(t
 	}
 	if !inspect(nodeType) {
 		t.Fatal("cache-node graph can retain model/plan/value/snapshot state")
+	}
+	// The new exact certificate type is permitted; arbitrary pointer/interface
+	// escape hatches remain forbidden. Reset traversal state for every root.
+	for _, forbidden := range []reflect.Type{
+		reflect.TypeOf((*spaClosedBytePlan)(nil)),
+		reflect.TypeOf((*spaClosedLazyLeaf)(nil)),
+		reflect.TypeOf((*codecEnumRegistrySnapshot)(nil)),
+		reflect.TypeOf((*reflect.Value)(nil)),
+		reflect.TypeOf((*dslot[string])(nil)),
+		reflect.TypeOf((*SkyDict[string])(nil)),
+		reflect.TypeOf((*any)(nil)).Elem(),
+		reflect.TypeOf([]any{}),
+		reflect.TypeOf([]*dslot[string]{}),
+	} {
+		seen = map[reflect.Type]bool{}
+		if inspect(forbidden) {
+			t.Fatal("cache reachability guard admitted arbitrary model/plan/value/snapshot state")
+		}
 	}
 }
 

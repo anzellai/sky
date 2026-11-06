@@ -153,31 +153,25 @@ func TestSpaDictSummaryBudgetDepthAndCurrentOwner(t *testing.T) {
 	if previous.units != oldUnits || warm.Cache.dict != previous {
 		t.Fatal("old immutable summary mutated")
 	}
-	reachable := map[*dslot[string]]bool{next.kids: true}
-	var inventory func(dslot[string])
-	inventory = func(s dslot[string]) {
-		if s.kids == nil {
-			return
-		}
-		reachable[s.kids] = true
-		for _, child := range s.children() {
-			inventory(child)
-		}
-	}
-	if next.trie {
-		inventory(next.root())
-	}
+
+	// Every retained node is scalar-only; no typed slot pointer is permitted
+	// even when that slot would happen to be reachable from the current owner.
 	var check func(*spaClosedDictSummary)
 	check = func(s *spaClosedDictSummary) {
-		if s.leaf {
-			if s.kids != nil || len(s.children) != 0 {
-				t.Fatal("leaf summary retains old slot/value owner")
+		typ := reflect.TypeOf(*s)
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			if field.Name == "children" && field.Type == reflect.TypeOf([]*spaClosedDictSummary{}) {
+				continue
 			}
-			return
+			switch field.Type.Kind() {
+			case reflect.Bool, reflect.Int, reflect.Uint32, reflect.Uint64:
+			default:
+				t.Fatal("summary certificate can retain model/value/interface state")
+			}
 		}
-		ptr, ok := s.kids.(*dslot[string])
-		if !ok || !reachable[ptr] {
-			t.Fatal("summary retained an old exclusive slot array")
+		if s.leaf && !spaDictSummaryLeafValid(s) {
+			t.Fatal("invalid scalar leaf certificate")
 		}
 		for _, child := range s.children {
 			check(child)
@@ -377,5 +371,46 @@ func TestSpaDictSummaryNoWriteStillFencesIdentityAndSignOut(t *testing.T) {
 	}
 	if len(optimized.calls) != 2 || optimized.calls[0] != "remove" || optimized.calls[1] != "remove" {
 		t.Fatal("identity fencing publication calls changed")
+	}
+}
+
+func TestSpaDictSummaryRejectsContradictoryOldCertificateShape(t *testing.T) {
+	const declared = "rt.SkyDict[string]"
+	old := spaDictSummaryFixture()
+	epoch := codecEnumRegistry()
+	warm := spaDictSummaryEncode(old, nil, nil, declared, nil, 4096, nil)
+	if warm.Cache == nil || warm.Cache.dict == nil {
+		t.Fatal("missing shape fixture")
+	}
+	next := old.Insert("k0128", strings.Repeat("x", 128)+"y")
+	changes := []struct {
+		name   string
+		change func(*spaClosedDictSummary)
+	}{
+		{"count", func(s *spaClosedDictSummary) { s.count-- }},
+		{"bitmap", func(s *spaClosedDictSummary) { s.bitmap ^= 1 }},
+		{"units", func(s *spaClosedDictSummary) { s.units++ }},
+		{"height", func(s *spaClosedDictSummary) { s.height++ }},
+		{"bytes", func(s *spaClosedDictSummary) { s.entryBytes++ }},
+	}
+	for _, tc := range changes {
+		t.Run(tc.name, func(t *testing.T) {
+			certificate := *warm.Cache.dict
+			tc.change(&certificate)
+			node := *warm.Cache
+			node.dict = &certificate
+			r := spaDictSummaryEncode(next, old, &node, declared, epoch, 4096, nil)
+			spaDictSummaryCheck(t, r, next, declared, 4096)
+			if r.Work.BudgetFallbacks == 0 || r.Work.EncodedBytes < uint64(len(spaDictSummaryWant(t, next, declared))) {
+				t.Fatal("contradictory old certificate was trusted")
+			}
+			same := spaDictSummaryEncode(old, old, &node, declared, epoch, 4096, nil)
+			if same.Cache == nil || same.Cache.dict != nil || same.Work.Reuses != 1 {
+				t.Fatal("unchanged root retained contradictory scalar metadata")
+			}
+		})
+	}
+	if warm.Cache.dict.count != old.n {
+		t.Fatal("shape test mutated original certificate")
 	}
 }

@@ -71,8 +71,8 @@ type spaClosedEncodingWork struct {
 }
 
 // Plans are invocation-local. Lazy leaves may capture CURRENT values/pinned
-// metadata, but cache nodes NEVER point to plans or snapshots. Dict summaries
-// may retain typed private subtrees only when reachable from the CURRENT owner.
+// metadata, but cache nodes NEVER point to plans, model/value nodes or snapshots.
+// Dict summaries retain only scalar metadata and child certificates.
 type spaClosedBytePlan struct {
 	raw      string
 	keys     []string
