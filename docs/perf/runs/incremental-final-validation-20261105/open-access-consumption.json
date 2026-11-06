@@ -1,0 +1,68 @@
+{
+  "change": "Consume a fresh singleton open Access constraint without copying its unreachable new-row complement",
+  "source_head_before_change": "d750551d16dfa41066730d752b9b1669d8c9c43a",
+  "source_sha256": "8e137bad2947f0f303c598749194542888806c9bef6fa88f2a8986a1aeca14cb",
+  "reviewed_patch_sha256": "dd5e15a19efda88bd6db2a90bae15fa59b1bc0ed9655bb872e24ee72714633fd",
+  "red": {
+    "exit": 101,
+    "elapsed_seconds": 34,
+    "actual_fields_copied": 24768,
+    "expected_fields_copied": 0
+  },
+  "focused": {
+    "passed": 6,
+    "failed": 0,
+    "elapsed_seconds": 34
+  },
+  "broad": {
+    "passed": 540,
+    "failed": 0,
+    "ignored": 2,
+    "binaries": 68,
+    "elapsed_seconds": 322,
+    "before_behavior_neutral_reservation_method_rename": true
+  },
+  "format": {
+    "exit": 0,
+    "elapsed_seconds": 14
+  },
+  "skip_helper_policy": {
+    "passed": 10,
+    "failed": 0,
+    "elapsed_seconds": 170,
+    "policy_unchanged": true
+  },
+  "growth": {
+    "exit": 101,
+    "elapsed_seconds": 65,
+    "model_app_all_four_ratios": 2.0,
+    "codec_chain_ratios": [
+      3.92,
+      3.87,
+      3.92,
+      3.91
+    ],
+    "overall_passed": false,
+    "original_bound": 2.3,
+    "ignored_status_unchanged": true
+  },
+  "log_sha256": {
+    "red": "98bcc9e8c80964dfd93e3771c3967844cb44d86d74c6079d792dea4e9e6c959b",
+    "focused": "393e726f1a89f079cae09ff415ea660eaf739999ae2284fec58034dc494e92a5",
+    "broad": "47f69294e2c464f7a5a80d26dbae2a9267b12d2fa7124fd3a8f3a49057d6ee88",
+    "format": "18bf957dd335c6068b94bdff0657db617f70ca1943db234509884ca209529b52",
+    "policy": "de2fef1b0a91a508e85f8a536c7cb0ce1766c12827242fd50255526c48b2052a",
+    "growth": "e77f7248bff3a5785c27a87ab4b8b0507a43d5954e6a99839cdc5224ce76799b"
+  },
+  "invariants": [
+    "Only the fresh unpublished singleton Access row is consumed; original rows and held copies remain live.",
+    "Dense oracle compares IDs, ranks, contents, aliases, late closure, errors and pending obligations.",
+    "Record updates, multi-field constraints, rigid/bounded/resolved rows retain the original path.",
+    "No new row registry or global cache; compiler error and logical allocation behavior retained."
+  ],
+  "scope_limits": [
+    "Codec accessor/constructor chains still show quadratic work and remain unresolved.",
+    "Historical application build/RSS improvement has not yet been measured for this change.",
+    "No universal scaling or current private-application browser validation claim."
+  ]
+}
