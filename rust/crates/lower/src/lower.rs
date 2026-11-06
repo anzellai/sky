@@ -139,7 +139,9 @@ impl FfiTable {
 
 mod closure;
 mod numeric;
+mod record_catalog;
 mod retained_types;
+use record_catalog::RecordFields;
 use retained_types::{ParamTypes, ResultTypes, SignatureTy};
 mod spa_capability_domain;
 mod spa_model;
@@ -317,7 +319,7 @@ pub fn lower_program(db: &dyn TyDb, entry: ModuleId) -> LowerOutput {
 pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> LowerOutput {
     #[cfg(test)]
     {
-        lower_program_impl(db, entry, cfg, None)
+        lower_program_impl(db, entry, cfg, None, None, false)
     }
     #[cfg(not(test))]
     {
@@ -330,6 +332,8 @@ fn lower_program_impl(
     entry: ModuleId,
     cfg: &LowerConfig,
     #[cfg(test)] observer: Option<&mut dyn FnMut(Vec<retained_types::Snapshot>)>,
+    #[cfg(test)] catalog_observer: Option<&mut dyn FnMut(record_catalog::Snapshot)>,
+    #[cfg(test)] reference_catalog: bool,
 ) -> LowerOutput {
     let typer = Typer::new(db);
     let signature_world = typer.declaration_world_owner();
@@ -587,17 +591,16 @@ fn lower_program_impl(
 
     // record `_R` go-name → declared field (Go-name, Sky type) list, for typing
     // record-literal field values to the struct's declared field types.
-    let mut record_fields: HashMap<String, Vec<(String, Ty)>> = HashMap::new();
-    for d in &type_decls {
-        if let TypeDeclKind::Record(fields) = &d.kind {
-            record_fields.insert(
-                d.go_name.clone(),
-                fields
-                    .iter()
-                    .map(|(n, t)| (capitalize(n), t.clone()))
-                    .collect(),
-            );
-        }
+    let record_fields = record_catalog::build(&type_decls);
+    #[cfg(test)]
+    let record_fields = if reference_catalog {
+        record_catalog::owned_reference(&type_decls)
+    } else {
+        record_fields
+    };
+    #[cfg(test)]
+    if let Some(observer) = catalog_observer {
+        observer(record_catalog::inspect(&type_decls, &env, &record_fields));
     }
 
     // ctor name → (owning Go type name, kind) reverse index + declaration-order tag.
@@ -2418,7 +2421,7 @@ struct Ctx<'a> {
     /// `withCors`, the only correct source (the curried sig over-counts).
     kernel_alias_arity: &'a HashMap<DefId, usize>,
     env: &'a TypeEnv,
-    record_fields: &'a HashMap<String, Vec<(String, Ty)>>,
+    record_fields: &'a RecordFields<'a>,
     ctor_owner: &'a HashMap<String, (String, NominalKind)>,
     ctor_tag: &'a HashMap<String, usize>,
     ctor_arity: &'a HashMap<String, usize>,
@@ -8946,7 +8949,7 @@ impl<'a> Ctx<'a> {
                 && self
                     .record_fields
                     .get(n)
-                    .map(|fs| fs.iter().any(|(_, t)| matches!(t, Ty::Fun(..))))
+                    .map(|fs| fs.iter().any(|(_, t)| matches!(&**t, Ty::Fun(..))))
                     .unwrap_or(false));
         let nominal = matches!(actual, GoTy::Named(_, _)) && !generic_func_cfg;
         if nominal {
@@ -8979,7 +8982,7 @@ impl<'a> Ctx<'a> {
             GoTy::Named(n, _) if nominal => self
                 .record_fields
                 .get(n)
-                .map(|fs| fs.iter().map(|(n, t)| (n.clone(), t.clone())).collect())
+                .map(|fs| fs.iter().map(|(n, t)| (n.clone(), (**t).clone())).collect())
                 .unwrap_or_default(),
             _ => HashMap::new(),
         };
@@ -9196,7 +9199,11 @@ impl<'a> Ctx<'a> {
             GoTy::Named(n, _) => self
                 .record_fields
                 .get(n)
-                .map(|fs| fs.iter().map(|(fn_, t)| (fn_.clone(), t.clone())).collect())
+                .map(|fs| {
+                    fs.iter()
+                        .map(|(fn_, t)| (fn_.clone(), (**t).clone()))
+                        .collect()
+                })
                 .unwrap_or_default(),
             _ => HashMap::new(),
         };
@@ -10475,11 +10482,7 @@ fn int_lit(n: i64) -> GoExpr {
 /// Is Go type name `n` a nominal record that is NOT the app's TEA Model? (See
 /// `row_poly_positions`: an open row that lowered to such a record resolved to
 /// it by field name alone.)
-fn goty_names_non_model_record(
-    n: &str,
-    record_fields: &HashMap<String, Vec<(String, Ty)>>,
-    env: &TypeEnv,
-) -> bool {
+fn goty_names_non_model_record(n: &str, record_fields: &RecordFields<'_>, env: &TypeEnv) -> bool {
     record_fields.contains_key(n) && env.model.as_ref().map(|(_, m)| m.as_str()) != Some(n)
 }
 

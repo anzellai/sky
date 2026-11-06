@@ -1283,3 +1283,38 @@ regeneration and recheck pass all 53 assertions, and the complete diff changes
 only two project/build.rs line locations. Canonical/private builds and the
 current-source coercion sweep remain pending; the prior resource guard and
 retry headroom condition remain unchanged.
+
+
+## 5ff integration and typed catalog continuation
+
+Checkpoint `5ff291e3b` passes all 40 hosted CI jobs, including the actual Linux
+coercion-floor step and native runtime/tool Go tests. Its fresh canonical build
+passes in 226 seconds with all 2,417 framework inputs unchanged. The next
+source-bound private build still stops at the original swap guard after
+29 seconds, sampled at 1,037 MiB, with zero compiler error codes, successful
+cleanup and all source hashes verified. See the [integration receipt](runs/incremental-final-validation-20261105/5ff-integration.json).
+The existing lower marker covers both IR lowering and Go emission: its missing
+end marker does not distinguish those subphases. No memory-saving conclusion
+follows from comparing these uncontrolled attempts.
+
+The typed catalog candidate borrows authoritative declaration field types while
+preserving all typed consumers, constructor order, generic/module conversion
+and owned literal/update temporary maps. The first packet ran zero tests due
+to one stale test-only inspection signature; it is a setup failure, not RED.
+The corrected packet reproduces the intended ownership assertion only after
+valid parse/check/lower, complete GoIR/value parity and the nested 96-field
+fixture premises. Its candidate passes all 54 lower unit tests, including the
+four retained-type and two peeling tests; the combined suite is running.
+The [catalog receipt](runs/incremental-final-validation-20261105/record-catalog-ownership.json)
+records these distinct results. Root adoption and another meaningful private
+build remain pending. A thin lower/emit boundary diagnostic stays unapplied
+unless that next real build still stops.
+
+
+The catalog combined suite passes 1,127 tests with three existing ignores
+(117 summaries, 712 seconds). The explicit growth run executes the exact fresh
+test artifact from that suite and keeps all eight ratios at 2.00 under the
+unchanged 2.3 bound. The three tested files are adopted byte-for-byte; pinned
+formatting, workspace formatting and the fresh census pass (53 assertions,
+generated census unchanged). Fresh canonical/private builds and current-head
+hosted integration remain the next gates.

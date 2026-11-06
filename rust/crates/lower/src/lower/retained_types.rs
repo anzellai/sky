@@ -114,7 +114,7 @@ fn owned_signature_parameters(sig: &Ty) -> Vec<Ty> {
 pub(super) fn build_caches<'a>(
     defs: &'a BTreeMap<DefId, DefEntry>,
     env: &TypeEnv,
-    record_fields: &HashMap<String, Vec<(String, Ty)>>,
+    record_fields: &RecordFields<'_>,
 ) -> (ParamTypes<'a>, ResultTypes<'a>) {
     let mut def_param_tys: ParamTypes<'_> = HashMap::new();
     for (d, e) in defs {
@@ -245,7 +245,7 @@ pub(super) fn build_caches<'a>(
 fn legacy_caches(
     defs: &BTreeMap<DefId, DefEntry>,
     env: &TypeEnv,
-    record_fields: &HashMap<String, Vec<(String, Ty)>>,
+    record_fields: &RecordFields<'_>,
 ) -> (HashMap<DefId, Vec<Ty>>, HashMap<DefId, Ty>) {
     let mut def_param_tys: HashMap<DefId, Vec<Ty>> = HashMap::new();
     for (d, e) in defs {
@@ -440,7 +440,7 @@ pub(super) fn inspect(
     params: &ParamTypes<'_>,
     results: &ResultTypes<'_>,
     env: &TypeEnv,
-    fields: &HashMap<String, Vec<(String, Ty)>>,
+    fields: &RecordFields<'_>,
 ) -> Vec<Snapshot> {
     let (old_params, old_results) = legacy_caches(defs, env, fields);
     assert_eq!(params.len(), old_params.len());
@@ -543,6 +543,8 @@ mod tests {
             module,
             &LowerConfig::default(),
             Some(&mut observer),
+            None,
+            false,
         );
         assert!(
             out.entry_ok && out.errors.is_empty(),
