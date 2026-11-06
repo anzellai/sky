@@ -14,6 +14,21 @@ do not enable it. No model contents, session values or environment data appear
 in the profile. This is diagnostic plumbing, not an application API or a basis
 for changing runtime decisions.
 
+The opt-in `__skyStepProfile.detail` report also attributes actual root-message
+dispatches and compiler-issued view-memo sites. Message keys are SHA-256 hashes
+of concrete type metadata; no payload fields or user methods are read. Site
+counters distinguish calls, builds, hits, admissions, cumulative commits and
+the **current** committed-entry gauge. `lastInputRows` observes only the direct
+length of an already validated final slice capture. A source binding must prove
+that this capture is the intended list before treating it as a workload size.
+
+Readers must require `complete` and `gaugeKnown`, reject unknown values, and
+compare snapshots within one epoch. Unsupported message shapes, multiple app
+caches, ambiguous metadata and exhausted bounds mark the report incomplete.
+Counters retain bounded numeric metadata, never models or cache entries.
+Resetting counters preserves the algorithm cache and its live-entry gauge;
+it does not create a cold-cache run. These counters are disabled by default.
+
 | Counter or duration | What it measures |
 |---|---|
 | steps | Executed TEA steps |

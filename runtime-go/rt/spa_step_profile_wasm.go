@@ -16,6 +16,7 @@ func spaProfileInit() {
 	reference := js.Global().Get("__skyStepReference")
 	spaStepReference = spaStepProfiling && reference.Type() == js.TypeBoolean && reference.Bool()
 	spaProfileSteps, spaProfileTotals = 0, spaStepMetrics{}
+	spaProfileDetailStart(spaStepProfiling)
 }
 
 func spaProfileReady() {
@@ -91,5 +92,6 @@ func spaProfilePublish(m *spaStepMetrics) {
 	stats["sessionNanos"] = float64(t.SessionNanos)
 	stats["projectionFields"] = t.ProjectionFields
 	stats["projectionBytes"] = t.ProjectionBytes
+	stats["detail"] = spaProfileDetailSnapshot().jsValue()
 	js.Global().Set("__skyStepProfile", js.ValueOf(stats))
 }

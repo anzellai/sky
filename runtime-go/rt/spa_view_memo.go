@@ -87,6 +87,7 @@ type spaViewMemoEntry struct {
 type spaViewMemoEpoch struct{ marker byte }
 
 type spaViewMemoCache struct {
+	detail   *spaDetailCache // numeric profile identity only; nil when off
 	mu       sync.Mutex
 	epoch    *spaViewMemoEpoch
 	current  map[spaViewMemoKey]spaViewMemoEntry
@@ -95,6 +96,7 @@ type spaViewMemoCache struct {
 }
 
 type spaViewMemoFrame struct {
+	detail                  *spaDetailFrame // numeric shadow only; nil when off
 	mu                      sync.Mutex
 	cache                   *spaViewMemoCache
 	epoch                   *spaViewMemoEpoch
@@ -111,14 +113,22 @@ type spaViewMemoFrame struct {
 func (c *spaViewMemoCache) begin(tokens []any) *spaViewMemoFrame {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	detail := spaDetailCacheLocked(c, false)
 	c.epoch = &spaViewMemoEpoch{}
 	metadata := codecEnumRegistry()
 	if c.metadata != metadata {
+		empty := len(c.current) == 0
 		c.current = nil
+		stamp := spaDetailStamp{}
+		if detail != nil {
+			stamp = detail.stamp
+		}
+		spaProfileDetailClear(stamp, empty)
 	}
 	c.metadata = metadata
 	f := &spaViewMemoFrame{
-		cache: c, epoch: c.epoch, previous: c.current, metadata: metadata,
+		detail: detail,
+		cache:  c, epoch: c.epoch, previous: c.current, metadata: metadata,
 		next: map[spaViewMemoKey]spaViewMemoEntry{}, visits: map[int]int{},
 		accepted: map[reflect.Type]bool{}, open: true,
 		valuesLeft: spaViewMemoValueBudget, stringsLeft: spaViewMemoStringBudget,
@@ -153,7 +163,13 @@ func (c *spaViewMemoCache) begin(tokens []any) *spaViewMemoFrame {
 		}
 	}
 	if !matched {
+		empty := len(c.current) == 0
 		c.current = nil
+		stamp := spaDetailStamp{}
+		if detail != nil {
+			stamp = detail.stamp
+		}
+		spaProfileDetailClear(stamp, empty)
 		f.previous = nil
 	}
 	c.accepted = f.accepted
@@ -177,6 +193,13 @@ func (f *spaViewMemoFrame) finish(success bool) {
 	if !success {
 		f.aborted = true
 	}
+	var detail *spaDetailFrame
+	if f.detail != nil {
+		shadow := *f.detail
+		detail = &shadow
+		f.detail.counts = nil
+		f.detail.known = false
+	}
 	next := f.next
 	metadata := f.metadata
 	f.metadata = nil
@@ -184,19 +207,33 @@ func (f *spaViewMemoFrame) finish(success bool) {
 	f.next = nil
 	f.visits = nil
 	f.mu.Unlock()
+	spaProfileDetailFrameEnd(detail)
 	f.cache.mu.Lock()
 	defer f.cache.mu.Unlock()
 	if f.cache.epoch != f.epoch {
 		return
 	}
 	if f.cache.metadata != metadata || metadata != codecEnumRegistry() {
+		empty := len(f.cache.current) == 0
 		f.cache.current = nil
+		stamp := spaDetailStamp{}
+		if detail != nil {
+			stamp = detail.stamp
+		}
+		spaProfileDetailClear(stamp, empty)
 		return
 	}
 	if success && !f.aborted {
 		f.cache.current = next
+		spaProfileDetailPublish(detail, len(next) == 0)
 	} else {
+		empty := len(f.cache.current) == 0
 		f.cache.current = nil
+		stamp := spaDetailStamp{}
+		if detail != nil {
+			stamp = detail.stamp
+		}
+		spaProfileDetailClear(stamp, empty)
 	}
 }
 
@@ -209,8 +246,11 @@ func (f *spaViewMemoFrame) liveEpoch() bool {
 func (c *spaViewMemoCache) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	stamp := spaDetailCurrentCacheStamp(c)
+	empty := len(c.current) == 0
 	c.epoch = &spaViewMemoEpoch{}
 	c.current = nil
+	spaProfileDetailClear(stamp, empty)
 	c.metadata = nil
 }
 
@@ -221,7 +261,10 @@ func (c *spaViewMemoCache) reset() {
 func SpaViewMemoRegion(ctx any, site int, captures any, build func() any) any {
 	f, ok := ctx.(*spaViewMemoFrame)
 	deps, depsOK := captures.([]any)
+	spaProfileDetailSite(f, site, 0, reflect.Value{})
 	if !ok || f == nil || !depsOK || len(deps) > spaViewMemoMaxCaptures || site < 0 {
+		spaDetailBad()
+		spaProfileDetailSite(f, site, 1, reflect.Value{})
 		return build()
 	}
 	values := make([]reflect.Value, len(deps))
@@ -229,22 +272,33 @@ func SpaViewMemoRegion(ctx any, site int, captures any, build func() any) any {
 		var valid bool
 		values[i], valid = spaViewMemoCaptured(dep)
 		if !valid {
+			spaDetailBad()
+			spaProfileDetailSite(f, site, 1, reflect.Value{})
 			return build()
 		}
 	}
+	if len(values) > 0 {
+		spaProfileDetailSite(f, site, 3, values[len(values)-1])
+	} else {
+		spaDetailBad()
+	}
 	f.mu.Lock()
 	if !f.open || f.finished || f.aborted {
+		spaDetailBad()
 		f.mu.Unlock()
+		spaProfileDetailSite(f, site, 1, reflect.Value{})
 		return build()
 	}
 	if !f.liveEpoch() {
 		f.open = false
 		f.aborted = true
 		f.mu.Unlock()
+		spaProfileDetailSite(f, site, 1, reflect.Value{})
 		return build()
 	}
 	if _, exists := f.visits[site]; !exists && len(f.visits) >= spaViewMemoMaxEntries {
 		f.mu.Unlock()
+		spaProfileDetailSite(f, site, 1, reflect.Value{})
 		return build()
 	}
 	visit := f.visits[site]
@@ -252,6 +306,7 @@ func SpaViewMemoRegion(ctx any, site int, captures any, build func() any) any {
 	key := spaViewMemoKey{site, visit}
 	if len(f.next) >= spaViewMemoMaxEntries {
 		f.mu.Unlock()
+		spaProfileDetailSite(f, site, 1, reflect.Value{})
 		return build()
 	}
 	old, found := f.previous[key]
@@ -270,13 +325,16 @@ func SpaViewMemoRegion(ctx any, site int, captures any, build func() any) any {
 				f.open = false
 				f.aborted = true
 				f.mu.Unlock()
+				spaProfileDetailSite(f, site, 1, reflect.Value{})
 				return build()
 			}
 			f.hits++
+			spaProfileDetailSite(f, site, 2, reflect.Value{})
 			if old.valueCost <= f.valuesLeft && old.stringCost <= f.stringsLeft {
 				f.valuesLeft -= old.valueCost
 				f.stringsLeft -= old.stringCost
 				f.next[key] = spaViewMemoEntry{captures: append([]any(nil), deps...), result: old.result, valueCost: old.valueCost, stringCost: old.stringCost}
+				spaProfileDetailAdmission(f, site)
 			}
 			f.mu.Unlock()
 			return old.result
@@ -299,11 +357,13 @@ func SpaViewMemoRegion(ctx any, site int, captures any, build func() any) any {
 	f.mu.Unlock()
 	// A panic propagates exactly once. The renderer's deferred finish(false)
 	// discards all staged entries; there is no effect replay or Full restart.
+	spaProfileDetailSite(f, site, 1, reflect.Value{})
 	result := build()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if inputOK && f.open && !f.finished && !f.aborted && f.liveEpoch() && len(f.next) < spaViewMemoMaxEntries && f.dataOnly(reflect.ValueOf(result), 0) {
 		f.next[key] = spaViewMemoEntry{captures: append([]any(nil), deps...), result: result, valueCost: valuesBefore - f.valuesLeft, stringCost: stringsBefore - f.stringsLeft}
+		spaProfileDetailAdmission(f, site)
 	}
 	return result
 }
@@ -505,7 +565,9 @@ type spaViewMemoApp struct {
 type spaViewMemoMetrics struct{ Frames, Hits, Builds, Resets int }
 
 func newSpaViewMemoApp(fns SpaFns) *spaViewMemoApp {
-	return &spaViewMemoApp{view: fns.View, memo: fns.ViewMemo, types: append([]any(nil), fns.ViewMemoTypes...)}
+	app := &spaViewMemoApp{view: fns.View, memo: fns.ViewMemo, types: append([]any(nil), fns.ViewMemoTypes...)}
+	spaProfileDetailNewCache(&app.cache)
+	return app
 }
 func (a *spaViewMemoApp) begin() *spaViewMemoFrame     { return a.cache.begin(a.types) }
 func (a *spaViewMemoApp) seal(frame *spaViewMemoFrame) { frame.seal() }

@@ -1,0 +1,81 @@
+{
+  "source_base": "716b3e88fcf9f42922c3fc0c56b5436e02497ecf",
+  "adopted": true,
+  "source_packet_sha256": "8691a904a46d714cd8127b701d48f570cd45df59f394591b443bd2bd875ae1b4",
+  "manifest_only_execution_copy": {
+    "same_declared_source_hashes": true,
+    "excluded_unlisted_drafts": 2
+  },
+  "setup_failures_not_red": [
+    {
+      "scope": "full native rt test package",
+      "executed_tests": 0,
+      "elapsed_seconds": 41,
+      "classification": "original swap guard stopped compiler at 1042MiB"
+    },
+    {
+      "scope": "full original js rt test package",
+      "executed_tests": 0,
+      "elapsed_seconds": 11,
+      "classification": "existing native-only SQLite test dependency unavailable on js"
+    }
+  ],
+  "focused_contract_scope": {
+    "all_production_sources_assets_module_preserved": true,
+    "production_imports_initialization_and_dependencies_equal": true,
+    "unchanged_new_test_files": 2,
+    "full_native_runtime_suite_claimed": false,
+    "full_original_js_test_suite_claimed": false,
+    "production_equivalence_verified_before_and_after": true
+  },
+  "wasm_red": {
+    "executed": 2,
+    "intended_missing_actual_event_failures": 2,
+    "elapsed_seconds": 9,
+    "normal_test_exit": true
+  },
+  "wasm_green": {
+    "passed": 17,
+    "failed": 0,
+    "elapsed_seconds": 10,
+    "actual_js_publication_test_included": true
+  },
+  "native_focused_green": {
+    "passed": 16,
+    "failed": 0,
+    "elapsed_seconds": 55
+  },
+  "initial_node_driver": {
+    "assertions_observed": 2,
+    "accepted_as_clean_red": false,
+    "classification": "lingering Go test timer after Go exit; driver corrected to normal process exit and same binary rerun"
+  },
+  "race": {
+    "passed": 16,
+    "failed": 0,
+    "elapsed_seconds": 55
+  },
+  "main_metadata_calibration": {
+    "passed": true,
+    "nativeAndWasmIdentical": true,
+    "methodsInvoked": 0,
+    "rootPackagePath": "main",
+    "typeKeyAlgorithm": "sha256(PkgPath+NUL+Name)"
+  },
+  "full_native_runtime_suite": "required before completion",
+  "source_and_resource_policy_unchanged": true,
+  "logs_sha256": {
+    "spa-detail-v2-red": "4c6469aefd8bb476a48c448ed8fd445f8fb21b5770cba9521ba0ad20ca651a6a",
+    "spa-detail-v2-wasm-red-build": "557fc0581ceb465635b59106b75bd529271c47a5f88c7ffbaf67f38ccae06925",
+    "spa-detail-v2-wasm-contract-red-build": "48931394596a0fadd82f6f9fd6c6601e2052017ef2d26a73c758b704ab9fd9bf",
+    "spa-detail-v2-wasm-contract-red": "e4f4a497a91d5721c7d10878387815026b41d24d83c066babbec93ddea8cb9d2",
+    "spa-detail-v2-wasm-contract-red-fixed-driver": "322fc9e141fed57db2384abfa83a2ff25290e79a11cfb5f5c5a4ed57f13c49bd",
+    "spa-detail-v2-wasm-contract-green-build": "48931394596a0fadd82f6f9fd6c6601e2052017ef2d26a73c758b704ab9fd9bf",
+    "spa-detail-v2-wasm-contract-green": "fbe6ddf8b26e82224254d208bc45030d6f7dde9867e5f7e4d1af82296ac2e72e",
+    "spa-detail-v2-native-contract-green": "9f815f07820958ec25a909bfd5dfc1e5f9fba376e66cf6140896f0119093c1e0",
+    "spa-detail-v2-wasm-baseline-equivalence": "9a7ad3ae5bf52ca2b03b5a312bf4aa44bc559b962ba95f4c3e6301a5314c219d",
+    "spa-detail-v2-native-contract-race": "bc4501c88455dbeed0b720d29ef0e22cb495efc5b28339afad6675b24ddc5473",
+    "spa-detail-v2-main-metadata-calibration": "02f9ce6faf181ce41dca4aabe9714037c9eea62adc28a3d28a97374c313cde57",
+    "spa-detail-v2-wasm-candidate-equivalence": "9a7ad3ae5bf52ca2b03b5a312bf4aa44bc559b962ba95f4c3e6301a5314c219d"
+  }
+}

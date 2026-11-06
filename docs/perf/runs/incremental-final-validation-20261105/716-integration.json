@@ -1,0 +1,92 @@
+{
+  "source_commit": "716b3e88fcf9f42922c3fc0c56b5436e02497ecf",
+  "canonical": {
+    "passed": true,
+    "elapsed_seconds": 217,
+    "compiler_sha256": "6b239d5f3333cf95825d7a4c5d44a1ffa2446aa7a6133e1b1d7ccbf3372a3abf",
+    "framework_files": 2418,
+    "before_after_source_equal": true,
+    "producer_receipt_sha256": "0b275bfc4449c6a2ebcc73341b9cb01b2e78ab0feac85561ea39e7cc03f4a1f5",
+    "framework_snapshot_sha256": "e62875f0b8c0240821bbc22f1cd90e0e2672464db32b19a553bf40b0814dcb9b",
+    "log_sha256": "6b368384bbeaf3978242b499b9581048430d2b23b1caf16fe7786369e7ce95c8"
+  },
+  "current_private_build": {
+    "passed": true,
+    "elapsed_seconds": 379,
+    "verified_source_files": 671,
+    "verified_framework_files": 2418,
+    "generated_frontend_files": 436,
+    "wasm_bytes": 42574533,
+    "backend_bytes": 96030178,
+    "compiler_sha256": "6b239d5f3333cf95825d7a4c5d44a1ffa2446aa7a6133e1b1d7ccbf3372a3abf",
+    "fresh_build_receipt_sha256": "3c5364b0aeee01c4c525b71b4e25b3b27d5ad288e10d9a45ddfbf049bf9c2984",
+    "view_struct_token_calls": 965,
+    "view_enum_token_calls": 8,
+    "normal_inlining": true,
+    "original_resource_policy": true,
+    "source_app_edited": false,
+    "runtime_semantics_validated": false
+  },
+  "hosted_ci": {
+    "run_id": 42293269454,
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": 40,
+    "failed": 0
+  },
+  "controlled_memory_saving_claimed": false,
+  "resource_limits_changed": false,
+  "public_step_cost_browsers": {
+    "passed": true,
+    "elapsed_seconds": 315,
+    "reports": [
+      {
+        "browser": "chromium",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "chromium",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "webkit",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "webkit",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "firefox",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "firefox",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      }
+    ],
+    "log_sha256": "3fd4de9fb7e3a3c30c4820edaeba5edb32c8e7e2ef4087d5ef1c5de442040046",
+    "build_cache": "off; no environment/settings cache probes",
+    "compiler_and_framework_unchanged": true
+  },
+  "historical_binder_preflights": {
+    "packet_manifest_sha256": "ca00f188e3d25a8d85bf6f7c450be8f6deded3fb56277a23b8c1ecc4cbe6aa9b",
+    "passed": 18,
+    "failed": 0,
+    "elapsed_seconds": 12,
+    "materialization_or_build_executed": false,
+    "log_sha256": "3ed6076d22f129aac937ad05329da75ee818a377ac5ccadf76d2c4a6a3f8ecfd"
+  }
+}
