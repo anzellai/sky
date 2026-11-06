@@ -427,7 +427,7 @@ pub fn infer_query(
     def: DefId,
     module: ModuleId,
     _file: SourceFile,
-) -> ty::BodyTypes {
+) -> std::sync::Arc<ty::BodyTypes> {
     // DECLARATIONS world (passes 1-4) — backdates on unrelated app body edits.
     let world = type_world_query(db);
     let sky = db.sky_db();
@@ -469,10 +469,16 @@ pub fn infer_query(
                     w.callsite_param_records.insert(def, recs.clone());
                 }
             }
-            return ty::compute_body_types_with(world, Some(&w), sky, module, def);
+            return std::sync::Arc::new(ty::compute_body_types_with(
+                world,
+                Some(&w),
+                sky,
+                module,
+                def,
+            ));
         }
     }
-    ty::compute_body_types(world, sky, module, def)
+    std::sync::Arc::new(ty::compute_body_types(world, sky, module, def))
 }
 
 // ---- Stage E: lower + codegen as a tracked query (doc 01 bottom-of-DAG) ----
@@ -818,11 +824,11 @@ impl ty::TyDb for SkyDatabase {
     fn check_world(&self) -> std::sync::Arc<ty::World> {
         check_world_query(self).clone()
     }
-    fn body_types_of(&self, module: ModuleId, def: DefId) -> Rc<ty::BodyTypes> {
+    fn body_types_of(&self, module: ModuleId, def: DefId) -> std::sync::Arc<ty::BodyTypes> {
         // `module` comes from the caller (revision-safe — no interned read here);
         // `source_file` reads the append-only registry, also revision-safe.
         let file = self.source_file(module);
-        Rc::new(infer_query(self, def, module, file).clone())
+        infer_query(self, def, module, file).clone()
     }
     fn numeric_elaboration_of(
         &self,

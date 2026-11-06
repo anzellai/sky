@@ -367,6 +367,50 @@ fn project_bt(bt: &ty::BodyTypes) -> String {
     s
 }
 
+#[test]
+fn infer_tables_share_memoized_owner_and_survive_revision() {
+    let mut fx = Fixture::build(LIB_V1, APP, OTHER_V1);
+    let def = def_of(&fx.db, fx.other_id, "x");
+    let first = fx.db.body_types_of(fx.other_id, def);
+    let again = fx.db.body_types_of(fx.other_id, def);
+    assert!(
+        std::ptr::eq(first.as_ref(), again.as_ref()),
+        "inference consumers must share the memo's table and owned signature"
+    );
+    let original = project_bt(&first);
+    let original_signature = first.signature.clone();
+    assert!(original_signature.is_some());
+    assert!(std::ptr::eq(
+        first.as_ref(),
+        skydb::infer_query(&fx.db, def, fx.other_id, fx.other).as_ref()
+    ));
+    let resolved = fx.db.resolve(fx.other_id);
+    let mut tooling_copy =
+        ty::Typer::new(&fx.db).body_types(fx.other_id, def, &resolved.bodies[&def]);
+    tooling_copy.result = None;
+    tooling_copy.signature = None;
+    assert_ne!(project_bt(&tooling_copy), original);
+    assert_eq!(
+        project_bt(&first),
+        original,
+        "tooling copy changed the memo"
+    );
+    assert_eq!(first.signature, original_signature);
+
+    fx.other.set_text(&mut fx.db).to(OTHER_BODY_EDIT.into());
+    let edited_def = def_of(&fx.db, fx.other_id, "x");
+    let edited = fx.db.body_types_of(fx.other_id, edited_def);
+    assert_ne!(project_bt(&edited), original);
+    assert_eq!(project_bt(&first), original, "retained old owner changed");
+    assert_eq!(first.signature, original_signature);
+    let fresh = Fixture::build(LIB_V1, APP, OTHER_BODY_EDIT);
+    let fresh_types = fresh
+        .db
+        .body_types_of(fresh.other_id, def_of(&fresh.db, fresh.other_id, "x"));
+    assert_eq!(project_bt(&edited), project_bt(&fresh_types));
+    assert_eq!(edited.signature, fresh_types.signature);
+}
+
 /// (D-2 a) The world is assembled **once and reused**: re-demanding `type_world`
 /// in the same revision hits the memo (no `WillExecute`), and its value — plus
 /// each def's `infer` table — is byte-stable on repeated demand (per-def memo).

@@ -819,3 +819,21 @@ an assertion equating persisted edited text with the controlled input. No missin
 path is being normalized to null and no completed browser comparison is claimed.
 The isolated historical benchmark build separately stopped during lowering under
 the same pressure guard, so its large-model reproduction remains unvalidated.
+
+## Complete inference-result ownership
+
+The tracked inference query already shared expression/local tables, but its
+bridge cloned the owned result and signature types into a fresh handle, and
+lowering cloned them again. The memo, bridge and lowerer now share the complete
+immutable result through `Arc`. Tooling retains its owned-copy API. Inference,
+query dependency edges, eager-backend computations and emitted-type consumers
+are unchanged.
+
+An executed regression first failed the owner-identity assertion. After the
+change, the complete lower and skydb suites pass 118 tests with one existing
+ignored test. The regression covers memo identity, owned tooling-copy isolation,
+retained owners across revisions and equality with fresh inference, including
+signatures. Memory savings remain unmeasured. The ignored unifier-growth test
+was then explicitly executed: it fails with near-quadratic work and is being
+investigated separately. It is not counted as passing or silently skipped.
+See [the receipt](runs/incremental-final-validation-20261105/inference-owner-sharing.json).

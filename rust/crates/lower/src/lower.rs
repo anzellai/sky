@@ -175,7 +175,7 @@ struct DefEntry {
     module_name: String,
     name: String,
     body: DefBody,
-    types: BodyTypes,
+    types: std::sync::Arc<BodyTypes>,
     task_discards: BTreeSet<ExprId>,
     numeric: std::rc::Rc<ty::numeric::NumericElaboration>,
     /// The declared/derived scheme type (peeled for param types), if any.
@@ -409,7 +409,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             continue;
         };
         crate::BODIES_TYPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let types = typer.body_types(*m, *d, body);
+        let types = db.body_types_of(*m, *d);
         let task_discards = task_discard::logical_task_discards(&typer, *d, body, &types);
         let numeric = db.numeric_elaboration_of(*m, *d);
         let sig = typer.value_sig(*d).map(|s| numeric.signature.apply(&s.ty));

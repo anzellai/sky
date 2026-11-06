@@ -56,8 +56,10 @@ pub trait TyDb: SkyDb {
     /// module/`SourceFile` is obtained WITHOUT reading the interned `DefKey` at
     /// this non-query boundary — reading interned data here would panic across a
     /// salsa revision that hasn't yet re-interned the key (the `sky watch` /
-    /// incremental path).
-    fn body_types_of(&self, module: ModuleId, def: DefId) -> Rc<BodyTypes>;
+    /// incremental path). The memo and its consumers share the entire immutable
+    /// result, including the owned result/signature types, rather than cloning
+    /// those recursive trees at each bridge.
+    fn body_types_of(&self, module: ModuleId, def: DefId) -> Arc<BodyTypes>;
 
     /// CHECK-derived numeric dictionaries. Ordinary BodyTypes are unchanged.
     fn numeric_elaboration_of(
@@ -225,12 +227,12 @@ impl TyDb for hir::SourceDb {
     fn check_world(&self) -> Arc<World> {
         Arc::new(World::build(self))
     }
-    fn body_types_of(&self, module: ModuleId, def: DefId) -> Rc<BodyTypes> {
+    fn body_types_of(&self, module: ModuleId, def: DefId) -> Arc<BodyTypes> {
         // FULL world so the lowering path's `Expr::Update` arm sees pass-7
         // `record_result_sigs` (byte-identical to the pre-split eager behaviour;
         // passes 5-6 are `!use_inferred`-gated so they never perturb lowering).
         let world = World::build(self);
-        Rc::new(compute_body_types(&world, self, module, def))
+        Arc::new(compute_body_types(&world, self, module, def))
     }
     fn as_sky_db(&self) -> &dyn SkyDb {
         self

@@ -40,3 +40,8 @@ the same cache-retention invariant in three jobs; 36 of 40 jobs passed.
 `dict-scalar-ci-correction.json` records that failure and the reviewed source
 correction removing retained model pointers. The corrected checkpoint still
 requires hosted full-runtime and race validation.
+
+`inference-owner-sharing.json` records the executed owner-identity RED and
+118 passing lower/skydb tests after sharing complete immutable inference
+results. Memory savings are unmeasured. The suite's existing ignored unifier
+growth test was explicitly executed separately and fails; that work remains open.

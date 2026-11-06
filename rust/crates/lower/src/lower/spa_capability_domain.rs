@@ -80,7 +80,7 @@ mod tests {
                                 owner: std::sync::Arc::clone(&r),
                                 def: d.def,
                             },
-                            types: BodyTypes::default(),
+                            types: std::sync::Arc::new(BodyTypes::default()),
                             task_discards: BTreeSet::new(),
                             numeric: std::rc::Rc::new(ty::numeric::NumericElaboration::default()),
                             sig: None,

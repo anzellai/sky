@@ -56,8 +56,9 @@ pub struct CheckOutput {
 /// This is the value of the `infer(DefId)` tracked query (Stage D-2 — doc 01's
 /// `infer(DefId) -> types, per-region type map`). It is deliberately `no_eq` as
 /// a salsa output (recompute-on-demand is fine; the lowerer is not yet a query),
-/// but derives `Clone` so the trait accessor can hand an owned copy back out of
-/// the memo, mirroring `SkyDb::resolve`'s `Rc`-clone.
+/// and the query and database accessor share it behind an `Arc`. It derives
+/// `Clone` for consumers that need an independently mutable result/signature,
+/// such as the tooling-facing `Typer::body_types` API.
 ///
 /// The per-expression and per-local types are stored hash-consed in a
 /// [`TyTable`] (see `tytable.rs` for the measurement that motivates it) behind

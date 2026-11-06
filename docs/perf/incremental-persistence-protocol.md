@@ -49,6 +49,37 @@ after another tab has collected unreachable chunks. Identity changes cannot
 make another identity's data eligible for restore. Reference-format migration,
 mixed old/new tabs and unsupported browser capabilities need explicit rules.
 
+### Pre-protocol tab compatibility
+
+An older **protocol-aware** tab can participate in coordination and revalidate
+its retained root. A pre-protocol tab cannot: it still reads and publishes full
+JSON at the existing model key and does not acquire the new locks.
+
+A separate root key cannot preserve publication order with those tabs. Suppose
+the existing key contains model A, a new tab publishes root B without updating
+that key, and a suspended pre-protocol tab resumes and republishes A. The
+existing key still contains A; the root still names B. Republishing an identical
+value produces no storage event, so this state cannot reveal whether A was
+published before or after B. The [HTML `setItem` algorithm](https://html.spec.whatwg.org/multipage/webstorage.html#dom-storage-setitem)
+returns before broadcasting when the stored value already equals the supplied
+value. Replacing the existing key with a root instead breaks pre-protocol
+restore.
+
+The conservative compatibility policy is therefore to keep full JSON at the
+existing key as the sole publication authority while pre-protocol contexts may
+exist. New tabs must continue synchronous full-JSON publication, including
+unchanged steps, with the existing identity, sign-out and size-cap rules. An
+optional chunk sidecar may only cache the current authoritative value after
+content, schema and identity validation; it must not resurrect state after that
+value changes or disappears, or introduce additional storage-failure windows.
+This policy does not remove the cost of whole-model publication.
+
+Root-only publication requires a storage scope known never to have hosted
+pre-protocol code, or an explicit compatibility cutover that accepts changed
+old-tab restore and last-writer semantics. Timeouts, heartbeats and a staged
+deployment do not prove that suspended pre-protocol writers are gone. These are
+design constraints and a candidate policy, not an implemented migration.
+
 Web Locks associate coordination with a storage bucket and release locks on
 agent termination; they do not turn the two storage APIs into one transaction.
 Unsupported coordination must select reference execution rather than an unsafe
