@@ -368,6 +368,94 @@ fn project_bt(bt: &ty::BodyTypes) -> String {
 }
 
 #[test]
+fn declared_value_schemes_share_between_worlds_and_remain_revision_isolated() {
+    const ANNOTATED: &str = "module App exposing (main)\n\nmain : String\nmain = \"initial\"\n";
+    const BODY_EDIT: &str = "module App exposing (main)\n\nmain : String\nmain = \"changed\"\n";
+    const ANNOTATION_EDIT: &str = "module App exposing (main)\n\nmain : Int\nmain = 7\n";
+    let mut fx = Fixture::build(LIB_V1, ANNOTATED, OTHER_V1);
+    let main = def_of(&fx.db, fx.app_id, "main");
+    let other = def_of(&fx.db, fx.other_id, "x");
+    let declarations = fx.db.type_world();
+    let checked = fx.db.check_world();
+    let original = declarations.value_sigs.get(&main).unwrap().clone();
+    assert!(
+        std::ptr::eq(
+            declarations.value_sigs.get(&main).unwrap(),
+            checked.value_sigs.get(&main).unwrap()
+        ),
+        "declaration and check worlds must share their explicit value schemes"
+    );
+    assert!(*checked == ty::World::build(&fx.db));
+    let before = fx.db.body_types_of(fx.other_id, other);
+
+    fx.app.set_text(&mut fx.db).to(BODY_EDIT.into());
+    fx.clear_log();
+    let body_declarations = fx.db.type_world();
+    let after = fx.db.body_types_of(fx.other_id, other);
+    assert!(*declarations == *body_declarations);
+    assert!(std::ptr::eq(before.as_ref(), after.as_ref()));
+    assert!(!executed(&fx.take_log(), "infer_query"));
+    assert!(*fx.db.check_world() == ty::World::build(&fx.db));
+
+    fx.app.set_text(&mut fx.db).to(ANNOTATION_EDIT.into());
+    let edited_main = def_of(&fx.db, fx.app_id, "main");
+    assert_eq!(main, edited_main);
+    let edited_declarations = fx.db.type_world();
+    let edited_checked = fx.db.check_world();
+    assert!(edited_declarations.value_sigs.get(&edited_main) != Some(&original));
+    assert!(declarations.value_sigs.get(&main) == Some(&original));
+    assert!(checked.value_sigs.get(&main) == Some(&original));
+    assert!(std::ptr::eq(
+        edited_declarations.value_sigs.get(&edited_main).unwrap(),
+        edited_checked.value_sigs.get(&edited_main).unwrap()
+    ));
+    assert!(*edited_checked == ty::World::build(&fx.db));
+
+    // The shared-world extension API must detach before changing an annotation.
+    let mut fork = declarations.as_ref().clone();
+    fork.extend_decls(&fx.db, true);
+    assert!(fork.value_sigs.get(&edited_main) == edited_declarations.value_sigs.get(&edited_main));
+    assert!(declarations.value_sigs.get(&main) == Some(&original));
+    assert!(checked.value_sigs.get(&main) == Some(&original));
+}
+
+#[test]
+fn declaration_core_shares_across_body_passes_and_detaches_on_declaration_mutation() {
+    let fx = Fixture::build(
+        LIB_V1,
+        "module App exposing (main)\n\nmain : String\nmain = \"initial\"\n",
+        OTHER_V1,
+    );
+    let main = def_of(&fx.db, fx.app_id, "main");
+    let declarations = fx.db.type_world();
+    let checked = fx.db.check_world();
+    let same_core = |a: &ty::World, b: &ty::World| {
+        std::ptr::eq(std::ops::Deref::deref(a), std::ops::Deref::deref(b))
+    };
+    assert!(same_core(&declarations, &checked));
+    let original = declarations.value_sigs.get(&main).unwrap().clone();
+    let mut body = declarations.as_ref().clone();
+    body.extend_bodies(&fx.db);
+    assert!(
+        same_core(&declarations, &body),
+        "body passes detached declarations"
+    );
+    assert!(body == *checked);
+
+    let mut fork = declarations.as_ref().clone();
+    fork.app_check_sigs.insert(main, original.clone());
+    fork.bound_check_sigs.insert(main, original.clone());
+    assert!(same_core(&declarations, &fork));
+    assert!(!declarations.app_check_sigs.contains_key(&main));
+    assert!(!declarations.bound_check_sigs.contains_key(&main));
+    fork.value_sigs.remove(&main);
+    assert!(!same_core(&declarations, &fork));
+    assert!(!fork.value_sigs.contains_key(&main));
+    assert!(declarations.value_sigs.get(&main) == Some(&original));
+    assert!(checked.value_sigs.get(&main) == Some(&original));
+}
+
+#[test]
 fn infer_tables_share_memoized_owner_and_survive_revision() {
     let mut fx = Fixture::build(LIB_V1, APP, OTHER_V1);
     let def = def_of(&fx.db, fx.other_id, "x");

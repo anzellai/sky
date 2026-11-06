@@ -47,7 +47,7 @@ pub use sig::{
     body_updates_a_param, caller_param_records, callsite_param_records_for, declared_param_record,
     direct_callees, fold_param_records, record_alias_fields, update_base_defs, variant_arg_types,
     variant_arg_types_qualified, wants_callsite_harvest, CallerParamRecords, ParamRecordSeen,
-    World,
+    World, WorldDecls,
 };
 pub use unify::{SuperType, UnionFind};
 

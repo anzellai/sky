@@ -30,27 +30,11 @@ struct AliasDef {
 /// body edit re-executes `World::build` but yields a value-equal `World`; salsa
 /// backdates it and dependent `infer(DefId)` queries validate from memo rather
 /// than re-inferring. See `skydb::type_world_query`.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub struct World {
-    /// Top-level value schemes from EXPLICIT annotations, keyed by `DefId`
-    /// (matches `Res::Def`). Only these are surfaced to the lowerer as a
-    /// "declared signature" (`Typer::value_sig`).
-    pub value_sigs: HashMap<DefId, Scheme>,
-    /// Schemes INFERRED for unannotated stdlib combinators (pass 3). Consulted
-    /// by inference at a `Res::Def` call site (to pin results from arg types)
-    /// but NOT exposed as declared signatures — the lowerer keeps its lenient
-    /// body-inference path for these defs, so their own emission is unchanged.
-    pub inferred_sigs: HashMap<DefId, Scheme>,
-    /// Kernel function schemes, keyed by `(pseudo-module, func)`
-    /// (matches `Res::Kernel`).
-    pub kernel_sigs: HashMap<(String, String), Scheme>,
-    /// Precise combinator schemes consulted by the accept/reject CHECKER ONLY
-    /// (`use_inferred == false`). Deliberately invisible to the lowerer
-    /// (`use_inferred == true`) and to pass-3 inference, so call-site element
-    /// pinning cannot perturb Go emission (see the pass-3 `Result`-only
-    /// exclusion rationale at sig.rs ~line 180-189). Closes audit #3.
-    pub check_sigs: HashMap<DefId, Scheme>,
-    pub check_kernel_sigs: HashMap<(String, String), Scheme>,
+    /// Declaration channels are immutable during body passes. Forks detach only
+    /// when declaration construction explicitly mutates one of these fields.
+    decls: std::sync::Arc<WorldDecls>,
     /// CHECK-only inferred schemes for unannotated app-module definitions.
     /// Includes polymorphic and Unit-parameter functions. Callers and numeric
     /// elaboration must see the same scheme, including numeric quantifiers.
@@ -84,9 +68,6 @@ pub struct World {
     /// Consulted FIRST at a `Res::Def` on the check path; never by the
     /// lowerer, so Go emission is unchanged.
     pub bound_check_sigs: HashMap<DefId, Scheme>,
-    /// The `Res::Kernel` face of [`World::bound_check_sigs`], keyed
-    /// `(pseudo-module, func)`.
-    pub bound_kernel_sigs: HashMap<(String, String), Scheme>,
     /// LOWERING-PATH ONLY: full closed-record result types for zero-param,
     /// unannotated top-level defs (D2). Consulted ONLY in the `Expr::Update` arm
     /// on the `use_inferred` (codegen region-type) path, to close the row var when
@@ -120,6 +101,34 @@ pub struct World {
     /// merge must not promote it back to `Some`. Whole-program builds populate
     /// it identically, so the two paths stay value-comparable.
     pub callsite_param_conflicts: HashSet<(DefId, usize)>,
+}
+
+/// Declaration-only channels completed by passes 1–4. Body-derived channels,
+/// including the mixed static/body `bound_check_sigs`, stay on [`World`].
+#[derive(Default, Clone, PartialEq, Eq)]
+pub struct WorldDecls {
+    /// Top-level value schemes from EXPLICIT annotations, keyed by `DefId`
+    /// (matches `Res::Def`). Only these are surfaced to the lowerer as a
+    /// "declared signature" (`Typer::value_sig`).
+    pub value_sigs: HashMap<DefId, Scheme>,
+    /// Schemes INFERRED for unannotated stdlib combinators (pass 3). Consulted
+    /// by inference at a `Res::Def` call site (to pin results from arg types)
+    /// but NOT exposed as declared signatures — the lowerer keeps its lenient
+    /// body-inference path for these defs, so their own emission is unchanged.
+    pub inferred_sigs: HashMap<DefId, Scheme>,
+    /// Kernel function schemes, keyed by `(pseudo-module, func)`
+    /// (matches `Res::Kernel`).
+    pub kernel_sigs: HashMap<(String, String), Scheme>,
+    /// Precise combinator schemes consulted by the accept/reject CHECKER ONLY
+    /// (`use_inferred == false`). Deliberately invisible to the lowerer
+    /// (`use_inferred == true`) and to pass-3 inference, so call-site element
+    /// pinning cannot perturb Go emission (see the pass-3 `Result`-only
+    /// exclusion rationale at sig.rs ~line 180-189). Closes audit #3.
+    pub check_sigs: HashMap<DefId, Scheme>,
+    pub check_kernel_sigs: HashMap<(String, String), Scheme>,
+    /// The `Res::Kernel` face of [`World::bound_check_sigs`], keyed
+    /// `(pseudo-module, func)`.
+    pub bound_kernel_sigs: HashMap<(String, String), Scheme>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates
@@ -159,7 +168,7 @@ pub struct World {
     /// bare, exactly as `ast_type_to_ty` produced it pre-#164).
     alias_keys: HashSet<String>,
     /// The set of all `"<module>.<name>"` UNION keys — the union namespace's
-    /// analogue of [`World::alias_keys`], and the reason a union's DECLARATION
+    /// analogue of [`WorldDecls::alias_keys`], and the reason a union's DECLARATION
     /// and every REFERENCE to it agree on one identity.
     ///
     /// Both sides consult this ONE set: `record_union` qualifies the union's own
@@ -175,6 +184,19 @@ pub struct World {
     /// reference to a union declared later in the module order would be left
     /// bare while its declaration was qualified.
     union_keys: HashSet<String>,
+}
+
+impl std::ops::Deref for World {
+    type Target = WorldDecls;
+    fn deref(&self) -> &Self::Target {
+        &self.decls
+    }
+}
+
+impl std::ops::DerefMut for World {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        std::sync::Arc::make_mut(&mut self.decls)
+    }
 }
 
 impl World {
@@ -750,31 +772,7 @@ impl World {
     /// shared-world path can extend a *prebuilt* world instead of always starting
     /// from nothing.
     fn empty_seeded() -> World {
-        let mut world = World {
-            value_sigs: HashMap::new(),
-            inferred_sigs: HashMap::new(),
-            kernel_sigs: HashMap::new(),
-            check_sigs: HashMap::new(),
-            check_kernel_sigs: HashMap::new(),
-            app_check_sigs: HashMap::new(),
-            app_group_errors: HashMap::new(),
-            any_result_check_sigs: HashMap::new(),
-            weak_vars: HashMap::new(),
-            bound_check_sigs: HashMap::new(),
-            bound_kernel_sigs: HashMap::new(),
-            record_result_sigs: HashMap::new(),
-            ctors: HashMap::new(),
-            ctors_by_def: HashMap::new(),
-            ctor_union: HashMap::new(),
-            union_ctors: HashMap::new(),
-            callsite_param_records: HashMap::new(),
-            callsite_param_conflicts: HashSet::new(),
-            union_members_by_def: HashMap::new(),
-            aliases: HashMap::new(),
-            alias_by_mod: HashMap::new(),
-            alias_keys: HashSet::new(),
-            union_keys: HashSet::new(),
-        };
+        let mut world = World::default();
         world.seed_builtin_ctors();
         world
     }
@@ -2198,7 +2196,7 @@ fn union_names_in_module(db: &dyn SkyDb, m: ModuleId) -> HashSet<String> {
 struct TypeKeys<'a> {
     /// `"<module>.<name>"` for every declared type ALIAS (the #164 fix).
     alias: &'a HashSet<String>,
-    /// `"<module>.<name>"` for every declared UNION. See [`World::union_keys`].
+    /// `"<module>.<name>"` for every declared UNION. See [`WorldDecls::union_keys`].
     union: &'a HashSet<String>,
 }
 

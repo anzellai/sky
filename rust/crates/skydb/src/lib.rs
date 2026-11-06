@@ -241,7 +241,12 @@ pub fn type_world_query(db: &dyn ResolveDb) -> std::sync::Arc<ty::World> {
 /// `World::build` the checker read directly.
 #[salsa::tracked]
 pub fn check_world_query(db: &dyn ResolveDb) -> std::sync::Arc<ty::World> {
-    std::sync::Arc::new(ty::World::build(db.sky_db()))
+    // Dependency direction stays check -> declarations: body-derived channels
+    // must never enter the backdatable declaration query. Clone only the World
+    // shell/body maps; its immutable declaration core remains shared.
+    let mut world = type_world_query(db).as_ref().clone();
+    world.extend_bodies(db.sky_db());
+    std::sync::Arc::new(world)
 }
 
 /// The D2 record-result scheme for one def (pass 7), demanded LAZILY by the
