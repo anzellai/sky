@@ -862,3 +862,18 @@ The complete gate passes in 661 seconds under the unchanged memory guard and
 under-cap whole-model publication and general changed-key storage remain open.
 No cross-device latency claim follows from these diagnostic runs. See the
 [cycle 9 evidence](runs/step-cost-20261104/cycle9-dict-summary/conditions.json).
+
+## Sparse storage for unreachable type-variable reservations
+
+A prior inference fast path reserved unused variables to preserve later logical
+IDs. Those reservations still allocated physical UF slots and occurs-check
+marks. The new store preserves the exact logical ID sequence while translating
+only live variables to dense storage; reserved holes cannot alias live slots.
+
+The executed RED observed 33,024 slots for 128 live variables. The corrected
+physical-storage regression passes, along with dense-oracle, clone/error,
+epoch-wrap and ID-exhaustion tests. The complete type library passes 86 tests
+with one existing ignored diagnostic; complete lower/skydb suites pass 118
+with one existing ignored growth test. That growth test was already explicitly
+executed and remains unresolved. CPU/RSS savings on the private app are not
+yet measured. See [the receipt](runs/incremental-final-validation-20261105/sparse-uf-reservations.json).

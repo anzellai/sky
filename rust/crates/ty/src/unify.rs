@@ -212,6 +212,115 @@ enum Slot {
     Link(TyVarId),
 }
 
+/// One interval of intentionally unreachable logical IDs. No live UF edge,
+/// obligation or recorded expression refers to an ID inside this interval.
+#[derive(Clone, Debug)]
+struct SkippedIds {
+    start: usize,
+    end: usize,
+    before: usize,
+}
+
+/// Logical IDs retain the original allocation sequence; only live slots occupy
+/// storage. Indexing always translates a logical ID, never silently treating a
+/// reserved hole as a different live variable. Most inference runs have no holes.
+#[derive(Default, Clone, Debug)]
+struct Slots {
+    dense: Vec<Slot>,
+    skipped: Vec<SkippedIds>,
+    logical_len: usize,
+    skipped_len: usize,
+}
+
+impl Slots {
+    fn len(&self) -> usize {
+        self.logical_len
+    }
+    fn stored_len(&self) -> usize {
+        self.dense.len()
+    }
+
+    fn push(&mut self, slot: Slot) {
+        assert!(
+            self.logical_len <= u32::MAX as usize,
+            "type-variable ID limit exceeded"
+        );
+        let next = self
+            .logical_len
+            .checked_add(1)
+            .expect("type-variable ID limit exceeded");
+        self.dense.push(slot);
+        self.logical_len = next;
+    }
+
+    fn skip(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let end = self
+            .logical_len
+            .checked_add(count)
+            .expect("type-variable ID limit exceeded");
+        assert!(
+            (end as u64) <= u32::MAX as u64 + 1,
+            "type-variable ID limit exceeded"
+        );
+        match self.skipped.last_mut() {
+            Some(last) if last.end == self.logical_len => last.end = end,
+            _ => self.skipped.push(SkippedIds {
+                start: self.logical_len,
+                end,
+                before: self.skipped_len,
+            }),
+        }
+        self.skipped_len += count;
+        self.logical_len = end;
+    }
+
+    fn dense_index(&self, id: usize) -> usize {
+        assert!(id < self.logical_len, "type-variable ID out of range");
+        let Some(first) = self.skipped.first() else {
+            return id;
+        };
+        if id < first.start {
+            return id;
+        }
+        let last = self.skipped.last().unwrap();
+        if id >= last.end {
+            return id - self.skipped_len;
+        }
+        let after = self.skipped.partition_point(|gap| gap.end <= id);
+        assert!(
+            id < self.skipped[after].start,
+            "reserved unreachable type-variable ID was accessed"
+        );
+        if after == 0 {
+            id
+        } else {
+            let previous = &self.skipped[after - 1];
+            id - previous.before - (previous.end - previous.start)
+        }
+    }
+
+    #[cfg(test)]
+    fn as_slice(&self) -> &[Slot] {
+        &self.dense
+    }
+}
+
+impl std::ops::Index<usize> for Slots {
+    type Output = Slot;
+    fn index(&self, logical: usize) -> &Slot {
+        &self.dense[self.dense_index(logical)]
+    }
+}
+impl std::ops::IndexMut<usize> for Slots {
+    fn index_mut(&mut self, logical: usize) -> &mut Slot {
+        let dense = self.dense_index(logical);
+        &mut self.dense[dense]
+    }
+}
+
 /// A unification mismatch — a value, never an exception (L7). Read back into a
 /// diagnostic by the caller.
 #[derive(Clone, Debug)]
@@ -230,7 +339,7 @@ impl Mismatch {
 /// The union-find store. Local to ONE inference run; never global (L1).
 #[derive(Default, Clone)]
 pub struct UnionFind {
-    slots: Vec<Slot>,
+    slots: Slots,
     /// Bound obligations the unifier cannot decide on its own (v0.27.0,
     /// C-11/B-1): a bounded variable met a nominal type (a custom type, an
     /// opaque stdlib type) or a record. Whether a custom type is comparable
@@ -311,13 +420,14 @@ impl UnionFind {
     }
 
     /// Allocate a fresh variable with the given content. Deterministic (L4):
-    /// the id is the next dense index, drawn in constraint-generation order.
+    /// the id is the next logical index, drawn in constraint-generation order.
     pub fn fresh(&mut self, content: Content) -> TyVarId {
         let id = TyVarId(self.slots.len() as u32);
-        if matches!(&content, Content::FlexSuper(s) if s.has(SuperType::IntLit)) {
+        let is_int_literal = matches!(&content, Content::FlexSuper(s) if s.has(SuperType::IntLit));
+        self.slots.push(Slot::Root { content, rank: 0 });
+        if is_int_literal {
             self.int_literals.push(id);
         }
-        self.slots.push(Slot::Root { content, rank: 0 });
         id
     }
 
@@ -464,8 +574,8 @@ impl UnionFind {
             sc.epoch = 1;
         }
         // The walk allocates no variable, so marks sized now cover it.
-        if sc.mark.len() < self.slots.len() {
-            sc.mark.resize(self.slots.len(), 0);
+        if sc.mark.len() < self.slots.stored_len() {
+            sc.mark.resize(self.slots.stored_len(), 0);
         }
         sc.stack.clear();
         sc.stack.push(v);
@@ -477,7 +587,7 @@ impl UnionFind {
                 found = true;
                 break;
             }
-            let mark = &mut sc.mark[r.0 as usize];
+            let mark = &mut sc.mark[self.slots.dense_index(r.0 as usize)];
             if *mark == sc.epoch {
                 continue;
             }
@@ -1354,13 +1464,11 @@ impl UnionFind {
         Some(nodes)
     }
 
-    /// Allocate `n` variables nothing refers to: they keep every later id
-    /// where an elided allocation of `n` fresh nodes would have put it.
+    /// Reserve `n` logical variables nothing refers to, preserving every later
+    /// ID/name without allocating phantom slots or occurs-check marks. The sole
+    /// caller has proved that these are the elided ground instance's dead nodes.
     pub(crate) fn reserve_unreachable(&mut self, n: usize) {
-        self.slots.reserve(n);
-        for _ in 0..n {
-            self.fresh_flex();
-        }
+        self.slots.skip(n);
     }
 
     /// `unify_records` (`Unify.hs:468`) — the closed/open discipline.
@@ -1972,5 +2080,185 @@ mod tests {
         let mut c = uf.clone();
         assert!(c.occurs(pair, a));
         assert!(!c.occurs(pair, b));
+    }
+}
+
+#[cfg(test)]
+mod sparse_reservation_storage_tests {
+    use super::*;
+
+    /// The real D2 pattern reserves a wide ground record at each update.
+    /// Count physical slots, independently of inference work counters.
+    #[test]
+    fn ground_reservations_preserve_ids_without_phantom_storage() {
+        for width in [128usize, 256] {
+            let mut uf = UnionFind::new();
+            let reserved_per_update = 2 * width + 1;
+            for update in 0..width {
+                uf.reserve_unreachable(reserved_per_update);
+                let actual = uf.fresh_flex();
+                assert_eq!(
+                    actual.0 as usize,
+                    update * (reserved_per_update + 1) + reserved_per_update
+                );
+            }
+            assert_eq!(uf.var_count(), width * (reserved_per_update + 1));
+            assert_eq!(
+                uf.slots.as_slice().len(),
+                width,
+                "unreachable reservations consumed physical UF slots"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod sparse_reservation_equivalence_tests {
+    use super::*;
+
+    // Allocate the holes physically in the oracle, just as the original UF did.
+    fn gap(sparse: &mut UnionFind, dense: &mut UnionFind, count: usize) {
+        sparse.reserve_unreachable(count);
+        for _ in 0..count {
+            dense.fresh_flex();
+        }
+        assert_eq!(sparse.var_count(), dense.var_count());
+    }
+    fn fresh_pair(sparse: &mut UnionFind, dense: &mut UnionFind, content: Content) -> TyVarId {
+        let id = sparse.fresh(content.clone());
+        assert_eq!(id, dense.fresh(content));
+        id
+    }
+    fn compare(sparse: &mut UnionFind, dense: &mut UnionFind, ids: &[TyVarId]) {
+        assert_eq!(sparse.var_count(), dense.var_count());
+        for &id in ids {
+            let sr = sparse.find(id);
+            let dr = dense.find(id);
+            assert_eq!(sr, dr);
+            assert_eq!(sparse.rank(sr), dense.rank(dr));
+            assert_eq!(
+                format!("{:?}", sparse.content(id)),
+                format!("{:?}", dense.content(id))
+            );
+        }
+    }
+    #[test]
+    fn reserved_ids_preserve_dense_unification_and_clone_results() {
+        let mut sparse = UnionFind::new();
+        let mut dense = UnionFind::new();
+        let int = fresh_pair(
+            &mut sparse,
+            &mut dense,
+            Content::Structure(FlatTy::App(Name::new("Int"), vec![])),
+        );
+        gap(&mut sparse, &mut dense, 4);
+        gap(&mut sparse, &mut dense, 0);
+        gap(&mut sparse, &mut dense, 7); // adjacent reservations coalesce
+        let a = fresh_pair(&mut sparse, &mut dense, Content::Flex);
+        let b = fresh_pair(&mut sparse, &mut dense, Content::Flex);
+        gap(&mut sparse, &mut dense, 3);
+        let tuple = fresh_pair(
+            &mut sparse,
+            &mut dense,
+            Content::Structure(FlatTy::Tuple(vec![a, int])),
+        );
+        let row = fresh_pair(&mut sparse, &mut dense, Content::Flex);
+        let open = fresh_pair(
+            &mut sparse,
+            &mut dense,
+            Content::Structure(FlatTy::Record(
+                BTreeMap::from([(Name::new("x"), a)]),
+                Some(row),
+            )),
+        );
+        gap(&mut sparse, &mut dense, 19);
+        let closed = fresh_pair(
+            &mut sparse,
+            &mut dense,
+            Content::Structure(FlatTy::Record(
+                BTreeMap::from([(Name::new("x"), int), (Name::new("y"), b)]),
+                None,
+            )),
+        );
+        let fun = fresh_pair(
+            &mut sparse,
+            &mut dense,
+            Content::Structure(FlatTy::Fun(tuple, open)),
+        );
+        let f = fresh_pair(&mut sparse, &mut dense, Content::Flex);
+        let ids = [int, a, b, tuple, row, open, closed, fun, f];
+        for (left, right) in [(a, int), (open, closed), (f, fun)] {
+            assert_eq!(
+                sparse.unify(left, right).is_ok(),
+                dense.unify(left, right).is_ok()
+            );
+            compare(&mut sparse, &mut dense, &ids);
+        }
+        // Clones retain the exact sparse ID space and independent mutations.
+        let mut sc = sparse.clone();
+        let mut dc = dense.clone();
+        gap(&mut sc, &mut dc, 11);
+        let infinite = fresh_pair(&mut sc, &mut dc, Content::Flex);
+        let list = fresh_pair(
+            &mut sc,
+            &mut dc,
+            Content::Structure(FlatTy::App(Name::new("List"), vec![infinite])),
+        );
+        assert!(sc.unify(infinite, list).is_err());
+        assert!(dc.unify(infinite, list).is_err());
+        compare(&mut sc, &mut dc, &[infinite, list]);
+        compare(&mut sparse, &mut dense, &ids);
+    }
+
+    #[test]
+    fn sparse_occurs_marks_follow_live_slots_and_epoch_wrap() {
+        let mut uf = UnionFind::new();
+        uf.reserve_unreachable(1000);
+        let a = uf.fresh_flex();
+        uf.reserve_unreachable(2000);
+        let b = uf.fresh_flex();
+        let pair = uf.fresh(Content::Structure(FlatTy::Tuple(vec![a, a])));
+        uf.occurs_scratch.epoch = u32::MAX - 1;
+        for _ in 0..4 {
+            assert!(uf.occurs(pair, a));
+            assert!(!uf.occurs(pair, b));
+        }
+        assert_eq!(uf.occurs_scratch.mark.len(), 3);
+        let mut clone = uf.clone();
+        assert!(clone.occurs(pair, a));
+        assert!(!clone.occurs(pair, b));
+        assert_eq!(clone.occurs_scratch.mark.len(), 3);
+    }
+
+    #[test]
+    fn logical_id_exhaustion_is_checked_before_storage_or_literal_publication() {
+        let mut uf = UnionFind::new();
+        uf.reserve_unreachable(u32::MAX as usize);
+        if usize::BITS > 32 {
+            // The final representable ID is valid on hosts that can store its
+            // one-past count. This allocates exactly one physical slot.
+            assert_eq!(uf.fresh_flex(), TyVarId(u32::MAX));
+            assert_eq!(uf.slots.as_slice().len(), 1);
+        }
+        let count = uf.var_count();
+        let stored = uf.slots.as_slice().len();
+        let literals = uf.int_literals.len();
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            uf.fresh(Content::FlexSuper(SuperType::IntLit));
+        }));
+        assert!(rejected.is_err());
+        assert_eq!(uf.var_count(), count);
+        assert_eq!(uf.slots.as_slice().len(), stored);
+        assert_eq!(uf.int_literals.len(), literals);
+    }
+
+    #[test]
+    #[should_panic(expected = "reserved unreachable type-variable ID was accessed")]
+    fn reserved_holes_cannot_alias_live_slots() {
+        let mut uf = UnionFind::new();
+        uf.fresh_flex();
+        uf.reserve_unreachable(5);
+        uf.fresh_flex();
+        uf.content(TyVarId(3));
     }
 }
