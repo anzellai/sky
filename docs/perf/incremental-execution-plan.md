@@ -1004,11 +1004,52 @@ smoke does not establish build-performance medians or a performance improvement.
 Formatting and source checks pass in 16 seconds.
 
 The [scoped receipt](runs/incremental-final-validation-20261105/enum-privacy-scoped-validation.json)
-binds source and evidence hashes. CI `42238182751` and the current public browser
-gate were running when this receipt was prepared. Historical large-model build
+binds source and evidence hashes. The later original public step-cost browser gate passes in 291 seconds across
+all 6 reference/incremental reports for Chromium, WebKit and Firefox, preserving
+8 scenarios per report. This is the public fixture proof, not a full private
+application or general latency claim. Checkpoint CI required the separately
+recorded source-line census correction. Historical large-model build
 and performance validation remain incomplete; guards and budgets are unchanged.
 
 The checkpoint CI config gate exposed stale source-line census witnesses after
 the settings-query removal. Updating two line witnesses leaves all summary counts
 and the ratchet unchanged; the original direct check then exits successfully.
 This is a metadata refresh, with no product-source or budget change.
+
+
+## Hosted enum/privacy checkpoint
+
+[Run 42239339686](https://github.com/anzellai/sky/actions/runs/42239339686)
+completed successfully at `2bcee4b5f`: all 40 jobs pass, including the config
+census and unchanged build-performance gates. This validates the enum/privacy
+checkpoint, not the subsequent isolated accessor-row experiment. The separate
+current-source public browser matrix passes all six runs and eight scenarios per
+run. The full private-application rebuild, historical workload and remaining
+codec constructor-arrow growth work remain open.
+
+
+## Singleton accessor rows: codec record-field growth is linear
+
+A private factory returns only the accessor function root and grants authority
+for its unexported row. Owned Record copies, normalizer results, generic
+publication and whole-UF snapshots revoke that authority before it can escape.
+The narrow merge moves the growing record map and elides only the unreachable
+accessor-row complement. The meaningful old-row complement still uses ordinary
+unification in original allocation/error order. Other shapes fall back.
+
+Three executed aliasing regressions reject the earlier unadopted design. A
+source-faithful 240-field Codec chain establishes the actual work RED: 29,399 copied
+fields in both baseline paths. The closed-only repair passes correctness checks
+but fails the same work assertion. The open-row repair passes all 17 focused
+checks, including the unchanged requirement to copy less than half that count.
+All 559 broad type/lower/database tests pass, with two existing ignores.
+
+The original ignored growth diagnostic was explicitly executed: both codec
+record-field counters and all four model counters now have 2.00 doubling ratios.
+Both codec constructor-arrow occurs counters remain 3.91, so the overall test
+still fails its unchanged 2.3 bound. Fresh compiler/application and hosted
+validation for this source remain pending. See the [scoped receipt](runs/incremental-final-validation-20261105/accessor-row-consumption.json).
+
+The unchanged coerce-floor gate also passes in 202 seconds: all 84 golden rows
+are measured, adapters remain exactly zero, and no dispatch/narrow count rises.
+No golden is changed.

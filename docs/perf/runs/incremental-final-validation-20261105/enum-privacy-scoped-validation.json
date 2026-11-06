@@ -161,8 +161,8 @@
     "The public app50 automatic smoke is not the build-performance median gate and establishes no performance improvement.",
     "Canonical binary content matches the checkpoint but retains its precommit base stamp.",
     "Historical large-model build and benchmark validation remain incomplete.",
-    "CI42238182751 and the current public browser gate were running at receipt preparation; no completed result is claimed.",
-    "All resource guards, quality requirements and gate budgets remain unchanged."
+    "All resource guards, quality requirements and gate budgets remain unchanged.",
+    "The public six-browser fixture gate and hosted enum/privacy checkpoint pass. Later isolated accessor candidates are outside that checkpoint."
   ],
   "config_surface_census": {
     "original_check": "stale line witnesses after settings-query removal",
@@ -181,5 +181,37 @@
     "direct_green_exit": 0,
     "green_log_sha256": "fb2d21c9c93980bf9a0e049dae13042d59d8b1a3a462d0ff1a9b583d7852d4c9",
     "product_source_changed": false
+  },
+  "public_six_browser_step_cost": {
+    "passed": true,
+    "elapsed_seconds": 291,
+    "reports": 6,
+    "modes": [
+      "reference",
+      "incremental"
+    ],
+    "engines": [
+      "chromium",
+      "webkit",
+      "firefox"
+    ],
+    "scenarios_per_report": 8,
+    "log_sha256": "52f851298bf0380f6103fc7996b739ee0e874a4b5dca008710fcd4f3bf78ad1d",
+    "compiler_sha256": "302824927bb4cc6c722bc78ef9b193e8fe82f624d5d93d2b725fde191f658b0a",
+    "production_content_checkpoint": "913c97184",
+    "docs_and_census_checkpoint": "2bcee4b5f",
+    "cache_disabled_to_avoid_settings_query": true,
+    "scope": "original public step-cost fixture and unchanged assertions; not full private application or general latency proof"
+  },
+  "hosted_ci": {
+    "run_id": 42239339686,
+    "url": "https://github.com/anzellai/sky/actions/runs/42239339686",
+    "head_sha": "2bcee4b5ffb0bc71521b74a1ddaf112c51b9462c",
+    "status": "completed",
+    "conclusion": "success",
+    "successful_jobs": 40,
+    "failed_jobs": 0,
+    "config_census_and_build_performance_gates_unchanged": true,
+    "later_accessor_candidate_covered": false
   }
 }

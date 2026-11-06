@@ -17,7 +17,11 @@
 
 use crate::TyVarId;
 use base::Name;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, OnceLock,
+};
 
 /// The bounds a type variable can carry: Elm's four built-in super-vars
 /// (`Type.hs:62`) plus `Encodable` (v0.27.0, B-1). NOT typeclasses (doc 03
@@ -336,10 +340,56 @@ impl Mismatch {
     }
 }
 
+/// Metadata-only capability state. A whole-UF snapshot is itself a latent
+/// Record export: permanently disable authority in BOTH graph copies before
+/// Clone returns. Never reactivate this flag on rollback or clear.
+#[derive(Default)]
+struct AccessorRowGrants {
+    rows: HashSet<TyVarId>,
+    snapshotted: OnceLock<Arc<AtomicBool>>,
+}
+impl Clone for AccessorRowGrants {
+    fn clone(&self) -> Self {
+        let flag = self
+            .snapshotted
+            .get_or_init(|| Arc::new(AtomicBool::new(false)));
+        flag.store(true, Ordering::Release);
+        Self {
+            rows: HashSet::new(),
+            snapshotted: OnceLock::from(flag.clone()),
+        }
+    }
+}
+impl AccessorRowGrants {
+    fn disabled(&self) -> bool {
+        self.snapshotted
+            .get()
+            .is_some_and(|flag| flag.load(Ordering::Acquire))
+    }
+    fn active(&self) -> bool {
+        !self.rows.is_empty() && !self.disabled()
+    }
+    fn contains(&self, row: &TyVarId) -> bool {
+        self.active() && self.rows.contains(row)
+    }
+    fn grant(&mut self, row: TyVarId) {
+        if !self.disabled() {
+            self.rows.insert(row);
+        }
+    }
+    fn revoke(&mut self, row: TyVarId) {
+        self.rows.remove(&row);
+    }
+    fn clear(&mut self) {
+        self.rows = HashSet::new();
+    }
+}
+
 /// The union-find store. Local to ONE inference run; never global (L1).
 #[derive(Default, Clone)]
 pub struct UnionFind {
     slots: Slots,
+    accessor_rows: AccessorRowGrants,
     /// Bound obligations the unifier cannot decide on its own (v0.27.0,
     /// C-11/B-1): a bounded variable met a nominal type (a custom type, an
     /// opaque stdlib type) or a record. Whether a custom type is comparable
@@ -419,9 +469,104 @@ impl UnionFind {
         self.slots.len()
     }
 
+    /// The new row never escapes its birth scope: only the complete function
+    /// root is returned. No annotation, callback or owned content copy occurs
+    /// between allocation and minting this singleton's authority.
+    pub(crate) fn fresh_accessor(&mut self, field: Name) -> TyVarId {
+        self.fresh_accessor_impl(field, true)
+    }
+    #[cfg(test)]
+    pub(crate) fn fresh_accessor_reference(&mut self, field: Name) -> TyVarId {
+        self.fresh_accessor_impl(field, false)
+    }
+    fn fresh_accessor_impl(&mut self, field: Name, grant: bool) -> TyVarId {
+        let value = self.fresh_flex();
+        let row = self.fresh_flex();
+        let rec = self.fresh(Content::Structure(FlatTy::Record(
+            BTreeMap::from([(field, value)]),
+            Some(row),
+        )));
+        let function = self.fresh(Content::Structure(FlatTy::Fun(rec, value)));
+        if grant {
+            self.accessor_rows.grant(row);
+        }
+        function
+    }
+    pub(crate) fn revoke_accessor_rows(&mut self) {
+        self.accessor_rows.clear();
+    }
+    fn revoke_accessor_root(&mut self, id: TyVarId) {
+        if !self.accessor_rows.active() {
+            return;
+        }
+        let root = self.find(id);
+        self.accessor_rows.revoke(id);
+        self.accessor_rows.revoke(root);
+    }
+    fn revoke_accessor_owner(&mut self, id: TyVarId) {
+        if !self.accessor_rows.active() {
+            return;
+        }
+        let root = self.find(id);
+        let row = match &self.slots[root.0 as usize] {
+            Slot::Root {
+                content: Content::Structure(FlatTy::Record(_, Some(row))),
+                ..
+            } => Some(*row),
+            _ => None,
+        };
+        if let Some(row) = row {
+            self.revoke_accessor_root(row);
+        }
+    }
+    /// New direct structural edges revoke before publication. A granted row
+    /// cannot be a link: every link/mutation of that representative revokes it.
+    fn revoke_accessor_children(&mut self, content: &Content) {
+        if !self.accessor_rows.active() {
+            return;
+        }
+        let Content::Structure(flat) = content else {
+            return;
+        };
+        let rows = &mut self.accessor_rows;
+        match flat {
+            FlatTy::App(_, xs) | FlatTy::Tuple(xs) => {
+                for x in xs {
+                    rows.revoke(*x);
+                }
+            }
+            FlatTy::Fun(a, b) => {
+                rows.revoke(*a);
+                rows.revoke(*b);
+            }
+            FlatTy::Record(fs, ext) => {
+                for x in fs.values() {
+                    rows.revoke(*x);
+                }
+                if let Some(ext) = ext {
+                    rows.revoke(*ext);
+                }
+            }
+            FlatTy::Unit => {}
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn record_copies_for_test(&self) -> u64 {
+        self.record_copies
+    }
+
     /// Allocate a fresh variable with the given content. Deterministic (L4):
     /// the id is the next logical index, drawn in constraint-generation order.
     pub fn fresh(&mut self, content: Content) -> TyVarId {
+        assert!(
+            self.slots.len() <= u32::MAX as usize,
+            "type-variable ID limit exceeded"
+        );
+        self.slots
+            .len()
+            .checked_add(1)
+            .expect("type-variable ID limit exceeded");
+        self.revoke_accessor_children(&content);
         let id = TyVarId(self.slots.len() as u32);
         let is_int_literal = matches!(&content, Content::FlexSuper(s) if s.has(SuperType::IntLit));
         self.slots.push(Slot::Root { content, rank: 0 });
@@ -462,6 +607,9 @@ impl UnionFind {
     /// Content of `v`'s representative (cloned — cheap, ids inside).
     pub fn content(&mut self, v: TyVarId) -> Content {
         let r = self.find(v);
+        // Revoke BEFORE an owned Record/row copy can be held across later
+        // unification, even when this reader is internal to the unifier.
+        self.revoke_accessor_owner(r);
         match &self.slots[r.0 as usize] {
             Slot::Root { content, .. } => {
                 if let Content::Structure(FlatTy::Record(fs, _)) = content {
@@ -518,6 +666,7 @@ impl UnionFind {
     /// Move a ROOT's content out, leaving `Flex` behind. Only for a root that
     /// [`Self::union`] overwrites next, before anything reads it.
     fn take_content(&mut self, root: TyVarId) -> Content {
+        self.revoke_accessor_root(root);
         match &mut self.slots[root.0 as usize] {
             Slot::Root { content, .. } => std::mem::replace(content, Content::Flex),
             Slot::Link(_) => Content::Flex,
@@ -525,6 +674,17 @@ impl UnionFind {
     }
 
     fn set_content(&mut self, v: TyVarId, content: Content) {
+        self.revoke_accessor_owner(v);
+        self.revoke_accessor_root(v);
+        self.revoke_accessor_children(&content);
+        self.set_moved_record_content(v, content);
+    }
+
+    /// Only the direct fresh Access path uses this: move already-published
+    /// fields plus its new fresh value/rest, with no new raw row aliases.
+    fn set_moved_record_content(&mut self, v: TyVarId, content: Content) {
+        self.revoke_accessor_owner(v);
+        self.revoke_accessor_root(v);
         let r = self.find(v);
         if let Slot::Root { content: c, .. } = &mut self.slots[r.0 as usize] {
             *c = content;
@@ -533,6 +693,17 @@ impl UnionFind {
 
     /// `union` by rank, carrying merged content (`UnionFind.hs:106`).
     fn union(&mut self, a: TyVarId, b: TyVarId, content: Content) {
+        self.revoke_accessor_owner(a);
+        self.revoke_accessor_owner(b);
+        self.union_moved_content(a, b, content);
+    }
+
+    /// The two Flex/Structure arms call this immediately after take_content:
+    /// the same edge moves within one logical class, without an owned copy or
+    /// intervening callback. Other union callers revoke owners first.
+    fn union_moved_content(&mut self, a: TyVarId, b: TyVarId, content: Content) {
+        self.revoke_accessor_root(a);
+        self.revoke_accessor_root(b);
         let (ra, rb) = (self.find(a), self.find(b));
         if ra == rb {
             self.set_content(ra, content);
@@ -626,6 +797,8 @@ impl UnionFind {
     }
 
     fn unify_vars(&mut self, a: TyVarId, b: TyVarId) -> Result<(), Mismatch> {
+        self.revoke_accessor_root(a);
+        self.revoke_accessor_root(b);
         let ra = self.find(a);
         let rb = self.find(b);
         if ra == rb {
@@ -651,7 +824,7 @@ impl UnionFind {
                     return self.infinite(ra, rb);
                 }
                 let other = self.take_content(rb);
-                self.union(ra, rb, other);
+                self.union_moved_content(ra, rb, other);
                 return Ok(());
             }
             (Kind::Other, Kind::Flex) => {
@@ -659,10 +832,14 @@ impl UnionFind {
                     return self.infinite(ra, rb);
                 }
                 let other = self.take_content(ra);
-                self.union(ra, rb, other);
+                self.union_moved_content(ra, rb, other);
                 return Ok(());
             }
             (Kind::Other, Kind::Other) => {}
+        }
+        // Consume before generic owned Record copies revoke the authority.
+        if let Some(result) = self.unify_consumable_accessor_record(ra, rb) {
+            return result;
         }
         // Both sides are rigid, bounded or structured: the arms below consume
         // owned copies (`unify_flat` / `satisfy` may read either root while
@@ -1284,6 +1461,8 @@ impl UnionFind {
                 None => return (fields, None),
                 Some(e) => {
                     let r = self.find(e);
+                    // The returned row/map is a raw-ID export, not just a read.
+                    self.revoke_accessor_root(e);
                     if !seen.insert(r) {
                         return (fields, Some(r));
                     }
@@ -1429,6 +1608,8 @@ impl UnionFind {
         if !matches!(self.kind(old_ext), Kind::Flex) {
             return None;
         }
+        // Replacing this owner record's old extension ends any earlier grant.
+        self.revoke_accessor_root(old_ext);
         // Both open rows allocate their shared rest before any child unifies.
         let rest = self.fresh_flex();
         let Content::Structure(FlatTy::Record(mut all, _)) = self.take_content(base) else {
@@ -1437,7 +1618,7 @@ impl UnionFind {
         if existing.is_none() {
             all.insert(field.clone(), value);
         }
-        self.set_content(base, Content::Structure(FlatTy::Record(all, Some(rest))));
+        self.set_moved_record_content(base, Content::Structure(FlatTy::Record(all, Some(rest))));
         self.link_fresh(base, rec);
         crate::counters::RECORD_FIELDS.bump();
         if let Some(existing) = existing {
@@ -1469,6 +1650,10 @@ impl UnionFind {
     /// rank-0 root distinct from `root`: `child` links under `root`, whose
     /// rank rises to 1 if it was 0 (union by rank). The content stays.
     fn link_fresh(&mut self, root: TyVarId, child: TyVarId) {
+        // Root content is preserved; child content is discarded.
+        self.revoke_accessor_owner(child);
+        self.revoke_accessor_root(root);
+        self.revoke_accessor_root(child);
         let root = self.find(root);
         let child = self.find(child);
         debug_assert_ne!(root, child);
@@ -1479,6 +1664,158 @@ impl UnionFind {
             }
         }
         self.slots[child.0 as usize] = Slot::Link(root);
+    }
+
+    /// Consume only the sole incoming row edge of a compiler-created
+    /// singleton accessor. The partner is closed or has a literal plain Flex
+    /// extension; all meaningful old-row constraints still run ordinarily.
+    fn unify_consumable_accessor_record(
+        &mut self,
+        ra: TyVarId,
+        rb: TyVarId,
+    ) -> Option<Result<(), Mismatch>> {
+        if !self.accessor_rows.active() {
+            return None;
+        }
+        let owned = |root: TyVarId| -> Option<(Name, TyVarId, TyVarId)> {
+            let Slot::Root {
+                content: Content::Structure(FlatTy::Record(fields, Some(row))),
+                ..
+            } = &self.slots[root.0 as usize]
+            else {
+                return None;
+            };
+            if fields.len() != 1 || !self.accessor_rows.contains(row) {
+                return None;
+            }
+            if !matches!(
+                &self.slots[row.0 as usize],
+                Slot::Root {
+                    content: Content::Flex,
+                    rank: 0
+                }
+            ) {
+                return None;
+            }
+            let (field, value) = fields.first_key_value()?;
+            Some((field.clone(), *value, *row))
+        };
+        let (accessor, base, field, value, row) = if let Some((f, v, r)) = owned(ra) {
+            (ra, rb, f, v, r)
+        } else if let Some((f, v, r)) = owned(rb) {
+            (rb, ra, f, v, r)
+        } else {
+            return None;
+        };
+        let (base_value, base_only, old_ext) = match &self.slots[base.0 as usize] {
+            Slot::Root {
+                content: Content::Structure(FlatTy::Record(fields, ext)),
+                ..
+            } => {
+                let shared = fields.get(&field).copied();
+                match ext {
+                    None if shared.is_none() => return None,
+                    Some(old)
+                        if *old == row
+                            || !matches!(
+                                &self.slots[old.0 as usize],
+                                Slot::Root {
+                                    content: Content::Flex,
+                                    ..
+                                }
+                            ) =>
+                    {
+                        return None
+                    }
+                    _ => {}
+                }
+                (shared, fields.len() - usize::from(shared.is_some()), *ext)
+            }
+            _ => return None,
+        };
+        // Consume before any fallible/reentrant work or owned Record copy.
+        // The base's old extension remains semantically live, so revoke its
+        // authority and retain its ordinary complement constraint below.
+        self.accessor_rows.revoke(row);
+        if let Some(old) = old_ext {
+            self.revoke_accessor_root(old);
+        }
+        // General record merging allocates the shared rest BEFORE union and
+        // all shared-field/complement constraints, even for existing fields.
+        let rest = old_ext.map(|_| self.fresh_flex());
+        let Content::Structure(FlatTy::Record(mut all, _)) = self.take_content(base) else {
+            unreachable!()
+        };
+        if accessor == ra {
+            all.insert(field.clone(), value);
+        } else {
+            all.entry(field.clone()).or_insert(value);
+        }
+        self.union(ra, rb, Content::Structure(FlatTy::Record(all, rest)));
+        crate::counters::RECORD_FIELDS.bump();
+        if let Some(other) = base_value {
+            let pair = if accessor == ra {
+                (value, other)
+            } else {
+                (other, value)
+            };
+            if let Err(error) = self.unify(pair.0, pair.1) {
+                return Some(Err(error));
+            }
+        }
+        // Mirror e1 then e2 exactly. Only the consumed row's complement is
+        // dead; a new field's one-field old-row complement is meaningful and
+        // must use ordinary unify, including its ignored-error graph state.
+        if accessor == ra {
+            self.bind_consumed_accessor_complement(row, base_only, rest);
+            self.bind_accessor_base_complement(old_ext, base_value.is_none(), &field, value, rest);
+        } else {
+            self.bind_accessor_base_complement(old_ext, base_value.is_none(), &field, value, rest);
+            self.bind_consumed_accessor_complement(row, base_only, rest);
+        }
+        Some(Ok(()))
+    }
+
+    /// Private post-consumption continuation only. No live graph edge reaches
+    /// row; preserve the allocation/link/rank with an empty placeholder map.
+    fn bind_consumed_accessor_complement(
+        &mut self,
+        row: TyVarId,
+        fields: usize,
+        rest: Option<TyVarId>,
+    ) {
+        if fields == 0 {
+            return;
+        }
+        let complement = self.fresh(Content::Structure(FlatTy::Record(BTreeMap::new(), rest)));
+        self.link_fresh(row, complement);
+        self.set_content(
+            row,
+            Content::Structure(FlatTy::Record(BTreeMap::new(), rest)),
+        );
+    }
+
+    /// This is intentionally NOT a fresh-link shortcut. The accessor's value
+    /// can already alias the old row; occurs checks and ignored failures of
+    /// the original generic record merge must still happen in original order.
+    fn bind_accessor_base_complement(
+        &mut self,
+        old: Option<TyVarId>,
+        missing: bool,
+        field: &Name,
+        value: TyVarId,
+        rest: Option<TyVarId>,
+    ) {
+        if !missing {
+            return;
+        }
+        if let Some(old) = old {
+            let complement = self.fresh(Content::Structure(FlatTy::Record(
+                BTreeMap::from([(field.clone(), value)]),
+                rest,
+            )));
+            let _ = self.unify(old, complement);
+        }
     }
 
     /// The number of nodes of `ty` when `v`'s graph, unfolded along `ty`, IS
@@ -1560,6 +1897,12 @@ impl UnionFind {
         fs2: BTreeMap<Name, TyVarId>,
         e2: Option<TyVarId>,
     ) -> Result<(), Mismatch> {
+        if let Some(row) = e1 {
+            self.revoke_accessor_root(row);
+        }
+        if let Some(row) = e2 {
+            self.revoke_accessor_root(row);
+        }
         // Flatten any resolved-Record extension so the closed/open discipline
         // sees the record's true field set + true final extension. A no-op when
         // both ext vars are still flex (the common case at call time).
@@ -2665,6 +3008,548 @@ mod open_access_consumption_tests {
                 "refusal must not allocate shared rest/complements"
             );
             assert!(uf.unify(base, rec).is_ok());
+        }
+    }
+}
+
+#[cfg(test)]
+mod accessor_export_tests {
+    use super::*;
+
+    fn accessor(uf: &mut UnionFind, fast: bool) -> (TyVarId, TyVarId, TyVarId) {
+        let f = if fast {
+            uf.fresh_accessor(Name::new("a"))
+        } else {
+            uf.fresh_accessor_reference(Name::new("a"))
+        };
+        let Content::Structure(FlatTy::Fun(rec, value)) = uf.content(f) else {
+            panic!("function")
+        };
+        (f, rec, value)
+    }
+    fn closed(uf: &mut UnionFind, width: usize) -> TyVarId {
+        let mut fields = BTreeMap::new();
+        for i in 0..width {
+            let value = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+            fields.insert(
+                Name::new(&if i == 0 {
+                    "a".to_string()
+                } else {
+                    format!("extra{i}")
+                }),
+                value,
+            );
+        }
+        uf.fresh(Content::Structure(FlatTy::Record(fields, None)))
+    }
+    fn close(
+        uf: &mut UnionFind,
+        rec: TyVarId,
+        wide: TyVarId,
+        reverse: bool,
+    ) -> Result<(), Mismatch> {
+        if reverse {
+            uf.unify(wide, rec)
+        } else {
+            uf.unify(rec, wide)
+        }
+    }
+    fn later_extra(uf: &mut UnionFind, record: TyVarId) -> Result<(), Mismatch> {
+        let value = uf.fresh_flex();
+        let row = uf.fresh_flex();
+        let need = uf.fresh(Content::Structure(FlatTy::Record(
+            BTreeMap::from([(Name::new("extra1"), value)]),
+            Some(row),
+        )));
+        uf.unify(record, need)
+    }
+    fn state(uf: &mut UnionFind, roots: &[TyVarId], all_content: bool) -> String {
+        let mut out = format!(
+            "count={} pending={:?} needs={:?} missing={:?} literals={:?}",
+            uf.var_count(),
+            uf.pending,
+            uf.rigid_needs,
+            uf.rigid_missing,
+            uf.int_literals
+        );
+        for i in 0..uf.var_count() {
+            let id = TyVarId(i as u32);
+            let root = uf.find(id);
+            out.push_str(&format!("|{id:?}:{root:?}:{}", uf.rank(root)));
+            if all_content || roots.contains(&id) {
+                // Borrowed formatting exports no Content or row IDs.
+                out.push_str(&format!(":{:?}", uf.slots[root.0 as usize]));
+            }
+        }
+        out
+    }
+    fn outcome(r: Result<(), Mismatch>) -> Result<(), String> {
+        r.map_err(|e| e.message)
+    }
+
+    /// These use only the original UF API after factory construction. On the
+    /// parked unsound prototype they lose the late extra field after closure.
+    #[test]
+    fn held_record_copy_republished_after_close_preserves_late_fields() {
+        for reverse in [false, true] {
+            let mut results = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let (_, rec, _) = accessor(&mut uf, fast);
+                let held = uf.content(rec);
+                let wide = closed(&mut uf, 4);
+                close(&mut uf, rec, wide, reverse).unwrap();
+                let published = uf.fresh(held);
+                later_extra(&mut uf, published).unwrap();
+                results.push(state(&mut uf, &[], true));
+            }
+            assert_eq!(results[0], results[1]);
+        }
+    }
+    #[test]
+    fn snapshot_held_before_close_protects_source_and_snapshot() {
+        for reverse in [false, true] {
+            let mut results = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let (_, rec, _) = accessor(&mut uf, fast);
+                let mut snapshot = uf.clone();
+                let wide = closed(&mut uf, 4);
+                close(&mut uf, rec, wide, reverse).unwrap();
+                let published = uf.fresh(snapshot.content(rec));
+                later_extra(&mut uf, published).unwrap();
+                results.push(state(&mut uf, &[], true));
+                // Independently use the snapshot, not just original's side.
+                let wide = closed(&mut snapshot, 4);
+                close(&mut snapshot, rec, wide, reverse).unwrap();
+                assert!(later_extra(&mut snapshot, rec).is_ok());
+            }
+            assert_eq!(results[0], results[1]);
+        }
+    }
+    #[test]
+    fn normalized_raw_row_republished_after_close_preserves_late_fields() {
+        let mut results = Vec::new();
+        for fast in [true, false] {
+            let mut uf = UnionFind::new();
+            let (_, rec, _) = accessor(&mut uf, fast);
+            let (fields, row) = uf.normalize_record(BTreeMap::new(), Some(rec));
+            assert!(row.is_some());
+            let wide = closed(&mut uf, 4);
+            close(&mut uf, rec, wide, false).unwrap();
+            let published = uf.fresh(Content::Structure(FlatTy::Record(fields, row)));
+            later_extra(&mut uf, published).unwrap();
+            results.push(state(&mut uf, &[], true));
+        }
+        assert_eq!(results[0], results[1]);
+    }
+    #[test]
+    fn unexported_accessor_preserves_all_ids_ranks_live_roots_and_failure_order() {
+        for reverse in [false, true] {
+            for field in [
+                Content::Flex,
+                Content::Rigid(Name::new("r")),
+                Content::FlexSuper(SuperType::Number),
+                Content::Error,
+                Content::Structure(FlatTy::App(Name::new("String"), vec![])),
+            ] {
+                let mut runs = Vec::new();
+                for fast in [true, false] {
+                    let mut uf = UnionFind::new();
+                    let (f, rec, value) = accessor(&mut uf, fast);
+                    uf.set_content(value, field.clone());
+                    // Structure-preserving owner movement through a Flex root.
+                    let moved = uf.fresh_flex();
+                    uf.unify(moved, rec).unwrap();
+                    let wide = closed(&mut uf, 8);
+                    let result = outcome(close(&mut uf, moved, wide, reverse));
+                    let live = [f, rec, value, moved, wide];
+                    runs.push((result, state(&mut uf, &live, false)));
+                }
+                assert_eq!(runs[0], runs[1], "reverse={reverse}, field={field:?}");
+            }
+        }
+    }
+    #[test]
+    fn row_publication_mutation_and_generic_merge_revoke_before_late_constraints() {
+        for mode in 0..4 {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let (_, rec, _) = accessor(&mut uf, fast);
+                // Real raw export, followed by each otherwise independent
+                // mutation/publication route. Export itself must revoke first.
+                let Content::Structure(FlatTy::Record(_, Some(row))) = uf.content(rec) else {
+                    panic!("row")
+                };
+                let alias = match mode {
+                    0 => uf.fresh(Content::Structure(FlatTy::Record(
+                        BTreeMap::new(),
+                        Some(row),
+                    ))),
+                    1 => {
+                        let x = uf.fresh_flex();
+                        uf.set_content(
+                            x,
+                            Content::Structure(FlatTy::Record(BTreeMap::new(), Some(row))),
+                        );
+                        x
+                    }
+                    2 => {
+                        let x = uf.fresh_flex();
+                        uf.unify(row, x).unwrap();
+                        uf.fresh(Content::Structure(FlatTy::Record(BTreeMap::new(), Some(x))))
+                    }
+                    _ => {
+                        let x = uf.fresh_flex();
+                        uf.unify(x, row).unwrap();
+                        uf.fresh(Content::Structure(FlatTy::Record(BTreeMap::new(), Some(x))))
+                    }
+                };
+                let wide = closed(&mut uf, 4);
+                close(&mut uf, rec, wide, false).unwrap();
+                later_extra(&mut uf, alias).unwrap();
+                let bad = uf.fresh(Content::Structure(FlatTy::Fun(row, row)));
+                let result = outcome(uf.unify(row, bad));
+                assert!(result.is_err());
+                runs.push((result, state(&mut uf, &[], true)));
+            }
+            assert_eq!(runs[0], runs[1], "mode={mode}");
+        }
+    }
+    #[test]
+    fn snapshot_disable_survives_clear_rollback_and_new_factories() {
+        fn send_sync<T: Send + Sync>() {}
+        send_sync::<UnionFind>();
+        let mut uf = UnionFind::new();
+        let _ = accessor(&mut uf, true);
+        let snapshot = uf.clone();
+        for mut graph in [uf, snapshot] {
+            graph.revoke_accessor_rows();
+            let (_, rec, _) = accessor(&mut graph, true);
+            assert!(
+                graph.accessor_rows.disabled(),
+                "snapshot disable survives clear/rollback"
+            );
+            assert!(
+                !graph.accessor_rows.active(),
+                "a new factory cannot mint after snapshot"
+            );
+            let held = graph.content(rec);
+            let wide = closed(&mut graph, 4);
+            close(&mut graph, rec, wide, false).unwrap();
+            let alias = graph.fresh(held);
+            later_extra(&mut graph, alias).unwrap();
+            assert!(!graph.accessor_rows.active());
+        }
+    }
+    #[test]
+    fn unexported_wide_accessor_does_not_copy_dead_complement() {
+        let mut copies = Vec::new();
+        for fast in [true, false] {
+            let mut uf = UnionFind::new();
+            let (_, rec, _) = accessor(&mut uf, fast);
+            let wide = closed(&mut uf, 128);
+            close(&mut uf, rec, wide, false).unwrap();
+            copies.push(uf.record_copies_for_test());
+        }
+        assert!(
+            copies[0] * 2 < copies[1],
+            "fast={} reference={}",
+            copies[0],
+            copies[1]
+        );
+    }
+    #[test]
+    fn raw_mutation_and_publication_each_withdraw_factory_authority() {
+        for mode in 0..6 {
+            let mut uf = UnionFind::new();
+            let (_, rec, _) = accessor(&mut uf, true);
+            // Test-only borrowed inspection isolates individual revocation
+            // boundaries. No production factory exposes this raw row.
+            let row = match &uf.slots[rec.0 as usize] {
+                Slot::Root {
+                    content: Content::Structure(FlatTy::Record(_, Some(row))),
+                    ..
+                } => *row,
+                _ => panic!("singleton"),
+            };
+            assert!(uf.accessor_rows.contains(&row));
+            match mode {
+                0 => {
+                    uf.fresh(Content::Structure(FlatTy::Tuple(vec![row])));
+                }
+                1 => {
+                    let x = uf.fresh_flex();
+                    uf.set_content(x, Content::Structure(FlatTy::Fun(row, row)));
+                }
+                2 => {
+                    uf.unify(row, row).unwrap();
+                }
+                3 => {
+                    uf.set_content(row, Content::Flex);
+                }
+                4 => {
+                    let x = uf.fresh_flex();
+                    uf.unify(row, x).unwrap();
+                }
+                _ => {
+                    let x = uf.fresh_flex();
+                    uf.unify(x, row).unwrap();
+                }
+            }
+            assert!(!uf.accessor_rows.contains(&row), "boundary {mode}");
+        }
+    }
+    #[test]
+    fn shared_field_occurs_failure_keeps_dense_publication_and_allocation_order() {
+        for reverse in [false, true] {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let (f, rec, value) = accessor(&mut uf, fast);
+                let recursive = uf.fresh(Content::Structure(FlatTy::Fun(rec, value)));
+                let other = uf.fresh_flex();
+                let wide = uf.fresh(Content::Structure(FlatTy::Record(
+                    BTreeMap::from([(Name::new("a"), recursive), (Name::new("extra1"), other)]),
+                    None,
+                )));
+                let before = uf.var_count();
+                let err = outcome(close(&mut uf, rec, wide, reverse));
+                assert!(err.as_ref().is_err_and(|s| s.contains("infinite type")));
+                assert_eq!(
+                    uf.var_count(),
+                    before,
+                    "fallible shared field precedes complement allocation"
+                );
+                runs.push((
+                    err,
+                    state(&mut uf, &[f, rec, value, wide, recursive, other], true),
+                ));
+            }
+            assert_eq!(runs[0], runs[1]);
+        }
+    }
+    fn open_base(uf: &mut UnionFind, existing: bool) -> (TyVarId, TyVarId) {
+        let row = uf.fresh_flex();
+        let mut fields = BTreeMap::new();
+        for name in if existing {
+            vec!["a", "extra1", "other"]
+        } else {
+            vec!["extra1", "other"]
+        } {
+            let v = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+            fields.insert(Name::new(name), v);
+        }
+        (
+            uf.fresh(Content::Structure(FlatTy::Record(fields, Some(row)))),
+            row,
+        )
+    }
+    fn born_row(uf: &UnionFind, rec: TyVarId) -> TyVarId {
+        match &uf.slots[rec.0 as usize] {
+            Slot::Root {
+                content: Content::Structure(FlatTy::Record(_, Some(row))),
+                ..
+            } => *row,
+            _ => panic!("new accessor record"),
+        }
+    }
+    fn live_except(uf: &mut UnionFind, dead: &[TyVarId]) -> String {
+        let dead: Vec<_> = dead.iter().map(|id| uf.find(*id)).collect();
+        let live: Vec<_> = (0..uf.var_count())
+            .map(|i| TyVarId(i as u32))
+            .filter(|id| !dead.contains(&uf.find(*id)))
+            .collect();
+        state(uf, &live, false)
+    }
+    fn request(uf: &mut UnionFind, base: TyVarId, field: &str) -> Result<(), Mismatch> {
+        let v = uf.fresh_flex();
+        let row = uf.fresh_flex();
+        let rec = uf.fresh(Content::Structure(FlatTy::Record(
+            BTreeMap::from([(Name::new(field), v)]),
+            Some(row),
+        )));
+        uf.unify(base, rec)
+    }
+    #[test]
+    fn open_consumption_preserves_every_live_node_old_row_and_late_constraints() {
+        for reverse in [false, true] {
+            for existing in [false, true] {
+                for ranked in [false, true] {
+                    let mut runs = Vec::new();
+                    for fast in [true, false] {
+                        let mut uf = UnionFind::new();
+                        let (base, old) = open_base(&mut uf, existing);
+                        if ranked {
+                            let alias = uf.fresh_flex();
+                            uf.unify(old, alias).unwrap();
+                        }
+                        // This copy is deliberately held before the new accessor is
+                        // born. Its OLD extension must retain ordinary constraints.
+                        let held = uf.content(base);
+                        let (_, rec, _) = accessor(&mut uf, fast);
+                        let dead = born_row(&uf, rec);
+                        let result = outcome(close(&mut uf, rec, base, reverse));
+                        assert!(result.is_ok());
+                        let before_late = live_except(&mut uf, &[dead]);
+                        let alias = uf.fresh(held);
+                        if !existing {
+                            request(&mut uf, alias, "a").unwrap();
+                        }
+                        let need =
+                            uf.fresh(Content::Structure(FlatTy::Record(BTreeMap::new(), None)));
+                        let late = outcome(uf.unify(old, need));
+                        runs.push((result, before_late, late, live_except(&mut uf, &[dead])));
+                    }
+                    assert_eq!(
+                        runs[0], runs[1],
+                        "reverse={reverse} existing={existing} ranked={ranked}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn exported_open_accessor_rows_keep_held_copy_snapshot_and_normalized_aliases() {
+        for mode in 0..3 {
+            for reverse in [false, true] {
+                let mut runs = Vec::new();
+                for fast in [true, false] {
+                    let mut uf = UnionFind::new();
+                    let (base, _) = open_base(&mut uf, false);
+                    let (_, rec, _) = accessor(&mut uf, fast);
+                    let held = match mode {
+                        0 => uf.content(rec),
+                        1 => {
+                            let mut snapshot = uf.clone();
+                            snapshot.content(rec)
+                        }
+                        _ => {
+                            let (fs, ext) = uf.normalize_record(BTreeMap::new(), Some(rec));
+                            Content::Structure(FlatTy::Record(fs, ext))
+                        }
+                    };
+                    close(&mut uf, rec, base, reverse).unwrap();
+                    let alias = uf.fresh(held);
+                    later_extra(&mut uf, alias).unwrap();
+                    runs.push(state(&mut uf, &[], true));
+                }
+                assert_eq!(runs[0], runs[1], "mode={mode} reverse={reverse}");
+            }
+        }
+    }
+    #[test]
+    fn open_shared_field_failure_publishes_rest_but_no_complements() {
+        for reverse in [false, true] {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let (base, _) = open_base(&mut uf, true);
+                let (_, rec, value) = accessor(&mut uf, fast);
+                uf.set_content(
+                    value,
+                    Content::Structure(FlatTy::App(Name::new("String"), vec![])),
+                );
+                let before = uf.var_count();
+                let result = outcome(close(&mut uf, rec, base, reverse));
+                assert!(result.is_err());
+                assert_eq!(
+                    uf.var_count(),
+                    before + 1,
+                    "only shared rest allocated before field failure"
+                );
+                runs.push((result, state(&mut uf, &[], true)));
+            }
+            assert_eq!(runs[0], runs[1]);
+        }
+    }
+    #[test]
+    fn open_old_row_occurs_failure_is_ignored_in_exact_complement_order() {
+        for reverse in [false, true] {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let (base, old) = open_base(&mut uf, false);
+                let (_, rec, value) = accessor(&mut uf, fast);
+                let dead = born_row(&uf, rec);
+                // Preserve OLD as a literal plain-Flex root (rank1), while
+                // making the meaningful old complement actually recursive.
+                uf.unify(old, value).unwrap();
+                let before = uf.var_count();
+                let result = outcome(close(&mut uf, rec, base, reverse));
+                assert!(
+                    result.is_ok(),
+                    "generic record merging ignores row complement errors"
+                );
+                assert_eq!(
+                    uf.var_count(),
+                    before + 3,
+                    "rest and BOTH complements in e1/e2 order"
+                );
+                assert!(matches!(uf.content(old), Content::Error));
+                runs.push((result, live_except(&mut uf, &[dead])));
+            }
+            assert_eq!(runs[0], runs[1], "reverse={reverse}");
+        }
+    }
+    #[test]
+    fn unsupported_open_extension_kinds_and_linked_roots_use_full_dense_fallback() {
+        for mode in 0..5 {
+            for reverse in [false, true] {
+                let mut runs = Vec::new();
+                for fast in [true, false] {
+                    let mut uf = UnionFind::new();
+                    let (base, old) = open_base(&mut uf, false);
+                    match mode {
+                        0 => uf.set_content(old, Content::Rigid(Name::new("r"))),
+                        1 => uf.set_content(old, Content::FlexSuper(SuperType::Encodable)),
+                        2 => uf.set_content(old, Content::Error),
+                        3 => uf.set_content(
+                            old,
+                            Content::Structure(FlatTy::Record(BTreeMap::new(), None)),
+                        ),
+                        _ => {
+                            let alias = uf.fresh_flex();
+                            uf.unify(alias, old).unwrap();
+                        }
+                    }
+                    let (_, rec, _) = accessor(&mut uf, fast);
+                    let result = outcome(close(&mut uf, rec, base, reverse));
+                    runs.push((result, state(&mut uf, &[], true)));
+                }
+                assert_eq!(runs[0], runs[1], "mode={mode} reverse={reverse}");
+            }
+        }
+    }
+    #[test]
+    fn two_unexported_singleton_owners_keep_both_function_aliases_exact() {
+        for reverse in [false, true] {
+            let mut runs = Vec::new();
+            for fast in [true, false] {
+                let mut uf = UnionFind::new();
+                let (f1, r1, _) = accessor(&mut uf, fast);
+                let row1 = born_row(&uf, r1);
+                let f2 = if fast {
+                    uf.fresh_accessor(Name::new("other"))
+                } else {
+                    uf.fresh_accessor_reference(Name::new("other"))
+                };
+                let Content::Structure(FlatTy::Fun(r2, _)) = uf.content(f2) else {
+                    panic!("function")
+                };
+                let row2 = born_row(&uf, r2);
+                close(&mut uf, r1, r2, reverse).unwrap();
+                // ra's singleton grant is selected first; the OTHER old row
+                // stays in the full live-content oracle (never hide both).
+                let dead = if reverse { row2 } else { row1 };
+                runs.push(live_except(&mut uf, &[dead]));
+                assert!(matches!(
+                    uf.content(f1),
+                    Content::Structure(FlatTy::Fun(_, _))
+                ));
+            }
+            assert_eq!(runs[0], runs[1]);
         }
     }
 }

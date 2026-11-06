@@ -1820,14 +1820,11 @@ impl<'a> Infer<'a> {
                 result
             }
             Expr::Accessor(field) => {
-                let fv = self.uf.fresh_flex();
-                let row = self.uf.fresh_flex();
-                let mut map = std::collections::BTreeMap::new();
-                map.insert(field.clone(), fv);
-                let rec = self
-                    .uf
-                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
-                self.fun(rec, fv)
+                #[cfg(test)]
+                if self.no_fast_paths {
+                    return self.uf.fresh_accessor_reference(field.clone());
+                }
+                self.uf.fresh_accessor(field.clone())
             }
             Expr::Access(base, field) => {
                 let tb = self.infer_expr(body, *base);
@@ -1950,6 +1947,7 @@ impl<'a> Infer<'a> {
     /// (a name that spells a bound, `comparable`, carries it). `None` for a
     /// binding with no annotation, or when the annotation cannot be read.
     fn let_anno_inst(&mut self, d: &hir::LocalDef) -> Option<LetAnnoInst> {
+        self.uf.revoke_accessor_rows();
         let anno = d.anno.as_ref()?;
         if d.pat.is_some() || d.binders.len() != 1 {
             return None;
@@ -2043,6 +2041,7 @@ impl<'a> Infer<'a> {
     /// are NOT reachable from the enclosing scope or from the let's other
     /// binders — HM's `ftv(τ) \ ftv(Γ)`.
     fn generalise_let_group(&mut self, body: &Body, defs: &[hir::LocalDef], group: &[usize]) {
+        self.uf.revoke_accessor_rows();
         // Decide the deferred bound obligations first, so a bound on a custom
         // type's argument reaches the variable before it is quantified (an
         // instance copies a bounded variable, not a pending obligation).
@@ -2151,6 +2150,7 @@ impl<'a> Infer<'a> {
     /// replacing each quantified root by a fresh var (keeping a super-var's
     /// constraint) and sharing everything else.
     fn instantiate_local(&mut self, generic: TyVarId, quantified: &[TyVarId]) -> TyVarId {
+        self.uf.revoke_accessor_rows();
         let mut memo: HashMap<TyVarId, TyVarId> = HashMap::new();
         for &q in quantified {
             let r = self.uf.find(q);
