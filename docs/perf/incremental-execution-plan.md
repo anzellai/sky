@@ -1053,3 +1053,28 @@ validation for this source remain pending. See the [scoped receipt](runs/increme
 The unchanged coerce-floor gate also passes in 202 seconds: all 84 golden rows
 are measured, adapters remain exactly zero, and no dispatch/narrow count rises.
 No golden is changed.
+
+
+The d16 accessor checkpoint builds a fresh canonical CLI and passes the full
+519-test project suite (two existing ignores) and automatic public app50 build.
+Its private-app build is still stopped by the original swap guard during
+lowering, with no checker diagnostic. Hosted run 42246342362 passes 38 jobs,
+including both unchanged build-performance gates. Its memory measurement test
+fails a fixed 100 MiB small-child assumption after observing 104 MiB; the aggregate
+gate also fails. That test oracle is under correction; no full hosted or private
+application success is claimed for this checkpoint.
+
+
+## Per-child RSS oracle correction
+
+The hosted small-child peak was 104 MiB, already below the preceding child
+whose assertion required at least 300 MiB. The test incorrectly also required
+that the small child stay below a fixed 100 MiB. The corrected existing test
+uses a fresh exact one-test launcher and compares small children before/after
+the unchanged 300 MiB workload. It retains status and baseline-discrimination
+assertions. Production wait4 and all memory guards are unchanged.
+
+A real cumulative-RUSAGE_CHILDREN fault fails the intended independence
+assertion. Restoring the per-child reporter passes, as do all six memory-module
+tests, all ten unchanged static skip-policy tests and the config census. New
+Linux hosted validation remains pending. See the [receipt](runs/incremental-final-validation-20261105/child-rss-oracle.json).

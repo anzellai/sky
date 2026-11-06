@@ -111,8 +111,8 @@
   "remaining": [
     "Two codec constructor-arrow occurs counters still have doubling ratio 3.91; the original overall 2.3 growth gate remains red.",
     "Original growth ignore is unchanged and was explicitly executed.",
-    "Fresh canonical compiler, private-application rebuild and new hosted validation remain pending for this source.",
-    "No application latency, peak-memory saving, persistence-protocol or universal-scaling claim."
+    "No application latency, peak-memory saving, persistence-protocol or universal-scaling claim.",
+    "The complete private application remains resource-stopped; the corrected hosted memory-test oracle requires fresh hosted validation."
   ],
   "coerce_floor": {
     "passed": true,
@@ -124,5 +124,55 @@
     "dispatch_or_narrow_widened": false,
     "golden_changed": false,
     "log_sha256": "a066d8b4525244ffc75de327a59da58e2e2ff95a5f28647b7cd6629a29320a2f"
+  },
+  "canonical_build": {
+    "passed": true,
+    "elapsed_seconds": 227,
+    "code_commit": "d16cf2091fd2698aa41a48e9df2d54bfea5ccb5b",
+    "compiler_sha256": "fa3f15caa45fe76a102fdda8984bb4fe26f59fc88e702f650b98c79826e92072",
+    "log_sha256": "17352125af4f2543862c441ce6ea92d68ac49003b20238c27cce78c358a9a284"
+  },
+  "public_app50_automatic_smoke": {
+    "passed": true,
+    "elapsed_seconds": 31,
+    "source_files": 8,
+    "wasm_copies": 2,
+    "matching_sdk_loader_copies": 2,
+    "log_sha256": "0c2af20de40c28bbf700a8d0e385b4c3c623a8108c13ab5e5c19fba80e492c56",
+    "performance_comparison_claimed": false
+  },
+  "full_project_suite": {
+    "passed": 519,
+    "failed": 0,
+    "ignored": 2,
+    "summaries": 49,
+    "elapsed_seconds": 224,
+    "log_sha256": "20be3b05ceb8838e51eec178b92180032334338f2954eca2f2dad21ea48c973a"
+  },
+  "hosted_ci": {
+    "run_id": 42246342362,
+    "url": "https://github.com/anzellai/sky/actions/runs/42246342362",
+    "head_sha": "d16cf2091fd2698aa41a48e9df2d54bfea5ccb5b",
+    "successful_jobs": 38,
+    "failed_jobs": [
+      "test-rest",
+      "ci-green"
+    ],
+    "failure_test": "memory::tests::a_childs_peak_is_its_own",
+    "observed_small_child_peak_bytes": 109051904,
+    "failed_assertion": "small child peak below fixed100MiB",
+    "build_performance_gates_passed": true,
+    "test_oracle_corrected_after_this_run": true
+  },
+  "private_current_build": {
+    "completed": false,
+    "resource_stopped": true,
+    "elapsed_seconds": 25,
+    "guard": "unchanged owned swap ceiling",
+    "observed_process_rss_mib": 1158,
+    "stage": "source lowering",
+    "checker_diagnostic_codes": 0,
+    "cleanup": true,
+    "performance_improvement_claimed": false
   }
 }
