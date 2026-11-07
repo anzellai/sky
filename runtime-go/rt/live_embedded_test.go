@@ -20,10 +20,12 @@ package rt
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -134,8 +136,67 @@ func freeLivePort(t *testing.T) int {
 	return p
 }
 
+// liveChildOutput owns the scanner lifetime. Waiting for a process must not
+// close StdoutPipe while that scanner still has unread shutdown output.
+type liveChildOutput struct {
+	mu   sync.Mutex
+	buf  strings.Builder
+	err  error
+	done chan struct{}
+}
+
+func scanLiveChildOutput(stdout io.Reader) (*liveChildOutput, <-chan bool) {
+	out := &liveChildOutput{done: make(chan struct{})}
+	ready := make(chan bool, 1)
+	go func() {
+		defer close(out.done)
+		sc := bufio.NewScanner(stdout)
+		sent := false
+		for sc.Scan() {
+			out.WriteString(sc.Text() + "\n")
+			if !sent && strings.Contains(sc.Text(), "LIVE_READY") {
+				ready <- true
+				sent = true
+			}
+		}
+		out.mu.Lock()
+		out.err = sc.Err()
+		out.mu.Unlock()
+		if !sent {
+			ready <- false
+		}
+	}()
+	return out, ready
+}
+
+func (out *liveChildOutput) WriteString(s string) {
+	out.mu.Lock()
+	defer out.mu.Unlock()
+	out.buf.WriteString(s)
+}
+
+func (out *liveChildOutput) String() string {
+	out.mu.Lock()
+	defer out.mu.Unlock()
+	return out.buf.String()
+}
+
+func (out *liveChildOutput) wait(wait func() error) error {
+	// os/exec requires StdoutPipe reads to finish BEFORE Cmd.Wait closes it.
+	// The child's exit closes its writing end, so the scanner can reach EOF
+	// without waiting for the process to be reaped.
+	<-out.done
+	err := wait()
+	if err != nil {
+		return err
+	}
+	out.mu.Lock()
+	defer out.mu.Unlock()
+	return out.err
+}
+
 // startLiveChild starts the helper and waits for LIVE_READY.
-func startLiveChild(t *testing.T, role string, port int, extraEnv ...string) (*exec.Cmd, *strings.Builder) {
+func startLiveChild(t *testing.T, role string, port int, extraEnv ...string) (*exec.Cmd, *liveChildOutput) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestLiveEmbeddedHelper$")
 	cmd.Env = append(os.Environ(), liveEmbeddedRoleEnv+"="+role,
@@ -149,30 +210,16 @@ func startLiveChild(t *testing.T, role string, port int, extraEnv ...string) (*e
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	out := &strings.Builder{}
-	ready := make(chan bool, 1)
-	go func() {
-		sc := bufio.NewScanner(stdout)
-		sent := false
-		for sc.Scan() {
-			out.WriteString(sc.Text() + "\n")
-			if !sent && strings.Contains(sc.Text(), "LIVE_READY") {
-				ready <- true
-				sent = true
-			}
-		}
-		if !sent {
-			ready <- false
-		}
-	}()
+	out, ready := scanLiveChildOutput(stdout)
 	select {
 	case ok := <-ready:
 		if !ok {
-			_ = cmd.Wait()
+			_ = out.wait(cmd.Wait)
 			t.Fatalf("the child never became ready:\n%s", out.String())
 		}
 	case <-time.After(30 * time.Second):
 		_ = cmd.Process.Kill()
+		_ = out.wait(cmd.Wait)
 		t.Fatalf("timed out waiting for the child:\n%s", out.String())
 	}
 	return cmd, out
@@ -189,7 +236,7 @@ func TestLiveEmbedded_InstallsNoSignalHandler(t *testing.T) {
 	t.Run("embedded: signal not caught", func(t *testing.T) {
 		cmd, out := startLiveChild(t, "embedded", freeLivePort(t))
 		_ = cmd.Process.Signal(syscall.SIGTERM)
-		err := cmd.Wait()
+		err := out.wait(cmd.Wait)
 		ws, _ := cmd.ProcessState.Sys().(syscall.WaitStatus)
 		if !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
 			t.Fatalf("embedded Live caught SIGTERM (a signal handler is installed); exit=%v\n%s", err, out.String())
@@ -201,10 +248,13 @@ func TestLiveEmbedded_InstallsNoSignalHandler(t *testing.T) {
 	t.Run("normal: signal caught (control)", func(t *testing.T) {
 		cmd, out := startLiveChild(t, "normal", freeLivePort(t))
 		_ = cmd.Process.Signal(syscall.SIGTERM)
-		_ = cmd.Wait()
+		err := out.wait(cmd.Wait)
 		ws, _ := cmd.ProcessState.Sys().(syscall.WaitStatus)
 		if ws.Signaled() {
 			t.Fatalf("control: a normal Live run did not catch SIGTERM:\n%s", out.String())
+		}
+		if err != nil {
+			t.Fatalf("control: normal Live exited unsuccessfully (%v):\n%s", err, out.String())
 		}
 		if !strings.Contains(out.String(), "shutting down") {
 			t.Fatalf("control: no shutdown line from a normal Live run:\n%s", out.String())
