@@ -1318,3 +1318,38 @@ unchanged 2.3 bound. The three tested files are adopted byte-for-byte; pinned
 formatting, workspace formatting and the fresh census pass (53 assertions,
 generated census unchanged). Fresh canonical/private builds and current-head
 hosted integration remain the next gates.
+
+## Production CPU continuation (2026-11-07)
+
+The typed catalog checkpoint subsequently completed a normal-inlining private
+application build. The later opt-in profiling checkpoint passes all 40 hosted
+CI jobs and the six public browser comparisons. The private production typing
+journeys also pass in reference and incremental modes, but the unprofiled
+encoding CPU improvement is only about 6%, despite substantially fewer encoded
+bytes. This does not establish that the production lag is resolved.
+
+A calibrated Chromium CPU diagnostic now identifies repeated codec preparation
+as the main remaining cost. Both original production journeys retain their
+typing, caret, IME, state, persistence and server assertions. Symbol attribution
+was first checked against named and stripped public Go/Wasm fixtures: all
+6,348 accepted named frame checks agree and both complete 1,566-function tables
+match. Unsupported engine bridge frames remain unknown. Inclusive sample
+weights overlap and do not predict reclaimable latency.
+
+The next implementation caches only the direct record duplicate-key result
+for an exact canonical `reflect.Type` and naming mode. Recursive checks,
+variant factories, current blank values, owner lookups and their error order
+remain unchanged. Retention is bounded to 4,096 entries, 64 KiB of result
+strings, and 8 KiB per result; every limit uses the original scanner. Foreign
+or noncomparable type wrappers take the unchanged fallback before any method
+or map-key access. No models, callbacks or registry-dependent facts are cached.
+
+The unchanged helper API first failed at 267 warm allocations per call on the
+valid 128-field fixture. The candidate passes the same zero-allocation
+assertion, five focused native tests, their native race run, and 17 tests run
+twice against all actual JS production runtime sources. Those tests include
+mutable factory traces and panics, changing blank evidence, existing nested
+shapes, and live/pinned owner changes. See the [validation record](runs/incremental-final-validation-20261105/codec-duplicate-facts.json).
+The candidate still needs an actual production application comparison and
+current-head hosted integration before review readiness. No candidate latency
+or universal model-size scaling result is claimed yet.

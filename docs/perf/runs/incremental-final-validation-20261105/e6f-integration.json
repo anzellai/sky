@@ -1,0 +1,60 @@
+{
+  "source_commit": "e6f26edf07bcda5776a3fe9324bab18fc39ce064",
+  "canonical": {
+    "passed": true,
+    "elapsed_seconds": 162,
+    "framework_files": 2421,
+    "before_after_framework_equal": true,
+    "compiler_sha256": "acf0f1addddf05e5593df952bc54d10b04581cf07aa97a26acbcd56e41ed6c66"
+  },
+  "hosted_ci": {
+    "run": 42310898592,
+    "passed": 40,
+    "failed": 0,
+    "rerun_reason": "one test setup dependency download failed with HTTP2 INTERNAL_ERROR; failed job rerun unchanged"
+  },
+  "public_browser_gate": {
+    "passed": true,
+    "elapsed_seconds": 340,
+    "comparisons": 6,
+    "engines": [
+      "chromium",
+      "webkit",
+      "firefox"
+    ],
+    "modes": [
+      "reference",
+      "incremental"
+    ],
+    "scenarios_per_comparison": 8,
+    "log_sha256": "46278c62364615728b30c9904a70ecf0353f6c72d964c201c0c3309161596d88"
+  },
+  "new_private_sky_build": {
+    "passed": false,
+    "elapsed_seconds": 27,
+    "classification": "unchanged swap guard stopped compiler before new artifacts",
+    "cleanup": true,
+    "compiler_error_codes": 0
+  },
+  "private_standard_runtime_composition_baseline": {
+    "passed": false,
+    "elapsed_seconds": 76,
+    "classification": "unchanged swap guard stopped Go main-package compilation",
+    "fresh_sky_emission_claimed": false
+  },
+  "compiler_gc_scheduling_experiment": {
+    "scope": "public direct-compiler archive parity",
+    "passed": true,
+    "actual_compiler_invocations": 4,
+    "targets": [
+      "native",
+      "wasm"
+    ],
+    "byte_identical_per_target": true,
+    "normal_inlining": true,
+    "guard_or_budget_relaxed": false,
+    "private_app_success_claimed": false
+  },
+  "private_browser_validation": "pending successful artifact build and actual runs",
+  "memory_saving_claimed": false
+}

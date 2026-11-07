@@ -62,7 +62,12 @@
     "rootPackagePath": "main",
     "typeKeyAlgorithm": "sha256(PkgPath+NUL+Name)"
   },
-  "full_native_runtime_suite": "required before completion",
+  "full_native_runtime_suite": {
+    "passed": true,
+    "hostedRun": 42310898592,
+    "job": "runtime-rt",
+    "scope": "CGO_ENABLED=0 go test ./rt/...; live PostgreSQL separately provided by integration jobs"
+  },
   "source_and_resource_policy_unchanged": true,
   "logs_sha256": {
     "spa-detail-v2-red": "4c6469aefd8bb476a48c448ed8fd445f8fb21b5770cba9521ba0ad20ca651a6a",

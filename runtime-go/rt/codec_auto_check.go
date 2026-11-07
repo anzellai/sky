@@ -445,6 +445,10 @@ func codecAutoDuplicateKey(t reflect.Type, snake bool) string {
 
 // codecAutoRecordDuplicateKey checks the fields of the record type t only.
 func codecAutoRecordDuplicateKey(t reflect.Type, snake bool) string {
+	return codecAutoRecordDuplicateFacts.problem(t, snake)
+}
+
+func codecAutoRecordDuplicateKeyUncached(t reflect.Type, snake bool) string {
 	seen := map[string]string{}
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
