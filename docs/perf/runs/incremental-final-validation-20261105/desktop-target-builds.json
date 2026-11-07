@@ -1,0 +1,47 @@
+{
+  "status": "PASS_DESKTOP_COMPILE_ONLY",
+  "phases": [
+    {
+      "phase": "freshness",
+      "exit": 0,
+      "seconds": 0.3465197500772774
+    },
+    {
+      "phase": "stage",
+      "exit": 0,
+      "seconds": 0.8844934580847621
+    },
+    {
+      "phase": "build-desktop",
+      "exit": 0,
+      "seconds": 12.460903291008435
+    },
+    {
+      "phase": "build-desktop-mac",
+      "exit": 0,
+      "seconds": 24.685985416988842
+    }
+  ],
+  "compiler_sha256": "dc799aa074e1ad9322e83cb005baf949823a48fbfafd9e95c5d289f90466384a",
+  "runner_sha256": "8340b49207f6ba8dfc59b39f3e470f90d0f81343ab8804e1461d8a32bc617c6d",
+  "go_tool_wrapper_sha256": "b5bfb2b6256e00c6c879aca616ffd46ec72d8b73530a14329a822833a43fa093",
+  "controlled_context_attestation": true,
+  "process_ancestry_inspected": false,
+  "environment_enumerated_or_copied": false,
+  "sdk_flags_injected": false,
+  "coverage": "desktop and desktop:mac development compilation only; no GUI/tests",
+  "guard": "unchanged external session policy",
+  "artifacts": {
+    "desktop": {
+      "sky-out/app": "abbbc7a749a43ef03ab37d149dba1db9aef1778f9e95f210d1f1fabd3a8d5616",
+      ".skyapp/desktop/sky-out/app": "abbbc7a749a43ef03ab37d149dba1db9aef1778f9e95f210d1f1fabd3a8d5616"
+    },
+    "desktop:mac": {
+      ".skyapp/desktop-mac/.split/backend/sky-out/app": "170a094b7049b6937bc556ba418dff2a9eba9a00afbd8fc2c49145e618c9518c",
+      ".skyapp/desktop-mac/.split/frontend/sky-out/main.wasm": "03a94298213f5d6caf35a33aef9b1cc8e20b0489d88e28bc61f89871267dccbe",
+      ".skyapp/desktop-mac/.split/frontend/sky-out/desktop/app": "a4e21d41dc15430890306dab71ea16901062fb1b00f007f62dd69c819038f4c9"
+    }
+  },
+  "matched_nix_sdk_valid": true,
+  "git_head": "dadf2a0df3305380f8975df00ddbba13df4c1e0c"
+}

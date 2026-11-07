@@ -1,0 +1,41 @@
+{
+  "tests": [
+    {
+      "test": "all_five_runners_typecheck_and_build_off_one_app_value",
+      "passed": true,
+      "exit": 0,
+      "seconds": 22
+    },
+    {
+      "test": "a_dispatched_entry_defaults_to_web_without_a_target",
+      "passed": true,
+      "exit": 0,
+      "seconds": 5
+    },
+    {
+      "test": "a_std_app_entry_builds_web_app_via_synthesized_spa",
+      "passed": true,
+      "exit": 0,
+      "seconds": 18
+    },
+    {
+      "test": "a_dispatched_entry_builds_terminal_cli_and_dce_prunes_other_backends",
+      "passed": true,
+      "exit": 0,
+      "seconds": 6
+    },
+    {
+      "test": "std_app_web_honours_sky_toml_port_and_explicit_web_config",
+      "passed": true,
+      "exit": 0,
+      "seconds": 14
+    },
+    {
+      "test": "a_desktop_window_whose_live_server_fails_to_start_exits_at_once_naming_the_cause",
+      "passed": true,
+      "exit": 0,
+      "seconds": 10
+    }
+  ],
+  "complete": true
+}

@@ -1,0 +1,61 @@
+{
+  "source_commit": "5ff291e3bae585c0c7c4fac059e005b285ead001",
+  "canonical": {
+    "passed": true,
+    "elapsed_seconds": 226,
+    "compiler_sha256": "3851a94b82c4ede29b3bb5c67f2ca7bc94dbe99c08cded9a58652c7b4c924471",
+    "framework_files": 2417,
+    "before_after_source_equal": true,
+    "producer_receipt_sha256": "d91b1689ae14d36d70a49a9ed29cbe8c7c61c135953ef4487954b8b6c94ab936",
+    "framework_snapshot_sha256": "feebfa045f955e28e5c81e512ea73ebb368c6e6ba88fa4d0b611252141d88af0",
+    "log_sha256": "3f8d099e3c99bf7fb662dfb3a14b16a5cb63e86eeecedf2b579a518b96aaab3d"
+  },
+  "current_private_build": {
+    "passed": false,
+    "classification": "original swap guard stop",
+    "elapsedSeconds": 29,
+    "sampledRssMiB": 1037,
+    "cleanup": true,
+    "compilerErrorCodes": 0,
+    "sourceFilesVerified": 671,
+    "donorAndDestinationUnchanged": true,
+    "frameworkFilesVerified": 2417,
+    "phasePeaksBytes": {
+      "check-begin": 72990720,
+      "check-world-begin": 73007104,
+      "check-world-end": 373850112,
+      "check-end": 688177152,
+      "lower-begin": 692830208
+    },
+    "lowerEndObserved": false,
+    "runtimeValidationClaimed": false,
+    "phase_attribution": "existing lower phase contains IR lowering and Go emission; missing lower-end does not identify the failing subphase"
+  },
+  "current_coercion_sweep": {
+    "source_commit": "5ff291e3bae585c0c7c4fac059e005b285ead001",
+    "ci_run": 42289052365,
+    "job_id": 128137367124,
+    "job": "codegen-build",
+    "step": "Gate \u2014 coerce-floor (runtime-coercion floor lock, FAIL-ON-INCREASE)",
+    "status": "completed",
+    "conclusion": "success",
+    "local_retry_not_launched_due_headroom": true
+  },
+  "controlled_memory_saving_claimed": false,
+  "resource_limits_changed": false,
+  "native_runtime_ci": {
+    "ci_run": 42289052365,
+    "job_id": 128137367012,
+    "status": "completed",
+    "conclusion": "success",
+    "runtime_rt_tests": "success",
+    "tools_go_tests": "success"
+  },
+  "hosted_ci": {
+    "run_id": 42289052365,
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": 40,
+    "failed": 0
+  }
+}

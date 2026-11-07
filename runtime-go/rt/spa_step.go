@@ -49,6 +49,7 @@ func spaTransition(
 			}
 		}
 	}()
+	spaProfileDetailDispatch(msg)
 	pair := update(msg, cur)
 	kept = pair.V0
 	cmd := pair.V1

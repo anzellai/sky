@@ -237,17 +237,23 @@ pub fn type_world_query(db: &dyn ResolveDb) -> std::sync::Arc<ty::World> {
 /// def's body (passes 5-6), so it does NOT backdate on a body edit — which is
 /// fine because it is demanded only by the whole-program checker + the per-def
 /// [`record_result_sig_query`], never by the per-def lowering `infer_query` whose
-/// backdating the incremental harness asserts. Value-identical to the pre-split
-/// `World::build` the checker read directly.
+/// backdating the incremental harness asserts. Passes 1-7 match the eager
+/// world; aggregate pass-8 maps are omitted because lowering demands the
+/// equivalent per-def harvest below.
 #[salsa::tracked]
 pub fn check_world_query(db: &dyn ResolveDb) -> std::sync::Arc<ty::World> {
-    std::sync::Arc::new(ty::World::build(db.sky_db()))
+    // Dependency direction stays check -> declarations: body-derived channels
+    // must never enter the backdatable declaration query. Clone only the World
+    // shell/body maps; its immutable declaration core remains shared.
+    let mut world = type_world_query(db).as_ref().clone();
+    world.extend_query_bodies(db.sky_db());
+    std::sync::Arc::new(world)
 }
 
 /// The D2 record-result scheme for one def (pass 7), demanded LAZILY by the
 /// lowering `infer_query` only for defs that appear as a record-update base in the
-/// body under inference (`ty::update_base_defs`). Built against the FULL
-/// [`check_world_query`] (passes 1-6) so the inferred field types are
+/// body under inference (`ty::update_base_defs`). Built against
+/// [`check_world_query`] (passes 1-7) so the inferred field types are
 /// byte-identical to the pre-split bulk pass. Because `infer_query` demands this
 /// ONLY when the body actually has such an update, a body with none creates no
 /// dependency on any other def's body — preserving backdating for the common case
@@ -396,8 +402,13 @@ pub fn numeric_elaboration_query(
     def: DefId,
     module: ModuleId,
     _file: SourceFile,
-) -> ty::numeric::NumericElaboration {
-    ty::numeric::compute_numeric_elaboration(&check_world_query(db), db.sky_db(), module, def)
+) -> std::sync::Arc<ty::numeric::NumericElaboration> {
+    std::sync::Arc::new(ty::numeric::compute_numeric_elaboration(
+        &check_world_query(db),
+        db.sky_db(),
+        module,
+        def,
+    ))
 }
 
 /// `infer(DefId)` as a `#[salsa::tracked]` query (doc 01 `infer(DefId) -> types,
@@ -427,7 +438,7 @@ pub fn infer_query(
     def: DefId,
     module: ModuleId,
     _file: SourceFile,
-) -> ty::BodyTypes {
+) -> std::sync::Arc<ty::BodyTypes> {
     // DECLARATIONS world (passes 1-4) — backdates on unrelated app body edits.
     let world = type_world_query(db);
     let sky = db.sky_db();
@@ -469,10 +480,16 @@ pub fn infer_query(
                     w.callsite_param_records.insert(def, recs.clone());
                 }
             }
-            return ty::compute_body_types_with(world, Some(&w), sky, module, def);
+            return std::sync::Arc::new(ty::compute_body_types_with(
+                world,
+                Some(&w),
+                sky,
+                module,
+                def,
+            ));
         }
     }
-    ty::compute_body_types(world, sky, module, def)
+    std::sync::Arc::new(ty::compute_body_types(world, sky, module, def))
 }
 
 // ---- Stage E: lower + codegen as a tracked query (doc 01 bottom-of-DAG) ----
@@ -565,8 +582,19 @@ pub struct GoProgram {
 /// captured through the `db.ty_db()` reads the lowerer performs while executing.
 #[salsa::tracked(no_eq)]
 pub fn go_program(db: &dyn LowerDb, entry: ModuleId, config: BuildConfig) -> GoProgram {
-    let cfg = config.cfg(db);
-    let out = lower::lower_program_cfg(db.ty_db(), entry, cfg);
+    compute_go_program(db.ty_db(), entry, config.cfg(db))
+}
+
+/// The exact shared lower+emit computation, with an owned result. A single-use
+/// build can move its output without creating a whole-program source/config
+/// memo. The tracked wrapper above still records every read performed here.
+/// No inference, diagnostics, output ordering or incremental query policy differs.
+pub fn compute_go_program(
+    db: &dyn ty::TyDb,
+    entry: ModuleId,
+    cfg: &lower::LowerConfig,
+) -> GoProgram {
+    let out = lower::lower_program_cfg(db, entry, cfg);
     // Emit only when lowering yielded a buildable program — otherwise the driver
     // reports `errors`/`entry_ok` and never writes/`go build`s (unchanged from
     // the eager path).
@@ -818,18 +846,18 @@ impl ty::TyDb for SkyDatabase {
     fn check_world(&self) -> std::sync::Arc<ty::World> {
         check_world_query(self).clone()
     }
-    fn body_types_of(&self, module: ModuleId, def: DefId) -> Rc<ty::BodyTypes> {
+    fn body_types_of(&self, module: ModuleId, def: DefId) -> std::sync::Arc<ty::BodyTypes> {
         // `module` comes from the caller (revision-safe — no interned read here);
         // `source_file` reads the append-only registry, also revision-safe.
         let file = self.source_file(module);
-        Rc::new(infer_query(self, def, module, file).clone())
+        infer_query(self, def, module, file).clone()
     }
     fn numeric_elaboration_of(
         &self,
         module: ModuleId,
         def: DefId,
-    ) -> Rc<ty::numeric::NumericElaboration> {
-        Rc::new(numeric_elaboration_query(self, def, module, self.source_file(module)).clone())
+    ) -> std::sync::Arc<ty::numeric::NumericElaboration> {
+        numeric_elaboration_query(self, def, module, self.source_file(module)).clone()
     }
     fn as_sky_db(&self) -> &dyn SkyDb {
         self

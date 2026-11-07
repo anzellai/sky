@@ -30,6 +30,34 @@ type navCmd struct {
 	Replace bool   `json:"replace"`
 }
 
+// scrollCmd is browser work, with no Task or completion Msg. Target is a
+// literal DOM id, never a CSS selector. Top scrolls the viewport to y=0.
+type scrollCmd struct {
+	Target   string `json:"target"`
+	Top      bool   `json:"top"`
+	IfNeeded bool   `json:"ifNeeded"`
+}
+
+// Nav_scrollToTop implements Std.Nav.scrollToTop : Cmd msg.
+func Nav_scrollToTop() SkyCmd {
+	return cmdT{kind: "scroll", payload: scrollCmd{Top: true}}
+}
+
+// Nav_scrollIntoView aligns an id's top in its nearest vertical scrollport.
+func Nav_scrollIntoView(id any) SkyCmd {
+	return cmdT{kind: "scroll", payload: scrollCmd{Target: AsString(id)}}
+}
+
+// Nav_scrollIntoViewIfNeeded leaves an already-visible target top in place.
+func Nav_scrollIntoViewIfNeeded(id any) SkyCmd {
+	return cmdT{kind: "scroll", payload: scrollCmd{Target: AsString(id), IfNeeded: true}}
+}
+
+func scrollCmdOf(c cmdT) (scrollCmd, bool) {
+	sc, ok := c.payload.(scrollCmd)
+	return sc, ok
+}
+
 // Nav_pushUrl builds the "nav" command that adds a history entry.
 //
 //	Std.Nav.pushUrl : String -> Cmd msg

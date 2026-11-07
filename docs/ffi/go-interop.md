@@ -77,7 +77,7 @@ The wrapping shape depends on what the Go function returns:
 | Go return | Sky type |
 |---|---|
 | `T` (single, no error) | `Result Error T` |
-| `*T` (single pointer, no error) | `Result Error T` (opaque; nil-deref panic → Err via recover) |
+| `*T` where `T` is opaque (single pointer, no error) | `Result Error T` (nil handle may be forwarded; nil receiver access → Err) |
 | `(T, error)` | `Result Error T` |
 | `error` | `Result Error ()` |
 | `(T, bool)` (comma-ok) | `Result Error (Maybe T)` |
@@ -106,13 +106,14 @@ Notes:
   means you handle two layers: the Result captures boundary failure
   (panic, type mismatch, runtime error); the Maybe captures Go's
   "nothing here" signal (comma-ok false).
-- **Bare `*T` returns** are NOT auto-wrapped in `Maybe` because Go
+- **Opaque `*T` returns** are NOT auto-wrapped in `Maybe` because Go
   SDK builder/getter chains (`Firestore.client.Collection(x).Doc(y)`,
-  `Stripe.params.SetMode(x).SetCustomer(y)`) rely on chaining
-  pointer returns. If a Go function genuinely returns nil, the
-  defer-recover catches the downstream nil-deref and surfaces an
-  `Err(ErrFfi("nil pointer..."))`. Go authors who mean "nothing
-  here" use `(T, error)` or `(T, bool)` — those map cleanly.
+  `Stripe.params.SetMode(x).SetCustomer(y)`) rely on chaining pointer returns.
+  A nil result remains an opaque handle in `Ok` and may be forwarded to Go;
+  accessing its method or field yields a guarded `Err`. Opaque function and
+  interface outputs also preserve nil when forwarded. Pointers to plain Sky
+  data (`*string`, `*int`, `*[]T`) instead use `Maybe`, with nil as `Nothing`.
+  Go authors can use `(T, error)` or `(T, bool)` for explicit failure/absence.
 - **Named error types** (`*os.PathError`, `*url.Error`,
   `*json.SyntaxError`, etc.) are detected via Go's
   `types.Implements` — they map to `Error` even though the type

@@ -78,6 +78,14 @@ A let-bound function is polymorphic, like a top-level one: `square` above
 could be used at `Int` and at `Float` in the same body. See
 [types.md](types.md) ("Type annotations") for the value restriction.
 
+A root discard whose expression is statically a Task, `let _ = pending in …`,
+runs that Task once. This includes a Task type supplied by a function or local
+annotation. A wildcard inside a tuple pattern, such as
+`let (kept, _) = (value, pending) in kept`, drops that slot as data and does not
+run a Task stored there. An ordinary function value or an unconstrained
+polymorphic value is not force-run by a discard; give an intended effect a Task
+type or run it explicitly with `Task.run`.
+
 The bindings of one `let` may refer to each other in any order, and local
 functions may call each other (mutual recursion):
 

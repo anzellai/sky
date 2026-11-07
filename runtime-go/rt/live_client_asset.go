@@ -34,16 +34,17 @@ type liveBootCfg struct {
 	// Tok is the session token of the header session transport
 	// (live_session_header.go): the client sends it in X-Sky-Session on
 	// every request. Empty in cookie mode, where the session is a cookie.
-	Tok              string `json:"tok,omitempty"`
-	BannerEnabled    bool   `json:"bannerEnabled"`
-	RetryBaseMs      int    `json:"retryBaseMs"`
-	RetryMaxMs       int    `json:"retryMaxMs"`
-	RetryMaxAttempts int    `json:"retryMaxAttempts"`
-	EventQueueMax    int    `json:"eventQueueMax"`
-	MsgReconnecting  string `json:"msgReconnecting"`
-	MsgOffline       string `json:"msgOffline"`
-	HelloTimeoutMs   int    `json:"helloTimeoutMs"`
-	HeartbeatTtlMs   int    `json:"heartbeatTtlMs"`
+	Tok              string               `json:"tok,omitempty"`
+	BannerEnabled    bool                 `json:"bannerEnabled"`
+	RetryBaseMs      int                  `json:"retryBaseMs"`
+	RetryMaxMs       int                  `json:"retryMaxMs"`
+	RetryMaxAttempts int                  `json:"retryMaxAttempts"`
+	EventQueueMax    int                  `json:"eventQueueMax"`
+	Scrolls          []liveScrollDelivery `json:"scrolls,omitempty"`
+	MsgReconnecting  string               `json:"msgReconnecting"`
+	MsgOffline       string               `json:"msgOffline"`
+	HelloTimeoutMs   int                  `json:"helloTimeoutMs"`
+	HeartbeatTtlMs   int                  `json:"heartbeatTtlMs"`
 }
 
 func newLiveBootCfg(sid string, cfg liveBannerConfig, csrfToken, basePath, view string) liveBootCfg {
@@ -71,9 +72,14 @@ func liveCfgBlock(c liveBootCfg) string {
 // #sky-root: the client's __skyPatch strips a full-page sky-nav response with
 // /<div id="sky-root">(…)<\/div><script type="application\/json" id="sky-live-cfg">/.
 func livePageScripts(sid string, cfg liveBannerConfig, csrfToken, basePath, view, tab, tok string) string {
+	return livePageScriptsWithScrolls(sid, cfg, csrfToken, basePath, view, tab, tok, nil)
+}
+
+func livePageScriptsWithScrolls(sid string, cfg liveBannerConfig, csrfToken, basePath, view, tab, tok string, scrolls []liveScrollDelivery) string {
 	c := newLiveBootCfg(sid, cfg, csrfToken, basePath, view)
 	c.Tab = tab
 	c.Tok = tok
+	c.Scrolls = scrolls
 	return liveCfgBlock(c) +
 		`<script src="` + basePath + liveClientPath + `"></script>`
 }
@@ -85,10 +91,10 @@ var liveClientPath = "/_sky/live." + assetHash(liveClientJS) + ".js"
 // runtime (island_client.go), the Std.Ui.Canvas pointer runtime
 // (scene_client.go), the built-in terminal widget (island_terminal.go), then
 // the Live client proper.
-const liveClientJS = islandClientJS + sceneClientJS + terminalWidgetJS + selectHoldJS + liveClientCoreJS
+const liveClientJS = islandClientJS + sceneClientJS + terminalWidgetJS + scrollClientJS + selectHoldJS + liveClientCoreJS
 
 // liveClientCoreJS is the Sky.Live client proper.
-const liveClientCoreJS = `// Sky.Live client (runtime-go/rt/live_client_asset.go). Served as the
+const liveClientCoreJS = liveScrollClientJS + `// Sky.Live client (runtime-go/rt/live_client_asset.go). Served as the
 // same-origin, content-hashed file /_sky/live.<hash>.js so a strict
 // Content-Security-Policy (script-src 'self') runs it. Per-page values come
 // from the non-executable <script type="application/json" id="sky-live-cfg">
@@ -305,7 +311,7 @@ function __skyIngestSeq(seq, ackInputs, globalSeq) {
 // View identity: "view" is the render the frame brings the DOM to;
 // "delta" frames (patch lists) also name their "base" render and apply
 // only on top of it — see __skyHoldFrame.
-function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq, view, base, delta) {
+function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq, view, base, delta, scrolls) {
   if (typeof seq === "number" && seq > 0 && seq <= __skyLastAppliedSeq) {
     return; // stale — a newer local-seq frame already landed
   }
@@ -317,12 +323,13 @@ function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq, view, base, del
     // frame overtook an earlier one). Hold it; applying it now would
     // corrupt the DOM, dropping it would lose the change for good.
     __skyHoldFrame({seq: seq, ackInputs: ackInputs, apply: applyFn,
-                    globalSeq: globalSeq, view: view, base: base});
+                    globalSeq: globalSeq, view: view, base: base, scrolls: scrolls});
     return;
   }
   __skyIngestSeq(seq, ackInputs, globalSeq);
   applyFn();
   if (view) __skyView = view;
+  __skyAfterDOMCommit(scrolls, view);
   __skyReleaseHeld();
 }
 
@@ -346,7 +353,8 @@ function __skyReleaseHeld() {
     progressed = false;
     for (var i = 0; i < __skyPendingFrames.length; i++) {
       var f = __skyPendingFrames[i];
-      if (typeof f.seq === "number" && f.seq > 0 && f.seq <= __skyLastAppliedSeq) {
+      if ((typeof f.seq === "number" && f.seq > 0 && f.seq <= __skyLastAppliedSeq) ||
+          (typeof f.globalSeq === "number" && f.globalSeq > 0 && f.globalSeq <= __skyLastGlobalSeq)) {
         __skyPendingFrames.splice(i, 1);
         i--;
         continue;
@@ -356,6 +364,7 @@ function __skyReleaseHeld() {
         __skyIngestSeq(f.seq, f.ackInputs, f.globalSeq);
         f.apply();
         if (f.view) __skyView = f.view;
+        __skyAfterDOMCommit(f.scrolls, f.view);
         progressed = true;
         break;
       }
@@ -1324,7 +1333,7 @@ function __skyPostEventNow(body) {
             __skyRebaseBase = null;
             delete __skyBaseBySeq[body.seq];
           }
-        }, data.globalSeq, data.view, data.base, true);
+        }, data.globalSeq, data.view, data.base, true, data.scrolls);
         if (data.error) __skyShowError(data.error);
       });
     }
@@ -1336,15 +1345,16 @@ function __skyPostEventNow(body) {
       var ackRaw = r.headers.get("X-Sky-Ack-Inputs");
       var ack = null;
       if (ackRaw) { try { ack = JSON.parse(ackRaw); } catch(_) {} }
+      var scrollReply = __skyScrollBodyReply(t);
       __skyHandleResponse(seq, ack, function() {
         __skyRebaseBase = __skyBaseBySeq[body.seq] || null;
         try {
-          __skyPatch(t);
+          __skyPatch(scrollReply.body);
         } finally {
           __skyRebaseBase = null;
           delete __skyBaseBySeq[body.seq];
         }
-      }, undefined, r.headers.get("X-Sky-View"), "", false);
+      }, undefined, r.headers.get("X-Sky-View"), "", false, scrollReply.scrolls);
     });
   }).catch(function() {
     __skyLoaderEnd();
@@ -2139,10 +2149,9 @@ document.addEventListener("click", function(ev) {
         // two history entries per sky-nav click, so Back needs two presses
         // to move one page. Setting the URL first makes the data-sky-path
         // handler see a matching pathname and replaceState (a no-op) instead.
-        window.history.pushState({}, "", href);
-        __skyPatch(t);
-        var nv = r.headers.get("X-Sky-View");
-        if (nv) __skyView = nv;
+        __skyApplyFetchedPage(r, t, function() {
+          window.history.pushState({}, "", href);
+        });
       });
     })
     .catch(function() { window.location.href = href; });
@@ -2158,9 +2167,7 @@ window.addEventListener("popstate", function() {
       // renders the 404 body as the whole page.
       if (!__skyIsPage(r)) { window.location.href = window.location.href; return; }
       return r.text().then(function(t) {
-        __skyPatch(t);
-        var nv = r.headers.get("X-Sky-View");
-        if (nv) __skyView = nv;
+        __skyApplyFetchedPage(r, t);
       });
     })
     .catch(function() { /* Back/Forward fetch failed; leave URL alone. */ });
@@ -2201,11 +2208,9 @@ function __skyNavApply(url, replace) {
       if (navSid) __skySid = navSid;
       if (!__skyIsPage(r)) { reload(); return; }
       return r.text().then(function(t) {
-        move();
-        __skyPatch(t);
-        var nv = r.headers.get("X-Sky-View");
-        if (nv) __skyView = nv;
-        if (String(window.location.hash || "") !== oldHash) __skySendFragment();
+        __skyApplyFetchedPage(r, t, move, function() {
+          if (String(window.location.hash || "") !== oldHash) __skySendFragment();
+        });
       });
     })
     .catch(reload);
@@ -2534,7 +2539,7 @@ function __skyOpenSSE() {
     if (frame && typeof frame === "object") {
       __skyHandleResponse(frame.seq, frame.ackInputs, function() {
         if (frame.body) __skyPatchOrHold(frame.body.replace(/\\n/g, "\n"));
-      }, frame.globalSeq, frame.view, "", false);
+      }, frame.globalSeq, frame.view, "", false, frame.scrolls);
     }
   });
   // Cycle 3 P50b / Gap C11 — structural-patches SSE event.
@@ -2595,7 +2600,7 @@ function __skyOpenSSE() {
     if (!frame || typeof frame !== "object" || !frame.patches) return;
     __skyHandleResponse(frame.seq, frame.ackInputs, function() {
       __skyApplyPatches(frame.patches);
-    }, frame.globalSeq, frame.view, frame.base, true);
+    }, frame.globalSeq, frame.view, frame.base, true, frame.scrolls);
   });
   // Cmd.toIsland (island_core.go): a command for a widget island. The
   // island runtime delivers it, or holds it until that island mounts.
@@ -3006,6 +3011,8 @@ document.addEventListener("visibilitychange", function() {
 function __skyInit() {
   __skyBindEvents(document);
   __skyInjectStatusBanner();
+  if (__skyLastAppliedSeq === 0) __skyAfterDOMCommit(__skyCfg.scrolls, __skyCfg.view);
+  __skyCfg.scrolls = null;
   // The listeners are bound: widget-island events held until now go out
   // (island_client.go, hostReady).
   if (window.Sky && window.Sky.__islandHostReady) window.Sky.__islandHostReady();

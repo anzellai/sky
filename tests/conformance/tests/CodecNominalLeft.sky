@@ -1,0 +1,4 @@
+module CodecNominalLeft exposing (Token)
+
+type alias Token =
+    { value : Int }

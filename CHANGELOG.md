@@ -11,6 +11,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## Unreleased changes
+
+- SPA updates reuse unchanged immutable data and prepared codec metadata. Record
+  duplicate-key validation caches only bounded facts about canonical Go types.
+- `Std.Nav.scrollToTop`, `scrollIntoView` and `scrollIntoViewIfNeeded` scroll
+  after the corresponding DOM commit, including server answers. Live and SPA
+  share nearest-container geometry, scroll margin/padding and instant motion.
+  Superseded renders and navigation cannot replay an older returned scroll.
+- SPA init planning recognises direct stdlib kernel aliases, so server effects
+  such as `File.readFile` stay on the server even without an app helper.
+
 ## v0.29.2 — `sky run` hands every app its embedded database (2026-11-01)
 
 - Numeric polymorphism now selects Int or Float representation before literals

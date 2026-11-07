@@ -1,0 +1,57 @@
+{
+  "status": "PASS_ORIGINAL_TUI_GATE",
+  "source_sha256": {
+    "scripts/tui-e2e.sh": "cd03e2981a5493c7729e4fc8b2125e8faf1024545e238a14312b746c98390e1d",
+    "scripts/tui-e2e-drive.py": "231ddc51207e5025937cf21cc61903f5e719f9c0a629de077a0b741e00c247b7",
+    "scripts/lib/gate-build-cache.sh": "c2148ea54098326ad044ea2618b9d3f7b0ec87a4ec2dc27c155773c9d54199c7",
+    "scripts/lib/with-timeout.sh": "3635b49f766fcfeb797df55af1c27a33dea0ebd4290ea49b22239b79080f17c2",
+    "sky-out/sky": "dc799aa074e1ad9322e83cb005baf949823a48fbfafd9e95c5d289f90466384a",
+    "flake.lock": "5acb0b9bc438fa8d668fd61f775d34c2d7671370aee50771c888b85b9713a7f9"
+  },
+  "expression_sha256": "c5108326612c7cdebd7bb064c924aba827aba0119a91d2d128887f664cb65b3c",
+  "go_wrapper_sha256": "b5bfb2b6256e00c6c879aca616ffd46ec72d8b73530a14329a822833a43fa093",
+  "controlled_context_inherited": true,
+  "home_tmpdir_preserved": true,
+  "nested_nix_shell_used": false,
+  "observer_used": false,
+  "phases": [
+    {
+      "phase": "tools-before",
+      "exit": 0,
+      "seconds": 0.046282832976430655
+    },
+    {
+      "phase": "resolve-pinned-python",
+      "exit": 0,
+      "seconds": 2.1535454579861835
+    },
+    {
+      "phase": "tools-after",
+      "exit": 0,
+      "seconds": 0.047745833988301456
+    },
+    {
+      "phase": "pyte-preflight",
+      "exit": 0,
+      "seconds": 0.07515358400996774
+    },
+    {
+      "phase": "tui-public-raw",
+      "exit": 0,
+      "seconds": 32.35656329197809
+    }
+  ],
+  "nonpython_tool_identity_equal": true,
+  "python_executable_sha256": "b0d069be4ff298bba657f1672b2d6bc3c2907819b1e4313b9d5daad6953d119f",
+  "exit": 0,
+  "seconds": 34.71632354101166,
+  "summary": {
+    "sky_sigterm_notice": 0,
+    "derived_build_sigterm": false,
+    "signal_terminated": 0,
+    "signal_killed": 0,
+    "guard_marker": false,
+    "compile_diagnostics": 0,
+    "original_gate_pass_marker": true
+  }
+}

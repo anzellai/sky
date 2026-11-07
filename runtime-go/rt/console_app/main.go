@@ -39,6 +39,7 @@ func Sky_Config_Database_Postgres(v0 string) Sky_Config_Database {
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Sky_Config_Database", "Sky_Config_Database", "sky:Sky.Config.Database")
 	rt.RegisterAdtTag("console_app.Sky_Config_Database", "Sqlite", 0)
 	rt.RegisterMsgVariant("Sky_Config_Database", "Sqlite", 0, 1)
 	rt.GobRegister(Sky_Config_Database_Sqlite_V{})
@@ -105,6 +106,7 @@ func Sky_Config_Telemetry_Otlp(v0 string) Sky_Config_Telemetry {
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Sky_Config_Telemetry", "Sky_Config_Telemetry", "sky:Sky.Config.Telemetry")
 	rt.RegisterAdtTag("console_app.Sky_Config_Telemetry", "Otlp", 0)
 	rt.RegisterMsgVariant("Sky_Config_Telemetry", "Otlp", 0, 1)
 	rt.GobRegister(Sky_Config_Telemetry_Otlp_V{})
@@ -120,10 +122,11 @@ func init() {
 type Sky_Core_Error_DomainFailure = rt.SkyADT
 
 func Sky_Core_Error_DomainFailure_DomainFailure(v0 any, v1 any, v2 any, v3 any, v4 any) Sky_Core_Error_DomainFailure {
-	return Sky_Core_Error_DomainFailure{Tag: 0, SkyName: "DomainFailure", Fields: []any{v0, v1, v2, v3, v4}}
+	return Sky_Core_Error_DomainFailure{SkyOwner: "sky:Sky.Core.Error.DomainFailure", Tag: 0, SkyName: "DomainFailure", Fields: []any{v0, v1, v2, v3, v4}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Sky_Core_Error_DomainFailure", "Sky_Core_Error_DomainFailure", "sky:Sky.Core.Error.DomainFailure")
 	rt.RegisterAdtTag("console_app.Sky_Core_Error_DomainFailure", "DomainFailure", 0)
 	rt.RegisterMsgVariant("Sky_Core_Error_DomainFailure", "DomainFailure", 0, 5)
 }
@@ -131,10 +134,11 @@ func init() {
 type Sky_Core_Error_Error = rt.SkyADT
 
 func Sky_Core_Error_Error_Error(v0 any, v1 any) Sky_Core_Error_Error {
-	return Sky_Core_Error_Error{Tag: 0, SkyName: "Error", Fields: []any{v0, v1}}
+	return Sky_Core_Error_Error{SkyOwner: "sky:Sky.Core.Error.Error", Tag: 0, SkyName: "Error", Fields: []any{v0, v1}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Sky_Core_Error_Error", "Sky_Core_Error_Error", "sky:Sky.Core.Error.Error")
 	rt.RegisterAdtTag("console_app.Sky_Core_Error_Error", "Error", 0)
 	rt.RegisterMsgVariant("Sky_Core_Error_Error", "Error", 0, 2)
 }
@@ -142,30 +146,31 @@ func init() {
 type Sky_Core_Error_ErrorDetails = rt.SkyADT
 
 func Sky_Core_Error_ErrorDetails_FfiPanic(v0 any) Sky_Core_Error_ErrorDetails {
-	return Sky_Core_Error_ErrorDetails{Tag: 0, SkyName: "FfiPanic", Fields: []any{v0}}
+	return Sky_Core_Error_ErrorDetails{SkyOwner: "sky:Sky.Core.Error.ErrorDetails", Tag: 0, SkyName: "FfiPanic", Fields: []any{v0}}
 }
 
 func Sky_Core_Error_ErrorDetails_TypeMismatch(v0 any) Sky_Core_Error_ErrorDetails {
-	return Sky_Core_Error_ErrorDetails{Tag: 1, SkyName: "TypeMismatch", Fields: []any{v0}}
+	return Sky_Core_Error_ErrorDetails{SkyOwner: "sky:Sky.Core.Error.ErrorDetails", Tag: 1, SkyName: "TypeMismatch", Fields: []any{v0}}
 }
 
 func Sky_Core_Error_ErrorDetails_HttpStatus(v0 any) Sky_Core_Error_ErrorDetails {
-	return Sky_Core_Error_ErrorDetails{Tag: 2, SkyName: "HttpStatus", Fields: []any{v0}}
+	return Sky_Core_Error_ErrorDetails{SkyOwner: "sky:Sky.Core.Error.ErrorDetails", Tag: 2, SkyName: "HttpStatus", Fields: []any{v0}}
 }
 
 func Sky_Core_Error_ErrorDetails_JsonDecode(v0 any) Sky_Core_Error_ErrorDetails {
-	return Sky_Core_Error_ErrorDetails{Tag: 3, SkyName: "JsonDecode", Fields: []any{v0}}
+	return Sky_Core_Error_ErrorDetails{SkyOwner: "sky:Sky.Core.Error.ErrorDetails", Tag: 3, SkyName: "JsonDecode", Fields: []any{v0}}
 }
 
 func Sky_Core_Error_ErrorDetails_Custom(v0 any) Sky_Core_Error_ErrorDetails {
-	return Sky_Core_Error_ErrorDetails{Tag: 4, SkyName: "Custom", Fields: []any{v0}}
+	return Sky_Core_Error_ErrorDetails{SkyOwner: "sky:Sky.Core.Error.ErrorDetails", Tag: 4, SkyName: "Custom", Fields: []any{v0}}
 }
 
 func Sky_Core_Error_ErrorDetails_Domain(v0 any) Sky_Core_Error_ErrorDetails {
-	return Sky_Core_Error_ErrorDetails{Tag: 5, SkyName: "Domain", Fields: []any{v0}}
+	return Sky_Core_Error_ErrorDetails{SkyOwner: "sky:Sky.Core.Error.ErrorDetails", Tag: 5, SkyName: "Domain", Fields: []any{v0}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Sky_Core_Error_ErrorDetails", "Sky_Core_Error_ErrorDetails", "sky:Sky.Core.Error.ErrorDetails")
 	rt.RegisterAdtTag("console_app.Sky_Core_Error_ErrorDetails", "FfiPanic", 0)
 	rt.RegisterMsgVariant("Sky_Core_Error_ErrorDetails", "FfiPanic", 0, 1)
 	rt.RegisterAdtTag("console_app.Sky_Core_Error_ErrorDetails", "TypeMismatch", 1)
@@ -929,6 +934,7 @@ func State_Msg_AiOpenEval(v0 string) State_Msg { return State_Msg_AiOpenEval_V{V
 func State_Msg_AiOpenModel(v0 string) State_Msg { return State_Msg_AiOpenModel_V{V0: v0} }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.State_Msg", "State_Msg", "sky:State.Msg")
 	rt.RegisterAdtTag("console_app.State_Msg", "SelectTab", 0)
 	rt.RegisterMsgVariant("State_Msg", "SelectTab", 0, 1)
 	rt.GobRegister(State_Msg_SelectTab_V{})
@@ -1313,10 +1319,11 @@ func Std_Ai_Endpoint_Setting(p0 string, p1 string, p2 string, p3 string) Std_Ai_
 type Std_App_App = rt.SkyADT
 
 func Std_App_App_App(v0 any) Std_App_App {
-	return Std_App_App{Tag: 0, SkyName: "App", Fields: []any{v0}}
+	return Std_App_App{SkyOwner: "sky:Std.App.App", Tag: 0, SkyName: "App", Fields: []any{v0}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_App_App", "Std_App_App", "sky:Std.App.App")
 	rt.RegisterAdtTag("console_app.Std_App_App", "App", 0)
 	rt.RegisterMsgVariant("Std_App_App", "App", 0, 1)
 }
@@ -1337,26 +1344,27 @@ func Std_App_BaseConfig(p0 Sky_Config_LogFormat, p1 Sky_Config_LogLevel, p2 rt.S
 type Std_App_Config = rt.SkyADT
 
 func Std_App_Config_WebConfig(v0 any) Std_App_Config {
-	return Std_App_Config{Tag: 0, SkyName: "WebConfig", Fields: []any{v0}}
+	return Std_App_Config{SkyOwner: "sky:Std.App.Config", Tag: 0, SkyName: "WebConfig", Fields: []any{v0}}
 }
 
 func Std_App_Config_DesktopConfig(v0 any) Std_App_Config {
-	return Std_App_Config{Tag: 1, SkyName: "DesktopConfig", Fields: []any{v0}}
+	return Std_App_Config{SkyOwner: "sky:Std.App.Config", Tag: 1, SkyName: "DesktopConfig", Fields: []any{v0}}
 }
 
 func Std_App_Config_TabletConfig(v0 any) Std_App_Config {
-	return Std_App_Config{Tag: 2, SkyName: "TabletConfig", Fields: []any{v0}}
+	return Std_App_Config{SkyOwner: "sky:Std.App.Config", Tag: 2, SkyName: "TabletConfig", Fields: []any{v0}}
 }
 
 func Std_App_Config_MobileConfig(v0 any) Std_App_Config {
-	return Std_App_Config{Tag: 3, SkyName: "MobileConfig", Fields: []any{v0}}
+	return Std_App_Config{SkyOwner: "sky:Std.App.Config", Tag: 3, SkyName: "MobileConfig", Fields: []any{v0}}
 }
 
 func Std_App_Config_TerminalConfig(v0 any) Std_App_Config {
-	return Std_App_Config{Tag: 4, SkyName: "TerminalConfig", Fields: []any{v0}}
+	return Std_App_Config{SkyOwner: "sky:Std.App.Config", Tag: 4, SkyName: "TerminalConfig", Fields: []any{v0}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_App_Config", "Std_App_Config", "sky:Std.App.Config")
 	rt.RegisterAdtTag("console_app.Std_App_Config", "WebConfig", 0)
 	rt.RegisterMsgVariant("Std_App_Config", "WebConfig", 0, 1)
 	rt.RegisterAdtTag("console_app.Std_App_Config", "DesktopConfig", 1)
@@ -1408,18 +1416,19 @@ func Std_App_MobileOpts(p0 string) Std_App_MobileOpts_R { return Std_App_MobileO
 type Std_App_Route = rt.SkyADT
 
 func Std_App_Route_RouteStatic(v0 any, v1 any) Std_App_Route {
-	return Std_App_Route{Tag: 0, SkyName: "RouteStatic", Fields: []any{v0, v1}}
+	return Std_App_Route{SkyOwner: "sky:Std.App.Route", Tag: 0, SkyName: "RouteStatic", Fields: []any{v0, v1}}
 }
 
 func Std_App_Route_RouteParam(v0 any, v1 any) Std_App_Route {
-	return Std_App_Route{Tag: 1, SkyName: "RouteParam", Fields: []any{v0, v1}}
+	return Std_App_Route{SkyOwner: "sky:Std.App.Route", Tag: 1, SkyName: "RouteParam", Fields: []any{v0, v1}}
 }
 
 func Std_App_Route_RouteApi(v0 any, v1 any) Std_App_Route {
-	return Std_App_Route{Tag: 2, SkyName: "RouteApi", Fields: []any{v0, v1}}
+	return Std_App_Route{SkyOwner: "sky:Std.App.Route", Tag: 2, SkyName: "RouteApi", Fields: []any{v0, v1}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_App_Route", "Std_App_Route", "sky:Std.App.Route")
 	rt.RegisterAdtTag("console_app.Std_App_Route", "RouteStatic", 0)
 	rt.RegisterMsgVariant("Std_App_Route", "RouteStatic", 0, 2)
 	rt.RegisterAdtTag("console_app.Std_App_Route", "RouteParam", 1)
@@ -1457,18 +1466,19 @@ func Std_App_TerminalOpts(p0 int, p1 int) Std_App_TerminalOpts_R {
 type Std_App_ViewImpl = rt.SkyADT
 
 func Std_App_ViewImpl_ViewUi(v0 any) Std_App_ViewImpl {
-	return Std_App_ViewImpl{Tag: 0, SkyName: "ViewUi", Fields: []any{v0}}
+	return Std_App_ViewImpl{SkyOwner: "sky:Std.App.ViewImpl", Tag: 0, SkyName: "ViewUi", Fields: []any{v0}}
 }
 
 func Std_App_ViewImpl_ViewHtml(v0 any) Std_App_ViewImpl {
-	return Std_App_ViewImpl{Tag: 1, SkyName: "ViewHtml", Fields: []any{v0}}
+	return Std_App_ViewImpl{SkyOwner: "sky:Std.App.ViewImpl", Tag: 1, SkyName: "ViewHtml", Fields: []any{v0}}
 }
 
 func Std_App_ViewImpl_ViewString(v0 any) Std_App_ViewImpl {
-	return Std_App_ViewImpl{Tag: 2, SkyName: "ViewString", Fields: []any{v0}}
+	return Std_App_ViewImpl{SkyOwner: "sky:Std.App.ViewImpl", Tag: 2, SkyName: "ViewString", Fields: []any{v0}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_App_ViewImpl", "Std_App_ViewImpl", "sky:Std.App.ViewImpl")
 	rt.RegisterAdtTag("console_app.Std_App_ViewImpl", "ViewUi", 0)
 	rt.RegisterMsgVariant("Std_App_ViewImpl", "ViewUi", 0, 1)
 	rt.RegisterAdtTag("console_app.Std_App_ViewImpl", "ViewHtml", 1)
@@ -1503,22 +1513,23 @@ func Std_App_WebOpts(p0 int, p1 rt.SkyMaybe[string], p2 rt.SkyMaybe[string], p3 
 type Std_Html_Attributes_Attribute = rt.SkyADT
 
 func Std_Html_Attributes_Attribute_Attr(v0 any, v1 any) Std_Html_Attributes_Attribute {
-	return Std_Html_Attributes_Attribute{Tag: 0, SkyName: "Attr", Fields: []any{v0, v1}}
+	return Std_Html_Attributes_Attribute{SkyOwner: "sky:Std.Html.Attributes.Attribute", Tag: 0, SkyName: "Attr", Fields: []any{v0, v1}}
 }
 
 func Std_Html_Attributes_Attribute_BoolAttr(v0 any, v1 any) Std_Html_Attributes_Attribute {
-	return Std_Html_Attributes_Attribute{Tag: 1, SkyName: "BoolAttr", Fields: []any{v0, v1}}
+	return Std_Html_Attributes_Attribute{SkyOwner: "sky:Std.Html.Attributes.Attribute", Tag: 1, SkyName: "BoolAttr", Fields: []any{v0, v1}}
 }
 
 func Std_Html_Attributes_Attribute_EventAttr(v0 any) Std_Html_Attributes_Attribute {
-	return Std_Html_Attributes_Attribute{Tag: 2, SkyName: "EventAttr", Fields: []any{v0}}
+	return Std_Html_Attributes_Attribute{SkyOwner: "sky:Std.Html.Attributes.Attribute", Tag: 2, SkyName: "EventAttr", Fields: []any{v0}}
 }
 
 func Std_Html_Attributes_Attribute_NoAttr() Std_Html_Attributes_Attribute {
-	return Std_Html_Attributes_Attribute{Tag: 3, SkyName: "NoAttr", Fields: []any{}}
+	return Std_Html_Attributes_Attribute{SkyOwner: "sky:Std.Html.Attributes.Attribute", Tag: 3, SkyName: "NoAttr", Fields: []any{}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_Html_Attributes_Attribute", "Std_Html_Attributes_Attribute", "sky:Std.Html.Attributes.Attribute")
 	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Attribute", "Attr", 0)
 	rt.RegisterMsgVariant("Std_Html_Attributes_Attribute", "Attr", 0, 2)
 	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Attribute", "BoolAttr", 1)
@@ -1532,22 +1543,23 @@ func init() {
 type Std_Html_Attributes_Event = rt.SkyADT
 
 func Std_Html_Attributes_Event_OnMsg(v0 any, v1 any) Std_Html_Attributes_Event {
-	return Std_Html_Attributes_Event{Tag: 0, SkyName: "OnMsg", Fields: []any{v0, v1}}
+	return Std_Html_Attributes_Event{SkyOwner: "sky:Std.Html.Attributes.Event", Tag: 0, SkyName: "OnMsg", Fields: []any{v0, v1}}
 }
 
 func Std_Html_Attributes_Event_OnString(v0 any, v1 any) Std_Html_Attributes_Event {
-	return Std_Html_Attributes_Event{Tag: 1, SkyName: "OnString", Fields: []any{v0, v1}}
+	return Std_Html_Attributes_Event{SkyOwner: "sky:Std.Html.Attributes.Event", Tag: 1, SkyName: "OnString", Fields: []any{v0, v1}}
 }
 
 func Std_Html_Attributes_Event_OnBool(v0 any, v1 any) Std_Html_Attributes_Event {
-	return Std_Html_Attributes_Event{Tag: 2, SkyName: "OnBool", Fields: []any{v0, v1}}
+	return Std_Html_Attributes_Event{SkyOwner: "sky:Std.Html.Attributes.Event", Tag: 2, SkyName: "OnBool", Fields: []any{v0, v1}}
 }
 
 func Std_Html_Attributes_Event_OnRaw(v0 any, v1 any) Std_Html_Attributes_Event {
-	return Std_Html_Attributes_Event{Tag: 3, SkyName: "OnRaw", Fields: []any{v0, v1}}
+	return Std_Html_Attributes_Event{SkyOwner: "sky:Std.Html.Attributes.Event", Tag: 3, SkyName: "OnRaw", Fields: []any{v0, v1}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_Html_Attributes_Event", "Std_Html_Attributes_Event", "sky:Std.Html.Attributes.Event")
 	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Event", "OnMsg", 0)
 	rt.RegisterMsgVariant("Std_Html_Attributes_Event", "OnMsg", 0, 2)
 	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Event", "OnString", 1)
@@ -1561,18 +1573,19 @@ func init() {
 type Std_Html_Html = rt.SkyADT
 
 func Std_Html_Html_HElement(v0 any, v1 any, v2 any) Std_Html_Html {
-	return Std_Html_Html{Tag: 0, SkyName: "HElement", Fields: []any{v0, v1, v2}}
+	return Std_Html_Html{SkyOwner: "sky:Std.Html.Html", Tag: 0, SkyName: "HElement", Fields: []any{v0, v1, v2}}
 }
 
 func Std_Html_Html_HText(v0 any) Std_Html_Html {
-	return Std_Html_Html{Tag: 1, SkyName: "HText", Fields: []any{v0}}
+	return Std_Html_Html{SkyOwner: "sky:Std.Html.Html", Tag: 1, SkyName: "HText", Fields: []any{v0}}
 }
 
 func Std_Html_Html_HRaw(v0 any) Std_Html_Html {
-	return Std_Html_Html{Tag: 2, SkyName: "HRaw", Fields: []any{v0}}
+	return Std_Html_Html{SkyOwner: "sky:Std.Html.Html", Tag: 2, SkyName: "HRaw", Fields: []any{v0}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_Html_Html", "Std_Html_Html", "sky:Std.Html.Html")
 	rt.RegisterAdtTag("console_app.Std_Html_Html", "HElement", 0)
 	rt.RegisterMsgVariant("Std_Html_Html", "HElement", 0, 3)
 	rt.RegisterAdtTag("console_app.Std_Html_Html", "HText", 1)
@@ -1596,10 +1609,11 @@ func Std_Live_Console_Identity(p0 string, p1 string, p2 rt.SkyDict[string]) Std_
 type Std_Ui_AnimationEntry = rt.SkyADT
 
 func Std_Ui_AnimationEntry_AnimationEntry(v0 any, v1 any, v2 any, v3 any) Std_Ui_AnimationEntry {
-	return Std_Ui_AnimationEntry{Tag: 0, SkyName: "AnimationEntry", Fields: []any{v0, v1, v2, v3}}
+	return Std_Ui_AnimationEntry{SkyOwner: "sky:Std.Ui.AnimationEntry", Tag: 0, SkyName: "AnimationEntry", Fields: []any{v0, v1, v2, v3}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_Ui_AnimationEntry", "Std_Ui_AnimationEntry", "sky:Std.Ui.AnimationEntry")
 	rt.RegisterAdtTag("console_app.Std_Ui_AnimationEntry", "AnimationEntry", 0)
 	rt.RegisterMsgVariant("Std_Ui_AnimationEntry", "AnimationEntry", 0, 4)
 }
@@ -1607,158 +1621,159 @@ func init() {
 type Std_Ui_Attribute = rt.SkyADT
 
 func Std_Ui_Attribute_NoAttribute() Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 0, SkyName: "NoAttribute", Fields: []any{}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 0, SkyName: "NoAttribute", Fields: []any{}}
 }
 
 func Std_Ui_Attribute_AttrWidth(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 1, SkyName: "AttrWidth", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 1, SkyName: "AttrWidth", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrHeight(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 2, SkyName: "AttrHeight", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 2, SkyName: "AttrHeight", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrAlignX(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 3, SkyName: "AttrAlignX", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 3, SkyName: "AttrAlignX", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrAlignY(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 4, SkyName: "AttrAlignY", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 4, SkyName: "AttrAlignY", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrNearby(v0 any, v1 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 5, SkyName: "AttrNearby", Fields: []any{v0, v1}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 5, SkyName: "AttrNearby", Fields: []any{v0, v1}}
 }
 
 func Std_Ui_Attribute_AttrPadding(v0 any, v1 any, v2 any, v3 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 6, SkyName: "AttrPadding", Fields: []any{v0, v1, v2, v3}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 6, SkyName: "AttrPadding", Fields: []any{v0, v1, v2, v3}}
 }
 
 func Std_Ui_Attribute_AttrSpacing(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 7, SkyName: "AttrSpacing", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 7, SkyName: "AttrSpacing", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrStyle(v0 any, v1 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 8, SkyName: "AttrStyle", Fields: []any{v0, v1}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 8, SkyName: "AttrStyle", Fields: []any{v0, v1}}
 }
 
 func Std_Ui_Attribute_AttrDescribe(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 9, SkyName: "AttrDescribe", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 9, SkyName: "AttrDescribe", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrClass(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 10, SkyName: "AttrClass", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 10, SkyName: "AttrClass", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrEvent(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 11, SkyName: "AttrEvent", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 11, SkyName: "AttrEvent", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrAttribute(v0 any, v1 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 12, SkyName: "AttrAttribute", Fields: []any{v0, v1}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 12, SkyName: "AttrAttribute", Fields: []any{v0, v1}}
 }
 
 func Std_Ui_Attribute_AttrFontSize(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 13, SkyName: "AttrFontSize", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 13, SkyName: "AttrFontSize", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrFontColor(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 14, SkyName: "AttrFontColor", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 14, SkyName: "AttrFontColor", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrFontFamily(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 15, SkyName: "AttrFontFamily", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 15, SkyName: "AttrFontFamily", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrFontWeight(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 16, SkyName: "AttrFontWeight", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 16, SkyName: "AttrFontWeight", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrFontItalic() Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 17, SkyName: "AttrFontItalic", Fields: []any{}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 17, SkyName: "AttrFontItalic", Fields: []any{}}
 }
 
 func Std_Ui_Attribute_AttrFontUnderline() Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 18, SkyName: "AttrFontUnderline", Fields: []any{}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 18, SkyName: "AttrFontUnderline", Fields: []any{}}
 }
 
 func Std_Ui_Attribute_AttrFontDecoration(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 19, SkyName: "AttrFontDecoration", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 19, SkyName: "AttrFontDecoration", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrFontLetterSpacing(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 20, SkyName: "AttrFontLetterSpacing", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 20, SkyName: "AttrFontLetterSpacing", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrFontWordSpacing(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 21, SkyName: "AttrFontWordSpacing", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 21, SkyName: "AttrFontWordSpacing", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrFontAlign(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 22, SkyName: "AttrFontAlign", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 22, SkyName: "AttrFontAlign", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrBgColor(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 23, SkyName: "AttrBgColor", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 23, SkyName: "AttrBgColor", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrBgImage(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 24, SkyName: "AttrBgImage", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 24, SkyName: "AttrBgImage", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrBgGradient(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 25, SkyName: "AttrBgGradient", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 25, SkyName: "AttrBgGradient", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrBorderWidth(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 26, SkyName: "AttrBorderWidth", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 26, SkyName: "AttrBorderWidth", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrBorderWidthEach(v0 any, v1 any, v2 any, v3 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 27, SkyName: "AttrBorderWidthEach", Fields: []any{v0, v1, v2, v3}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 27, SkyName: "AttrBorderWidthEach", Fields: []any{v0, v1, v2, v3}}
 }
 
 func Std_Ui_Attribute_AttrBorderColor(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 28, SkyName: "AttrBorderColor", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 28, SkyName: "AttrBorderColor", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrBorderRounded(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 29, SkyName: "AttrBorderRounded", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 29, SkyName: "AttrBorderRounded", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrBorderStyle(v0 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 30, SkyName: "AttrBorderStyle", Fields: []any{v0}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 30, SkyName: "AttrBorderStyle", Fields: []any{v0}}
 }
 
 func Std_Ui_Attribute_AttrBorderShadow(v0 any, v1 any, v2 any, v3 any, v4 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 31, SkyName: "AttrBorderShadow", Fields: []any{v0, v1, v2, v3, v4}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 31, SkyName: "AttrBorderShadow", Fields: []any{v0, v1, v2, v3, v4}}
 }
 
 func Std_Ui_Attribute_AttrBorderInsetShadow(v0 any, v1 any, v2 any, v3 any, v4 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 32, SkyName: "AttrBorderInsetShadow", Fields: []any{v0, v1, v2, v3, v4}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 32, SkyName: "AttrBorderInsetShadow", Fields: []any{v0, v1, v2, v3, v4}}
 }
 
 func Std_Ui_Attribute_AttrPointer() Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 33, SkyName: "AttrPointer", Fields: []any{}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 33, SkyName: "AttrPointer", Fields: []any{}}
 }
 
 func Std_Ui_Attribute_AttrOverflow(v0 any, v1 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 34, SkyName: "AttrOverflow", Fields: []any{v0, v1}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 34, SkyName: "AttrOverflow", Fields: []any{v0, v1}}
 }
 
 func Std_Ui_Attribute_AttrPseudoRule(v0 any, v1 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 35, SkyName: "AttrPseudoRule", Fields: []any{v0, v1}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 35, SkyName: "AttrPseudoRule", Fields: []any{v0, v1}}
 }
 
 func Std_Ui_Attribute_AttrTransition(v0 any, v1 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 36, SkyName: "AttrTransition", Fields: []any{v0, v1}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 36, SkyName: "AttrTransition", Fields: []any{v0, v1}}
 }
 
 func Std_Ui_Attribute_AttrAnimation(v0 any, v1 any, v2 any, v3 any) Std_Ui_Attribute {
-	return Std_Ui_Attribute{Tag: 37, SkyName: "AttrAnimation", Fields: []any{v0, v1, v2, v3}}
+	return Std_Ui_Attribute{SkyOwner: "sky:Std.Ui.Attribute", Tag: 37, SkyName: "AttrAnimation", Fields: []any{v0, v1, v2, v3}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_Ui_Attribute", "Std_Ui_Attribute", "sky:Std.Ui.Attribute")
 	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "NoAttribute", 0)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "NoAttribute", 0, 0)
 	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrWidth", 1)
@@ -1867,10 +1882,11 @@ func Std_Ui_Chart_Series(p0 []rt.T2[float64, float64], p1 rt.SkyMaybe[string], p
 type Std_Ui_Color = rt.SkyADT
 
 func Std_Ui_Color_Rgba(v0 any, v1 any, v2 any, v3 any) Std_Ui_Color {
-	return Std_Ui_Color{Tag: 0, SkyName: "Rgba", Fields: []any{v0, v1, v2, v3}}
+	return Std_Ui_Color{SkyOwner: "sky:Std.Ui.Color", Tag: 0, SkyName: "Rgba", Fields: []any{v0, v1, v2, v3}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_Ui_Color", "Std_Ui_Color", "sky:Std.Ui.Color")
 	rt.RegisterAdtTag("console_app.Std_Ui_Color", "Rgba", 0)
 	rt.RegisterMsgVariant("Std_Ui_Color", "Rgba", 0, 4)
 }
@@ -1878,50 +1894,51 @@ func init() {
 type Std_Ui_Description = rt.SkyADT
 
 func Std_Ui_Description_NoDescription() Std_Ui_Description {
-	return Std_Ui_Description{Tag: 0, SkyName: "NoDescription", Fields: []any{}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 0, SkyName: "NoDescription", Fields: []any{}}
 }
 
 func Std_Ui_Description_DescMain() Std_Ui_Description {
-	return Std_Ui_Description{Tag: 1, SkyName: "DescMain", Fields: []any{}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 1, SkyName: "DescMain", Fields: []any{}}
 }
 
 func Std_Ui_Description_DescNavigation() Std_Ui_Description {
-	return Std_Ui_Description{Tag: 2, SkyName: "DescNavigation", Fields: []any{}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 2, SkyName: "DescNavigation", Fields: []any{}}
 }
 
 func Std_Ui_Description_DescContentInfo() Std_Ui_Description {
-	return Std_Ui_Description{Tag: 3, SkyName: "DescContentInfo", Fields: []any{}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 3, SkyName: "DescContentInfo", Fields: []any{}}
 }
 
 func Std_Ui_Description_DescComplementary() Std_Ui_Description {
-	return Std_Ui_Description{Tag: 4, SkyName: "DescComplementary", Fields: []any{}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 4, SkyName: "DescComplementary", Fields: []any{}}
 }
 
 func Std_Ui_Description_DescHeading(v0 any) Std_Ui_Description {
-	return Std_Ui_Description{Tag: 5, SkyName: "DescHeading", Fields: []any{v0}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 5, SkyName: "DescHeading", Fields: []any{v0}}
 }
 
 func Std_Ui_Description_DescLabel(v0 any) Std_Ui_Description {
-	return Std_Ui_Description{Tag: 6, SkyName: "DescLabel", Fields: []any{v0}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 6, SkyName: "DescLabel", Fields: []any{v0}}
 }
 
 func Std_Ui_Description_DescLivePolite() Std_Ui_Description {
-	return Std_Ui_Description{Tag: 7, SkyName: "DescLivePolite", Fields: []any{}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 7, SkyName: "DescLivePolite", Fields: []any{}}
 }
 
 func Std_Ui_Description_DescLiveAssertive() Std_Ui_Description {
-	return Std_Ui_Description{Tag: 8, SkyName: "DescLiveAssertive", Fields: []any{}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 8, SkyName: "DescLiveAssertive", Fields: []any{}}
 }
 
 func Std_Ui_Description_DescButton() Std_Ui_Description {
-	return Std_Ui_Description{Tag: 9, SkyName: "DescButton", Fields: []any{}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 9, SkyName: "DescButton", Fields: []any{}}
 }
 
 func Std_Ui_Description_DescParagraph() Std_Ui_Description {
-	return Std_Ui_Description{Tag: 10, SkyName: "DescParagraph", Fields: []any{}}
+	return Std_Ui_Description{SkyOwner: "sky:Std.Ui.Description", Tag: 10, SkyName: "DescParagraph", Fields: []any{}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_Ui_Description", "Std_Ui_Description", "sky:Std.Ui.Description")
 	rt.RegisterAdtTag("console_app.Std_Ui_Description", "NoDescription", 0)
 	rt.RegisterMsgVariant("Std_Ui_Description", "NoDescription", 0, 0)
 	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescMain", 1)
@@ -1949,26 +1966,27 @@ func init() {
 type Std_Ui_Element = rt.SkyADT
 
 func Std_Ui_Element_Empty() Std_Ui_Element {
-	return Std_Ui_Element{Tag: 0, SkyName: "Empty", Fields: []any{}}
+	return Std_Ui_Element{SkyOwner: "sky:Std.Ui.Element", Tag: 0, SkyName: "Empty", Fields: []any{}}
 }
 
 func Std_Ui_Element_Text(v0 any) Std_Ui_Element {
-	return Std_Ui_Element{Tag: 1, SkyName: "Text", Fields: []any{v0}}
+	return Std_Ui_Element{SkyOwner: "sky:Std.Ui.Element", Tag: 1, SkyName: "Text", Fields: []any{v0}}
 }
 
 func Std_Ui_Element_Node(v0 any, v1 any, v2 any) Std_Ui_Element {
-	return Std_Ui_Element{Tag: 2, SkyName: "Node", Fields: []any{v0, v1, v2}}
+	return Std_Ui_Element{SkyOwner: "sky:Std.Ui.Element", Tag: 2, SkyName: "Node", Fields: []any{v0, v1, v2}}
 }
 
 func Std_Ui_Element_TaggedNode(v0 any, v1 any, v2 any, v3 any) Std_Ui_Element {
-	return Std_Ui_Element{Tag: 3, SkyName: "TaggedNode", Fields: []any{v0, v1, v2, v3}}
+	return Std_Ui_Element{SkyOwner: "sky:Std.Ui.Element", Tag: 3, SkyName: "TaggedNode", Fields: []any{v0, v1, v2, v3}}
 }
 
 func Std_Ui_Element_Raw(v0 any) Std_Ui_Element {
-	return Std_Ui_Element{Tag: 4, SkyName: "Raw", Fields: []any{v0}}
+	return Std_Ui_Element{SkyOwner: "sky:Std.Ui.Element", Tag: 4, SkyName: "Raw", Fields: []any{v0}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_Ui_Element", "Std_Ui_Element", "sky:Std.Ui.Element")
 	rt.RegisterAdtTag("console_app.Std_Ui_Element", "Empty", 0)
 	rt.RegisterMsgVariant("Std_Ui_Element", "Empty", 0, 0)
 	rt.RegisterAdtTag("console_app.Std_Ui_Element", "Text", 1)
@@ -2016,34 +2034,35 @@ func (v Std_Ui_LayoutContext) SkyEnumName() string {
 type Std_Ui_Length = rt.SkyADT
 
 func Std_Ui_Length_Px(v0 any) Std_Ui_Length {
-	return Std_Ui_Length{Tag: 0, SkyName: "Px", Fields: []any{v0}}
+	return Std_Ui_Length{SkyOwner: "sky:Std.Ui.Length", Tag: 0, SkyName: "Px", Fields: []any{v0}}
 }
 
 func Std_Ui_Length_Content() Std_Ui_Length {
-	return Std_Ui_Length{Tag: 1, SkyName: "Content", Fields: []any{}}
+	return Std_Ui_Length{SkyOwner: "sky:Std.Ui.Length", Tag: 1, SkyName: "Content", Fields: []any{}}
 }
 
 func Std_Ui_Length_Fill(v0 any) Std_Ui_Length {
-	return Std_Ui_Length{Tag: 2, SkyName: "Fill", Fields: []any{v0}}
+	return Std_Ui_Length{SkyOwner: "sky:Std.Ui.Length", Tag: 2, SkyName: "Fill", Fields: []any{v0}}
 }
 
 func Std_Ui_Length_Min(v0 any, v1 any) Std_Ui_Length {
-	return Std_Ui_Length{Tag: 3, SkyName: "Min", Fields: []any{v0, v1}}
+	return Std_Ui_Length{SkyOwner: "sky:Std.Ui.Length", Tag: 3, SkyName: "Min", Fields: []any{v0, v1}}
 }
 
 func Std_Ui_Length_Max(v0 any, v1 any) Std_Ui_Length {
-	return Std_Ui_Length{Tag: 4, SkyName: "Max", Fields: []any{v0, v1}}
+	return Std_Ui_Length{SkyOwner: "sky:Std.Ui.Length", Tag: 4, SkyName: "Max", Fields: []any{v0, v1}}
 }
 
 func Std_Ui_Length_Vh(v0 any) Std_Ui_Length {
-	return Std_Ui_Length{Tag: 5, SkyName: "Vh", Fields: []any{v0}}
+	return Std_Ui_Length{SkyOwner: "sky:Std.Ui.Length", Tag: 5, SkyName: "Vh", Fields: []any{v0}}
 }
 
 func Std_Ui_Length_Vw(v0 any) Std_Ui_Length {
-	return Std_Ui_Length{Tag: 6, SkyName: "Vw", Fields: []any{v0}}
+	return Std_Ui_Length{SkyOwner: "sky:Std.Ui.Length", Tag: 6, SkyName: "Vw", Fields: []any{v0}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_Ui_Length", "Std_Ui_Length", "sky:Std.Ui.Length")
 	rt.RegisterAdtTag("console_app.Std_Ui_Length", "Px", 0)
 	rt.RegisterMsgVariant("Std_Ui_Length", "Px", 0, 1)
 	rt.RegisterAdtTag("console_app.Std_Ui_Length", "Content", 1)
@@ -2141,10 +2160,11 @@ func (v Std_Ui_VAlign) SkyEnumName() string { return rt.EnumName("Std_Ui_VAlign"
 type Std_Xml_Encode_Attribute = rt.SkyADT
 
 func Std_Xml_Encode_Attribute_Attribute__Internal(v0 any) Std_Xml_Encode_Attribute {
-	return Std_Xml_Encode_Attribute{Tag: 0, SkyName: "Attribute__Internal", Fields: []any{v0}}
+	return Std_Xml_Encode_Attribute{SkyOwner: "sky:Std.Xml.Encode.Attribute", Tag: 0, SkyName: "Attribute__Internal", Fields: []any{v0}}
 }
 
 func init() {
+	rt.RegisterAdtOwner("console_app.Std_Xml_Encode_Attribute", "Std_Xml_Encode_Attribute", "sky:Std.Xml.Encode.Attribute")
 	rt.RegisterAdtTag("console_app.Std_Xml_Encode_Attribute", "Attribute__Internal", 0)
 	rt.RegisterMsgVariant("Std_Xml_Encode_Attribute", "Attribute__Internal", 0, 1)
 }

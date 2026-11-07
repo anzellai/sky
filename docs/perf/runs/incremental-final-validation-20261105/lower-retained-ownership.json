@@ -1,0 +1,178 @@
+{
+  "scope": "lowering-ownership-piv",
+  "source_base": "e54f7b86358dfaeaaf00dff0e118a4660244ffb5",
+  "adopted": true,
+  "memory_savings_claimed": false,
+  "resource_limits_changed": false,
+  "borrowed_parameter_peeling": {
+    "packet_sha256": "444ec94a7d2bb12d72b403364abb4c2a7775ab0463cb2e33f04996ff3816df69",
+    "red": {
+      "elapsed_seconds": 77,
+      "intended_pointer_failure": true,
+      "executed": 1
+    },
+    "green": {
+      "elapsed_seconds": 43,
+      "lower_lib_passed": 49,
+      "ignored": 0
+    }
+  },
+  "single_use_go_program": {
+    "packet_sha256": "57a256cef6a0a700bc39c857336692b1f86bb808f4dcfda019acc464a7376e21",
+    "red": {
+      "elapsed_seconds": 101,
+      "intended_query_retention_failure": true,
+      "executed": 1,
+      "scaffold_extraction": true
+    },
+    "green": {
+      "elapsed_seconds": 112,
+      "project_focused_passed": 2,
+      "incremental_passed": 15,
+      "ignored": 0
+    }
+  },
+  "logs_sha256": {
+    "lower-parameter-owner-red": "db3212b6dd2a8da9f2e83d63258a1cc42585a895d2fa59dccde4fba868bd439a",
+    "lower-parameter-owner-v2-green": "8dbfb59ae37c33e3f729f206950bac35942ea02c9db7a9e90abd0653d2664d43",
+    "cli-owned-go-program-red": "7124edd082789084b32d4019f680aae9aef280aba9538a131661090d7728b17c",
+    "cli-owned-go-program-green": "3a2aa4d9c920ebf670c5bc0a220103d6d2b05828da951aaacac480ba16fc73df",
+    "lower-retained-types-red": "6fc050308fc8b1765f9428a1de029df8e60fbc357d253c5a99947d00657e7896",
+    "lower-retained-types-green": "2de960f8a2f057d2cc8a1f5ed2b55b390e1dd9112e7b2b1ae635a0e3b7010d32",
+    "lower-ownership-combined": "9a2d10678bcf31467b3ca6902d19aa690891e4138e3b85ef4d3b1ab4892f50ed",
+    "lower-ownership-original-growth": "701a5cb4b16951df7bf71351b1585c71a2a9dc8993956f12f81e1c6eb8926d9e",
+    "lower-ownership-census-refresh": "65652ec0580bbfcf6c97edc75c0f8a80b4d784db8b6ae18bd8c087cf2b47e7e7"
+  },
+  "retained_signature_and_cache_types": {
+    "packet_sha256": "496f6b9c59ef1f0334e37b266ed763113006ab4b60247522aea23b3ae1e165ac",
+    "red": {
+      "elapsed_seconds": 75,
+      "executed": 1,
+      "intended_authoritative_signature_identity_failure": true,
+      "valid_wide_fixture_and_complete_value_oracle_before_failure": true
+    },
+    "green": {
+      "elapsed_seconds": 38,
+      "lower_lib_passed": 53,
+      "retained_type_tests": 4,
+      "preserved_peel_tests": 2,
+      "ignored": 0
+    },
+    "numeric_reapplication_preserved": true,
+    "structural_alias_equality_preserved": true
+  },
+  "combined": {
+    "passed": 1126,
+    "failed": 0,
+    "existing_ignored": 3,
+    "summaries": 117,
+    "elapsed_seconds": 698
+  },
+  "original_unifier_growth": {
+    "passed": true,
+    "elapsed_seconds": 77,
+    "ratios": [
+      {
+        "shape": "codec_chain",
+        "phase": "typecheck",
+        "counter": "occurs",
+        "points": [
+          13147,
+          23947,
+          45547
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "codec_chain",
+        "phase": "typecheck",
+        "counter": "record_fields",
+        "points": [
+          5118,
+          9418,
+          18018
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "codec_chain",
+        "phase": "lower",
+        "counter": "occurs",
+        "points": [
+          6088,
+          11288,
+          21688
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "codec_chain",
+        "phase": "lower",
+        "counter": "record_fields",
+        "points": [
+          1722,
+          3122,
+          5922
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "model_app",
+        "phase": "typecheck",
+        "counter": "occurs",
+        "points": [
+          5645,
+          8945,
+          15545
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "model_app",
+        "phase": "typecheck",
+        "counter": "record_fields",
+        "points": [
+          12720,
+          24620,
+          48420
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "model_app",
+        "phase": "lower",
+        "counter": "occurs",
+        "points": [
+          1626,
+          3226,
+          6426
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "model_app",
+        "phase": "lower",
+        "counter": "record_fields",
+        "points": [
+          4708,
+          9408,
+          18808
+        ],
+        "ratio": 2.0
+      }
+    ],
+    "original_bound": 2.3,
+    "fixtures_unchanged": true
+  },
+  "format_check": {
+    "passed": true
+  },
+  "configuration_census": {
+    "initial_stale_source_locations_only": true,
+    "refresh_and_recheck_passed": true,
+    "elapsed_seconds": 13,
+    "assertions": 53,
+    "changed_source_locations": 2,
+    "summary_and_all_other_details_unchanged": true
+  }
+}

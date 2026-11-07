@@ -1,0 +1,99 @@
+{
+  "source_commit": "e54f7b86358dfaeaaf00dff0e118a4660244ffb5",
+  "canonical": {
+    "passed": true,
+    "elapsed_seconds": 238,
+    "compiler_sha256": "808ff25fcfc9ad4679ea887822c88f64fb599ddf884e7945715f5b4059b91875",
+    "framework_files": 2416,
+    "before_after_source_equal": true,
+    "framework_snapshot_sha256": "489b0e3b5e3ce14ba4003e78776b1adcbd8c27519b9fd00aa65b3b6f25000ab8",
+    "log_sha256": "bed6473a060af77bc2a3ee6867060273c1d222d7856739a909bcb60ef17134bc"
+  },
+  "public_app50_smoke": {
+    "passed": true,
+    "elapsed_seconds": 22,
+    "freshCompilerSha256": "808ff25fcfc9ad4679ea887822c88f64fb599ddf884e7945715f5b4059b91875",
+    "sourceSkyFiles": 8,
+    "wasmArtifacts": 2,
+    "matchingSdkScripts": 2,
+    "sdkScriptSha256": "0c949f4996f9a89698e4b5c586de32249c3b69b7baadb64d220073cc04acba14",
+    "fullPrivateAppClaimed": false,
+    "performanceClaimed": false
+  },
+  "public_step_cost_browsers": {
+    "passed": true,
+    "elapsed_seconds": 294,
+    "reports": [
+      {
+        "browser": "chromium",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "chromium",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "webkit",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "webkit",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "firefox",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "firefox",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      }
+    ],
+    "log_sha256": "ed3db556683043d28609262bae85acc51701371c5363b782b1aa6418fa8d3cdb",
+    "build_cache": "off; no settings/environment cache-key probes executed"
+  },
+  "private_current_source_build": {
+    "passed": false,
+    "elapsed_seconds": 29,
+    "classification": "original swap guard stop",
+    "sampled_process_rss_mib": 1048,
+    "compiler_error_codes": 0,
+    "cleanup": true,
+    "verified_donor_files": 671,
+    "verified_destination_files": 671,
+    "verified_framework_files": 2416,
+    "phase_peaks_bytes": {
+      "check-world-end": 401145856,
+      "check-end": 668254208,
+      "lower-begin": 672137216
+    },
+    "lower_end_observed": false,
+    "runtime_validation_claimed": false
+  },
+  "controlled_memory_saving_claimed": false,
+  "resource_limits_changed": false,
+  "remaining": [
+    "Observed lower-phase memory blocker, followed by another meaningful verified compiler revision before retry.",
+    "Complete private browser journeys and genuine growing retained-model/historical workload.",
+    "Final native/target integration; general storage compatibility constraints remain."
+  ],
+  "hosted_ci": {
+    "run_id": 42278964035,
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": 40,
+    "failed": 0
+  }
+}

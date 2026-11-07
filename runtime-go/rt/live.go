@@ -208,9 +208,10 @@ type liveSession struct {
 	// render the user clicked on (live_view_version.go). dispatchBase —
 	// viewID at the start of the current dispatch: the `base` a delta
 	// frame of this dispatch was diffed against. All under sess.mu.
-	viewID       string
-	handlerGens  []handlerGen
-	dispatchBase string
+	viewID          string
+	handlerGens     []handlerGen
+	dispatchBase    string
+	dispatchScrolls []liveScrollDelivery // transient, current dispatch only; under mu
 	// lastDispatchErr — ref of the last classified dispatch panic, read
 	// (and cleared) by handleEvent so the acting tab shows a banner.
 	lastDispatchErr string
@@ -797,8 +798,9 @@ type frameSnapshot struct {
 	// to). base — content id of the render a `patches` frame was diffed
 	// against; the client applies the delta only on top of that render
 	// and buffers it otherwise (live_view_version.go).
-	view string
-	base string
+	view    string
+	base    string
+	scrolls []liveScrollDelivery
 }
 
 // prepareFrameSnapshot captures (seq, body, ackInputs) under sess.mu so
@@ -876,6 +878,9 @@ func encodeSSEFrameFromSnapshot(snap frameSnapshot) string {
 	}
 	if snap.view != "" {
 		frame["view"] = snap.view
+	}
+	if len(snap.scrolls) != 0 {
+		frame["scrolls"] = snap.scrolls
 	}
 	b, err := json.Marshal(frame)
 	if err != nil {
@@ -972,12 +977,13 @@ type sseConn struct {
 // __skyLastGlobalSeq guard so a replayed broadcast event drops at the
 // boundary rather than mutating state twice.
 type patchesEventEnvelope struct {
-	Seq       int64            `json:"seq"`
-	GlobalSeq int64            `json:"globalSeq,omitempty"`
-	AckInputs map[string]int64 `json:"ackInputs,omitempty"`
-	Patches   []Patch          `json:"patches"`
-	View      string           `json:"view,omitempty"`
-	Base      string           `json:"base,omitempty"`
+	Seq       int64                `json:"seq"`
+	GlobalSeq int64                `json:"globalSeq,omitempty"`
+	AckInputs map[string]int64     `json:"ackInputs,omitempty"`
+	Patches   []Patch              `json:"patches"`
+	View      string               `json:"view,omitempty"`
+	Base      string               `json:"base,omitempty"`
+	Scrolls   []liveScrollDelivery `json:"scrolls,omitempty"`
 }
 
 // encodePatchesEventFromSnapshot serialises a frameSnapshot + patches
@@ -1007,6 +1013,7 @@ func encodePatchesEventFromSnapshot(snap frameSnapshot, patches []Patch) string 
 		Patches:   patches,
 		View:      snap.view,
 		Base:      snap.base,
+		Scrolls:   snap.scrolls,
 	}
 	b, err := json.Marshal(env)
 	if err != nil {
@@ -2612,6 +2619,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	if fromSession && sess.model != nil {
 		model = sess.model
 	}
+	sess.dispatchScrolls = nil
 	model = routeAndNavigate(model)
 	sess.model = model
 	sess.handlers = map[string]any{}
@@ -2652,6 +2660,8 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		mirror = true
 	}
 	initialView := sess.viewID
+	initialSeq := sess.nextLocalSeq()
+	initialScrolls := sess.takeDispatchScrolls()
 	app.persistSession(sess)
 	sess.mu.Unlock()
 	if mirror {
@@ -2660,6 +2670,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// The render id of this body: a sky-nav / popstate fetch adopts it
 	// from the header, a full page load from the inline script below.
 	w.Header().Set("X-Sky-View", initialView)
+	w.Header().Set("X-Sky-Seq", strconv.FormatInt(initialSeq, 10))
 
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2735,7 +2746,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	if !routed && app.notFound != nil {
 		w.WriteHeader(http.StatusNotFound)
 	}
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", baseMeta, headExtra, liveBaseCSS, body, livePageScripts(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken), devBanner)
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", baseMeta, headExtra, liveBaseCSS, body, livePageScriptsWithScrolls(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken, initialScrolls), devBanner)
 }
 
 // renderAppHead invokes the optional `head : Model -> List (Html
@@ -3186,6 +3197,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// ordering works uniformly.
 	respSeq := sess.nextLocalSeq()
 	respAck := ackInputsForPrevTree(sess)
+	respScrolls := sess.takeDispatchScrolls()
 	sess.mu.Unlock()
 	// PULL-model revocation: the dispatch gate evicted this session (revoked /
 	// disabled user). Reply session-lost so the browser clears + re-inits, and
@@ -3242,7 +3254,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// client acknowledges the event without the server shipping a
 	// redundant HTML frame.
 	if body2 == "" {
-		writeEventJSONView(w, respSeq, req.Seq, respAck, nil, newView, baseView, dispatchErr)
+		writeEventJSONView(w, respSeq, req.Seq, respAck, nil, newView, baseView, dispatchErr, respScrolls)
 		return
 	}
 	// When we have a prior tree we can reply with a minimal patch set
@@ -3266,11 +3278,11 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if prev != nil && newTree != nil {
 		patches := liveDiff(prev, newTree, clientStateFromRequest(req.InputState))
 		if !patchesAreFullReplace(patches) {
-			writeEventJSONView(w, respSeq, req.Seq, respAck, patches, newView, baseView, dispatchErr)
+			writeEventJSONView(w, respSeq, req.Seq, respAck, patches, newView, baseView, dispatchErr, respScrolls)
 			return
 		}
 	}
-	writeEventHTML(w, respSeq, respAck, body2, newView)
+	writeEventHTML(w, respSeq, respAck, body2, newView, respScrolls)
 }
 
 // writeEventJSON emits the structured /_sky/event response envelope:
@@ -3286,7 +3298,7 @@ func writeEventJSON(w http.ResponseWriter, seq, respondingTo int64, ackInputs ma
 // DOM to, `base` the id they were diffed against (the client applies
 // them only on top of that render). errRef, when set, is the ref of a
 // classified dispatch panic the client shows as a banner (L12).
-func writeEventJSONView(w http.ResponseWriter, seq, respondingTo int64, ackInputs map[string]int64, patches []Patch, view, base, errRef string) {
+func writeEventJSONView(w http.ResponseWriter, seq, respondingTo int64, ackInputs map[string]int64, patches []Patch, view, base, errRef string, scrolls ...[]liveScrollDelivery) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Sky-Live", "1")
 	payload := map[string]any{
@@ -3311,6 +3323,9 @@ func writeEventJSONView(w http.ResponseWriter, seq, respondingTo int64, ackInput
 	if errRef != "" {
 		payload["error"] = errRef
 	}
+	if len(scrolls) != 0 && len(scrolls[0]) != 0 {
+		payload["scrolls"] = scrolls[0]
+	}
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
@@ -3318,7 +3333,7 @@ func writeEventJSONView(w http.ResponseWriter, seq, respondingTo int64, ackInput
 // in headers so the client can update its seq bookkeeping without
 // parsing the HTML — X-Sky-Seq (single counter) and X-Sky-Ack-Inputs
 // (JSON-encoded map, absent when empty).
-func writeEventHTML(w http.ResponseWriter, seq int64, ackInputs map[string]int64, body string, view string) {
+func writeEventHTML(w http.ResponseWriter, seq int64, ackInputs map[string]int64, body string, view string, scrolls ...[]liveScrollDelivery) {
 	h := w.Header()
 	if view != "" {
 		h.Set("X-Sky-View", view)
@@ -3330,6 +3345,9 @@ func writeEventHTML(w http.ResponseWriter, seq int64, ackInputs map[string]int64
 		if b, err := json.Marshal(ackInputs); err == nil {
 			h.Set("X-Sky-Ack-Inputs", string(b))
 		}
+	}
+	if len(scrolls) != 0 {
+		body = appendLiveScrollMetadata(body, scrolls[0])
 	}
 	_, _ = w.Write([]byte(body))
 }
@@ -3414,8 +3432,8 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	var snap frameSnapshot
 	var patches []Patch
 	var haveFrame bool
-	if body2 != "" && body2 != prevShipped {
-		snap = sess.prepareFrameSnapshot(body2)
+	if (body2 != "" && body2 != prevShipped) || sess.hasDispatchScrolls() {
+		snap = sess.prepareDispatchFrameSnapshot(body2)
 		sess.lastShippedBody = body2
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
 			// Cycle 3 P50a / Gap C11: structural diff for SSE
@@ -3474,6 +3492,7 @@ func patchesAreFullReplace(patches []Patch) bool {
 // so one malformed handler can't crash the session; the view simply
 // falls back to its last rendered body.
 func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
+	sess.dispatchScrolls = nil
 	if _, bad := msg.(msgDecodeError); bad {
 		// applyMsgArgs already logged the specific mismatch. Return "" so
 		// the client sees an empty patch list (no visible change) and
@@ -3544,6 +3563,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	sess.lastDispatchErr = ""
 	defer func() {
 		if r := recover(); r != nil {
+			sess.dispatchScrolls = nil // a rolled-back render owns no commands
 			// L8: a recovered dispatch panic used to write ONLY to stderr — an
 			// operator would never grep it, and a DETERMINISTIC panic for a
 			// given Msg turned that control into a permanently silent no-op
@@ -4010,6 +4030,10 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 			return
 		}
 		sess.pushIslandCmd(ic)
+	case "scroll":
+		if command, ok := scrollCmdOf(c); ok {
+			sess.recordScroll(command)
+		}
 	case "nav":
 		// Std.Nav.pushUrl / replaceUrl: the tab that caused this update moves
 		// its address bar (live_nav_delivery.go). A URL off this site is
@@ -4181,8 +4205,8 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	var snap frameSnapshot
 	var patches []Patch
 	var haveFrame bool
-	if body != "" && body != prevShipped {
-		snap = sess.prepareFrameSnapshot(body)
+	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() {
+		snap = sess.prepareDispatchFrameSnapshot(body)
 		sess.lastShippedBody = body
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
 			// Cycle 3 P50a / Gap C11: compute the structural diff
@@ -4491,8 +4515,8 @@ func (app *liveApp) timeEveryDispatch(sess *liveSession, toMsg any, t time.Time,
 	// interval, amplifying contention on busy sessions. Advancing
 	// lastShippedBody stays under the lock so the next tick's prevShipped read
 	// sees the up-to-date value.
-	if body != "" && body != prevShipped {
-		snap = sess.prepareFrameSnapshot(body)
+	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() {
+		snap = sess.prepareDispatchFrameSnapshot(body)
 		sess.lastShippedBody = body
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
 			// Cycle 3 P50a / Gap C11: structural diff for Time.every ticks —
@@ -4710,13 +4734,13 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 	var snap frameSnapshot
 	var patches []Patch
 	var haveFrame bool
-	if body != "" && body != prevShipped {
+	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() {
 		// Stamp the broadcast event's globalSeq onto the snapshot so
 		// the SSE envelope carries it. The client guards on
 		// __skyLastAppliedGlobalSeq independently of the per-session
 		// localSeq — see live.go's frame snapshot path + the wire
 		// envelope (Cycle 3 P47).
-		snap = sess.prepareFrameSnapshotWithGlobalSeq(body, ev.GlobalSeq)
+		snap = sess.prepareDispatchFrameSnapshotWithGlobalSeq(body, ev.GlobalSeq)
 		sess.lastShippedBody = body
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
 			patches = liveDiff(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)

@@ -1,0 +1,84 @@
+{
+  "status": "PASS_SCOPED",
+  "mode": "builds",
+  "desktop_requested": false,
+  "phases": [
+    {
+      "phase": "freshness",
+      "exit": 0,
+      "seconds": 0.8150653750635684,
+      "success": true,
+      "evidence": "compile-or-check"
+    },
+    {
+      "phase": "stage",
+      "exit": 0,
+      "seconds": 0.8691594999982044,
+      "success": true,
+      "evidence": "compile-or-check"
+    },
+    {
+      "phase": "build-web",
+      "exit": 0,
+      "seconds": 202.30953291605692,
+      "success": true,
+      "evidence": "compile-or-check"
+    },
+    {
+      "phase": "build-web-app",
+      "exit": 0,
+      "seconds": 73.48738829197828,
+      "success": true,
+      "evidence": "compile-or-check"
+    },
+    {
+      "phase": "build-terminal-cli",
+      "exit": 0,
+      "seconds": 4.110617625061423,
+      "success": true,
+      "evidence": "compile-or-check"
+    },
+    {
+      "phase": "build-terminal-tui",
+      "exit": 0,
+      "seconds": 2.6383911659941077,
+      "success": true,
+      "evidence": "compile-or-check"
+    },
+    {
+      "phase": "shared-cli-eof",
+      "exit": 0,
+      "seconds": 0.044221957912668586,
+      "success": true,
+      "evidence": "native-execution"
+    }
+  ],
+  "compiler_sha256": "dc799aa074e1ad9322e83cb005baf949823a48fbfafd9e95c5d289f90466384a",
+  "go_tool_wrapper_sha256": "b5bfb2b6256e00c6c879aca616ffd46ec72d8b73530a14329a822833a43fa093",
+  "guard": "external session guard unchanged; no threshold configured here",
+  "not_claimed": [
+    "browser execution",
+    "successful desktop GUI",
+    "owner payload conformance",
+    "performance budgets"
+  ],
+  "git_head": "dadf2a0df3305380f8975df00ddbba13df4c1e0c",
+  "artifacts": {
+    "web": {
+      "sky-out/app": "fdf743661f23065decd4ab68a2589d4e73478cd39e5936ec738b4e634aa6e511",
+      ".skyapp/web/sky-out/app": "fdf743661f23065decd4ab68a2589d4e73478cd39e5936ec738b4e634aa6e511"
+    },
+    "web:app": {
+      ".skyapp/web-app/.split/backend/sky-out/app": "a6da40dfcaff9c371026b73b4ed6b6cba638abb648e7b32f8f495d0f13c530ae",
+      ".skyapp/web-app/.split/frontend/sky-out/main.wasm": "03a94298213f5d6caf35a33aef9b1cc8e20b0489d88e28bc61f89871267dccbe"
+    },
+    "terminal:cli": {
+      "sky-out/app": "9700c7ab0cf49ca5d69cb32a801c5ad7f1a10158cb7503a92a5248d64e7ee5c6",
+      ".skyapp/terminal-cli/sky-out/app": "9700c7ab0cf49ca5d69cb32a801c5ad7f1a10158cb7503a92a5248d64e7ee5c6"
+    },
+    "terminal:tui": {
+      "sky-out/app": "693a4a17559d49b100ce1ef4d4320fa51e405020e9d3510871169d84045f21dc",
+      ".skyapp/terminal-tui/sky-out/app": "693a4a17559d49b100ce1ef4d4320fa51e405020e9d3510871169d84045f21dc"
+    }
+  }
+}

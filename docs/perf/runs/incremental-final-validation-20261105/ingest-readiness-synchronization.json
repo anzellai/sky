@@ -1,0 +1,69 @@
+{
+  "change": "Wait for captured push-ingest payload rather than HTTP request arrival in BatchedDelivery test",
+  "affected_source": "runtime-go/rt/observability_push_test.go",
+  "source_sha256": "0f62bcc3722e6300476fee6d26923e96b13e4814ea82f6de2878b6cfb454083a",
+  "failed_ci": {
+    "run": 42204965045,
+    "job": 127849183032,
+    "job_name": "macos-determinism",
+    "step": 11,
+    "failed_test": "TestPushExporter_BatchedDelivery",
+    "assertion_line": 227,
+    "test_elapsed_seconds": 0.05,
+    "empty_payload_observed": true,
+    "private_log_sha256": "d1394333db3097be4fe91eb9738201b8cf3948a16c44bdbcdf168c680f74ecf4",
+    "other_functional_jobs_succeeded": 38
+  },
+  "production_exporter_changed": false,
+  "original_two_second_deadline_changed": false,
+  "original_payload_assertions_changed": false,
+  "helper_proof": {
+    "scope": "exact-source helper synchronization only",
+    "standard_library_only": true,
+    "whole_real_helper_and_wire_types": true,
+    "whole_barrier_test_assertions_unchanged": true,
+    "source_and_predicate_identity_checked_with_go_ast": true,
+    "frozen_packet_sha256": "f06d89fc4d8119a24f316a08e57ea0eaf26e2091993a12889527ed5805ed6878",
+    "closure_manifest_sha256": "3dd59bcb3e4c8d2a56cad9b9595e9141b8db68f5cb0cf081acc35d8caca0c4ff",
+    "red": {
+      "failed_test": "TestFakeIngest_DeliveryReadinessWaitsForCapturedBody",
+      "expected_pre_body_readiness_assertion_failed": true,
+      "log_sha256": "f5298c07b537d015f38a967ead021958d1b2fbfd7295578b1c625ed21461b907"
+    },
+    "green": {
+      "exit": 0,
+      "elapsed_seconds": 10,
+      "passed": 2,
+      "failed": 0,
+      "log_sha256": "96ed217e4b4229d7fe845115d91196e05b8efcdb56d83732a599bff27c6a5dd0"
+    }
+  },
+  "runtime_test_patch_sha256": "eebe528159afa46831cf75503987dbdd54190a995ded3d9788ad779d4449c2fd",
+  "scope_limits": [
+    "No full runtime package or exporter production test is claimed by the helper-only proof.",
+    "The failed CI run is not reclassified as green.",
+    "No timing budget, memory guard, worker cap or payload assertion was relaxed.",
+    "The later hosted runtime and macOS jobs succeeded; its two other failed functional jobs and aggregate remain red."
+  ],
+  "hosted_validation": {
+    "run": 42215098140,
+    "jobs": [
+      {
+        "job": 127883007314,
+        "job_name": "runtime-rt",
+        "conclusion": "success"
+      },
+      {
+        "job": 127883007521,
+        "job_name": "macos-determinism",
+        "conclusion": "success"
+      }
+    ],
+    "overall_run_conclusion": "failure",
+    "remaining_failed_functional_jobs": [
+      "test-rest",
+      "build-perf-2"
+    ],
+    "ci_green_aggregator": "failure"
+  }
+}

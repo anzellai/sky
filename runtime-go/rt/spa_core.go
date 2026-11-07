@@ -45,7 +45,11 @@ type SpaFns struct {
 	Init   func(any) SkyTuple2
 	Update func(any, any) SkyTuple2
 	View   func(any) any
-	Subs   func(any) any
+	// Optional compiler-proven source-value regions. View remains the exact
+	// reference entry; memo contexts are owned by one app render lifecycle.
+	ViewMemo      func(any, any) any
+	ViewMemoTypes []any
+	Subs          func(any) any
 }
 
 // Spa_config materialises the config into a map[string]any that the withX
@@ -171,7 +175,14 @@ func Spa_withModelDecoder(fn, cfg any) any { return spaCfgSet(cfg, "ModelDecoder
 // ModelDecoder (both use the same `Codec.auto blank`). The server IGNORES it —
 // persistence is a client concern, exactly like ModelDecoder. Stored on the
 // config map so it survives the withX builder chain.
-func Spa_withModelEncoder(fn, cfg any) any { return spaCfgSet(cfg, "ModelEncoder", fn) }
+func Spa_withModelEncoder(fn, cfg any) any {
+	// Builder order matters: a custom encoder always revokes generated-codec
+	// eligibility, even if it happens to produce the same bytes in a test.
+	cfg = spaCfgSet(cfg, "GeneratedAutoModelEncoder", false)
+	cfg = spaCfgSet(cfg, "GeneratedModelInputType", nil)
+	cfg = spaCfgSet(cfg, "PreparedAutoModelEncoder", nil)
+	return spaCfgSet(cfg, "ModelEncoder", fn)
+}
 
 // Spa_withPersistProtectedFields stores the protected-field name list (a Sky
 // `List String`) under "PersistProtectedFields". On boot the wasm client keeps

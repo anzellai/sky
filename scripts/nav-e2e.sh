@@ -56,7 +56,7 @@ LIVE="$TMP/app/.skyapp/web/sky-out/app"
 
 echo "==> driving both targets in a browser"
 SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
-  with_timeout 600 node "$ROOT/scripts/nav-verify.mjs" "$SPA" "$LIVE" --port "${NAV_E2E_PORT:-9381}"
+  with_timeout 600 node "$ROOT/scripts/nav-verify.mjs" "$SPA" "$LIVE" --port "${NAV_E2E_PORT:-9381}" --fixture-root "$TMP/app"
 
 echo "nav-e2e: PASS — Std.Nav moves the address bar the same way on web:app and Sky.Live."
 rm -rf "$TMP"

@@ -1,0 +1,96 @@
+{
+  "source_base_commit": "44dde201b",
+  "scope": [
+    "Skip only reporting type-tree collection in the build checker; preserve reporting APIs and all authoritative checking.",
+    "Share immutable numeric query metadata through its actual Arc owner, preserving computation, query keys, dependencies and all read-only consumers."
+  ],
+  "source_files_sha256": {
+    "rust/crates/ty/src/check.rs": "c1403555b5ae8d7085d5ba0596a57e63b9be019e546b43ad036afd8af90bb255",
+    "rust/crates/ty/src/lib.rs": "5030afc6c9e455e61ad6a203aa2951bd4bf574513ba849956d0c55d243b9ba9d",
+    "rust/crates/project/src/build.rs": "f96b3a86f0a153d25b800eb87469d8bcfc53a76c51e4151881dd8f3342c6927b",
+    "rust/crates/ty/src/db.rs": "3825fb83500ed07cc894740b49e0cac35b1d2766bbd13d0ff827c92c6950a645",
+    "rust/crates/skydb/src/lib.rs": "a29cfae0d398fe7e039790b42341c26f5611343082b3310c88812b8125a4163c",
+    "rust/crates/lower/src/lower.rs": "b047433113b0fa328198a1727153aa7a4f1dc82a422760b5d51020d814c6023a",
+    "rust/crates/lower/src/lower/spa_capability_domain.rs": "8197053ffdc0135b24f1982ff3a1ba1481147c0256ab355867f5c2f992b51bb5",
+    "rust/crates/skydb/tests/incremental.rs": "c2b0606b89b06cd620a1cb279f01f811ac525b8a9ec4ac8970756a781621fd7e"
+  },
+  "frozen_manifests_sha256": [
+    "439b4fd7a2eb3ffc11100a1bf992cf460056e0106c28b6b7dfeaae6d92e3cb72",
+    "89f1f66ce128700266a6ea50f4686b594bc02cf6c0add1e270859caf9320f753",
+    "92183599693f9e77e16c4f513336d3bd45bf86228ab65d14cc8a2a9ada9651f3"
+  ],
+  "stages": [
+    {
+      "task": "build-verdict-reports-red",
+      "elapsed_seconds": 235,
+      "passed": 0,
+      "failed": 2,
+      "ignored": 0,
+      "summaries": 1,
+      "log_sha256": "3a6b5ebc2a538d12a57c23a921a6c2c48a15ff713cc9198639a4289ec3e0b0a9"
+    },
+    {
+      "task": "build-verdict-reports-green",
+      "elapsed_seconds": 112,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "summaries": 1,
+      "log_sha256": "2cefb27ac1e82f580d3738a3f66e40e29c5faacaf28146401c0ef606d51c6ced"
+    },
+    {
+      "task": "numeric-owner-v2-strengthened-red",
+      "elapsed_seconds": 67,
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "summaries": 1,
+      "log_sha256": "50d8d7d48592be11d691fa3aa10c35474f20395c243a506ef58963d4aa4bf1ca"
+    },
+    {
+      "task": "numeric-owner-v2-full-incremental",
+      "elapsed_seconds": 71,
+      "passed": 14,
+      "failed": 0,
+      "ignored": 0,
+      "summaries": 1,
+      "log_sha256": "c7a47438c1ad1b110abd3f040372759fa1376f14c6544a8332b88be3ab589679"
+    },
+    {
+      "task": "numeric-owner-v2-type-safety",
+      "elapsed_seconds": 46,
+      "passed": 32,
+      "failed": 0,
+      "ignored": 0,
+      "summaries": 3,
+      "log_sha256": "8fadc03710c1fd1b1226d7d29454d1fc19d30ccd54043f8775c440c0adc788c0"
+    },
+    {
+      "task": "allocation-checkpoint-full-project",
+      "elapsed_seconds": 286,
+      "passed": 520,
+      "failed": 0,
+      "ignored": 2,
+      "summaries": 49,
+      "log_sha256": "67daf64b9b2009df68780ee8112754e16cf219b65cc27a23066c0d21b299be3c"
+    }
+  ],
+  "fixture_correction": "The initial revision test incorrectly passed Int to Float. The five-stage replacement retains initial Int/Float evidence, separates caller-only and imported-signature-only edits, and proves initial eager acceptance before RED. Production code is unchanged by the correction.",
+  "independent_numeric_source_review": "PASS: complete consumers, immutable metadata, query and revision dependencies",
+  "formatter": "Pinned rustfmt 1.95.0 on all eight touched Rust files; diff check passes.",
+  "memory_saving_measured": false,
+  "resource_limits_changed": false,
+  "goldens_changed": false,
+  "remaining": [
+    "Subsequent authority and source-provider refinements have separate validation; allocation checkpoint full project/hosted checks pass.",
+    "Fresh canonical and current private application build; prior compiler is stale.",
+    "Shared invalid-ID authority repair and original Codec occurs growth repair."
+  ],
+  "hosted_ci": {
+    "run": 42269060167,
+    "commit": "01de151a7cc13e6d6cf1fc4ac243b473da738cda",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": 40
+  }
+}

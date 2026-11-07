@@ -1,0 +1,40 @@
+{
+  "change": "Sparse physical storage for deliberately unreachable type-variable reservations, preserving exact logical IDs.",
+  "candidate_patch_sha256": "018698f4a0489948ca9b2b5e6ef843366ec17a2b8549cc06ac5bfc156fe15b90",
+  "red": {
+    "exit": 101,
+    "elapsed_seconds": 54,
+    "live_variables": 128,
+    "physical_slots_observed": 33024,
+    "desired_physical_slots": 128
+  },
+  "type_suite": {
+    "elapsed_seconds": 55,
+    "passed": 86,
+    "failed": 0,
+    "ignored": 1
+  },
+  "lower_skydb": {
+    "elapsed_seconds": 177,
+    "passed": 118,
+    "failed": 0,
+    "ignored": 1
+  },
+  "log_sha256": {
+    "red": "3302d699537c84196e9027b69cddc2578eb7e1598b1666bdd02df7d86b0f42f0",
+    "type_suite": "f690bb5e39601c24042dd8a1f8ac2e5e63109decda66174a1a6fd814f576d239",
+    "lower_skydb": "dc52bc9d044375d9611aa44081c975ade24b161014db2cc29f74b717aed87795"
+  },
+  "invariants": [
+    "Logical variable IDs and allocation sequence unchanged",
+    "Dense-oracle representatives, ranks, records, functions, clone and failure behavior agree",
+    "Occurs marks track physical live slots, including epoch wrap",
+    "Reserved holes reject access instead of aliasing another variable",
+    "ID exhaustion rejects before storage or literal-state mutation"
+  ],
+  "scope_limits": [
+    "Actual application RSS and CPU effects unmeasured",
+    "Existing ignored unifier occurs/record-field growth regression remains unresolved",
+    "No general linear-inference claim"
+  ]
+}

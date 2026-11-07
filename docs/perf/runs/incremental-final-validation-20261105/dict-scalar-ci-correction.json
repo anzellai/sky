@@ -1,0 +1,50 @@
+{
+  "run": 42136087088,
+  "jobs": [
+    {
+      "job": "runtime-rt",
+      "failed_steps": [
+        "Gate \u2014 runtime rt tests (go test)"
+      ],
+      "failed_tests": [
+        "TestSpaClosedLazyResolutionClearsInvocationOwnersAndCacheCannotReachPlans"
+      ],
+      "cache_invariant": true,
+      "raw_log_sha256": "a00fa9b4e66b8ae9c1562b1900ec17c0bfec49e1d39c7d70c2bca3d3c887ddd1"
+    },
+    {
+      "job": "macos-determinism",
+      "failed_steps": [
+        "Gate \u2014 runtime rt tests (go test, 2nd platform)"
+      ],
+      "failed_tests": [
+        "TestSpaClosedLazyResolutionClearsInvocationOwnersAndCacheCannotReachPlans"
+      ],
+      "cache_invariant": true,
+      "raw_log_sha256": "95ffe472208d940bb4cf7157703707249498376c867bf05c67ef6dafd344138f"
+    },
+    {
+      "job": "integration-postgres-2",
+      "failed_steps": [
+        "rt tests under the race detector, with a live PostgreSQL (shard 2/2)"
+      ],
+      "failed_tests": [
+        "TestSpaClosedLazyResolutionClearsInvocationOwnersAndCacheCannotReachPlans"
+      ],
+      "cache_invariant": true,
+      "raw_log_sha256": "d537106639250bc735b513812483b56f103df9bb02eb96710f0b0d4baaec1f3f"
+    }
+  ],
+  "aggregate_only": "ci-green",
+  "source_checkpoint": "cbd54078a0e7eb13c1d9060abefa624356f9387d",
+  "successful_jobs": 36,
+  "total_jobs": 40,
+  "correction": "Retain only scalar Dict certificates and certificate-child links; compare model pointers only invocation-locally.",
+  "correction_validation": {
+    "source_review": "two independent reviews passed",
+    "formatter": "passed",
+    "local_compilation": "not run after correction; earlier prototype attempts guard-stopped",
+    "hosted_ci": "required after checkpoint push"
+  },
+  "original_encoded_value_bytes_assertion": 131
+}

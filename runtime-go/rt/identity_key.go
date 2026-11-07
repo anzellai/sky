@@ -111,6 +111,11 @@ func identityKey(v any) string {
 }
 
 func writeIdentityKey(b *strings.Builder, rv reflect.Value, depth int) {
+	if rv.IsValid() && rv.Kind() != reflect.Interface && rv.CanInterface() {
+		if handle, ok := rv.Interface().(ffiGoFuncHandle); ok {
+			rv = handle.function
+		}
+	}
 	if !rv.IsValid() {
 		b.WriteByte('N')
 		return

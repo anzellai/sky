@@ -260,6 +260,16 @@ different: nil is a normal value there (an optional field), so it is a
 be nothing" use `(T, error)` or `(T, bool)` — those map cleanly to
 `Result Error T` / `Result Error (Maybe T)`.
 
+Opaque nil results are not automatically `Err` at their producing call. The
+wrapper returns `Ok` with an opaque nil handle, which may be forwarded to a Go
+function that accepts nil (including an empty-interface argument). Opaque Go
+function and interface outputs follow the same rule; a typed nil function inside
+an interface remains typed nil when forwarded. Sky does not expose a null value
+for ordinary data. A pointer to convertible data still becomes `Maybe`, and an
+invalid nil receiver, conversion failure or recovered Go panic is `Err` at the
+binding where it occurs. This is distinct from treating an arbitrary Go nil
+result as a failed call.
+
 ### Method calls have nil-receiver guards
 
 Every generated method/getter/setter wrapper checks for a nil
@@ -286,6 +296,22 @@ the same rule: `List.sort`, `sortBy` and `sortWith` copy before they sort
 (`runtime-go/rt/list_block_test.go`,
 `TestRuntimeNeverChangesAListArgument`, which also checks that this section
 states the rule).
+
+### Returned data belongs to Sky
+
+A generated binding snapshots convertible Go return containers before exposing
+its Result to Sky. A Go producer may reuse its own backing buffer on the next
+call; an earlier Sky List must retain its earlier elements. The copy is
+transitive through ordinary list/map data, preserves the existing Go/Sky
+representation and nil/empty distinction, and applies to reflective returns,
+callback arguments entering Sky, and data read through opaque struct getters.
+
+Opaque Go structs, named container types, interfaces and reference handles
+retain their existing identity. They do not become ordinary Sky records or
+immutable List/Dict data merely because Go reflection reports a container
+kind. Such opaque named containers are excluded from immutable encoding
+witnesses; use their generated bindings to read convertible data snapshots.
+This ownership boundary does not change the slice-argument rule above.
 
 ## When to add to Sky's stdlib instead of telling users to FFI
 

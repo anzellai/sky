@@ -294,6 +294,28 @@ struct Emitted {
     console_needed: bool,
 }
 
+// Split the existing check_modules forwarding pair for durable attribution.
+// The same full world query runs once and its Arc moves into the same checker.
+fn check_modules_profiled(db: &dyn ty::TyDb, modules: &[base::ModuleId]) -> ty::CheckOutput {
+    let world_phase = crate::timings::phase("check world");
+    let world = ty::TyDb::check_world(db);
+    world_phase.end();
+    ty::check_modules_with_world_without_report_types(db, world, modules)
+}
+
+/// Single-use CLI assembly owns its final output. Per-def Salsa memos still
+/// serve lowering, while the complete source/config are not retained in a new
+/// whole-program memo through later split/build work.
+fn single_use_go_program(
+    db: &skydb::SkyDatabase,
+    entry: base::ModuleId,
+    cfg: lower::LowerConfig,
+) -> skydb::GoProgram {
+    let result = skydb::compute_go_program(db, entry, &cfg);
+    drop(cfg);
+    result
+}
+
 /// Assemble the source db (stdlib + example src), lower, and emit the Go source.
 /// Returns `Err(note)` for every non-emit outcome (no stdlib, no src, no entry,
 /// no `main`) so callers surface the same diagnostics. Deterministic: no wall
@@ -376,6 +398,11 @@ impl LoadedProgram {
     }
 }
 
+/// These owned trees serve reporting, not the lowerer's independent type tables.
+pub(crate) fn release_checker_report_types(checked: &mut ty::CheckOutput) {
+    drop(std::mem::take(&mut checked.def_types));
+}
+
 fn assemble_and_emit_loaded(
     repo_root: &Path,
     example_dir: &Path,
@@ -384,6 +411,7 @@ fn assemble_and_emit_loaded(
     progress: bool,
     scope: AppScope,
 ) -> Result<(Emitted, LoadedProgram), BuildFailure> {
+    timing_role(example_dir);
     // ---- assemble the source db (stdlib + example src) ----
     // Stage A/B (doc 01, doc 12): a salsa db holds the source set as `SourceFile`
     // inputs and the `parse` leaf query memoises each module's CST. Every parse
@@ -410,6 +438,12 @@ fn assemble_and_emit_loaded(
     }
     let stdlib_names: std::collections::BTreeSet<String> =
         stdlib.iter().map(|(n, _, _)| n.clone()).collect();
+    // Keep source identities, not a module-name purity heuristic. A project
+    // may shadow stdlib source; that disables auto-codec specialisation.
+    let canonical_stdlib_sources: Vec<_> = stdlib
+        .iter()
+        .map(|(n, file, _)| (n.clone(), *file))
+        .collect();
     // The stdlib is trusted (never type-checked again), but a stdlib module
     // that does not parse is still reported as the parse error it is, naming
     // the stdlib file. Before this, a recovered ERROR node in a stdlib module
@@ -629,21 +663,8 @@ fn assemble_and_emit_loaded(
     // diagnostic span's `file.index()` is the module's `ModuleId` index, so the
     // map keys straight off `check_ids`.
     t_parse.end();
-    let src_map: std::collections::HashMap<base::FileId, String> = check_ids
-        .iter()
-        .map(|m| {
-            (
-                base::FileId(m.index()),
-                db.source_file(*m).text(&db).to_string(),
-            )
-        })
-        .collect();
-    // Combined source provider: text (for the caret excerpt) + display path (for
-    // the `path:line:col` header). Passed to every `render_diags` call below.
-    let sources = CliSources {
-        text: &src_map,
-        paths: &path_map,
-    };
+    // The facade uses the same FileId mapping and paths for every renderer.
+    let sources = assembly_sources(&db, &check_ids, &path_map);
 
     // Halt on any app-module parse error BEFORE entry detection, typecheck,
     // lower, and emit — a syntactically broken module can never be soundly
@@ -692,11 +713,15 @@ fn assemble_and_emit_loaded(
     let mut trust = ffi_trust(&db, repo_root, example_dir, &check_ids);
     trust.packages = registry_package_names(&db, &registry_files);
     surface.set_trust(trust);
+    // No DB-backed text reference may span this input mutation. Recreate
+    // the small diagnostic facade afterward against the same source handles.
+    drop(sources);
     db.set_ffi_surface(std::sync::Arc::new(surface));
+    let sources = assembly_sources(&db, &check_ids, &path_map);
     let t_check = crate::timings::phase("canonicalise + typecheck");
     let counters_start = ty::counters::snapshot();
     crate::timings::count_type_check();
-    let mut checked = ty::check_modules(&db, &check_ids);
+    let mut checked = check_modules_profiled(&db, &check_ids);
     t_check.end();
     let counters_checked = ty::counters::snapshot();
     crate::timings::note(format!(
@@ -871,6 +896,10 @@ fn assemble_and_emit_loaded(
     if !exhaustive_diags.is_empty() {
         return Err(render_diags(&exhaustive_diags, &sources));
     }
+    // Reporting-only owned type trees are not consumed by lowering or the
+    // later split. Release them before configuration/GoIR allocations begin;
+    // keep the check verdict and diagnostics for LoadedProgram unchanged.
+    release_checker_report_types(&mut checked);
     if progress {
         println!("   Types OK ({} module(s))", check_ids.len());
         println!("-- Generating Go");
@@ -902,13 +931,10 @@ fn assemble_and_emit_loaded(
     // its currying arity from the declared Sky signature instead (see
     // `LowerConfig.variadic_kernels`); every non-variadic alias keeps the scan.
     cfg.variadic_kernels = crate::abi_guard::runtime_variadic_kernels(repo_root).clone();
-    // Stage E (doc 01 bottom-of-DAG): route lowering + codegen through the salsa
-    // `go_program` tracked query, closing the query DAG below `infer`. The config
-    // is a salsa **input** created once for this build; `go_program` reads the
-    // whole module set's `type_world`/`resolve`/per-def `infer` through the db, so
-    // it is memoised (re-demand is a cache hit) and invalidated natively by any
-    // `SourceFile` edit (the LSP/incremental path). Emitted bytes are byte-for-byte
-    // the prior eager `lower_program_cfg` + `emit_program` pair.
+    // Single-use CLI assembly runs the exact lower+emit computation directly.
+    // Per-def/world/resolve queries remain memoised; incremental consumers keep
+    // the Stage-E tracked go_program wrapper and its complete dependency DAG.
+    // This CLI does not retain a second complete source/config in that memo.
     // The Std.Ai device slots (`Endpoint.withDevice`): rooted and registered
     // by the lowering (`LowerConfig.device_slots`). A misuse is a build error
     // (ai_slots::device_slots_for_entry). A generated Sky.Spa half is checked
@@ -933,8 +959,157 @@ fn assemble_and_emit_loaded(
         }
     }
     let t_lower = crate::timings::phase("lower + emit Go");
-    let config = skydb::BuildConfig::new(&db, cfg);
-    let prog = skydb::go_program(&db, entry, config);
+    if is_spa_generated_project(example_dir)
+        && canonical_stdlib_sources.iter().all(|(name, source)| {
+            hir::SkyDb::module_by_name(&db, name).is_some_and(|m| db.source_file(m) == *source)
+        })
+        && hir::SkyDb::module_ids(&db).iter().all(|m| {
+            let name = hir::SkyDb::module_name(&db, *m);
+            !(name.starts_with("Sky.") || name.starts_with("Std.")) || stdlib_names.contains(name)
+        })
+    {
+        cfg.trusted_private_modules = canonical_stdlib_sources
+            .iter()
+            .filter_map(|(name, _)| hir::SkyDb::module_by_name(&db, name))
+            .collect();
+        // Same source-identity gate as codec capsules. Keep the grant as
+        // resolved DefIDs, never a project setting or editable helper name.
+        for (module_name, names) in [
+            (
+                "Std.Spa",
+                &[
+                    "app",
+                    "config",
+                    "withRoutes",
+                    "withNotFound",
+                    "withOnNavigate",
+                    "withHead",
+                    "withModelDecoder",
+                    "withModelEncoder",
+                    "withPersistProtectedFields",
+                    "withPersistDecoder",
+                    "withPersistSeedFields",
+                    "withPersistExcludeFields",
+                    "withHoldFree",
+                    "withGuard",
+                ][..],
+            ),
+            (
+                "Sky.Core.List",
+                &[
+                    "map",
+                    "indexedMap",
+                    "filter",
+                    "filterMap",
+                    "concatMap",
+                    "any",
+                    "all",
+                    "foldl",
+                    "foldr",
+                    "length",
+                    "isEmpty",
+                    "reverse",
+                    "take",
+                    "drop",
+                    "append",
+                    "concat",
+                ][..],
+            ),
+            ("Sky.Core.Maybe", &["map", "andThen", "withDefault"][..]),
+            ("Sky.Core.Result", &["withDefault"][..]),
+            (
+                "Sky.Core.Char",
+                &["isAlpha", "isDigit", "isAlphaNum", "toLower", "toUpper"][..],
+            ),
+            (
+                "Sky.Core.Regex",
+                &[
+                    "fromString",
+                    "never",
+                    "contains",
+                    "find",
+                    "findMatch",
+                    "replace",
+                    "replaceWith",
+                ][..],
+            ),
+            ("Std.Ui", &["onPseudo"][..]),
+            (
+                "Sky.Core.String",
+                &[
+                    "fromInt",
+                    "fromFloat",
+                    "length",
+                    "isEmpty",
+                    "join",
+                    "split",
+                    "replace",
+                    "slice",
+                    "toUpper",
+                    "toLower",
+                    "trim",
+                    "trimStart",
+                    "trimEnd",
+                    "reverse",
+                    "append",
+                    "concat",
+                    "contains",
+                    "startsWith",
+                    "endsWith",
+                    "padLeft",
+                    "padRight",
+                    "left",
+                    "right",
+                    "dropLeft",
+                    "dropRight",
+                    "toInt",
+                    "toFloat",
+                    "toList",
+                    "fromList",
+                ][..],
+            ),
+            (
+                "Sky.Core.Math",
+                &["abs", "min", "max", "round", "floor", "ceil"][..],
+            ),
+        ] {
+            if let Some(module) = hir::SkyDb::module_by_name(&db, module_name) {
+                for name in names {
+                    cfg.trusted_view_memo.push((
+                        module_name.into(),
+                        (*name).into(),
+                        hir::SkyDb::intern_def(
+                            &db,
+                            module,
+                            &base::Name::new(name),
+                            hir::DefKind::Value,
+                        ),
+                    ));
+                }
+            }
+        }
+        if let Some(module) = hir::SkyDb::module_by_name(&db, "Std.Codec") {
+            cfg.trusted_auto_codec = Some((
+                hir::SkyDb::intern_def(
+                    &db,
+                    module,
+                    &base::Name::new("toJson"),
+                    hir::DefKind::Value,
+                ),
+                hir::SkyDb::intern_def(&db, module, &base::Name::new("auto"), hir::DefKind::Value),
+            ));
+        }
+    }
+    for (name, source) in &canonical_stdlib_sources {
+        if matches!(name.as_str(), "Std.Decimal" | "Std.Money") {
+            if let Some(module) = hir::SkyDb::module_by_name(&db, name) {
+                if db.source_file(module) == *source {
+                    cfg.trusted_builtin_adt_modules.insert(module);
+                }
+            }
+        }
+    }
+    let mut prog = single_use_go_program(&db, entry, cfg);
     if !prog.entry_ok {
         return Err("lowering found no entry `main`".into());
     }
@@ -953,11 +1128,11 @@ fn assemble_and_emit_loaded(
                 .collect(),
         });
     }
-    // `entry_ok && errors.is_empty()` guarantees `go_program` emitted the source.
-    // `go_program` returns a reference into the salsa memo, so clone the fields out.
+    // The owned result carries exactly the source that passed lowering.
+    // Transfer its allocation into Emitted rather than cloning it again.
     let source = prog
         .source
-        .clone()
+        .take()
         .ok_or_else(|| "lowering produced no Go source".to_string())?;
     // ABI-symbol guard: reject any emitted `rt.X` the runtime does not export
     // BEFORE `go build`, so a codegen hole surfaces as a clean `[E4005]`
@@ -1009,7 +1184,7 @@ fn assemble_and_emit_loaded(
     let emitted = Emitted {
         source,
         registry,
-        ffi_used: prog.ffi_used.clone(),
+        ffi_used: prog.ffi_used,
         warnings,
         located_warnings,
         migration_hint,
@@ -1019,12 +1194,9 @@ fn assemble_and_emit_loaded(
         db,
         split_entry,
         split_check_ids,
-        // The split reads the verdict and the diagnostics, never the per-def
-        // types, so those are not carried.
-        checked: ty::CheckOutput {
-            def_types: Vec::new(),
-            ..checked
-        },
+        // Reporting types were released before lowering; preserve the verdict
+        // and diagnostics for the split over this same database.
+        checked,
         checked_ids: check_ids,
         // Only the plain load (no extra source roots, the whole app) builds
         // the db `load_source_db` builds.
@@ -1589,27 +1761,10 @@ fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     if !out.status.is_some_and(|s| s.success()) {
         return Err(out.stderr);
     }
-    let goroot = Command::new("go")
-        .args(["env", "GOROOT"])
-        .output()
-        .map_err(|e| format!("`go env GOROOT`: {e}"))?;
-    let goroot = String::from_utf8_lossy(&goroot.stdout).trim().to_string();
-    // Go 1.21+ ships wasm_exec.js under lib/wasm; older toolchains, misc/wasm.
-    let candidates = [
-        Path::new(&goroot)
-            .join("lib")
-            .join("wasm")
-            .join("wasm_exec.js"),
-        Path::new(&goroot)
-            .join("misc")
-            .join("wasm")
-            .join("wasm_exec.js"),
-    ];
-    let src = candidates.iter().find(|p| p.exists()).ok_or_else(|| {
-        format!("wasm_exec.js not found under GOROOT ({goroot}); looked in lib/wasm and misc/wasm")
-    })?;
+    let src = crate::go_tool_metadata::wasm_exec_using(std::ffi::OsStr::new("go"), out_dir)
+        .map_err(str::to_owned)?;
     let dest = out_dir.join("wasm_exec.js");
-    // The GOROOT copy is read-only (0444); a prior build left a read-only dest,
+    // The SDK source copy is read-only (0444); a prior build left a read-only dest,
     // so overwriting it would EPERM. Remove it first (best-effort).
     let _ = std::fs::remove_file(&dest);
     std::fs::copy(src, &dest)
@@ -2921,6 +3076,17 @@ pub fn bundled_source_texts(repo_root: &Path) -> std::collections::HashSet<Strin
 /// `[spa] generated = true` in the project's `sky.toml`: the Sky.Spa split
 /// wrote this project (the same marker `sky build` keys its no-re-split guard
 /// on).
+fn timing_role(project_dir: &Path) {
+    if crate::timings::enabled() {
+        let role = match spa_role(project_dir).as_deref() {
+            Some("backend") => crate::timings::Role::Backend,
+            Some("frontend") => crate::timings::Role::Frontend,
+            _ => crate::timings::Role::Source,
+        };
+        crate::timings::set_role(role);
+    }
+}
+
 /// The `[spa] role` of a generated Sky.Spa half (`frontend` or `backend`).
 fn spa_role(example_dir: &Path) -> Option<String> {
     let s = std::fs::read_to_string(example_dir.join("sky.toml")).ok()?;
@@ -3147,7 +3313,7 @@ fn inject_ffi_deps(
     // go.sum these `go get`s produce are known from their inputs: reuse them
     // (go_get_memo.rs). A floating spec re-resolves on every build, as before.
     let memo_key = (all_exact && local.is_empty())
-        .then(crate::go_get_memo::go_version)
+        .then(|| crate::go_get_memo::go_version_in(out_dir))
         .flatten()
         .map(|v| {
             // The starting go.sum is an input too: `go get` keeps its lines.
@@ -3561,6 +3727,8 @@ pub(crate) fn load_source_db(
     example_dir: &Path,
     entry_module: Option<&str>,
 ) -> Result<(skydb::SkyDatabase, base::ModuleId, Vec<base::ModuleId>), String> {
+    timing_role(example_dir);
+    let _source_load_phase = crate::timings::phase("source database load");
     crate::timings::count_source_load();
     let mut db = skydb::SkyDatabase::with_kernel();
     let mut next_id: u32 = 0;
@@ -3884,6 +4052,38 @@ fn display_path(project_dir: &Path, p: &Path) -> String {
         rel.push(c.as_os_str());
     }
     slash(&rel)
+}
+
+/// Non-self-referential diagnostic facade over the database's exact input
+/// owners. No source String or Parse is copied; the owned map contains stable
+/// SourceFile handles only. Returned text cannot outlive this shared DB borrow.
+struct AssemblySources<'a> {
+    db: &'a skydb::SkyDatabase,
+    files: std::collections::HashMap<base::FileId, skydb::SourceFile>,
+    paths: &'a std::collections::HashMap<base::FileId, String>,
+}
+
+fn assembly_sources<'a>(
+    db: &'a skydb::SkyDatabase,
+    modules: &[base::ModuleId],
+    paths: &'a std::collections::HashMap<base::FileId, String>,
+) -> AssemblySources<'a> {
+    let files = modules
+        .iter()
+        .map(|m| (base::FileId(m.index()), db.source_file(*m)))
+        .collect();
+    AssemblySources { db, files, paths }
+}
+
+impl diagnostics::SourceProvider for AssemblySources<'_> {
+    fn text(&self, file: base::FileId) -> Option<&str> {
+        self.files
+            .get(&file)
+            .map(|input| input.text(self.db).as_str())
+    }
+    fn path(&self, file: base::FileId) -> Option<&str> {
+        self.paths.get(&file).map(String::as_str)
+    }
 }
 
 /// A CLI source provider: the `FileId → text` map for the caret excerpt PLUS a
@@ -5602,6 +5802,419 @@ mod go_build_timeout_tests {
         for bad in ["", "0", "0m", "-5", "1.5m", "ten", "5d", "m"] {
             let e = parse_go_build_timeout(bad).unwrap_err();
             assert!(e.contains("15m"), "{bad:?}: {e}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod checker_report_lifetime_tests {
+    use super::*;
+
+    #[test]
+    fn report_types_release_storage_before_lowering_without_changing_check_results() {
+        let diagnostics = vec![diagnostics::Diagnostic::error(
+            "E2001",
+            "synthetic diagnostic",
+        )];
+        let mut checked = ty::CheckOutput {
+            type_errors: 2,
+            exhaustiveness_warnings: 3,
+            name_errors: 4,
+            diagnostics: diagnostics.clone(),
+            def_types: vec![ty::DefType {
+                module: "Main".into(),
+                name: "model".into(),
+                ty: ty::Ty::Tuple(vec![ty::Ty::Error; 256]),
+                declared: true,
+            }],
+        };
+        let diagnostics_storage = checked.diagnostics.as_ptr();
+        assert!(checked.def_types.capacity() > 0);
+        release_checker_report_types(&mut checked);
+        assert!(checked.def_types.is_empty());
+        assert_eq!(
+            checked.def_types.capacity(),
+            0,
+            "release the allocation, not just its entries"
+        );
+        assert_eq!(checked.type_errors, 2);
+        assert_eq!(checked.exhaustiveness_warnings, 3);
+        assert_eq!(checked.name_errors, 4);
+        assert_eq!(checked.diagnostics, diagnostics);
+        assert_eq!(checked.diagnostics.as_ptr(), diagnostics_storage);
+
+        // Check the actual phase boundary too: the operation must follow all
+        // diagnostic gates and precede configuration and lowering allocations.
+        let source = include_str!("build.rs");
+        let assembly = source.split_once("fn assemble_and_emit_loaded(").unwrap().1;
+        let release = assembly
+            .find("release_checker_report_types(&mut checked);")
+            .unwrap();
+        assert!(assembly.find("if !exhaustive_diags.is_empty()").unwrap() < release);
+        assert!(release < assembly.find("let mut cfg = read_sky_toml_config").unwrap());
+        assert!(release < assembly.find("single_use_go_program(").unwrap());
+    }
+
+    #[test]
+    fn split_report_types_release_precedes_partition_allocations() {
+        // Runtime storage/verdict/diagnostic preservation is checked by the
+        // existing release helper test above. Check its actual split call site.
+        let source = include_str!("spa_split.rs");
+        let function = source.split_once("fn analyze_for_split(").unwrap().1;
+        let function = function.split_once("\n}\n").unwrap().0;
+        let release = function
+            .find("crate::build::release_checker_report_types(&mut checked);")
+            .expect("split must explicitly dispose report types");
+        assert!(function.find("check_phase.end();").unwrap() < release);
+        assert!(release < function.find("let _partition_phase").unwrap());
+        assert!(release < function.find("spa_partition::analyze_checked(").unwrap());
+        assert!(
+            !function.contains("def_types: Vec::new()"),
+            "a partial struct update is not explicit disposal"
+        );
+    }
+}
+
+#[cfg(test)]
+mod check_world_checkpoint_tests {
+    use super::*;
+
+    #[test]
+    fn profiled_check_preserves_verdict_and_world_without_collecting_report_types() {
+        for source in [
+            "module Main exposing (..)\nid : a -> a\nid x = x\nmain = id 7\n",
+            "module Main exposing (..)\nmain : Int\nmain = \"bad\"\n",
+            "module Main exposing (..)\nmain = missing\n",
+            "module Main exposing (..)\ntype Choice = One | Two\nmain choice = case choice of\n    One -> 1\n",
+        ] {
+            let mut db = skydb::SkyDatabase::with_kernel();
+            let file = db.new_source(0, source.to_string());
+            let parsed = skydb::parse(&db, file);
+            assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+            let module = db.add_module("Main", file);
+            let first_world = ty::TyDb::check_world(&db);
+            let expected = ty::check_modules(&db, &[module]);
+            let actual = check_modules_profiled(&db, &[module]);
+            assert!(!expected.def_types.is_empty(), "the fixture must be checked");
+            let last_world = ty::TyDb::check_world(&db);
+            assert!(std::sync::Arc::ptr_eq(&first_world, &last_world));
+            assert_eq!(actual.type_errors, expected.type_errors);
+            assert_eq!(actual.name_errors, expected.name_errors);
+            assert_eq!(actual.exhaustiveness_warnings, expected.exhaustiveness_warnings);
+            assert_eq!(actual.diagnostics, expected.diagnostics);
+            let signatures = |out: &ty::CheckOutput| out.def_types.iter()
+                .map(|d| (d.module.clone(), d.name.clone(), d.ty.clone(), d.declared))
+                .collect::<Vec<_>>();
+            let reporting = ty::check_modules_with_world(&db, first_world, &[module]);
+            assert_eq!(signatures(&reporting), signatures(&expected), "reporting API changed");
+            assert!(actual.def_types.is_empty(), "build checker collected reporting-only type trees");
+        }
+    }
+
+    #[test]
+    fn build_check_never_collects_wide_declared_type_reports() {
+        let fields: Vec<_> = (0..80).map(|i| format!("f{i} : Int")).collect();
+        let values: Vec<_> = (0..80).map(|i| format!("f{i} = 0")).collect();
+        let mut source = format!(
+            "module Main exposing (..)\n\ntype alias Wide = {{ {} }}\n\n",
+            fields.join(", ")
+        );
+        for i in 0..24 {
+            source.push_str(&format!(
+                "value{i} : Wide\nvalue{i} = {{ {} }}\n\n",
+                values.join(", ")
+            ));
+        }
+        source.push_str("main = value0.f0\n");
+        let mut db = skydb::SkyDatabase::with_kernel();
+        let file = db.new_source(0, source);
+        let parsed = skydb::parse(&db, file);
+        assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+        let module = db.add_module("Main", file);
+        let world = ty::TyDb::check_world(&db);
+        let expected = ty::check_modules_with_world(&db, world.clone(), &[module]);
+        assert_eq!(
+            (
+                expected.type_errors,
+                expected.name_errors,
+                expected.exhaustiveness_warnings
+            ),
+            (0, 0, 0)
+        );
+        let report_fields: usize = expected
+            .def_types
+            .iter()
+            .map(|d| match &d.ty {
+                ty::Ty::Record(fields, None) => fields.len(),
+                _ => 0,
+            })
+            .sum();
+        assert!(
+            report_fields >= 24 * 80,
+            "fixture must materialize many owned reporting fields"
+        );
+        let actual = check_modules_profiled(&db, &[module]);
+        assert_eq!(actual.type_errors, expected.type_errors);
+        assert_eq!(actual.name_errors, expected.name_errors);
+        assert_eq!(
+            actual.exhaustiveness_warnings,
+            expected.exhaustiveness_warnings
+        );
+        assert_eq!(actual.diagnostics, expected.diagnostics);
+        assert!(std::sync::Arc::ptr_eq(&world, &ty::TyDb::check_world(&db)));
+        assert!(
+            actual.def_types.is_empty(),
+            "build collected type-report trees only to discard them later"
+        );
+    }
+}
+
+#[cfg(test)]
+mod assembly_source_owner_tests {
+    use super::*;
+    use diagnostics::SourceProvider;
+
+    fn fixture(source: &str) -> (skydb::SkyDatabase, skydb::SourceFile, base::ModuleId) {
+        let mut db = skydb::SkyDatabase::with_kernel();
+        let input = db.new_source(0, source.to_string());
+        let module = db.add_module("Main", input);
+        (db, input, module)
+    }
+
+    fn assert_original_rendering(
+        db: &skydb::SkyDatabase,
+        modules: &[base::ModuleId],
+        paths: &std::collections::HashMap<base::FileId, String>,
+        diagnostics: &[diagnostics::Diagnostic],
+    ) {
+        // Independent exact pre-change implementation retained as the byte,
+        // label, path and ordering oracle; it deliberately owns its text.
+        let copied: std::collections::HashMap<base::FileId, String> = modules
+            .iter()
+            .map(|m| {
+                (
+                    base::FileId(m.index()),
+                    db.source_file(*m).text(db).to_string(),
+                )
+            })
+            .collect();
+        let old = CliSources {
+            text: &copied,
+            paths,
+        };
+        let actual = assembly_sources(db, modules, paths);
+        let a = render_diags(diagnostics, &actual);
+        let b = render_diags(diagnostics, &old);
+        assert_eq!(a.diagnostics, b.diagnostics);
+        assert_eq!(a.render(), b.render());
+        for file in modules
+            .iter()
+            .map(|m| base::FileId(m.index()))
+            .chain([base::FileId(999)])
+        {
+            assert_eq!(actual.text(file), old.text(file));
+            assert_eq!(actual.path(file), old.path(file));
+        }
+        assert_eq!(actual.text(base::FileId(999)), None);
+        assert_eq!(actual.path(base::FileId(999)), None);
+    }
+
+    #[test]
+    fn assembly_diagnostics_share_actual_nonempty_source_input_owner() {
+        let source =
+            "module Main exposing (main)\n\n-- λ and 雪 are UTF-8 source bytes\nmain = \"héllo\"\n";
+        let (db, input, module) = fixture(source);
+        let parsed = skydb::parse(&db, input);
+        assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+        let paths = std::collections::HashMap::from([(
+            base::FileId(module.index()),
+            "src/Unicode.sky".to_string(),
+        )]);
+        let provider = assembly_sources(&db, &[module], &paths);
+        let original = input.text(&db);
+        let supplied = provider.text(base::FileId(module.index())).unwrap();
+        assert_eq!(supplied, source);
+        assert_eq!(supplied.len(), original.len());
+        assert!(original.len() > 64, "nonempty actual source-byte premise");
+        // Both owners are alive: allocator address reuse cannot mask the
+        // original retained .to_string allocation. No asset bytes are counted.
+        assert!(
+            std::ptr::eq(supplied, original.as_str()),
+            "assembly diagnostics copied the database source text"
+        );
+    }
+
+    #[test]
+    fn assembly_diagnostic_bytes_labels_and_order_survive_ffi_and_source_revisions() {
+        for source in [
+            "module Main exposing (main)\n\n-- λ雪\nmain = \"héllo\"\n",
+            "module Main exposing (main)\n\n-- λ雪\nmain : Int\nmain = \"wrong\"\n",
+            "module Main exposing (main)\n\n-- λ雪\nmain = (\n",
+        ] {
+            let (mut db, input, module) = fixture(source);
+            let file = base::FileId(module.index());
+            let paths = std::collections::HashMap::from([(file, "src/Unicode.sky".to_string())]);
+            let parsed = skydb::parse(&db, input);
+            let malformed = source.ends_with("(\n");
+            assert_eq!(
+                !parsed.errors().is_empty() || parsed.error_node_count() > 0,
+                malformed
+            );
+            let offset = source.find('λ').unwrap() as u32;
+            let custom = diagnostics::Diagnostic::error("E2001", "first diagnostic")
+                .with_label(
+                    base::Span::new(file, offset, offset + 'λ'.len_utf8() as u32),
+                    "primary unicode",
+                )
+                .with_label(
+                    base::Span::new(base::FileId(999), 0, 1),
+                    "missing secondary source",
+                );
+            let unlocated = diagnostics::Diagnostic::error("E2007", "second diagnostic");
+            let mut diags = vec![custom, unlocated];
+            diags.extend(parsed.errors().iter().cloned());
+            if !malformed {
+                let checked = ty::check_modules(&db, &[module]);
+                assert_eq!(checked.name_errors, 0);
+                assert_eq!(checked.type_errors > 0, source.contains("main : Int"));
+                diags.extend(checked.diagnostics);
+            }
+            assert_original_rendering(&db, &[module], &paths, &diags);
+            let before = {
+                let facade = assembly_sources(&db, &[module], &paths);
+                render_diags(&diags, &facade).diagnostics
+            }; // all facade/text borrows end BEFORE the real FFI input mutation
+            db.set_ffi_surface(std::sync::Arc::new(hir::FfiSurface::default()));
+            let after = {
+                let facade = assembly_sources(&db, &[module], &paths);
+                assert_eq!(facade.text(file), Some(source));
+                assert_eq!(facade.path(file), Some("src/Unicode.sky"));
+                render_diags(&diags, &facade).diagnostics
+            };
+            assert_eq!(before, after, "FFI input mutation changed source rendering");
+            assert_original_rendering(&db, &[module], &paths, &diags);
+
+            let revised = "module Main exposing (main)\n\n-- λ revised 雪\nmain = \"updated\"\n";
+            db.set_source_text(input, revised.to_string());
+            let facade = assembly_sources(&db, &[module], &paths);
+            assert_eq!(facade.text(file), Some(revised));
+            assert!(
+                std::ptr::eq(facade.text(file).unwrap(), input.text(&db).as_str()),
+                "revised source owner was copied"
+            );
+            assert_original_rendering(&db, &[module], &paths, &diags);
+            // Reports are owned values and remain stable after their source
+            // revision; no borrowed diagnostic text escapes into LoadedProgram.
+            assert_eq!(before, after);
+        }
+    }
+}
+
+#[cfg(test)]
+mod single_use_go_program_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn fixture(source: &str) -> (skydb::SkyDatabase, base::ModuleId, Arc<Mutex<Vec<String>>>) {
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let mut db = skydb::SkyDatabase::with_kernel_events(logs.clone());
+        let file = db.new_source(0, source.to_string());
+        let parsed = skydb::parse(&db, file);
+        assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+        let module = db.add_module("Main", file);
+        (db, module, logs)
+    }
+
+    // Tracked reference remains public and independently exercises the query
+    // route. Skydb's additional regression retains the original lower+emit pair.
+    fn tracked_reference(
+        db: &skydb::SkyDatabase,
+        entry: base::ModuleId,
+        cfg: &lower::LowerConfig,
+    ) -> skydb::GoProgram {
+        let config = skydb::BuildConfig::new(db, cfg.clone());
+        skydb::go_program(db, entry, config).clone()
+    }
+
+    fn same(actual: &skydb::GoProgram, expected: &skydb::GoProgram) {
+        assert_eq!(actual.source, expected.source);
+        let diagnostics = |ds: &[lower::LowerDiag]| {
+            ds.iter()
+                .map(|d| (d.message.clone(), d.span))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            diagnostics(&actual.warnings),
+            diagnostics(&expected.warnings)
+        );
+        assert_eq!(diagnostics(&actual.errors), diagnostics(&expected.errors));
+        assert_eq!(actual.entry_ok, expected.entry_ok);
+        assert_eq!(actual.ffi_used, expected.ffi_used);
+        assert_eq!(actual.console_needed, expected.console_needed);
+    }
+
+    #[test]
+    fn actual_single_use_assembly_produces_owned_source_without_whole_program_memo() {
+        let (db, module, logs) =
+            fixture("module Main exposing (main)\nmain = \"owned program source\"\n");
+        let cfg = lower::LowerConfig::default();
+        let expected = tracked_reference(&db, module, &cfg);
+        assert!(expected.entry_ok && expected.errors.is_empty());
+        assert!(
+            expected.source.as_ref().is_some_and(|s| s.len() > 64),
+            "real nonempty emitted source premise"
+        );
+        logs.lock().unwrap().clear();
+        let mut actual = single_use_go_program(&db, module, cfg);
+        let events = std::mem::take(&mut *logs.lock().unwrap());
+        same(&actual, &expected);
+        // BASE extraction still executes the actual original Stage-E query,
+        // storing the complete source/config in Salsa before returning its copy.
+        assert!(
+            !events
+                .iter()
+                .any(|e| e.starts_with("WillExecute") && e.contains("go_program")),
+            "single-use CLI retained output through the whole-program query"
+        );
+        // The returned owned allocation is moved, not cloned, into Emitted.
+        let before = actual.source.as_ref().unwrap().as_ptr();
+        let moved = actual.source.take().unwrap();
+        assert_eq!(before, moved.as_ptr());
+        assert!(actual.source.is_none());
+        // Structural route check ties this real helper to actual CLI assembly.
+        let source = include_str!("build.rs");
+        let assembly = source.split_once("fn assemble_and_emit_loaded(").unwrap().1;
+        let assembly = assembly
+            .split_once("\n/// Resolve a lowering diagnostic")
+            .unwrap()
+            .0;
+        assert!(assembly.contains("single_use_go_program(&db, entry, cfg)"));
+        assert!(!assembly.contains("skydb::go_program("));
+        assert!(!assembly.contains("ffi_used: prog.ffi_used.clone()"));
+    }
+
+    #[test]
+    fn single_use_and_tracked_programs_preserve_all_original_pair_fields() {
+        for source in [
+            "module Main exposing (main)\nmain = \"owned program source\"\n",
+            "module Main exposing (x)\nx = 1\n",
+            "module Main exposing (main)\nmain = missing\n",
+        ] {
+            for port in [None, Some("8751".to_string())] {
+                let (db, module, _) = fixture(source);
+                let mut cfg = lower::LowerConfig::default();
+                cfg.port = port;
+                let expected = tracked_reference(&db, module, &cfg);
+                let actual = single_use_go_program(&db, module, cfg.clone());
+                same(&actual, &expected);
+                let config = skydb::BuildConfig::new(&db, cfg);
+                same(skydb::go_program(&db, module, config), &expected);
+                if source.contains("owned program") {
+                    assert!(actual.entry_ok && actual.errors.is_empty() && actual.source.is_some());
+                } else {
+                    assert!(actual.source.is_none(), "missing main/error emitted source");
+                }
+            }
         }
     }
 }

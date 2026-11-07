@@ -1,0 +1,69 @@
+{
+  "change": "Share immutable declaration core between declaration and checker Worlds",
+  "source_head": "dec528300",
+  "implementation_uncommitted_at_validation": true,
+  "source_sha256": {
+    "rust/crates/ty/src/sig.rs": "59b3a1223f713693abc39c94c37a74182dc714ea059b237f3217ce8d68b37433",
+    "rust/crates/ty/src/lib.rs": "89512eba0e7bf42572b83dd259dd295a4fa71f397e9ca42546ce5ac67526f339",
+    "rust/crates/skydb/src/lib.rs": "b9a21df234dce169d3219ff3b6e27fc1378efee06f8e191c93928903d5276403",
+    "rust/crates/skydb/tests/incremental.rs": "901990e9e516f62af15ed0f0b22ce6b7f7dcf78c186a845d8d8af68d149931b2"
+  },
+  "reviewed_patch_sha256": "5f32102cee4460063ff7b14c8f0b7c99654429dc4dc2ce551e2fd561c6b80f78",
+  "ownership_layout": {
+    "shared_declaration_containers": 15,
+    "independent_body_channels": 8,
+    "bound_check_sigs_shared": false
+  },
+  "red": {
+    "exit": 101,
+    "elapsed_seconds": 15,
+    "passed": 0,
+    "failed": 1,
+    "ignored": 0,
+    "assertion": "actual Scheme addresses differ across declaration/check Worlds",
+    "log_sha256": "3f502de6f761325125797dc918e75637bbf991ca182a4874bc48e661f50cd767"
+  },
+  "green": {
+    "exit": 0,
+    "elapsed_seconds": 290,
+    "passed": 534,
+    "failed": 0,
+    "ignored": 2,
+    "test_binary_summaries": 68,
+    "log_sha256": "2a113c400513b660fd111bde39b289ee9e4fa895710ecc6c590768d7e0ec84f9",
+    "new_sharing_revision_and_core_isolation_tests_passed": true
+  },
+  "post_broad_checks": {
+    "source_delta": "Two rustdoc links retargeted from World to WorldDecls; executable source unchanged.",
+    "format": {
+      "exit": 0,
+      "elapsed_seconds": 18,
+      "log_sha256": "18bf957dd335c6068b94bdff0657db617f70ca1943db234509884ca209529b52"
+    },
+    "targeted_type_check": {
+      "exit": 0,
+      "elapsed_seconds": 35,
+      "passed": 1,
+      "failed": 0,
+      "log_sha256": "b9cf99f987e93bd1298067c6e5c8d735deae864daa2c800c9059b075b1b2af4f"
+    }
+  },
+  "canonical_build": {
+    "exit": 0,
+    "elapsed_seconds": 206,
+    "compiler_sha256": "0006cea3a984c0499142c6c09e3a5fde4fc10fb01eb1fa4803730c70b0522b70",
+    "log_sha256": "58a500f1a6e336da87c2afbeb85166168baa926402121eebe0499c7541bd4dc5"
+  },
+  "invariants": [
+    "Declaration query remains body-independent; checker depends on declaration query and runs the same body passes.",
+    "Derived equality remains structural; body-edit backdating and annotation revision isolation are asserted.",
+    "Declaration forks use copy-on-write; body-derived maps and mixed bound-check channel remain independent.",
+    "Eager whole-World equality and complete inference-result ownership remain asserted."
+  ],
+  "scope_limits": [
+    "Test counts exclude two unchanged ignored diagnostics; no ignored diagnostic is counted as passing.",
+    "Historical application peak-memory reduction and fresh historical application build success remain unmeasured.",
+    "Canonical compiler build success does not establish current application browser validation.",
+    "Elapsed wall times are bound to parent execution reports; logs are retained privately by hash."
+  ]
+}

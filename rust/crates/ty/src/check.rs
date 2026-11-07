@@ -56,8 +56,9 @@ pub struct CheckOutput {
 /// This is the value of the `infer(DefId)` tracked query (Stage D-2 — doc 01's
 /// `infer(DefId) -> types, per-region type map`). It is deliberately `no_eq` as
 /// a salsa output (recompute-on-demand is fine; the lowerer is not yet a query),
-/// but derives `Clone` so the trait accessor can hand an owned copy back out of
-/// the memo, mirroring `SkyDb::resolve`'s `Rc`-clone.
+/// and the query and database accessor share it behind an `Arc`. It derives
+/// `Clone` for consumers that need an independently mutable result/signature,
+/// such as the tooling-facing `Typer::body_types` API.
 ///
 /// The per-expression and per-local types are stored hash-consed in a
 /// [`TyTable`] (see `tytable.rs` for the measurement that motivates it) behind
@@ -235,6 +236,28 @@ impl<'a> Typer<'a> {
             .with_inferred(true)
             .with_expected(self.world.value_sigs.get(&def).cloned());
         BodyTypes::from_tables(infer.infer_def_tables(body))
+    }
+
+    /// Logical Task heads at selected sites, with exactly the signature/self
+    /// seeding of body_types_annotated but no owned types or tables read back.
+    pub fn task_typed_expressions(
+        &self,
+        def: DefId,
+        body: &Body,
+        selected: &std::collections::BTreeSet<ExprId>,
+    ) -> std::collections::BTreeSet<ExprId> {
+        let mut infer = Infer::new(&self.world, self.db.as_sky_db())
+            .with_self_def(Some(def))
+            .with_inferred(true)
+            .with_expected(self.world.value_sigs.get(&def).cloned());
+        infer.infer_def_task_heads(body, selected)
+    }
+
+    /// Share the exact immutable declaration owner already held by this typer.
+    /// This performs no database query and does not deep-copy any scheme. A
+    /// lowering signature can retain this owner instead of cloning its Ty.
+    pub fn declaration_world_owner(&self) -> Arc<World> {
+        Arc::clone(&self.world)
     }
 
     /// The declared/derived scheme for a top-level value def, if known.
@@ -894,6 +917,28 @@ pub fn check_modules_with_world(
     world: std::sync::Arc<crate::sig::World>,
     to_check: &[ModuleId],
 ) -> CheckOutput {
+    check_modules_with_world_reporting(db, world, to_check, true)
+}
+
+/// The build driver consumes the verdict and diagnostics, then discards all
+/// reporting-only DefType trees before lowering. Avoid collecting those trees
+/// at all; inference, authoritative scans, world and diagnostic ordering are
+/// exactly the same as the reporting API. Tooling/reporting callers retain the
+/// original check_modules_with_world behavior.
+pub fn check_modules_with_world_without_report_types(
+    db: &dyn TyDb,
+    world: std::sync::Arc<crate::sig::World>,
+    to_check: &[ModuleId],
+) -> CheckOutput {
+    check_modules_with_world_reporting(db, world, to_check, false)
+}
+
+fn check_modules_with_world_reporting(
+    db: &dyn TyDb,
+    world: std::sync::Arc<crate::sig::World>,
+    to_check: &[ModuleId],
+    report_types: bool,
+) -> CheckOutput {
     let sky = db.as_sky_db();
     let mut out = CheckOutput::default();
 
@@ -1289,6 +1334,9 @@ pub fn check_modules_with_world(
             // list is computed once. The scans below look types up by `ExprId`
             // (last recording wins) and rebuild only what they read.
             let (recorded, table) = infer.recorded_expr_table();
+            // The solved snapshot owns its data. No scan below needs the UF,
+            // inference environments or local/generalisation scratch.
+            drop(infer);
             let mut key_memo = HashMap::new();
             for (e, r) in &recorded {
                 let keys = dictkey::unsupported_keys_ref(&table, *r, &mut key_memo);
@@ -1296,6 +1344,7 @@ pub fn check_modules_with_world(
                     dict_keys.add_keys(&keys, &dname, body.expr_span(*e), false);
                 }
             }
+            drop(key_memo);
 
             // ---- [E2009] un-derivable codec element ---------------------
             //
@@ -1333,21 +1382,23 @@ pub fn check_modules_with_world(
             out.exhaustiveness_warnings += warns.len();
             out.diagnostics.extend(warns);
 
-            // per-def type entry: declared annotation wins, else inferred body.
-            let name = names.get(def).cloned().unwrap_or_default();
-            if name.is_empty() {
-                continue;
+            if report_types {
+                // per-def type entry: declared annotation wins, else inferred body.
+                let name = names.get(def).cloned().unwrap_or_default();
+                if name.is_empty() {
+                    continue;
+                }
+                let (ty, declared) = match world.value_sigs.get(def) {
+                    Some(s) => (s.ty.clone(), true),
+                    None => (inferred.unwrap_or(Ty::Error), false),
+                };
+                out.def_types.push(DefType {
+                    module: mname.clone(),
+                    name,
+                    ty,
+                    declared,
+                });
             }
-            let (ty, declared) = match world.value_sigs.get(def) {
-                Some(s) => (s.ty.clone(), true),
-                None => (inferred.unwrap_or(Ty::Error), false),
-            };
-            out.def_types.push(DefType {
-                module: mname.clone(),
-                name,
-                ty,
-                declared,
-            });
         }
 
         // One `[E2008]` per distinct offending key type in this module.

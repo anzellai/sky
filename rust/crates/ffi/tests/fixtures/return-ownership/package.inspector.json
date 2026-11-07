@@ -1,0 +1,225 @@
+{
+  "pkg": "example.test/reusedbuffers",
+  "name": "reusedbuffers",
+  "functions": [
+    {
+      "name": "Read",
+      "params": [
+        {
+          "name": "n",
+          "type": "int",
+          "sky3": "Int"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]int",
+          "sky3": "List Int"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "ReadNested",
+      "params": [
+        {
+          "name": "n",
+          "type": "int",
+          "sky3": "Int"
+        }
+      ],
+      "results": [
+        {
+          "type": "[][]int",
+          "sky3": "List (List Int)"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "GetHolder",
+      "params": [
+        {
+          "name": "n",
+          "type": "int",
+          "sky3": "Int"
+        }
+      ],
+      "results": [
+        {
+          "type": "*example.test/reusedbuffers.Holder",
+          "sky3": "Holder@example.test/reusedbuffers"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "HolderValues",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*example.test/reusedbuffers.Holder",
+          "sky3": "Holder@example.test/reusedbuffers"
+        }
+      ],
+      "results": [
+        {
+          "type": "[][]int",
+          "sky3": "List (List Int)"
+        }
+      ],
+      "recvType": "Holder",
+      "methodName": "Values",
+      "isField": true,
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "Named",
+      "params": [
+        {
+          "name": "n",
+          "type": "int",
+          "sky3": "Int"
+        }
+      ],
+      "results": [
+        {
+          "type": "example.test/reusedbuffers.NamedList",
+          "sky3": "NamedList@example.test/reusedbuffers"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "Feed",
+      "params": [
+        {
+          "name": "callback",
+          "type": "func([]int) int",
+          "sky3": "(List Int -> Int)"
+        }
+      ],
+      "results": [
+        {
+          "type": "int",
+          "sky3": "Int"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "Function",
+      "params": [],
+      "results": [
+        {
+          "type": "func([]int) int",
+          "sky3": "@func"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "FunctionIsOriginal",
+      "params": [
+        {
+          "name": "value",
+          "type": "interface{}",
+          "sky3": "any"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool",
+          "sky3": "Bool"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "Consume",
+      "params": [
+        {
+          "name": "callback",
+          "type": "func(int) []int",
+          "sky3": "(Int -> List Int)"
+        }
+      ],
+      "results": [
+        {
+          "type": "int",
+          "sky3": "Int"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "NilFunction",
+      "params": [],
+      "results": [
+        {
+          "type": "func([]int) int",
+          "sky3": "@func"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "NilFunctionAny",
+      "params": [],
+      "results": [
+        {
+          "type": "any",
+          "sky3": "@any"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "FunctionIsNil",
+      "params": [
+        {
+          "name": "value",
+          "type": "any",
+          "sky3": "any"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool",
+          "sky3": "Bool"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    },
+    {
+      "name": "ReadArray",
+      "params": [
+        {
+          "name": "n",
+          "type": "int",
+          "sky3": "Int"
+        }
+      ],
+      "results": [
+        {
+          "type": "[1][]int",
+          "sky3": "List (List Int)"
+        }
+      ],
+      "effect": "pure",
+      "exported": true
+    }
+  ]
+}

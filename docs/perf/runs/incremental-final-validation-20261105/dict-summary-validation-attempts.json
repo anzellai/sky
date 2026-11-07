@@ -1,0 +1,41 @@
+{
+  "kind": "primitive-dict-prototype-local-validation-attempts",
+  "tests_executed": 0,
+  "prototype_validated": false,
+  "memory_guard_unchanged": true,
+  "test_deadline_seconds": 120,
+  "outer_deadline_seconds": 180,
+  "reason": "pressure-dependent swap ceiling",
+  "attempts": [
+    {
+      "compiler_workers": 2,
+      "compilation_scope": "full runtime test package",
+      "elapsed_seconds": 39,
+      "guard_reported_rss_mb": 1058
+    },
+    {
+      "compiler_workers": 1,
+      "compilation_scope": "full runtime test package",
+      "elapsed_seconds": 43,
+      "guard_reported_rss_mb": 1089
+    },
+    {
+      "compiler_workers": 1,
+      "tighter_compile_heap": true,
+      "compilation_scope": "full runtime test package",
+      "elapsed_seconds": 39,
+      "guard_reported_rss_mb": 1075
+    },
+    {
+      "compiler_workers": 1,
+      "tighter_compile_heap": true,
+      "compilation_scope": "reviewed complete-file focused closure",
+      "elapsed_seconds": 62,
+      "guard_reported_rss_mb": 1025,
+      "retained_test_files": 134,
+      "selected_tests": 12,
+      "omitted_native_test_files": 481
+    }
+  ],
+  "next_validation": "existing hosted full runtime and race jobs on draft feature branch"
+}

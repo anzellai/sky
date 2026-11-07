@@ -529,7 +529,7 @@ impl World {
         use crate::infer::Infer;
         struct Target {
             def: base::DefId,
-            body: hir::Body,
+            body: crate::retained_body::RetainedBody,
             annotated: bool,
             defs: Vec<base::DefId>,
             kernels: Vec<(String, String)>,
@@ -571,7 +571,8 @@ impl World {
                     .collect();
                 targets.push(Target {
                     def: *def,
-                    body: body.clone(),
+                    body: crate::retained_body::RetainedBody::new(&resolved, *def)
+                        .expect("iterated bound target belongs to its resolved owner"),
                     annotated,
                     defs,
                     kernels,

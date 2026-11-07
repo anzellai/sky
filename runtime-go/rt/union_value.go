@@ -30,10 +30,7 @@
 // and name where both sides carry one) AND equal payloads.
 package rt
 
-import (
-	"reflect"
-	"strings"
-)
+import "reflect"
 
 type unionShape uint8
 
@@ -65,11 +62,10 @@ func unionShapeOf(t reflect.Type) unionShape {
 	if t == skyADTType {
 		return unionLegacy
 	}
-	name := t.Name()
 	switch {
-	case strings.HasPrefix(name, "SkyMaybe["):
+	case isSkyMaybeType(t):
 		return unionMaybe
-	case strings.HasPrefix(name, "SkyResult["):
+	case isSkyResultType(t):
 		return unionResult
 	}
 	return unionNone

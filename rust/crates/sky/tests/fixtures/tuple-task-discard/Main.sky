@@ -1,0 +1,162 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Sync as Sync
+import Std.Log exposing (println)
+
+type alias Envelope =
+    { pending : Task Error Int }
+
+
+nestedDiscard : Task Error Int -> Int
+nestedDiscard pending =
+    let
+        ( kept, _ ) = ( 7, pending )
+    in
+        kept
+
+
+rootDiscard : Task Error Int -> Int
+rootDiscard pending =
+    let
+        _ = pending
+    in
+        7
+
+
+aliasDiscard : Task Error Int -> Int
+aliasDiscard pending =
+    let
+        forwarded = pending
+        _ = forwarded
+    in
+        7
+
+
+localDiscard : Task Error Int -> Int
+localDiscard pending =
+    let
+        run : Task Error Int -> Int
+        run task =
+            let
+                _ = task
+            in
+                7
+    in
+        run pending
+
+
+lambdaDiscard : Task Error Int -> Int
+lambdaDiscard pending =
+    (\task ->
+        let
+            _ = task
+        in
+            7) pending
+
+
+tupleDiscard : ( Task Error Int, Int ) -> Int
+tupleDiscard ( pending, _ ) =
+    let
+        _ = pending
+    in
+        7
+
+
+fieldDiscard : Envelope -> Int
+fieldDiscard model =
+    let
+        _ = model.pending
+    in
+        7
+
+
+directDiscard : Sync.Ref Int -> Int
+directDiscard ref =
+    let
+        _ = Sync.update (\n -> n + 1) ref
+    in
+        7
+
+
+functionDiscard : (() -> Task Error Int) -> Int
+functionDiscard pending =
+    let
+        _ = pending
+    in
+        7
+
+
+genericDiscard : a -> Int
+genericDiscard pending =
+    let
+        _ = pending
+    in
+        7
+
+
+observed : Int -> Result Error Int -> Bool
+observed expected actual =
+    case actual of
+
+        Ok value ->
+            value == expected
+
+        Err _ ->
+            False
+
+
+probe : Sync.Ref Int -> Bool
+probe ref =
+    let
+        kept = nestedDiscard (Sync.update (\n -> n + 1) ref)
+        afterNested = Task.run (Sync.get ref)
+        forced = rootDiscard (Sync.update (\n -> n + 1) ref)
+        afterRoot = Task.run (Sync.get ref)
+        aliased = aliasDiscard (Sync.update (\n -> n + 1) ref)
+        afterAlias = Task.run (Sync.get ref)
+        local = localDiscard (Sync.update (\n -> n + 1) ref)
+        afterLocal = Task.run (Sync.get ref)
+        lambda = lambdaDiscard (Sync.update (\n -> n + 1) ref)
+        afterLambda = Task.run (Sync.get ref)
+        tuple = tupleDiscard ( Sync.update (\n -> n + 1) ref, 0 )
+        afterTuple = Task.run (Sync.get ref)
+        field = fieldDiscard { pending = Sync.update (\n -> n + 1) ref }
+        afterField = Task.run (Sync.get ref)
+        direct = directDiscard ref
+        afterDirect = Task.run (Sync.get ref)
+        function = functionDiscard (\_ -> Sync.update (\n -> n + 1) ref)
+        afterFunction = Task.run (Sync.get ref)
+        generic = genericDiscard (Sync.update (\n -> n + 1) ref)
+        afterGeneric = Task.run (Sync.get ref)
+    in
+        kept == 7 && forced == 7 && aliased == 7 && local == 7 && lambda == 7
+            && tuple == 7
+            && field == 7
+            && direct == 7
+            && function == 7
+            && generic == 7
+            && observed 0 afterNested
+            && observed 1 afterRoot
+            && observed 2 afterAlias
+            && observed 3 afterLocal
+            && observed 4 afterLambda
+            && observed 5 afterTuple
+            && observed 6 afterField
+            && observed 7 afterDirect
+            && observed 7 afterFunction
+            && observed 7 afterGeneric
+
+
+main =
+    Task.run
+        (Sync.newRef 0
+            |> Task.andThen
+                   (\ref ->
+                       println
+                           (if probe ref then
+                               "TUPLE_TASK_LATENT_ROOT_TASK_FORCED"
+
+                           else
+                               "TUPLE_TASK_DISCARD_WRONG")))

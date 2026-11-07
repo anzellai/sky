@@ -1,0 +1,58 @@
+{
+  "source_base_commit": "01de151a7cc13e6d6cf1fc4ac243b473da738cda",
+  "source_file": "rust/crates/project/src/build.rs",
+  "source_sha256": "bfb5b4e673cf83015db9facb0ec185d41fb5e3cb094c8146ec9d81b8d1880cc4",
+  "candidate_manifest_sha256": "a84f21f6eb3c8ddbd6db0fb57dc3f21514bcc9397ef2fdbadf9c26a80ccb0625",
+  "scope": "Assembly diagnostics borrow exact SourceFile input text via stable handles, releasing/recreating the facade around existing FFI mutation. No borrowed text escapes LoadedProgram.",
+  "red_scaffold": "Mechanical extraction of the real original owned .to_string construction; not an untouched-public-API regression. The scaffold retains original ownership and is not a performance measurement.",
+  "stages": [
+    {
+      "task": "assembly-source-owner-red",
+      "elapsed_seconds": 127,
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "summaries": 1,
+      "log_sha256": "3f26550248ac0a68fc0af2db038da1432a3f8fa8b0aed7816ea1a8a68db88892"
+    },
+    {
+      "task": "assembly-source-owner-project-lib",
+      "elapsed_seconds": 78,
+      "passed": 336,
+      "failed": 0,
+      "ignored": 1,
+      "summaries": 1,
+      "log_sha256": "5e8bcc2ac01ad357dd35fe7fa9e6dfb7c7136f85f765691b6c8b48b4d47cddf4"
+    }
+  ],
+  "new_test_denominator": 2,
+  "independent_source_review": "PASS",
+  "configuration_metadata": {
+    "only_source_line_witnesses_changed": 2,
+    "old_lines": [
+      2893,
+      2899
+    ],
+    "new_lines": [
+      2884,
+      2890
+    ],
+    "all_other_measurement_details_unchanged": true,
+    "source_only_detector_source_unchanged_since": "d16cf2091",
+    "prebuilt_detector_sha256": "d1f8ac631519a9c86c8fbf0c4346a8cc307f2e565961e53e728b10c4864079a3",
+    "post_refresh_check_exit": 0,
+    "freshly_rebuilt_detector_check_pending": false,
+    "fresh_detector": {
+      "passed": true,
+      "log_sha256": "dd35526749252425862cc228f7e8fe426a6c04ec1f904744724de5ae54385e36",
+      "binary_sha256": "93887385ba83180cb6bac404484fc100b96f2bde14380ccbb4cb2b7682b96ff9"
+    }
+  },
+  "memory_saving_measured": false,
+  "removed_copy_bound": "Only actual checked source-text bytes; donor asset bytes are not a source-saving estimate.",
+  "cache_policy_changed": false,
+  "resource_limits_changed": false,
+  "remaining": [
+    "Full hosted/current compiler and private app validation."
+  ]
+}

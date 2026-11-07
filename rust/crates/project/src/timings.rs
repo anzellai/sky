@@ -20,6 +20,68 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+/// Fixed diagnostic roles only; no project paths or config text are emitted.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum Role {
+    Source = 0,
+    Backend = 1,
+    Frontend = 2,
+}
+static ROLE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+fn current_role() -> Role {
+    match ROLE.load(Ordering::Relaxed) {
+        1 => Role::Backend,
+        2 => Role::Frontend,
+        _ => Role::Source,
+    }
+}
+pub fn set_role(role: Role) {
+    if enabled() {
+        ROLE.store(role as u8, Ordering::Relaxed);
+        checkpoint("role", "none", role);
+    }
+}
+fn phase_id(label: &'static str) -> &'static str {
+    match label {
+        "synthesise + stage Spa entry (.skyapp)" => "synth",
+        "spa split (partition + generate)" => "split",
+        "load sources (stdlib + app)" | "source database load" => "load",
+        "parse (app modules)" => "parse",
+        "canonicalise + typecheck" | "split typecheck" => "check",
+        "check world" => "check-world",
+        "split analysis" => "partition",
+        "lower + emit Go" => "lower",
+        "backend leg (child sky build, native)" => "backend-leg",
+        "frontend leg (child sky build, wasm)" => "frontend-leg",
+        "go build (native)" | "go build (native, before the frontend's wasm name)" => "go-native",
+        "go build (wasm, GOOS=js)" => "go-wasm",
+        _ => "other",
+    }
+}
+fn checkpoint(event: &'static str, phase: &'static str, role: Role) {
+    if !enabled() {
+        return;
+    }
+    use std::io::Write;
+    let role = match role {
+        Role::Source => "source",
+        Role::Backend => "backend",
+        Role::Frontend => "frontend",
+    };
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(
+        stderr,
+        "SKY_PHASE pid={} role={} event={} phase={} peak_rss_bytes={}",
+        std::process::id(),
+        role,
+        event,
+        phase,
+        peak_rss_bytes().unwrap_or(0)
+    );
+    let _ = stderr.flush();
+}
+
 /// One recorded phase: its label, wall-clock, and the process peak RSS (bytes)
 /// sampled when the phase closed (`None` where the platform cannot report it).
 type PhaseRow = (String, Duration, Option<u64>);
@@ -118,6 +180,7 @@ pub struct Phase {
     label: &'static str,
     start: Instant,
     done: bool,
+    role: Role,
 }
 
 impl Phase {
@@ -129,6 +192,7 @@ impl Phase {
         if !self.done {
             self.done = true;
             record(self.label, self.start.elapsed());
+            checkpoint("end", phase_id(self.label), self.role);
         }
     }
 }
@@ -141,10 +205,13 @@ impl Drop for Phase {
 
 /// Start timing a phase.
 pub fn phase(label: &'static str) -> Phase {
+    let role = current_role();
+    checkpoint("begin", phase_id(label), role);
     Phase {
         label,
         start: Instant::now(),
         done: false,
+        role,
     }
 }
 

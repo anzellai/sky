@@ -32,15 +32,34 @@ import (
 // leaf whose reader can refuse what its writer wrote: every stdlib type
 // Codec.auto reads by name (codecAutoReadable).
 func codecAutoPartialLeaf(name string) bool {
-	return codecAutoReadable[name]
+	return codecAutoDeclaredReadable(name)
 }
 
 // codecAutoDeclaresPartial reports whether a declared type names a partial
 // leaf anywhere in it (`[]rt.SkyMaybe[Std_Money_Currency]`).
 func codecAutoDeclaresPartial(declared string) bool {
-	for n := range codecAutoReadable {
-		if strings.Contains(declared, n) {
+	// A registered alias can have any emitted Go name. Walk the actual
+	// container/type-argument grammar rather than search three old spellings.
+	// Iteration also avoids a new stack-depth limit for nested declared tags.
+	pending := []string{declared}
+	for len(pending) != 0 {
+		current := strings.TrimSpace(pending[len(pending)-1])
+		pending = pending[:len(pending)-1]
+		if codecAutoDeclaredReadable(current) {
 			return true
+		}
+		if inner := codecDeclaredElem(current); inner != "" && inner != current {
+			pending = append(pending, inner)
+			continue
+		}
+		if strings.HasPrefix(current, "[") {
+			if close := strings.IndexByte(current, ']'); close > 0 && close+1 < len(current) {
+				pending = append(pending, current[close+1:])
+				continue
+			}
+		}
+		if open := strings.IndexByte(current, '['); open > 0 && strings.HasSuffix(current, "]") {
+			pending = append(pending, codecSplitTopLevel(current[open+1:len(current)-1])...)
 		}
 	}
 	return false
@@ -231,9 +250,9 @@ func codecAutoJust(v any, err error) (any, error) {
 	return v, nil
 }
 
-// codecAutoReadable are the declared stdlib types a Codec.auto record field
-// (or a List, Maybe or Dict of one) reads back by name: their Go type is the
-// erased rt.SkyADT, so only the declared name says what they are.
+// codecAutoReadable enumerates the builtin aliases whose readers are partial.
+// A spelling alone never grants readability: production checks additionally
+// require the source-granted owner registry via codecAutoDeclaredReadable.
 var codecAutoReadable = map[string]bool{
 	"Std_Decimal_Decimal": true,
 	"Std_Money_Money":     true,
@@ -316,7 +335,7 @@ func codecAutoTypeProblemAt(t reflect.Type, declared string, inVariant bool, dep
 		if isSkyAdtType(t) {
 			// A declared name comes from a record field's tag (a field, or a
 			// List, Maybe or Dict of one), also inside a variant's record.
-			if codecAutoReadable[declared] {
+			if codecAutoDeclaredReadable(declared) {
 				return ""
 			}
 			if codecHandleDeclared(declared) {
@@ -426,6 +445,10 @@ func codecAutoDuplicateKey(t reflect.Type, snake bool) string {
 
 // codecAutoRecordDuplicateKey checks the fields of the record type t only.
 func codecAutoRecordDuplicateKey(t reflect.Type, snake bool) string {
+	return codecAutoRecordDuplicateFacts.problem(t, snake)
+}
+
+func codecAutoRecordDuplicateKeyUncached(t reflect.Type, snake bool) string {
 	seen := map[string]string{}
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)

@@ -396,18 +396,49 @@ type jsonOrderedObject struct {
 }
 
 func (o jsonOrderedObject) MarshalJSON() ([]byte, error) {
-	out := []byte{'{'}
+	// A fixed small starting buffer avoids repeated growth for tiny objects.
+	// No keys, values, lengths or spare caller capacity are read ahead.
+	out := make([]byte, 1, 32)
+	out[0] = '{'
 	for i, k := range o.keys {
 		if i > 0 {
 			out = append(out, ',')
 		}
-		kb, err := json.Marshal(k)
-		if err != nil {
-			return nil, err
+		// Read this current key ONLY at its original position, after all
+		// preceding value effects. Dynamic misses never populate the cache.
+		if encoded, ok := codecAutoSchemaKeys.Load(k); ok {
+			out = append(out, encoded.(string)...)
+		} else {
+			kb, err := json.Marshal(k)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, kb...)
 		}
-		out = append(out, kb...)
 		out = append(out, ':')
-		vb, err := json.Marshal(o.vals[i])
+		// Only exact builtin dynamic types enter these infallible cases.
+		// Named/custom values and all other representations retain the
+		// original json.Marshal call at this precise value position.
+		value := o.vals[i]
+		switch v := value.(type) {
+		case int64:
+			out = strconv.AppendInt(out, v, 10)
+			continue
+		case bool:
+			out = strconv.AppendBool(out, v)
+			continue
+		case nil:
+			out = append(out, "null"...)
+			continue
+		case string:
+			if codecJSONSafeASCII(v) {
+				out = append(out, '"')
+				out = append(out, v...)
+				out = append(out, '"')
+				continue
+			}
+		}
+		vb, err := json.Marshal(value)
 		if err != nil {
 			return nil, err
 		}
@@ -415,6 +446,23 @@ func (o jsonOrderedObject) MarshalJSON() ([]byte, error) {
 	}
 	out = append(out, '}')
 	return out, nil
+}
+
+// codecJSONSafeASCII is deliberately narrower than JSON string escaping.
+// Anything requiring escaping, HTML handling, Unicode or invalid-UTF8 repair
+// stays with the canonical standard-library marshaler.
+func codecJSONSafeASCII(value string) bool {
+	// Bound extra scanning before fallback, including long safe prefixes.
+	if len(value) > 64 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		b := value[i]
+		if b < 0x20 || b >= 0x80 || b == '"' || b == '\\' || b == '<' || b == '>' || b == '&' {
+			return false
+		}
+	}
+	return true
 }
 
 func JsonEnc_object(pairs any) any {

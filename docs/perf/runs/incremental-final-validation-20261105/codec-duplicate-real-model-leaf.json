@@ -1,0 +1,87 @@
+{
+  "scope": "warm duplicate-key metadata leaf on exact projected production Model declarations; not full application",
+  "codeCommit": "eac7d961d223d932e4fdc15e99233a9c904b8ff3",
+  "baselineCoreCommit": "716b3e88fcf9f42922c3fc0c56b5436e02497ecf",
+  "target": "Go1.26.10 js/wasm via matching Node loader",
+  "staticallyReachableTaggedRecords": 174,
+  "rootFields": 276,
+  "namingModes": 2,
+  "callsPerTypePerModePerRepeat": 32,
+  "repeats": 5,
+  "equalWeightCorpusNotAppRecursionMultiplicity": true,
+  "metadataAndResultHashesMatchBeforeAndAfter": true,
+  "measuredWarmIntervalsOnly": true,
+  "gcAndCorpusHashWorkOutsideMeasurement": true,
+  "normalInlining": true,
+  "ownedCleanupVerified": true,
+  "originalGeneratedInventoryEntriesVerified": 436,
+  "originalApplicationGoFilesVerified": 3,
+  "projectedMainPackageGoFiles": 2,
+  "allOriginalGeneratedEntriesAreGoFiles": false,
+  "publicProjectionTestsPassed": 15,
+  "methodsetsAndApplicationInitOmitted": true,
+  "temporaryActualHelperBridgeDisclosed": true,
+  "factoryOrModelValuesInvoked": false,
+  "fullNominalProgramClaimed": false,
+  "fullPreparationClaimed": false,
+  "applicationLatencyClaimed": false,
+  "privateSourcePublished": false,
+  "rows": {
+    "baseline": {
+      "callsPerRepeat": 11136,
+      "elapsedNanos": [
+        121300224,
+        116377088,
+        116522752,
+        114014976,
+        113744896
+      ],
+      "allocations": [
+        232864,
+        232864,
+        232864,
+        232864,
+        232864
+      ],
+      "allocatedBytes": [
+        10072592,
+        10072592,
+        10072592,
+        10072592,
+        10072592
+      ],
+      "medianElapsedNanos": 116377088,
+      "medianAllocations": 232864,
+      "medianAllocatedBytes": 10072592
+    },
+    "candidate": {
+      "callsPerRepeat": 11136,
+      "elapsedNanos": [
+        1670144,
+        1331200,
+        1238528,
+        1120512,
+        1096704
+      ],
+      "allocations": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "allocatedBytes": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "medianElapsedNanos": 1238528,
+      "medianAllocations": 0,
+      "medianAllocatedBytes": 0
+    }
+  },
+  "medianLeafSpeedRatio": 93.96403472509301,
+  "privateEvidenceReceiptSha256": "ff506aaf0cb42e072361fbb3d2e7e8953c1cbab2a24c52bf7555b3c8d69ae1fb"
+}

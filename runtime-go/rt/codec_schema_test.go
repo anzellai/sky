@@ -32,7 +32,7 @@ func TestCodecAutoSchemaFollowsTheEncoder(t *testing.T) {
 	}
 
 	RegisterEnum("csKind", []string{"Bug", "Feature"})
-	defer delete(enumRegistry, "csKind")
+	defer setEnumRegistration("csKind", nil, false)
 	got = Codec_autoSchema(false, csEnumHolder{}).(string)
 	want = `{"fields":[` +
 		`{"name":"kind","schema":{"type":"string","enum":["Bug","Feature"]},"exact":true},` +

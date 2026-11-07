@@ -47,4 +47,9 @@ fn sky_stopped_by_sigterm_says_so_and_keeps_status_143() {
         stderr.contains("sky: stopped by SIGTERM from another process"),
         "stderr: {stderr:?}"
     );
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    assert!(
+        stderr.contains(&format!("sky: SIGTERM sender pid={}\n", std::process::id())),
+        "SIGTERM notice did not identify the signaling process"
+    );
 }

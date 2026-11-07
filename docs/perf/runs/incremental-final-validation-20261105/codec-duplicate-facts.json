@@ -1,0 +1,59 @@
+{
+  "status": "runtime contract validated; production application candidate comparison pending",
+  "scope": "cache only direct record duplicate-key sentences, never recursive preparation results",
+  "retention": {
+    "typeAndNamingModeEntries": 4096,
+    "totalResultBytes": 65536,
+    "perResultBytes": 8192,
+    "onLimit": "original scan; no eviction"
+  },
+  "correctness": {
+    "canonicalReflectTypeCarrierRequiredBeforeMethodsOrHashing": true,
+    "foreignAndNoncomparableFallbackPreserved": true,
+    "originalScannerBodyUnchangedApartFromName": true,
+    "recursiveFactoryBlankOwnerAndEnumChecksUnchanged": true
+  },
+  "testsFirst": {
+    "originalHelperWarmAllocationsPerCall": 267,
+    "candidateWarmAllocationsPerCall": 0,
+    "canonicalFixtureFields": 128,
+    "sameResultAndZeroAllocationAssertion": true
+  },
+  "localValidation": {
+    "focusedNativeTests": 5,
+    "focusedNativeRaceTests": 5,
+    "fullJsProductionFilesByteVerified": 459,
+    "retainedExactTestFiles": 4,
+    "wasmTestsPerRun": 17,
+    "wasmRepeatedRuns": 2,
+    "wasmTestPasses": 34,
+    "wasmFailures": 0,
+    "ownedCleanupVerified": true,
+    "includesExistingNestedShapeAndLiveOwnerTests": true,
+    "includesMutableFactoryTraceChangePanicAndCurrentBlankTests": true
+  },
+  "diagnosticBasis": {
+    "artifact": "previous standard production artifact containing the core incremental algorithms",
+    "originalChromiumJourneysPassed": 2,
+    "originalCorrectnessAssertionsPreserved": true,
+    "publicSymbolCalibrationGoFunctions": 1566,
+    "publicAcceptedNamedLocationChecks": 6348,
+    "allAcceptedNamedChecksMatch": true,
+    "incrementalInclusiveSampleMicros": {
+      "codecPreparation": 1214548,
+      "directRecordDuplicateLeaf": 468187,
+      "viewCatalogSetup": 17779
+    },
+    "inclusiveSampleWeightsOverlap": true,
+    "candidateApplicationCpuImprovementClaimed": false
+  },
+  "setupFailurePreserved": {
+    "firstFullJsAttempt": "launcher passed native thread count into single-thread Go/Wasm; no tests ran",
+    "correction": "run Go/Wasm with its required single thread",
+    "assertionsAndMemoryGuardsRelaxed": false
+  },
+  "currentCodeHostedIntegrationPassed": 40,
+  "currentCodePublicBrowserCasesPassed": 6,
+  "realModelMetadataLeafEvidence": "codec-duplicate-real-model-leaf.json",
+  "privateApplicationCandidateTimingStillUnverified": true
+}

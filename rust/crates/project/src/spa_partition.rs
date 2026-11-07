@@ -609,7 +609,26 @@ const SERVER_ONLY_MEMBERS: &[(&str, &str)] = &[
     ("Spa", "sessionCookieAttrs"),
 ];
 
+const SCROLL_KERNELS: &[&str] = &[
+    "Nav_scrollToTop",
+    "Nav_scrollIntoView",
+    "Nav_scrollIntoViewIfNeeded",
+    "Spa_scrollCommands",
+];
+fn scroll_member(module: &str, func: &str) -> bool {
+    module == "Nav"
+        && matches!(
+            func,
+            "scrollToTop" | "scrollIntoView" | "scrollIntoViewIfNeeded"
+        )
+}
+
 fn classify_kernel(module: &str, func: &str) -> KernelClass {
+    // Constructing a scroll Cmd is pure data on BOTH legs. Its effect runs only
+    // after the corresponding client render, including server-returned Cmds.
+    if scroll_member(module, func) {
+        return KernelClass::Neutral;
+    }
     if SERVER_ONLY_MEMBERS.contains(&(module, func)) {
         return KernelClass::ServerOnly;
     }
@@ -1010,22 +1029,19 @@ pub fn body_effects_and_callees(
     (fams.into_iter().collect(), callees)
 }
 
-/// True when `def`'s body is a direct kernel alias `Ffi.kernel "<sym>"` whose
-/// symbol is one of `targets`. The Sky-source stdlib defines `Sub.subscribeTopic`
-/// / `Cmd.publish` as exactly this shape (`Ffi.kernel "Sub_subscribeTopic"`,
-/// `Ffi.kernel "Cmd_publish"`), so a reachable def matching a target proves the
-/// app uses that surface — the raw material for the `spa-split` generator's
-/// push-mode decision.
-fn def_is_kernel_alias_to(db: &dyn SkyDb, def: DefId, targets: &[&str]) -> bool {
+/// The exact symbol of a direct resolved `Ffi.kernel "<sym>"` alias.
+/// The same recognition serves feature reachability and init-effect routing;
+/// neither path grants kernel identity from a source-level function name.
+fn def_kernel_alias_symbol(db: &dyn SkyDb, def: DefId) -> Option<String> {
     let Some(loc) = db.def_loc(def) else {
-        return false;
+        return None;
     };
     let resolved = db.resolve(loc.module);
     let Some(body) = resolved.bodies.get(&def) else {
-        return false;
+        return None;
     };
     let Some(root) = body.root else {
-        return false;
+        return None;
     };
     if let Expr::Call(callee, args) = &body.exprs[root] {
         if args.len() == 1 {
@@ -1033,19 +1049,74 @@ fn def_is_kernel_alias_to(db: &dyn SkyDb, def: DefId, targets: &[&str]) -> bool 
                 // Only `Ffi.kernel` binds a kernel (see `hir::FFI_PLUMBING`).
                 if module.as_str() == "Ffi" && func.as_str() == "kernel" {
                     if let Expr::Str(sym) = &body.exprs[args[0]] {
-                        let sym_str: &str = sym;
-                        return targets.contains(&sym_str);
+                        return Some(sym.to_string());
                     }
                 }
             }
         }
     }
-    false
+    None
+}
+
+fn def_is_kernel_alias_to(db: &dyn SkyDb, def: DefId, targets: &[&str]) -> bool {
+    def_kernel_alias_symbol(db, def).is_some_and(|symbol| targets.contains(&symbol.as_str()))
+}
+
+/// Direct kernel references and canonical Sky-source kernel aliases are absent
+/// from the app-only tainted binding report. Init planning must still route
+/// their server effects using exactly the partition's existing policy.
+pub(crate) fn reference_is_server_kernel(
+    db: &dyn SkyDb,
+    reference: &Res,
+    client_crypto: bool,
+) -> bool {
+    match reference {
+        Res::Kernel { module, func } => {
+            classify_kernel_in(client_crypto, module.as_str(), func.as_str())
+                == KernelClass::ServerOnly
+        }
+        Res::Def(def) => {
+            let Some(symbol) = def_kernel_alias_symbol(db, *def) else {
+                return false;
+            };
+            let mut refs = Refs::default();
+            record_ffi_symbol(&symbol, &mut refs, client_crypto);
+            !refs.server_kernels.is_empty()
+        }
+        _ => false,
+    }
 }
 
 /// Whether the app reaches ANY def that is a kernel alias to one of `targets`,
 /// scanning every def in the reachability graph (app top-defs + their transitive
 /// callees, which is where `Sub.subscribeTopic` / `Cmd.publish` land when used).
+/// Opt in to the changed wire only when the actual entry reaches a scroll
+/// constructor, through resolved defs (CAF/function aliases/helpers included).
+fn resolved_kernel_reachable(db: &dyn SkyDb, start: DefId, targets: &[&str]) -> bool {
+    let mut work = vec![start];
+    let mut seen = HashSet::new();
+    while let Some(def) = work.pop() {
+        if !seen.insert(def) {
+            continue;
+        }
+        if def_is_kernel_alias_to(db, def, targets) {
+            return true;
+        }
+        if let Some(loc) = db.def_loc(def) {
+            work.extend(body_def_callees(db, loc.module, def));
+        }
+    }
+    false
+}
+pub(crate) fn returned_scrolls_reachable(db: &dyn SkyDb, entry: ModuleId) -> bool {
+    def_by_name(db, entry, "main")
+        .is_some_and(|main| resolved_kernel_reachable(db, main, SCROLL_KERNELS))
+}
+pub(crate) fn init_reaches_url_navigation(db: &dyn SkyDb, module: ModuleId) -> bool {
+    def_by_name(db, module, "init")
+        .is_some_and(|init| resolved_kernel_reachable(db, init, &["Nav_pushUrl", "Nav_replaceUrl"]))
+}
+
 fn app_reaches_kernel(db: &dyn SkyDb, graph: &Graph, targets: &[&str]) -> bool {
     graph
         .nodes
@@ -2528,7 +2599,7 @@ fn tail_continuations(db: &dyn SkyDb, body: &Body, e: ExprId) -> Option<Vec<Stri
                 out.insert(m);
             }
             CmdLeaf::Perform { to_msg: None, .. } | CmdLeaf::Unresolvable => return None,
-            CmdLeaf::NoneCmd | CmdLeaf::Publish | CmdLeaf::Nav => {}
+            CmdLeaf::NoneCmd | CmdLeaf::Publish | CmdLeaf::Nav | CmdLeaf::Scroll => {}
         }
     }
     Some(out.into_iter().collect())
@@ -3867,6 +3938,8 @@ enum CmdLeaf {
     /// containing one is not chained; a server arm's leaf is the client's
     /// residual).
     Nav,
+    /// Post-render client data, carried back in the actual RPC response.
+    Scroll,
     /// A shape the static resolver could not read (an opaque let-bound Cmd, a
     /// helper returning a Cmd, a non-list batch). Forces fail-closed.
     Unresolvable,
@@ -3879,6 +3952,7 @@ enum CmdDefKind {
     NoneCmd,
     Publish,
     Nav,
+    Scroll,
     Other,
 }
 
@@ -3889,6 +3963,9 @@ enum CmdDefKind {
 /// every server command read as opaque (and every `Msg` treated as a possible
 /// follow-up).
 fn cmd_kernel_kind(module: &str, func: &str) -> Option<CmdDefKind> {
+    if scroll_member(module, func) {
+        return Some(CmdDefKind::Scroll);
+    }
     if module.rsplit('.').next() != Some("Cmd") {
         return None;
     }
@@ -3902,7 +3979,9 @@ fn cmd_kernel_kind(module: &str, func: &str) -> Option<CmdDefKind> {
 }
 
 fn cmd_def_kind(db: &dyn SkyDb, d: DefId) -> CmdDefKind {
-    if def_is_kernel_alias_to(db, d, &["Cmd_perform"]) {
+    if def_is_kernel_alias_to(db, d, SCROLL_KERNELS) {
+        CmdDefKind::Scroll
+    } else if def_is_kernel_alias_to(db, d, &["Cmd_perform"]) {
         CmdDefKind::Perform
     } else if def_is_kernel_alias_to(db, d, &["Cmd_batch"]) {
         CmdDefKind::Batch
@@ -3910,12 +3989,15 @@ fn cmd_def_kind(db: &dyn SkyDb, d: DefId) -> CmdDefKind {
         CmdDefKind::NoneCmd
     } else if def_is_kernel_alias_to(db, d, &["Cmd_publish", "Cmd_publishNoEcho"]) {
         CmdDefKind::Publish
-    } else if db
-        .def_loc(d)
-        .is_some_and(|loc| db.module_name(loc.module) == "Std.Nav")
-    {
-        // Every `Std.Nav` command (`clearFragment` is `replaceUrl "#"`, not a
-        // kernel alias).
+    } else if db.def_loc(d).is_some_and(|loc| {
+        db.module_name(loc.module) == "Std.Nav"
+            && matches!(
+                loc.name.as_str(),
+                "pushUrl" | "replaceUrl" | "clearFragment"
+            )
+    }) {
+        // URL operations only (`clearFragment` is `replaceUrl "#"`, not a
+        // kernel alias). Scroll constructors were classified above.
         CmdDefKind::Nav
     } else {
         CmdDefKind::Other
@@ -4058,6 +4140,7 @@ fn resolve_cmd_leaves_rec(
                     CmdDefKind::NoneCmd => out.push(CmdLeaf::NoneCmd),
                     CmdDefKind::Publish => out.push(CmdLeaf::Publish),
                     CmdDefKind::Nav => out.push(CmdLeaf::Nav),
+                    CmdDefKind::Scroll => out.push(CmdLeaf::Scroll),
                     // A HELPER returning a `Cmd` (e.g. `shippedCmd o = Cmd.perform
                     // (Mailer.sendShipped o) EmailSent`) — resolve INTO its body so
                     // the perform edge is seen, not treated as opaque.
@@ -4083,6 +4166,7 @@ fn resolve_cmd_leaves_rec(
         Expr::Var(Res::Kernel { module, func }) => {
             match cmd_kernel_kind(module.as_str(), func.as_str()) {
                 Some(CmdDefKind::NoneCmd) => out.push(CmdLeaf::NoneCmd),
+                Some(CmdDefKind::Scroll) => out.push(CmdLeaf::Scroll),
                 _ => out.push(CmdLeaf::Unresolvable),
             }
         }
@@ -4090,6 +4174,7 @@ fn resolve_cmd_leaves_rec(
         Expr::Var(Res::Def(d)) => match cmd_def_kind(db, *d) {
             CmdDefKind::NoneCmd => out.push(CmdLeaf::NoneCmd),
             CmdDefKind::Nav => out.push(CmdLeaf::Nav),
+            CmdDefKind::Scroll => out.push(CmdLeaf::Scroll),
             CmdDefKind::Other => resolve_helper_cmd(db, *d, out, depth + 1, visited),
             _ => out.push(CmdLeaf::Unresolvable),
         },
@@ -4894,6 +4979,7 @@ fn compute_server_chaining(
                             // as the opaque batch it was read as before.
                             CmdLeaf::Publish
                             | CmdLeaf::Nav
+                            | CmdLeaf::Scroll
                             | CmdLeaf::Unresolvable
                             | CmdLeaf::Perform { repeated: true, .. } => {
                                 dirty = true;
@@ -5278,7 +5364,9 @@ fn compute_server_chaining(
                             None => clean = false,
                         }
                     }
-                    CmdLeaf::Publish | CmdLeaf::Nav | CmdLeaf::Unresolvable => clean = false,
+                    CmdLeaf::Publish | CmdLeaf::Nav | CmdLeaf::Scroll | CmdLeaf::Unresolvable => {
+                        clean = false
+                    }
                 }
             }
             if !clean || perform_count != 1 {
@@ -5380,7 +5468,7 @@ fn compute_server_chaining(
                             has_perform = true;
                             ctors = None;
                         }
-                        CmdLeaf::NoneCmd | CmdLeaf::Publish | CmdLeaf::Nav => {}
+                        CmdLeaf::NoneCmd | CmdLeaf::Publish | CmdLeaf::Nav | CmdLeaf::Scroll => {}
                     }
                 }
             }
@@ -7572,6 +7660,69 @@ fn trim_span(src: &str, r: (u32, u32)) -> Option<(u32, u32)> {
 /// differential split fuzzer tags each one with its leaf number, so the two
 /// runs it compares show which leaf each took. A leaf inside a helper is not
 /// listed (its command still shows in the command shape).
+/// Constructors whose returned command may contain a DOM scroll. Unknown
+/// commands fail closed only in a scroll-enabled app. This reads resolved
+/// command leaves, never source names or model read/write sets.
+pub(crate) fn returned_scroll_heads(db: &dyn SkyDb, module: ModuleId) -> Option<HashSet<String>> {
+    let resolved = db.resolve(module);
+    let td = resolved
+        .top_defs
+        .iter()
+        .find(|t| t.name.as_str() == "update")?;
+    let body = resolved.bodies.get(&td.def)?;
+    let mut refs = Refs::default();
+    let case = find_top_case(body, body.root?, &mut refs, &CollectCtx::default())?;
+    let Expr::Case { branches, .. } = &body.exprs[case] else {
+        return None;
+    };
+    let mut heads = HashSet::new();
+    let mut edges = Vec::new();
+    for arm in branches {
+        let Some(head) = arm_ctor_key(body, arm.pat) else {
+            return None;
+        };
+        let mut leaves = Vec::new();
+        collect_tail_cmd_leaves_tagged(
+            db,
+            body,
+            arm.body,
+            false,
+            &mut leaves,
+            0,
+            &mut HashSet::new(),
+        );
+        if leaves.is_empty() {
+            heads.insert(head.clone());
+        }
+        for (leaf, _) in leaves {
+            match leaf {
+                CmdLeaf::Scroll | CmdLeaf::Unresolvable => {
+                    heads.insert(head.clone());
+                }
+                CmdLeaf::Perform {
+                    to_msg: Some(next), ..
+                } => edges.push((head.clone(), next)),
+                CmdLeaf::Perform { to_msg: None, .. } => {
+                    heads.insert(head.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    loop {
+        let before = heads.len();
+        for (head, next) in &edges {
+            if heads.contains(next) {
+                heads.insert(head.clone());
+            }
+        }
+        if heads.len() == before {
+            break;
+        }
+    }
+    Some(heads)
+}
+
 pub fn update_leaf_cmd_spans(db: &dyn SkyDb, module: ModuleId, src: &str) -> Vec<(u32, u32)> {
     fn walk(body: &Body, e: ExprId, src: &str, out: &mut Vec<(u32, u32)>) {
         // One level per level of the tree it walks: grow the stack on demand.
@@ -8472,6 +8623,32 @@ mod tests {
                     && !CLIENT_EFFECT_KERNELS.contains(m),
                 "mixed kernel `{m}` is also classified as a whole family"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod returned_scroll_classification_tests {
+    use super::*;
+    #[test]
+    fn only_exact_scroll_constructors_are_neutral_data() {
+        for member in ["scrollToTop", "scrollIntoView", "scrollIntoViewIfNeeded"] {
+            assert_eq!(classify_kernel("Nav", member), KernelClass::Neutral);
+            assert!(matches!(
+                cmd_kernel_kind("Nav", member),
+                Some(CmdDefKind::Scroll)
+            ));
+            let mut refs = Refs::default();
+            record_ffi_symbol(&format!("Nav_{member}"), &mut refs, false);
+            assert!(refs.client_kernels.is_empty() && refs.server_kernels.is_empty());
+        }
+        for member in [
+            "pushUrl",
+            "replaceUrl",
+            "scrollIntoViewUnsafe",
+            "scrollToTopSuffix",
+        ] {
+            assert_eq!(classify_kernel("Nav", member), KernelClass::ClientEffect);
         }
     }
 }

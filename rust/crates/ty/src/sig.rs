@@ -30,27 +30,11 @@ struct AliasDef {
 /// body edit re-executes `World::build` but yields a value-equal `World`; salsa
 /// backdates it and dependent `infer(DefId)` queries validate from memo rather
 /// than re-inferring. See `skydb::type_world_query`.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub struct World {
-    /// Top-level value schemes from EXPLICIT annotations, keyed by `DefId`
-    /// (matches `Res::Def`). Only these are surfaced to the lowerer as a
-    /// "declared signature" (`Typer::value_sig`).
-    pub value_sigs: HashMap<DefId, Scheme>,
-    /// Schemes INFERRED for unannotated stdlib combinators (pass 3). Consulted
-    /// by inference at a `Res::Def` call site (to pin results from arg types)
-    /// but NOT exposed as declared signatures — the lowerer keeps its lenient
-    /// body-inference path for these defs, so their own emission is unchanged.
-    pub inferred_sigs: HashMap<DefId, Scheme>,
-    /// Kernel function schemes, keyed by `(pseudo-module, func)`
-    /// (matches `Res::Kernel`).
-    pub kernel_sigs: HashMap<(String, String), Scheme>,
-    /// Precise combinator schemes consulted by the accept/reject CHECKER ONLY
-    /// (`use_inferred == false`). Deliberately invisible to the lowerer
-    /// (`use_inferred == true`) and to pass-3 inference, so call-site element
-    /// pinning cannot perturb Go emission (see the pass-3 `Result`-only
-    /// exclusion rationale at sig.rs ~line 180-189). Closes audit #3.
-    pub check_sigs: HashMap<DefId, Scheme>,
-    pub check_kernel_sigs: HashMap<(String, String), Scheme>,
+    /// Declaration channels are immutable during body passes. Forks detach only
+    /// when declaration construction explicitly mutates one of these fields.
+    decls: std::sync::Arc<WorldDecls>,
     /// CHECK-only inferred schemes for unannotated app-module definitions.
     /// Includes polymorphic and Unit-parameter functions. Callers and numeric
     /// elaboration must see the same scheme, including numeric quantifiers.
@@ -84,9 +68,6 @@ pub struct World {
     /// Consulted FIRST at a `Res::Def` on the check path; never by the
     /// lowerer, so Go emission is unchanged.
     pub bound_check_sigs: HashMap<DefId, Scheme>,
-    /// The `Res::Kernel` face of [`World::bound_check_sigs`], keyed
-    /// `(pseudo-module, func)`.
-    pub bound_kernel_sigs: HashMap<(String, String), Scheme>,
     /// LOWERING-PATH ONLY: full closed-record result types for zero-param,
     /// unannotated top-level defs (D2). Consulted ONLY in the `Expr::Update` arm
     /// on the `use_inferred` (codegen region-type) path, to close the row var when
@@ -120,6 +101,34 @@ pub struct World {
     /// merge must not promote it back to `Some`. Whole-program builds populate
     /// it identically, so the two paths stay value-comparable.
     pub callsite_param_conflicts: HashSet<(DefId, usize)>,
+}
+
+/// Declaration-only channels completed by passes 1–4. Body-derived channels,
+/// including the mixed static/body `bound_check_sigs`, stay on [`World`].
+#[derive(Default, Clone, PartialEq, Eq)]
+pub struct WorldDecls {
+    /// Top-level value schemes from EXPLICIT annotations, keyed by `DefId`
+    /// (matches `Res::Def`). Only these are surfaced to the lowerer as a
+    /// "declared signature" (`Typer::value_sig`).
+    pub value_sigs: HashMap<DefId, Scheme>,
+    /// Schemes INFERRED for unannotated stdlib combinators (pass 3). Consulted
+    /// by inference at a `Res::Def` call site (to pin results from arg types)
+    /// but NOT exposed as declared signatures — the lowerer keeps its lenient
+    /// body-inference path for these defs, so their own emission is unchanged.
+    pub inferred_sigs: HashMap<DefId, Scheme>,
+    /// Kernel function schemes, keyed by `(pseudo-module, func)`
+    /// (matches `Res::Kernel`).
+    pub kernel_sigs: HashMap<(String, String), Scheme>,
+    /// Precise combinator schemes consulted by the accept/reject CHECKER ONLY
+    /// (`use_inferred == false`). Deliberately invisible to the lowerer
+    /// (`use_inferred == true`) and to pass-3 inference, so call-site element
+    /// pinning cannot perturb Go emission (see the pass-3 `Result`-only
+    /// exclusion rationale at sig.rs ~line 180-189). Closes audit #3.
+    pub check_sigs: HashMap<DefId, Scheme>,
+    pub check_kernel_sigs: HashMap<(String, String), Scheme>,
+    /// The `Res::Kernel` face of [`World::bound_check_sigs`], keyed
+    /// `(pseudo-module, func)`.
+    pub bound_kernel_sigs: HashMap<(String, String), Scheme>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates
@@ -159,7 +168,7 @@ pub struct World {
     /// bare, exactly as `ast_type_to_ty` produced it pre-#164).
     alias_keys: HashSet<String>,
     /// The set of all `"<module>.<name>"` UNION keys — the union namespace's
-    /// analogue of [`World::alias_keys`], and the reason a union's DECLARATION
+    /// analogue of [`WorldDecls::alias_keys`], and the reason a union's DECLARATION
     /// and every REFERENCE to it agree on one identity.
     ///
     /// Both sides consult this ONE set: `record_union` qualifies the union's own
@@ -177,7 +186,39 @@ pub struct World {
     union_keys: HashSet<String>,
 }
 
+impl std::ops::Deref for World {
+    type Target = WorldDecls;
+    fn deref(&self) -> &Self::Target {
+        &self.decls
+    }
+}
+
+impl std::ops::DerefMut for World {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        std::sync::Arc::make_mut(&mut self.decls)
+    }
+}
+
 impl World {
+    /// Exact resolved record-alias constructor declaration. Never consult the
+    /// ambiguous bare alias table or grant by a printed/name-shape heuristic.
+    pub(crate) fn is_record_constructor(&self, db: &dyn SkyDb, def: DefId) -> bool {
+        let Some(loc) = db.def_loc(def) else {
+            return false;
+        };
+        if loc.kind != DefKind::Value {
+            return false;
+        }
+        let key = format!("{}.{}", db.module_name(loc.module), loc.name.as_str());
+        matches!(
+            self.alias_by_mod.get(&key),
+            Some(AliasDef {
+                body: Ty::Record(..),
+                ..
+            })
+        )
+    }
+
     /// The (field-name, field-type) pairs of a record alias in DECLARATION order,
     /// with every field-type reference resolved through HIR in the DECLARING
     /// module's scope (`m`). A reference to a declared alias or union becomes its
@@ -268,6 +309,17 @@ impl World {
     /// a whole-program fold; it merges rather than assigns (see
     /// [`World::harvest_callsite_param_records`]).
     pub fn extend_bodies(&mut self, db: &dyn SkyDb) {
+        self.extend_query_bodies(db);
+        // Eager/shared-world oracle retains the whole-program fold and sticky
+        // conflicts. Query lowering instead demands its per-def harvest.
+        self.harvest_callsite_param_records(db);
+    }
+
+    /// Query-world passes 5-7. Keep D2 for caller inference, but do not run the
+    /// aggregate pass-8 harvest: no query-world consumer reads that channel.
+    /// Intended for a declaration-world fork; existing aggregate maps are not
+    /// cleared or otherwise changed by this additive extension.
+    pub fn extend_query_bodies(&mut self, db: &dyn SkyDb) {
         // ---- pass 5: precise CHECK-ONLY schemes for UNANNOTATED app defs ----
         // (F1c narrow subset — see `infer_app_check_sigs`.) Runs on top of the
         // decls world so it can consult every declaration channel + its own prior
@@ -286,23 +338,15 @@ impl World {
 
         // ---- pass 7: full record result types (D2, lowering-path only) ----
         self.infer_record_result_sigs(db);
-
-        // ---- pass 8: call-site param records for UNANNOTATED defs (#166,
-        // lowering-path only) — the concrete record each caller passes, so the
-        // record-update close can pin an unannotated `{ model | … }` base. ----
-        self.harvest_callsite_param_records(db);
     }
 
     /// Is `name` a BARE alias name already declared in this world?
     ///
-    /// The shared-world runner consults this to detect the one declaration-pass
-    /// interaction a prebuilt world cannot represent: the bare `aliases` table is
-    /// last-writer-wins and is completed (pass 1a) *before* any signature is
-    /// expanded (pass 2), so in a whole-program build a case-module alias that
-    /// collides on a bare name can change how a **stdlib** signature expands. A
-    /// world whose stdlib pass 2 has already run cannot reproduce that, so such a
-    /// case falls back to a full rebuild rather than being checked against a
-    /// world that is subtly wrong for it.
+    /// The shared-world runner conservatively rebuilds on a bare alias-name
+    /// collision. Alias-key collection precedes signature expansion, and the
+    /// first-writer-wins bare fallback depends on module load order. The guard
+    /// avoids assuming that extending a prebuilt world reproduces every
+    /// declaration-pass interaction.
     pub fn has_bare_alias(&self, name: &str) -> bool {
         self.aliases.contains_key(name)
     }
@@ -347,6 +391,9 @@ impl World {
                 }
                 let mut infer = Infer::new(self, db).with_inferred(true);
                 let (exprs, locals) = infer.infer_def_selected(body, &want_e, &want_l);
+                // Selected types own their readbacks; release solved UF scratch
+                // before the harvest retains or compares record type trees.
+                drop(infer);
                 for (_eid, expr) in body.exprs.iter() {
                     let (callee, args) = match expr {
                         hir::Expr::Call(c, a) => (*c, a),
@@ -463,6 +510,9 @@ pub fn callsite_param_records_for(db: &dyn SkyDb, world: &World, callee: DefId) 
             let (want_e, want_l) = call_arg_ids(body, |f| f == callee);
             let mut infer = Infer::new(world, db).with_inferred(true);
             let (exprs, locals) = infer.infer_def_selected(body, &want_e, &want_l);
+            // Selected types own their readbacks; release solved UF scratch
+            // before the harvest retains or compares record type trees.
+            drop(infer);
             for (_eid, expr) in body.exprs.iter() {
                 let (c, args) = match expr {
                     hir::Expr::Call(c, a) => (*c, a),
@@ -573,6 +623,9 @@ pub fn caller_param_records(
     }
     let mut infer = Infer::new(world, db).with_inferred(true);
     let (exprs, locals) = infer.infer_def_selected(body, &want_e, &want_l);
+    // Selected types own their readbacks; release solved UF scratch
+    // before the harvest retains or compares record type trees.
+    drop(infer);
     let mut index: HashMap<DefId, usize> = HashMap::new();
     for (_eid, expr) in body.exprs.iter() {
         let (c, args) = match expr {
@@ -741,31 +794,7 @@ impl World {
     /// shared-world path can extend a *prebuilt* world instead of always starting
     /// from nothing.
     fn empty_seeded() -> World {
-        let mut world = World {
-            value_sigs: HashMap::new(),
-            inferred_sigs: HashMap::new(),
-            kernel_sigs: HashMap::new(),
-            check_sigs: HashMap::new(),
-            check_kernel_sigs: HashMap::new(),
-            app_check_sigs: HashMap::new(),
-            app_group_errors: HashMap::new(),
-            any_result_check_sigs: HashMap::new(),
-            weak_vars: HashMap::new(),
-            bound_check_sigs: HashMap::new(),
-            bound_kernel_sigs: HashMap::new(),
-            record_result_sigs: HashMap::new(),
-            ctors: HashMap::new(),
-            ctors_by_def: HashMap::new(),
-            ctor_union: HashMap::new(),
-            union_ctors: HashMap::new(),
-            callsite_param_records: HashMap::new(),
-            callsite_param_conflicts: HashSet::new(),
-            union_members_by_def: HashMap::new(),
-            aliases: HashMap::new(),
-            alias_by_mod: HashMap::new(),
-            alias_keys: HashSet::new(),
-            union_keys: HashSet::new(),
-        };
+        let mut world = World::default();
         world.seed_builtin_ctors();
         world
     }
@@ -790,7 +819,7 @@ impl World {
     /// for the already-built ones **provided the added modules cannot change
     /// them**. A stdlib module never imports an app module, so the app→stdlib
     /// direction is empty; the one channel that does flow backwards is the BARE,
-    /// last-writer-wins `aliases` table read as a fallback during pass-2
+    /// load-order-sensitive `aliases` table read as a fallback during pass-2
     /// expansion. `crate::shared` detects that collision and rebuilds instead.
     pub fn extend_decls(&mut self, db: &dyn SkyDb, seed_static: bool) {
         let world = self;
@@ -1069,7 +1098,7 @@ impl World {
     /// only ever narrows a scheme, so it converges; the bound is a backstop.
     fn infer_any_result_check_sigs(&mut self, db: &dyn SkyDb) {
         use crate::infer::Infer;
-        let mut targets: Vec<(DefId, Scheme, hir::Body)> = Vec::new();
+        let mut targets: Vec<(DefId, Scheme, crate::retained_body::RetainedBody)> = Vec::new();
         for m in db.module_ids() {
             let mname = db.module_name(m).to_string();
             if KERNEL_MODULES.iter().any(|(p, _)| *p == mname)
@@ -1079,14 +1108,19 @@ impl World {
                 continue;
             }
             let resolved = db.resolve(m);
-            for (def, body) in &resolved.bodies {
+            for (def, _) in &resolved.bodies {
                 let Some(anno) = self.value_sigs.get(def) else {
                     continue;
                 };
                 if !crate::infer::ty_contains_any(&anno.ty) {
                     continue;
                 }
-                targets.push((*def, anno.clone(), body.clone()));
+                targets.push((
+                    *def,
+                    anno.clone(),
+                    crate::retained_body::RetainedBody::new(&resolved, *def)
+                        .expect("iterated wildcard target belongs to its resolved owner"),
+                ));
             }
         }
         for _round in 0..4 {
@@ -1764,7 +1798,7 @@ impl World {
     pub fn expand_ty(&self, ty: &Ty) -> Ty {
         // Lowering path: field types arrive as BARE names (`collect_types` uses
         // `ast_type_to_ty_qualified`, not `resolve_type_names`), so the bare
-        // last-writer-wins `aliases` fallback IS needed to expand e.g. a bare
+        // first-writer-wins `aliases` fallback IS needed to expand e.g. a bare
         // `Point` field to its tuple. No union-protection here — behaviour is
         // byte-identical to before the #164-follow-up fix.
         self.expand(ty, 0, &HashSet::new(), None)
@@ -1772,7 +1806,7 @@ impl World {
 
     /// Module-aware `expand_ty` for the lowering DECL path. A bare field-type
     /// name is first resolved against the DECLARING module's own alias
-    /// (`alias_by_mod["{cur_mod}.{name}"]`) before the bare last-writer-wins
+    /// (`alias_by_mod["{cur_mod}.{name}"]`) before the bare first-writer-wins
     /// `aliases` fallback. Without this a record-alias field annotated with a
     /// bare `Message` expands through the bare table — where the stdlib
     /// `Std.Ai.Provider.Message` (loaded first) sits under the same key — so a
@@ -1789,7 +1823,7 @@ impl World {
     /// aliases). Guarded against runaway recursion (aliases are non-recursive in
     /// Sky, but a malformed corpus must not hang — L7).
     /// `protect`: bare type names that must NOT be alias-expanded via the
-    /// last-writer-wins bare `aliases` fallback, because in the CURRENT module's
+    /// first-writer-wins bare `aliases` fallback, because in the CURRENT module's
     /// view they name a UNION (their `type_refs` entry resolves to a `TypeCon`).
     /// Without this, a local union `Model` would be hijacked by a DIFFERENT
     /// module's same-named alias `Model` sitting in the global `aliases` table
@@ -2158,7 +2192,7 @@ pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
 /// The set of bare type names module `m` sees as UNIONS — every name in its
 /// `type_refs` (own decls + `exposing`-imported types) whose def is a
 /// `DefKind::TypeCon`. Used as the `protect` set for `expand`: a name here must
-/// not be alias-expanded through the last-writer-wins bare `aliases` table, so a
+/// not be alias-expanded through the first-writer-wins bare `aliases` table, so a
 /// local union `Model` can't be hijacked by a different module's same-named alias
 /// (#164 follow-up). Aliases stay OUT of the set, so genuine bare-alias leniency
 /// (an un-imported alias resolving only through the global table) is preserved.
@@ -2184,7 +2218,7 @@ fn union_names_in_module(db: &dyn SkyDb, m: ModuleId) -> HashSet<String> {
 struct TypeKeys<'a> {
     /// `"<module>.<name>"` for every declared type ALIAS (the #164 fix).
     alias: &'a HashSet<String>,
-    /// `"<module>.<name>"` for every declared UNION. See [`World::union_keys`].
+    /// `"<module>.<name>"` for every declared UNION. See [`WorldDecls::union_keys`].
     union: &'a HashSet<String>,
 }
 

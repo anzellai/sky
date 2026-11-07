@@ -164,12 +164,10 @@ fn growth_failures(
 /// `[E2008]` key scan, interning and the lowerer's Go-type mapping.
 const TABLE_COUNTERS: &[&str] = &["readback", "owned_rebuild", "dictkey", "intern", "goty"];
 
-/// The unifier's counters. Still quadratic on both shapes: binding an
-/// instantiated variable to a large structure runs the occurs check over the
-/// whole structure (`Codec.field`'s `r` and `b` against the record and the
-/// rest of the constructor arrow), and the lowering path's update of an
-/// annotated record param unifies a fresh instance of the declared record per
-/// update (#166 / doc 13 D2). Kept as an ignored test so the gap stays visible.
+/// The unifier's original occurs/record-field growth contract. Ground
+/// constructor payloads, owned accessor complements and private pipeline
+/// results retain exact typing while avoiding repeated whole-record scans.
+/// This gate is ACTIVE; its original source shapes and 2.3 bound are unchanged.
 const UNIFIER_COUNTERS: &[&str] = &["occurs", "record_fields"];
 
 /// The counters are process-wide: the two tests below must not overlap.
@@ -181,7 +179,6 @@ fn type_table_work_is_linear_in_record_size() {
 }
 
 #[test]
-#[ignore = "known quadratic: occurs check and D2 record instance per update (see UNIFIER_COUNTERS)"]
 fn unifier_work_is_linear_in_record_size() {
     growth_test(UNIFIER_COUNTERS);
 }

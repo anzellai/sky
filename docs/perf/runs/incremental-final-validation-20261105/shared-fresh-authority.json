@@ -1,0 +1,52 @@
+{
+  "source_base_commit": "01de151a7cc13e6d6cf1fc4ac243b473da738cda",
+  "source_file": "rust/crates/ty/src/unify.rs",
+  "source_sha256": "6d410db37dd32b080a3d18bb7c673d69d138ee3ffac9bfcc2d21375cedddde79",
+  "candidate_manifest_sha256": "b15c031883ebeb4cfe3df50a35145826f2c290270f3ed718c94b3833151c3f0b",
+  "scope": "Conservatively deny fresh-row/dead-instance authority after a public graph edge names a nonlive future/self/hole ID; preserve ordinary fallback and deferred malformed-ID behavior.",
+  "reachability": "Synthetic internal raw-Rust UF API counterexamples; no compiled Sky-source trigger identified.",
+  "stages": [
+    {
+      "task": "forward-fresh-authority-red",
+      "elapsed_seconds": 47,
+      "passed": 0,
+      "failed": 3,
+      "ignored": 0,
+      "summaries": 1,
+      "log_sha256": "e33ed16b6581b87b0b760fa5d7e13ebffbb9adac5ac6115c5b5c53348fdd2f38"
+    },
+    {
+      "task": "shared-fresh-authority-ty-lib",
+      "elapsed_seconds": 56,
+      "passed": 116,
+      "failed": 0,
+      "ignored": 1,
+      "summaries": 1,
+      "log_sha256": "aebf2c8cedc8ae9612d7da2c7ccaf3cf98e39ba5a1243c1102e1dbcd4ce96f0a"
+    },
+    {
+      "task": "allocation-authority-compiler-broad",
+      "elapsed_seconds": 301,
+      "passed": 570,
+      "failed": 0,
+      "ignored": 2,
+      "summaries": 68,
+      "log_sha256": "ca5f42a37b415a912fa5f2565cdac45b07f534e0527aa507db12e822ef245c7a"
+    }
+  ],
+  "focused_denominators": {
+    "original_forward_regressions": 3,
+    "new_state_tests": 4,
+    "original_accessor_export_tests": 15,
+    "original_accessor_inference_tests": 2
+  },
+  "independent_source_review": "PASS",
+  "resource_limits_changed": false,
+  "goldens_changed": false,
+  "original_growth_ignore_changed": false,
+  "memory_saving_measured": false,
+  "remaining": [
+    "Coerce/fresh compiler/current private application validation.",
+    "Constructor/pipeline scaling refinement is separate and remains unadopted."
+  ]
+}

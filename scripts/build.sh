@@ -15,6 +15,8 @@
 # Optional flags:
 #   --sweep       run every example end-to-end after the build (takes ~2 min)
 #   --clean       remove rust/target/, sky-out/, bin/ before building
+#   --keep-go-cache  leave the shared Go build cache to its owner
+#   --dev         use the optimised dev profile (assertions + overflow checks)
 #   --help        print this help
 #
 # Prerequisites (expected on PATH):
@@ -31,11 +33,15 @@ source "$ROOT/scripts/lib/cargo-target.sh"
 
 RUN_SWEEP=0
 DO_CLEAN=0
+KEEP_GO_CACHE=0
+COMPILER_PROFILE_ARG=--release
 
 for arg in "$@"; do
     case "$arg" in
         --sweep)      RUN_SWEEP=1 ;;
         --clean)      DO_CLEAN=1 ;;
+        --keep-go-cache) KEEP_GO_CACHE=1 ;;
+        --dev)        COMPILER_PROFILE_ARG=--profile=dev ;;
         --help|-h)
             sed -n '2,22p' "$0"
             exit 0
@@ -71,8 +77,8 @@ say "building sky compiler (cargo)"
 # See scripts/lib/cargo-target.sh for the incident: that assumption silently
 # installed a pre-fix compiler, because cargo was honouring CARGO_TARGET_DIR and
 # writing elsewhere while the `cp` kept succeeding on the older file.
-( cd rust && cargo build --release --locked -p sky )
-install_binary "$(cargo_bin_path "$ROOT/rust" sky --release)" "$ROOT/sky-out/sky" || exit 1
+( cd rust && cargo build "$COMPILER_PROFILE_ARG" --locked -p sky )
+install_binary "$(cargo_bin_path "$ROOT/rust" sky "$COMPILER_PROFILE_ARG")" "$ROOT/sky-out/sky" || exit 1
 ./sky-out/sky --version
 
 # ─── build sky-ffi-inspect ──────────────────────────────────────────
@@ -125,7 +131,7 @@ fi
 # CI failure 2026-06-04 on commit 549d4701).
 go_cache_dir="${HOME}/Library/Caches/go-build"
 [[ -d "$go_cache_dir" ]] || go_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/go-build"
-if [[ -d "$go_cache_dir" ]]; then
+if [[ $KEEP_GO_CACHE -eq 0 && -d "$go_cache_dir" ]]; then
     cache_kb=$(du -sk "$go_cache_dir" 2>/dev/null | awk '{print $1}')
     cache_kb=${cache_kb:-0}
     free_kb=$(df -k / 2>/dev/null | awk 'NR==2 {print $4}')

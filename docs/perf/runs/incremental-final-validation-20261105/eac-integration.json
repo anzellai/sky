@@ -1,0 +1,30 @@
+{
+  "codeCommit": "eac7d961d223d932e4fdc15e99233a9c904b8ff3",
+  "currentCodeAllCiJobsPassed": 40,
+  "ciRun": "https://github.com/anzellai/sky/actions/runs/42325807659",
+  "canonicalBuildPassed": true,
+  "canonicalElapsedSeconds": 143,
+  "canonicalFrameworkFilesUnchanged": 2424,
+  "canonicalCliSha256": "e8cfb50c66a529c7424375cb78f9a1606a94e72d432f24b67aa8a313f4c66db9",
+  "publicBrowserGatePassed": true,
+  "publicBrowserGateElapsedSeconds": 305,
+  "browserEngines": 3,
+  "referenceAndIncrementalCases": 6,
+  "originalAssertionsAndBudgetsPreserved": true,
+  "focusedNativeLeafTestsPassed": 5,
+  "focusedNativeRaceLeafTestsPassed": 5,
+  "actualFullJsProductionFocusedTestsPassed": 34,
+  "actualFullJsRepeatedRuns": 2,
+  "privateCandidateApplicationBuildPassed": false,
+  "privateBuildStop": {
+    "reason": "original swap-pressure guard",
+    "compilerRssMiB": 1073,
+    "cleanupVerified": true,
+    "normalInlining": true
+  },
+  "oldCompiledAppReuseAttempted": false,
+  "exactRuntimeExportReuseRejected": true,
+  "privateApplicationLatencyClaimed": false,
+  "reviewReadiness": "bounded implementation and metadata hotspot slice; private full-app timing remains blocked",
+  "mergeTagDeployOrStableInstallPerformed": false
+}

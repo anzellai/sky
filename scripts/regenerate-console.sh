@@ -238,6 +238,7 @@ NR == 1 {
 # picking a winner, so dropping this rewrite fails loudly at startup.
 {
     gsub(/rt\.RegisterAdtTag\("main\./, "rt.RegisterAdtTag(\"console_app.")
+    gsub(/rt\.RegisterAdtOwner\("main\./, "rt.RegisterAdtOwner(\"console_app.")
     gsub(/rt\.RegisterAdtVariant\("main\./, "rt.RegisterAdtVariant(\"console_app.")
 }
 

@@ -163,6 +163,10 @@ func isSkyWrapperType(t reflect.Type) bool {
 // Sky.Live shape pre-typed-codegen) fails with "gob: type not
 // registered for interface: map[string]interface {}".
 func init() {
+	// SkyADT is a runtime carrier, including builtin Decimal/Money values.
+	// A static any field hides it from the generated model-type boot walk;
+	// registering only while encoding cannot restore a fresh process's session.
+	gob.Register(SkyADT{})
 	gob.Register(map[string]any{})
 	gob.Register([]any{})
 	gob.Register(SkyMaybe[any]{})
