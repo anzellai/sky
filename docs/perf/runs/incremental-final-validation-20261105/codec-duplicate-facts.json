@@ -51,5 +51,9 @@
     "firstFullJsAttempt": "launcher passed native thread count into single-thread Go/Wasm; no tests ran",
     "correction": "run Go/Wasm with its required single thread",
     "assertionsAndMemoryGuardsRelaxed": false
-  }
+  },
+  "currentCodeHostedIntegrationPassed": 40,
+  "currentCodePublicBrowserCasesPassed": 6,
+  "realModelMetadataLeafEvidence": "codec-duplicate-real-model-leaf.json",
+  "privateApplicationCandidateTimingStillUnverified": true
 }

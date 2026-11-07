@@ -1350,6 +1350,20 @@ assertion, five focused native tests, their native race run, and 17 tests run
 twice against all actual JS production runtime sources. Those tests include
 mutable factory traces and panics, changing blank evidence, existing nested
 shapes, and live/pinned owner changes. See the [validation record](runs/incremental-final-validation-20261105/codec-duplicate-facts.json).
-The candidate still needs an actual production application comparison and
-current-head hosted integration before review readiness. No candidate latency
-or universal model-size scaling result is claimed yet.
+All 40 hosted jobs and the six public reference/incremental browser cases now
+pass at `eac7d961d`. A separate Wasm microbenchmark uses exact declarations
+from the production Model: 174 statically reachable tagged records and 11,136
+helper calls per repeat. Across five repeats the median drops from 116.377 ms
+to 1.239 ms, with 232,864 allocations becoming zero. Metadata and result hashes
+match before and after measurement. See the [scoped measurement](runs/incremental-final-validation-20261105/codec-duplicate-real-model-leaf.json).
+
+This measures the warmed duplicate-key helper with equal call weights. App
+methods and initialization are omitted, and it does not measure complete codec
+preparation or typing latency. The normal private application rebuild still
+hits the unchanged local swap-pressure guard at 1,073 MiB. Reuse of the previous
+compiled app was rejected when exact runtime export compatibility failed.
+The [integration record](runs/incremental-final-validation-20261105/eac-integration.json)
+keeps these limits separate from the passing compiler/runtime/browser checks.
+This bounded implementation is ready for code review; a fresh private app
+artifact and its typing measurement remain required before claiming the whole
+production interaction is faster. No universal model-size guarantee is made.
