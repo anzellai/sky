@@ -2,6 +2,88 @@ package rt
 
 import "strings"
 
+// spaScrollQueue is the post-DOM-commit barrier, not a timer. A scroll produced
+// by an update whose patches are held for an open select waits until a later
+// render actually commits them. A newer ordinary render supersedes old queued
+// commands: applying an old id to the newest DOM could scroll a different row.
+// Only command data and its scheduler completion (never a DOM node) are retained.
+type spaScrollQueue struct {
+	held      bool
+	pending   []scrollCmd
+	epoch     uint64
+	authority uint64
+	done      func()
+}
+
+func (q *spaScrollQueue) command(c scrollCmd, apply func(scrollCmd)) {
+	if q.held {
+		q.pending = append(q.pending, c)
+		return
+	}
+	apply(c)
+}
+
+// cancel drops a failed render's commands and releases only its scheduler
+// completion. The driver drains after its existing render/transition guard.
+func (q *spaScrollQueue) cancel() {
+	q.pending = nil
+	done := q.done
+	q.done = nil
+	if done != nil {
+		done()
+	}
+}
+
+// supersede is also called at direct navigation intent, before onNavigate may
+// queue behind an in-flight hold. Even without a paint, its Page change revokes
+// an older request's returned-scroll authority.
+func (q *spaScrollQueue) supersede() {
+	q.authority++
+	q.epoch++
+	q.cancel()
+}
+
+// afterRender runs only after the entire Applied step (including its returned
+// commands). A failed/skipped paint or a decoded no-scroll result cannot hold
+// later Msgs indefinitely. An actual held scroll waits for that render's commit.
+func (q *spaScrollQueue) afterRender(before uint64, done func()) {
+	if q.epoch == before || !q.held || len(q.pending) == 0 {
+		done()
+		return
+	}
+	q.done = done
+}
+
+func (q *spaScrollQueue) committed(held, continuation bool, apply func(scrollCmd)) {
+	var cancelled func()
+	if !continuation {
+		q.pending = nil
+		cancelled, q.done = q.done, nil
+	}
+	if !continuation {
+		q.epoch++
+	}
+	q.held = held
+	// A newer accepted render supersedes the old command. Release even if the
+	// new render is held too; the old command must never target its same-id node.
+	if cancelled != nil {
+		cancelled()
+	}
+	if held {
+		return
+	}
+	pending, done := q.pending, q.done
+	q.pending, q.done = nil, nil
+	// Release also on an unexpected applier panic; the caller's existing render
+	// panic net remains responsible for classification/model recovery.
+	if done != nil {
+		defer done()
+	}
+	for _, c := range pending {
+		apply(c)
+	}
+}
+
 // The open-<select> defence of the Sky.Spa client, as a pure planner.
 //
 // A native dropdown closes on ANY DOM mutation inside the open select or an

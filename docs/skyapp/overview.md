@@ -201,6 +201,18 @@ command: `Nav.pushUrl "/orders/7"`, `Nav.replaceUrl "/"` or
 `Nav.clearFragment`. It routes like an in-app link on every web target, and a
 terminal target ignores it.
 
+To scroll after an update, return `Nav.scrollIntoView "part-top"` and give the
+target `Ui.htmlAttribute "id" "part-top"`. The command runs after that update's
+DOM commits, including when a server branch returns its answer. It aligns the
+target in its nearest vertical scroll container, otherwise the window, and
+respects scroll margin and padding without changing the address bar.
+`Nav.scrollIntoViewIfNeeded` leaves an already visible target top alone;
+`Nav.scrollToTop` scrolls the document to its top. Scrolling is instant, missing
+or hidden targets do nothing, and terminal/server runners perform no DOM work.
+A deferred render superseded by a newer render loses its scroll commands;
+an RPC's returned scroll also loses its authority when navigation overtakes it.
+No application JavaScript or completion message is needed.
+
 At session init the `Sky.Http.Server.Request` carries `method` / `host` /
 `path` / `headers` / `params` / `query` / `cookies` (`host` is the name the
 browser used, port included, and is also `headers` `"Host"`). `body` and `remoteAddr` are empty —

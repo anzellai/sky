@@ -122,7 +122,12 @@ func spaCatchUpHeld(sel js.Value) {
 	f = js.FuncOf(func(this js.Value, args []js.Value) any {
 		f.Release()
 		if spaPrev != nil {
-			spaRenderGuard(spaModel, renderCurrent, nil, func(_ string, r any) { spaReportPanic("render", r) })
+			spaRenderGuard(spaModel, func() { renderCurrentWithScroll(true) }, nil, func(_ string, r any) { spaReportPanic("render", r) })
+		}
+		// The actual held DOM and its scroll have completed (or failed/cancelled).
+		// Later Msgs run after the render guard, not re-entrantly during patching.
+		if spaSch != nil {
+			spaSch.drain(step)
 		}
 		return nil
 	})

@@ -27,7 +27,14 @@
 -- the wasm client; in a server branch the client runs the navigation when it
 -- sends the request, as Sky.Live does. A terminal target has no address bar
 -- and ignores it.
-module Std.Nav exposing (pushUrl, replaceUrl, clearFragment)
+module Std.Nav exposing
+    ( pushUrl
+    , replaceUrl
+    , clearFragment
+    , scrollToTop
+    , scrollIntoView
+    , scrollIntoViewIfNeeded
+    )
 
 import Sky.Ffi as Ffi
 
@@ -50,3 +57,26 @@ replaceUrl =
 clearFragment : Cmd msg
 clearFragment =
     replaceUrl "#"
+
+
+-- | Scroll the document to its top after this update renders. No URL/history
+-- change. Instant (including reduced motion); ignored on non-browser targets.
+scrollToTop : Cmd msg
+scrollToTop =
+    Ffi.kernel "Nav_scrollToTop"
+
+
+-- | After this update renders, align an element's top within its nearest
+-- scrolling container. The argument is an element id, not a selector. Missing
+-- or hidden targets are ignored; scroll-margin/padding are respected. A server
+-- branch returns this command with its answer, after the answer's model renders.
+scrollIntoView : String -> Cmd msg
+scrollIntoView =
+    Ffi.kernel "Nav_scrollIntoView"
+
+
+-- | Like scrollIntoView, but leave scroll unchanged when the target's top is
+-- already inside the selected scrollport's visible, padding-adjusted region.
+scrollIntoViewIfNeeded : String -> Cmd msg
+scrollIntoViewIfNeeded =
+    Ffi.kernel "Nav_scrollIntoViewIfNeeded"

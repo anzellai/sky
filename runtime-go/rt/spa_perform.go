@@ -79,7 +79,7 @@ func spaRpcDeliver(s *spaSched, j *spaRpcJob, result SkyResult[SkyADT, any], run
 	// is the generated arm's knowledge, not the delivery's: with
 	// App.withRpcError the arm routes it into update, without it the arm
 	// returns Spa.reportRpcFailure (spaReportRpcFailure), which logs.
-	s.settle(j, spaApplyToMsg(j.toMsg, result), run)
+	s.settleWithDOM(j, spaApplyToMsg(j.toMsg, result), run, result.Tag == 0)
 }
 
 // spaRunRpcTask builds the request task from the request id and runs it to a

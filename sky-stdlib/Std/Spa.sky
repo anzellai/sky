@@ -94,8 +94,12 @@ module Std.Spa exposing
     , postJson
     , rpc
     , rpcHold
+    , rpcScrollHold
+    , scrollRpcScope
     , rpcWith
     , followUps
+    , returnedScrolls
+    , readInitScrolls
     , reportError
     , reportRpcFailure
     , withGuard
@@ -378,6 +382,25 @@ rpcHold bodyCodec respCodec url body toMsg =
     rpcHoldCmd (rpcRequest bodyCodec respCodec url body) toMsg
 
 
+-- | Internal auto-split DOM-effect barrier. Like rpcHold, but commuting
+-- inputs also wait until the returned model and scroll have committed.
+rpcScrollHold : Codec body -> Codec a -> String -> body -> (Result Error a -> msg) -> Cmd msg
+rpcScrollHold bodyCodec respCodec url body toMsg =
+    scrollRpcHoldCmd (rpcHold bodyCodec respCodec url body toMsg)
+
+
+-- | Internal generated mixed-command scope. Its interpreter captures the
+-- render origin before an immediate navigation residual can change it.
+scrollRpcScope : Cmd msg -> Cmd msg
+scrollRpcScope =
+    Ffi.kernel "Spa_scrollRpcScope"
+
+
+scrollRpcHoldCmd : Cmd msg -> Cmd msg
+scrollRpcHoldCmd =
+    Ffi.kernel "Spa_scrollRpcHold"
+
+
 -- | `rpcWith bodyCodec respCodec url body residual toMsg` — `rpc` plus a CLIENT
 -- residual: the part of the server branch's command that only the client can
 -- run (a `Std.Native` effect). The client runs `residual` when it sends the
@@ -480,3 +503,18 @@ decodeResponse codec resp =
         Err
             (Error.unexpected
                 ("HTTP " ++ String.fromInt resp.status ++ ": " ++ resp.body))
+
+
+-- | Internal generated RPC plumbing: reconstruct post-render scroll commands
+-- from the returned versioned data. Malformed data reports a loud Error Cmd;
+-- it never discards the already-applied model or runs a DOM effect here.
+returnedScrolls : String -> Cmd msg
+returnedScrolls =
+    Ffi.kernel "Spa_scrollCommands"
+
+
+-- | Internal generated init-RPC plumbing. Decode its versioned follow-up and
+-- scroll data; accept a legacy backend's plain follow-up JSON with no scrolls.
+readInitScrolls : String -> Result Error ( String, String )
+readInitScrolls =
+    Ffi.kernel "Spa_readInitScrolls"

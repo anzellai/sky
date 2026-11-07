@@ -59,6 +59,12 @@ type spaRpcJob struct {
 	toMsg any
 	// hold is true for a hold RPC: later Msgs wait until it answers.
 	hold bool
+	// domHold additionally waits for the returned scroll's actual DOM commit.
+	domHold bool
+	// Navigation authority at source-command issue, not at answer. Navigation revokes
+	// ONLY the response's scroll sideband; its model delta/Msg still applies.
+	issueEpoch      uint64
+	issueEpochKnown bool
 	// name is the constructor of the Msg whose step issued this RPC (the
 	// server branch), "" when no Msg was running (init's command). It keys
 	// the hold-free table (spaSched.holdFree).
@@ -76,7 +82,9 @@ type spaRpcJob struct {
 type spaQueued struct {
 	msg    any
 	urgent bool
-	tick   int // the Sub.every interval this Msg is a tick of; 0 otherwise
+	// dom associates a successful scroll-capable RPC result with its paint.
+	dom  *spaRpcJob
+	tick int // the Sub.every interval this Msg is a tick of; 0 otherwise
 	// src is the form control whose input or change event made this Msg (a
 	// js.Value in the browser), nil for every other Msg. While a Msg from a
 	// control waits, the render does not write that control's value: the
@@ -86,12 +94,21 @@ type spaQueued struct {
 
 // spaSched is the per-client Msg scheduler.
 type spaSched struct {
-	queue    []spaQueued
-	hold     *spaRpcJob
-	running  bool
-	inflight map[string]*spaRpcJob
-	nonce    string
-	seq      int
+	queue []spaQueued
+	hold  *spaRpcJob
+	// domHold is separate: an Applied step may issue a new network hold.
+	domHold *spaRpcJob
+	// Browser hooks observe only render lineage, never model or DOM values.
+	domEpoch                func() uint64
+	scrollAuthority         func() uint64
+	scopeAuthority          uint64
+	scopeAuthorityKnown     bool
+	awaitDOM                func(before uint64, done func())
+	suppressReturnedScrolls bool
+	running                 bool
+	inflight                map[string]*spaRpcJob
+	nonce                   string
+	seq                     int
 	// curTick is the Sub.every interval whose tick Msg is running now (0 when
 	// the running Msg is not a tick). tickNet counts each interval's
 	// tick-origin network work still unsettled; onTickNet is told when a tick
@@ -147,7 +164,7 @@ func (s *spaSched) dispatchFrom(msg, src any, run func(any)) {
 // runs now, and every queued Msg is urgent (nothing ordinary waits ahead of it,
 // so it cannot overtake one).
 func (s *spaSched) holdFreeNow(msg any) bool {
-	if s.hold == nil || s.running || s.hold.name == "" || len(s.holdFree) == 0 {
+	if s.domHold != nil || s.hold == nil || s.hold.domHold || s.running || s.hold.name == "" || len(s.holdFree) == 0 {
 		return false
 	}
 	for _, q := range s.queue {
@@ -232,14 +249,46 @@ func (s *spaSched) drain(run func(any)) {
 	s.running = true
 	defer func() { s.running = false }()
 	for len(s.queue) > 0 {
-		if s.hold != nil && !s.queue[0].urgent {
+		if (s.hold != nil || s.domHold != nil) && !s.queue[0].urgent {
 			return
 		}
 		q := s.queue[0]
 		s.queue = s.queue[1:]
 		s.curTick = q.tick
 		s.curMsg = q.msg
-		run(q.msg)
+		before := uint64(0)
+		if q.dom != nil {
+			s.domHold = q.dom
+			if s.domEpoch != nil {
+				before = s.domEpoch()
+			}
+		}
+		func() {
+			previousSuppression := s.suppressReturnedScrolls
+			s.suppressReturnedScrolls = q.dom != nil && q.dom.issueEpochKnown && s.scrollAuthority != nil && q.dom.issueEpoch != s.scrollAuthority()
+			defer func() { s.suppressReturnedScrolls = previousSuppression }()
+			returned := false
+			defer func() {
+				if !returned && s.domHold == q.dom {
+					s.domHold = nil
+				}
+			}()
+			run(q.msg)
+			returned = true
+		}()
+		if q.dom != nil && s.domHold == q.dom {
+			job := q.dom
+			release := func() {
+				if s.domHold == job {
+					s.domHold = nil
+				}
+			}
+			if s.awaitDOM != nil {
+				s.awaitDOM(before, release)
+			} else {
+				release()
+			}
+		}
 		s.curMsg = nil
 		s.curTick = 0
 	}
@@ -264,19 +313,67 @@ func (s *spaSched) issue(mk, toMsg any, hold bool) *spaRpcJob {
 	return j
 }
 
-// settle delivers an RPC's result Msg. An async result joins the queue in
-// arrival order. A hold result runs first and releases the hold, and the Msgs
-// that waited behind it then run in order.
+// withScrollAuthority scopes a compiler-generated mixed residual/RPC batch.
+// Capture before URL effects; nested scopes inherit the earliest source scope,
+// so they cannot mint new authority after a residual navigation. Restore even
+// on panic; no Task/toMsg/request is evaluated merely by entering the scope.
+func (s *spaSched) withScrollAuthority(run func()) {
+	if s.scopeAuthorityKnown {
+		run()
+		return
+	}
+	old, known := s.scopeAuthority, s.scopeAuthorityKnown
+	if s.scrollAuthority != nil {
+		s.scopeAuthority = s.scrollAuthority()
+		s.scopeAuthorityKnown = true
+	}
+	defer func() { s.scopeAuthority, s.scopeAuthorityKnown = old, known }()
+	run()
+}
+
+// allowReturnedScrolls is consulted ONLY for the private decoded sideband
+// batch. Ordinary local scroll commands, delta/errors and followUps are intact.
+func (s *spaSched) allowReturnedScrolls() bool { return !s.suppressReturnedScrolls }
+
+// issueWithDOM preserves the legacy issue API. Only a private compiler marker
+// opts a job into the actual-commit barrier; it also requires a network hold.
+func (s *spaSched) issueWithDOM(mk, toMsg any, hold, dom bool) *spaRpcJob {
+	j := s.issue(mk, toMsg, hold || dom)
+	j.domHold = dom
+	if dom {
+		if s.scopeAuthorityKnown {
+			j.issueEpoch = s.scopeAuthority
+			j.issueEpochKnown = true
+		} else if s.scrollAuthority != nil {
+			j.issueEpoch = s.scrollAuthority()
+			j.issueEpochKnown = true
+		}
+	}
+	return j
+}
+
+// settle retains the original scheduler seam for existing callers/tests.
 func (s *spaSched) settle(j *spaRpcJob, resultMsg any, run func(any)) {
+	s.settleWithDOM(j, resultMsg, run, true)
+}
+
+// Only successful RPC results may await a returned scroll. Failed RPCs release
+// their hold normally, including errors with an application-level handler.
+func (s *spaSched) settleWithDOM(j *spaRpcJob, resultMsg any, run func(any), success bool) {
 	if _, live := s.inflight[j.rid]; live && j.tick > 0 {
 		s.tickNetEnd(j.tick)
 	}
 	delete(s.inflight, j.rid)
+	q := spaQueued{msg: resultMsg}
+	if j.domHold && success {
+		q.dom = j
+	}
 	if s.hold == j {
 		s.hold = nil
-		s.queue = append([]spaQueued{{msg: resultMsg, urgent: true}}, s.queue...)
+		q.urgent = true
+		s.queue = append([]spaQueued{q}, s.queue...)
 	} else {
-		s.queue = append(s.queue, spaQueued{msg: resultMsg})
+		s.queue = append(s.queue, q)
 	}
 	s.drain(run)
 }
@@ -286,6 +383,8 @@ func (s *spaSched) settle(j *spaRpcJob, resultMsg any, run func(any)) {
 // ahead of the Msgs it holds, so the app can show the failure; the hold stays.
 func (s *spaSched) report(j *spaRpcJob, errMsg any, run func(any)) {
 	if s.hold == j {
+		// Retry is not terminal: preserve the original hold until this same rid
+		// succeeds or settles terminally, rather than letting Next overtake it.
 		s.queue = append([]spaQueued{{msg: errMsg, urgent: true}}, s.queue...)
 	} else {
 		s.queue = append(s.queue, spaQueued{msg: errMsg})
@@ -300,7 +399,7 @@ func (s *spaSched) pending() bool {
 
 // held reports whether a hold RPC is in flight (later Msgs wait).
 func (s *spaSched) held() bool {
-	return s.hold != nil
+	return s.hold != nil || s.domHold != nil
 }
 
 // spaGuardedUpdate runs `guard msg model` (when set) before `update`, the

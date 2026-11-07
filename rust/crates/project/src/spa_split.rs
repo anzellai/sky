@@ -2609,6 +2609,66 @@ pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> 
     }
 }
 
+const RETURNED_SCROLL_PROTOCOL_MARKER: &str =
+    "\n-- returned-scroll-wire-v1: response/init envelopes and SSR boot command data\n";
+
+fn returned_scroll_route(handler: &str, enabled: bool) -> String {
+    if enabled {
+        format!("(spaScrollWireGuard_ {handler})")
+    } else {
+        handler.to_string()
+    }
+}
+
+fn indent_scroll_apply(text: &str, amount: usize) -> String {
+    let base = text
+        .lines()
+        .find(|s| !s.trim().is_empty())
+        .map(|s| s.len() - s.trim_start().len())
+        .unwrap_or(0);
+    text.lines()
+        .map(|s| {
+            if s.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{}{}", " ".repeat(amount), s.get(base..).unwrap_or(s))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn returned_scroll_response(io: &BranchIo, fields: &[String], model: &str) -> String {
+    let mut parts: Vec<String> = fields
+        .iter()
+        .map(|name| {
+            if name == spa_partition::BOXED_MODEL_FIELD {
+                format!("{name} = {model}")
+            } else {
+                format!("{name} = {model}.{name}")
+            }
+        })
+        .collect();
+    // Both whole-model and field-set responses preserve original field order.
+    let _ = io;
+    parts.push("spaScroll_ = scrolls_".into());
+    format!("{{ {} }}", parts.join(", "))
+}
+fn returned_scroll_model_apply(model: &str, fields: &[String]) -> String {
+    if fields.is_empty() {
+        return format!("( {model}, Cmd.none )");
+    }
+    if fields == [spa_partition::BOXED_MODEL_FIELD] {
+        return format!("( resp.{}, Cmd.none )", spa_partition::BOXED_MODEL_FIELD);
+    }
+    let sets = fields
+        .iter()
+        .map(|f| format!("{f} = resp.{f}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("( {{ {model} | {sets} }}, Cmd.none )")
+}
+
 /// SHARED WIRE EMIT — client leg: build the RPC `Req` value from the client
 /// model + Msg args. The exact inverse of [`emit_reconstruct`]'s read-set — what
 /// the frontend SENDS is what the backend reconstructs.
@@ -3983,8 +4043,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .iter()
         .map(|r| (r.ctor.clone(), r.msg_arg_tys.clone()))
         .collect();
+    let returned_scrolls = spa_partition::returned_scrolls_reachable(&db, entry);
     let mut arm_routes =
         ArmRoutes::from_report(&report.branches, &routes, &report.chaining_branches);
+    arm_routes.returned_scrolls = returned_scrolls;
+    if returned_scrolls {
+        arm_routes.scroll_heads = spa_partition::returned_scroll_heads(&db, update_module)
+            .unwrap_or_else(|| routes.iter().map(|r| r.ctor.clone()).collect());
+    }
     let mut client_names: Vec<String> = Vec::new();
     for b in report.branches.iter().filter(|b| !b.server) {
         let name = ctor_name(&b.msg).to_string();
@@ -4040,7 +4106,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let (init_plan, strip_init_cmd): (Option<InitRpcPlan>, bool) = {
         let tdefs = tainted_def_ids(&db, &report);
         let names_here = tainted_in_scope(&db, &tdefs, init_mod);
-        let strip = init_cmd_is_get_safe(&init_src)
+        let strip = !returned_scrolls
+            && init_cmd_is_get_safe(&init_src)
             && names_here.iter().any(|t| references_word(&init_src, t));
         if strip {
             (None, true)
@@ -4065,6 +4132,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &names_here,
                 msg_mod,
                 report.settle.init_continuations.clone(),
+                returned_scrolls,
+                report.client_crypto,
             )?;
             (plan, false)
         }
@@ -4312,6 +4381,25 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             .collect::<HashSet<String>>(),
         &mut warnings,
     )?;
+    if returned_scrolls {
+        for wire in wires
+            .iter_mut()
+            .filter(|w| server.iter().any(|(name, _)| name == &w.name))
+        {
+            if wire.resp_fields.iter().any(|f| f.name == "spaScroll_") {
+                return Err(
+                    "sky.spa: response field `spaScroll_` is reserved for returned scroll commands"
+                        .into(),
+                );
+            }
+            wire.resp_fields.push(ModelFieldTy {
+                name: "spaScroll_".into(),
+                ty_name: "String".into(),
+                codec: Some("Codec.string".into()),
+                ty: None,
+            });
+        }
+    }
     // STATELESS SIGNED SESSION (security): the identity projection the backend
     // signs into an httpOnly `sky_sid` cookie and verifies on every RPC + SSR. A
     // model field whose type is nominally `Session` / `Maybe Session` AND which
@@ -5002,7 +5090,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     };
 
     // ---- write the three trees ----
-    let shared_src = gen_shared(
+    let mut shared_src = gen_shared(
         &wires,
         &shared_imports,
         &copied_decls,
@@ -5011,6 +5099,11 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &session_projection,
         wire_decl_orders(&shapes),
     );
+    if returned_scrolls {
+        // Includes init-only String RPCs: their INNER envelope changed even if
+        // there are no ordinary response fields. Existing409/reload gate binds it.
+        shared_src.push_str(RETURNED_SCROLL_PROTOCOL_MARKER);
+    }
     let push_mode = report.subscribes_topics || report.publishes;
     let broker_url = broker_url.map(str::trim).filter(|s| !s.is_empty());
     if push_mode {
@@ -5143,6 +5236,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &device_only,
         ssr_model_anno(&file, &src).as_deref(),
         &wire_hash,
+        returned_scrolls,
         &db,
     )?;
     // P2 client persistence: the SESSION projection field NAMES threaded into the
@@ -7839,17 +7933,20 @@ fn tainted_refs_in(
     m: ModuleId,
     tainted: &HashSet<DefId>,
     within: (usize, usize),
+    client_crypto: bool,
 ) -> Vec<(usize, usize)> {
     let resolved = db.resolve(m);
     let mut out: Vec<(usize, usize)> = resolved
         .ref_occs
         .iter()
-        .filter_map(|occ| match &occ.res {
-            hir::Res::Def(d) if tainted.contains(d) => {
-                let (a, b) = (occ.span.range.0 as usize, occ.span.range.1 as usize);
-                (a >= within.0 && b <= within.1).then_some((a, b))
+        .filter_map(|occ| {
+            let (a, b) = (occ.span.range.0 as usize, occ.span.range.1 as usize);
+            if a < within.0 || b > within.1 {
+                return None;
             }
-            _ => None,
+            let server = matches!(&occ.res, hir::Res::Def(d) if tainted.contains(d))
+                || spa_partition::reference_is_server_kernel(db, &occ.res, client_crypto);
+            server.then_some((a, b))
         })
         .collect();
     out.sort();
@@ -7881,6 +7978,8 @@ fn plan_init_rpc(
     tainted_names_here: &HashSet<String>,
     msg_module: Option<ModuleId>,
     ctors: Option<Vec<String>>,
+    returned_scrolls: bool,
+    client_crypto: bool,
 ) -> Result<Option<InitRpcPlan>, String> {
     use syntax::ast::Expr as E;
     let parse = db.module_parse(init_mod);
@@ -7895,7 +7994,7 @@ fn plan_init_rpc(
     let node = decl.syntax();
     let d0 = u32::from(node.text_range().start()) as usize;
     let d1 = u32::from(node.text_range().end()) as usize;
-    let refs = tainted_refs_in(db, init_mod, tainted, (d0, d1));
+    let refs = tainted_refs_in(db, init_mod, tainted, (d0, d1), client_crypto);
     if refs.is_empty() {
         return Ok(None);
     }
@@ -8015,7 +8114,7 @@ fn plan_init_rpc(
         )?);
     }
     let nav = NavNames::of_module(&file, &src);
-    if nav.names_nav(&cmd_text) {
+    if spa_partition::init_reaches_url_navigation(db, init_mod) && nav.names_nav(&cmd_text) {
         residual.push(nav_residual(
             &tuple,
             &src,
@@ -8035,14 +8134,24 @@ fn plan_init_rpc(
         }
         _ => "",
     };
+    let rpc_kind = if returned_scrolls {
+        "rpcScrollHold"
+    } else {
+        "rpc"
+    };
     let rpc = format!(
-        "SpaInitRpc_.rpc SpaInitCodec_.string SpaInitCodec_.string \"/_rpc/{INIT_RPC}\" \"\" {q}Applied{INIT_RPC}"
+        "SpaInitRpc_.{rpc_kind} SpaInitCodec_.string SpaInitCodec_.string \"/_rpc/{INIT_RPC}\" \"\" {q}Applied{INIT_RPC}"
     );
     let call = if residual.is_empty() {
         rpc
     } else {
         imports.push("import Std.Cmd as SpaInitCmd_".to_string());
-        format!("SpaInitCmd_.batch [ {}, {rpc} ]", residual.join(", "))
+        let batch = format!("SpaInitCmd_.batch [ {}, {rpc} ]", residual.join(", "));
+        if returned_scrolls {
+            format!("SpaInitRpc_.scrollRpcScope ({batch})")
+        } else {
+            batch
+        }
     };
     repl.push((cmd_range, call));
     repl.sort_by(|a, b| b.0 .0.cmp(&a.0 .0));
@@ -8950,6 +9059,7 @@ fn gen_backend(
     // every page (`<meta name="sky-wire">`), so a tab from an older deploy is
     // told to reload instead of sending a request the backend cannot read.
     wire_hash: &str,
+    returned_scrolls: bool,
     // The type world, for the shared `Encodable` check on the first-paint model.
     db: &dyn ty::TyDb,
 ) -> Result<String, String> {
@@ -9001,7 +9111,7 @@ fn gen_backend(
     let any_follow = follow
         .map(|(fc, _)| server.iter().any(|(n, _)| fc.branches.contains_key(n)))
         .unwrap_or(false);
-    if any_chaining || any_client_result || any_follow {
+    if any_chaining || any_client_result || any_follow || returned_scrolls {
         add(
             imports,
             &mut import_lines,
@@ -9310,6 +9420,15 @@ fn gen_backend(
         handlers.push_str("forbidden : String -> Response\nforbidden msg =\n    Server.withStatus 403 (Server.text msg)\n\n\n");
     }
 
+    if returned_scrolls {
+        handlers.push_str("spaCollectScrolls_ : any -> String\nspaCollectScrolls_ =\n    Ffi.kernel \"Spa_collectScrolls\"\n\n\nspaInitScrollResponse_ : any -> String -> String\nspaInitScrollResponse_ =\n    Ffi.kernel \"Spa_initScrollResponse\"\n\n\n");
+    }
+    if returned_scrolls {
+        handlers.push_str("spaSsrScrollSettle_ : model -> any -> any -> ( model, Bool, String )\nspaSsrScrollSettle_ =\n    Ffi.kernel \"Spa_ssrSettleFullScrolls\"\n\n\nspaJoinScrolls_ : List String -> String\nspaJoinScrolls_ =\n    Ffi.kernel \"Spa_joinScrolls\"\n\n\nspaSsrPageScrolls_ : String -> String -> String -> String -> Bool -> Bool -> List String -> String -> String\nspaSsrPageScrolls_ =\n    Ffi.kernel \"Spa_ssrPageSeededScrolls\"\n\n\n");
+    }
+    if returned_scrolls {
+        handlers.push_str("spaScrollLegacy_ : Request -> Bool\nspaScrollLegacy_ =\n    Ffi.kernel \"Spa_isLegacyRpc\"\n\n\nspaScrollWireGuard_ : Handler -> Handler\nspaScrollWireGuard_ handler_ req_ =\n    if spaScrollLegacy_ req_ then\n        Task.succeed (Server.withHeader \"X-Sky-Status\" \"reload\" (Server.withStatus 409 (Server.text \"This page must reload before using the returned-scroll protocol\")))\n\n    else\n        handler_ req_\n\n\n");
+    }
     // Server-internal effect chaining (docs/skyspa/auto-split.md). A server
     // branch that returns `Cmd.perform serverTask ToMsg` (where `ToMsg` is
     // dispatched ONLY server-side) must run the WHOLE chain inside its RPC and
@@ -9587,6 +9706,7 @@ fn gen_backend(
     }
     for (name, io) in server {
         let handler = format!("{}Handler", lower_first(name));
+        let route_handler = returned_scroll_route(&handler, returned_scrolls);
         if name == INIT_RPC {
             // `init`'s command, run on the server (see `plan_init_rpc`): the
             // client `init` asks once, the backend runs `init ()`'s command
@@ -9600,7 +9720,14 @@ fn gen_backend(
                 ));
                 format!("{handler}Inner_")
             };
-            let answer = "Task.succeed (Server.json (Codec.toJson Codec.string (spaEncodeFollows_ (spaFollowUps_ spaInitCmd_))))";
+            let init_json = "spaEncodeFollows_ (spaFollowUps_ spaInitCmd_)";
+            let init_json = if returned_scrolls {
+                format!("spaInitScrollResponse_ spaInitCmd_ ({init_json})")
+            } else {
+                init_json.to_string()
+            };
+            let answer =
+                format!("Task.succeed (Server.json (Codec.toJson Codec.string ({init_json})))");
             let answer = if push_mode {
                 format!(
                     "spaInterpretPublish spaBroker spaInitCmd_\n\
@@ -9622,7 +9749,7 @@ fn gen_backend(
                  \x20   {answer}\n\n\n"
             ));
             routes.push(format!(
-                "        , Server.rpc \"POST /_rpc/{name}\" {handler}"
+                "        , Server.rpc \"POST /_rpc/{name}\" {route_handler}"
             ));
             continue;
         }
@@ -9722,17 +9849,28 @@ fn gen_backend(
         };
         // The response value.
         let resp_val = if is_client_result {
-            "{ result = result }".to_string()
+            if returned_scrolls {
+                "{ result = result, spaScroll_ = scrolls_ }".to_string()
+            } else {
+                "{ result = result }".to_string()
+            }
         } else if is_follow {
             let mut parts: Vec<String> = resp_field_names
                 .iter()
                 .map(|f| format!("{f} = {result_model}.{f}"))
                 .collect();
             parts.push("spaFollow_ = follow_".to_string());
+            if returned_scrolls {
+                parts.push("spaScroll_ = scrolls_".to_string());
+            }
             format!("{{ {} }}", parts.join(", "))
         } else {
             // Shared server-leg write-set encode (also emitted by the phase-2 fuzzer).
-            emit_write_set_encode(io, &resp_field_names, result_model)
+            if returned_scrolls {
+                returned_scroll_response(io, &resp_field_names, result_model)
+            } else {
+                emit_write_set_encode(io, &resp_field_names, result_model)
+            }
         };
         // STATELESS SIGNED SESSION write path: when this branch ESTABLISHES an
         // identity field (its write-set intersects the projection), wrap the JSON
@@ -9766,7 +9904,7 @@ fn gen_backend(
                      \x20                       |> Task.andThen (\\_ -> Task.succeed ({json_resp}))"
                 ),
             )
-        } else if is_chaining || is_client_result || is_follow {
+        } else if is_chaining || is_client_result || is_follow || returned_scrolls {
             ("cmd", format!("Task.succeed ({json_resp})"))
         } else {
             ("_", format!("Task.succeed ({json_resp})"))
@@ -9776,8 +9914,11 @@ fn gen_backend(
         // spaChainSettle_ …` for a chaining branch, or `result = spaRunPerform_
         // cmd` for a client-result branch.
         let extra_bind = |indent: &str| -> String {
-            if is_chaining {
-                format!("\n{indent}( mFinal, _ ) =\n{indent}    spaChainSettle_ m2 cmd update\n")
+            let mut extra = if is_chaining {
+                format!(
+                    "\n{indent}( mFinal, {} ) =\n{indent}    spaChainSettle_ m2 cmd update\n",
+                    if returned_scrolls { "cmdScroll_" } else { "_" }
+                )
             } else if is_client_result {
                 format!("\n{indent}result =\n{indent}    spaRunPerform_ cmd\n")
             } else if is_follow {
@@ -9790,7 +9931,20 @@ fn gen_backend(
                 )
             } else {
                 String::new()
+            };
+            if returned_scrolls {
+                let scroll_cmd = if is_chaining {
+                    "cmdScroll_"
+                } else if is_follow {
+                    "cmd3_"
+                } else {
+                    "cmd"
+                };
+                extra.push_str(&format!(
+                    "\n{indent}scrolls_ =\n{indent}    spaCollectScrolls_ {scroll_cmd}\n"
+                ));
             }
+            extra
         };
         let chain_bind_noguard = extra_bind("                ");
         let chain_bind_guard = extra_bind("                        ");
@@ -9854,7 +10008,7 @@ fn gen_backend(
              \x20           Task.succeed (badRequest (Error.toString e))\n\n\n"
         ));
         routes.push(format!(
-            "        , Server.rpc \"POST /_rpc/{name}\" {handler}"
+            "        , Server.rpc \"POST /_rpc/{name}\" {route_handler}"
         ));
     }
     // STATELESS SIGNED SESSION: the framework sign-out endpoint clears `sky_sid`.
@@ -10066,21 +10220,43 @@ fn gen_backend(
         } else {
             seed_base.to_string()
         };
+        let ssr_page = if returned_scrolls {
+            "spaSsrPageScrolls_"
+        } else {
+            "spaSsrPageSeeded"
+        };
+        let ssr_scroll_arg = if returned_scrolls {
+            " (spaJoinScrolls_ [ initScrolls_, requestScrolls_, if navDone_ then navScrolls_ else \"\" ])"
+        } else {
+            ""
+        };
         // The settle chain over the routed model: settle init's read, then the
         // request-seed's read (each runs under the SSR-safe guard). An init
         // command that is not GET-safe is NOT run here; it counts as finished
         // only when it is empty.
         let mut chain = route_base.clone();
         if settle_init {
-            lets.push_str(&format!(
-                "        ( initSettled_, initDone_ ) =\n            spaSsrSettleFull {chain} cmd0 update\n\n"
-            ));
+            lets.push_str(&if returned_scrolls {
+                format!("        ( initSettled_, initDone_, initScrolls_ ) =\n            spaSsrScrollSettle_ {chain} cmd0 update\n\n")
+            } else {
+                format!("        ( initSettled_, initDone_ ) =\n            spaSsrSettleFull {chain} cmd0 update\n\n")
+            });
             chain = "initSettled_".to_string();
         } else {
             lets.push_str("        initDone_ =\n            spaSsrCmdIsNone cmd0\n\n");
         }
+        if returned_scrolls && !settle_init {
+            lets.push_str("        initScrolls_ =\n            \"\"\n\n");
+        }
         if seed_req {
-            chain = format!("spaSsrSettle {chain} cmdSeed_ update");
+            if returned_scrolls {
+                lets.push_str(&format!("        ( requestSettled_, _, requestScrolls_ ) =\n            spaSsrScrollSettle_ {chain} cmdSeed_ update\n\n"));
+                chain = "requestSettled_".into();
+            } else {
+                chain = format!("spaSsrSettle {chain} cmdSeed_ update");
+            }
+        } else if returned_scrolls {
+            lets.push_str("        requestScrolls_ =\n            \"\"\n\n");
         }
         // onNavigate: fire `onNavigate page` for the resolved route, run it
         // through `update` to a (model, cmd), and settle that command — the
@@ -10096,16 +10272,30 @@ fn gen_backend(
                 "        navMsg_ =\n            spaOnNavigate_ preNav_.page\n\n\
                  \x20       ( navModel_, navCmd_ ) =\n            update navMsg_ preNav_\n\n",
             );
-            let settle_expr = "spaSsrSettleFull navModel_ navCmd_ update";
+            let settle_expr = if returned_scrolls {
+                "spaSsrScrollSettle_ navModel_ navCmd_ update"
+            } else {
+                "spaSsrSettleFull navModel_ navCmd_ update"
+            };
+            let nav_pattern = if returned_scrolls {
+                "( resolved, navRan_, navScrolls_ )"
+            } else {
+                "( resolved, navRan_ )"
+            };
+            let denied = if returned_scrolls {
+                "( preNav_, False, \"\" )"
+            } else {
+                "( preNav_, False )"
+            };
             if ssr_guard {
                 lets.push_str(&format!(
-                    "        ( resolved, navRan_ ) =\n            case spaGuard_ navMsg_ preNav_ of\n\
-                     \x20               Err _ ->\n                    ( preNav_, False )\n\n\
+                    "        {nav_pattern} =\n            case spaGuard_ navMsg_ preNav_ of\n\
+                     \x20               Err _ ->\n                    {denied}\n\n\
                      \x20               Ok _ ->\n                    {settle_expr}\n\n"
                 ));
             } else {
                 lets.push_str(&format!(
-                    "        ( resolved, navRan_ ) =\n            {settle_expr}\n\n"
+                    "        {nav_pattern} =\n            {settle_expr}\n\n"
                 ));
             }
             if settle.nav.is_empty() {
@@ -10123,6 +10313,9 @@ fn gen_backend(
             lets.push_str(
                 "        navDone_ =\n            False\n\n        navFields_ =\n            []\n\n",
             );
+        }
+        if returned_scrolls && !settle_nav {
+            lets.push_str("        navScrolls_ =\n            \"\"\n\n");
         }
         lets.push_str(
             "        initFields_ =\n            if initDone_ then\n                spaInitSeedFields_\n\n            else\n                []\n\n",
@@ -10198,14 +10391,14 @@ fn gen_backend(
              \x20   in\n\
              \x20   Task.succeed\n\
              \x20       ({with_status}Server.html\n\
-             \x20           (spaSsrPageSeeded\n\
+             \x20           ({ssr_page}\n\
              \x20               (\"<meta name=\\\"sky-wire\\\" content=\\\"{wire_hash}\\\">\" ++ spaAiEngineMeta_ ++ spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\
              \x20               spaWasmName\n\
              \x20               modelJson\n\
              \x20               initDone_\n\
              \x20               navDone_\n\
-             \x20               (initFields_ ++ navFields_)\n\
+             \x20               (initFields_ ++ navFields_){ssr_scroll_arg}\n\
              \x20           )\n\
              \x20       )\n\n\n"
         ));
@@ -10943,6 +11136,9 @@ model in `view`."
 /// report carries no arm positions (then the head constructor decides).
 #[derive(Default)]
 pub(crate) struct ArmRoutes {
+    /// Actual reachable scroll constructors opt in to response sideband v1.
+    returned_scrolls: bool,
+    scroll_heads: HashSet<String>,
     /// Server arm index → the positional pattern to write (a positional
     /// route), or `None` to keep the source pattern.
     server: HashMap<usize, Option<String>>,
@@ -11074,12 +11270,37 @@ impl NavNames {
 
     /// Whether the text of a command leaf names a Std.Nav command.
     fn names_nav(&self, text: &str) -> bool {
+        // Match identifier/dot tokens, never comments or id string contents.
+        let tokens: Vec<_> = syntax::lex(text)
+            .into_iter()
+            .filter(|t| {
+                !matches!(
+                    t.kind,
+                    SyntaxKind::Whitespace
+                        | SyntaxKind::Newline
+                        | SyntaxKind::LineComment
+                        | SyntaxKind::BlockComment
+                )
+            })
+            .collect();
+        let token_text = |t: &syntax::LexToken| &text[t.start as usize..t.end as usize];
+        let mut names = self.bare.clone();
         if let Some(q) = &self.qualifier {
-            if text.contains(&format!("{q}.")) {
-                return true;
-            }
+            names.extend(
+                ["pushUrl", "replaceUrl", "clearFragment"]
+                    .iter()
+                    .map(|n| format!("{q}.{n}")),
+            );
         }
-        self.bare.iter().any(|n| references_word(text, n))
+        names.iter().any(|name| {
+            let wanted: Vec<_> = syntax::lex(name).into_iter().collect();
+            !wanted.is_empty()
+                && tokens.windows(wanted.len()).any(|window| {
+                    window.iter().zip(&wanted).all(|(a, b)| {
+                        a.kind == b.kind && token_text(a) == &name[b.start as usize..b.end as usize]
+                    })
+                })
+        })
     }
 }
 
@@ -11911,7 +12132,13 @@ fn gen_frontend_update(
             // arrives as its own Msg.
             let payload = emit_build_req(io, model_param, model_field_names);
             let hold = !arm_routes.async_heads.contains(&m);
-            let rpc_fn = if hold { "Spa.rpcHold" } else { "Spa.rpc" };
+            let rpc_fn = if arm_routes.scroll_heads.contains(&m) {
+                "Spa.rpcScrollHold"
+            } else if hold {
+                "Spa.rpcHold"
+            } else {
+                "Spa.rpc"
+            };
             // SPA-3: a follow-up branch whose command holds a `Std.Native`
             // client effect sends it with `Spa.rpcWith`: the client runs that
             // residual from the send-time snapshot (bound to the arm's model
@@ -11949,6 +12176,11 @@ fn gen_frontend_update(
                     residual.join(", ")
                 )
             };
+            let call = if !residual.is_empty() && arm_routes.scroll_heads.contains(&m) {
+                format!("Spa.scrollRpcScope ({call})")
+            } else {
+                call
+            };
             // The arm's client body: as written (a planned or direct-tuple arm
             // of an async constructor), or `( model, rpc )`.
             let body = client_arm_body(&arm, arm_index, &m, src, &call, model_param, arm_routes)?;
@@ -11979,13 +12211,13 @@ fn gen_frontend_update(
                     format!("( {model_param}, Spa.reportRpcFailure e )"),
                 )
             };
+            let init_apply = if arm_routes.returned_scrolls {
+                format!("            case Spa.readInitScrolls spaInitJson_ of\n                Ok ( spaFollowJson_, spaScrollJson_ ) ->\n                    case spaDecodeFollows_ spaFollowJson_ of\n                        Ok spaFollows_ ->\n                            ( {model_param}, Cmd.batch [ Spa.returnedScrolls spaScrollJson_, Spa.followUps spaFollows_ ] )\n\n                        Err e_ ->\n                            {decode_err}\n\n                Err e_ ->\n                    {decode_err}\n")
+            } else {
+                format!("            case spaDecodeFollows_ spaInitJson_ of\n                Ok spaFollows_ ->\n                    ( {model_param}, Spa.followUps spaFollows_ )\n\n                Err e_ ->\n                    {decode_err}\n")
+            };
             arms_out.push_str(&format!(
-                "        Applied{m} (Ok spaInitJson_) ->\n\
-                 \x20           case spaDecodeFollows_ spaInitJson_ of\n\
-                 \x20               Ok spaFollows_ ->\n\
-                 \x20                   ( {model_param}, Spa.followUps spaFollows_ )\n\n\
-                 \x20               Err e_ ->\n\
-                 \x20                   {decode_err}\n\n\
+                "        Applied{m} (Ok spaInitJson_) ->\n{init_apply}\n\
                  \x20       Applied{m} (Err e) ->\n\
                  \x20           {rpc_err}\n\n"
             ));
@@ -11995,11 +12227,14 @@ fn gen_frontend_update(
         // made the arm's own write (an async constructor with a client model
         // half); the server's write-set otherwise.
         let client_made_write = arm_routes.client_model.contains(m);
-        let apply_delta = if client_made_write {
-            format!("            ( {model_param}, Cmd.none )")
-        } else {
-            emit_apply_delta(io, model_param)
-        };
+        let apply_delta =
+            if arm_routes.returned_scrolls && io.writes_whole_model && !client_made_write {
+                returned_scroll_model_apply(model_param, model_field_names)
+            } else if client_made_write {
+                format!("            ( {model_param}, Cmd.none )")
+            } else {
+                emit_apply_delta(io, model_param)
+            };
         // PATTERN-2 (client-result perform): the RPC answered with the task
         // RESULT (`resp.result : List (Result Error T)`, one element when a task
         // ran). DISPATCH the client result Msg with the WHOLE result value into
@@ -12070,6 +12305,11 @@ fn gen_frontend_update(
         } else {
             // Shared client-leg apply-delta (also emitted by the phase-2 fuzzer).
             apply_delta
+        };
+        let apply = if arm_routes.returned_scrolls {
+            format!("            let\n                ( spaScrollModel_, spaScrollCmd_ ) =\n{}\n            in\n                ( spaScrollModel_, Cmd.batch [ Spa.returnedScrolls resp.spaScroll_, spaScrollCmd_ ] )", indent_scroll_apply(&apply, 20))
+        } else {
+            apply
         };
         // The Err arm. When the app declared `App.withRpcError`, route the error
         // INTO `update` via `spaRpcError_ e` so the app's own view can show it
@@ -13931,5 +14171,109 @@ mod import_gate_tests {
             src
         );
         assert!(!gated(src).contains("Std.Db"));
+    }
+}
+
+#[cfg(test)]
+mod returned_scroll_tests {
+    use super::*;
+    #[test]
+    fn url_residual_does_not_capture_scrolls_or_id_text() {
+        let names = NavNames {
+            qualifier: Some("N".into()),
+            bare: vec!["pushUrl".into(), "clearFragment".into()],
+        };
+        for source in [
+            "N.scrollToTop",
+            "N.scrollIntoView \"N.pushUrl\"",
+            "N.scrollIntoView \"pushUrl\"",
+            "N.scrollIntoView \"id\" -- N.replaceUrl\n",
+        ] {
+            assert!(
+                !names.names_nav(source),
+                "scroll/id text became send-time URL effect: {source}"
+            );
+        }
+        for source in [
+            "N.pushUrl \"/x\"",
+            "N.replaceUrl \"#\"",
+            "pushUrl \"/x\"",
+            "clearFragment",
+        ] {
+            assert!(names.names_nav(source));
+        }
+        assert!(!names.names_nav("N.pushUrlSuffix \"/x\""));
+    }
+    #[test]
+    fn returned_response_retains_order_whole_empty_and_boxed_shapes() {
+        for whole in [false, true] {
+            let io = BranchIo {
+                writes_whole_model: whole,
+                ..Default::default()
+            };
+            assert_eq!(
+                returned_scroll_response(&io, &[], "m2"),
+                "{ spaScroll_ = scrolls_ }"
+            );
+            assert_eq!(
+                returned_scroll_response(&io, &["b".into(), "a".into()], "m2"),
+                "{ b = m2.b, a = m2.a, spaScroll_ = scrolls_ }"
+            );
+            assert_eq!(
+                returned_scroll_response(&io, &[spa_partition::BOXED_MODEL_FIELD.into()], "m2"),
+                format!(
+                    "{{ {} = m2, spaScroll_ = scrolls_ }}",
+                    spa_partition::BOXED_MODEL_FIELD
+                )
+            );
+        }
+        assert_eq!(
+            returned_scroll_model_apply("model", &[]),
+            "( model, Cmd.none )"
+        );
+        assert_eq!(
+            returned_scroll_model_apply("model", &["b".into(), "a".into()]),
+            "( { model | b = resp.b, a = resp.a }, Cmd.none )"
+        );
+        assert_eq!(
+            returned_scroll_model_apply("model", &[spa_partition::BOXED_MODEL_FIELD.into()]),
+            format!("( resp.{}, Cmd.none )", spa_partition::BOXED_MODEL_FIELD)
+        );
+    }
+    #[test]
+    fn init_only_inner_protocol_and_boot_data_change_existing_wire_hash() {
+        let routes = vec![(INIT_RPC.into(), BranchIo::default())];
+        let before = "module Shared exposing (..)\n";
+        let mut after = before.to_string();
+        after.push_str(RETURNED_SCROLL_PROTOCOL_MARKER);
+        assert_ne!(
+            wire_schema_hash(before, &routes),
+            wire_schema_hash(&after, &routes)
+        );
+        assert_eq!(
+            wire_schema_hash(before, &routes),
+            wire_schema_hash(before, &routes)
+        );
+    }
+    #[test]
+    fn scroll_routes_guard_legacy_before_handler_without_changing_old_apps() {
+        assert_eq!(returned_scroll_route("handler", false), "handler");
+        assert_eq!(
+            returned_scroll_route("handler", true),
+            "(spaScrollWireGuard_ handler)"
+        );
+    }
+    #[test]
+    fn wrapping_apply_preserves_nested_sky_layout() {
+        let original="            case resp.result of\n                [ result ] ->\n                    update (Got result) model\n\n                _ ->\n                    ( model, Cmd.none )";
+        let indented = indent_scroll_apply(original, 20);
+        assert!(indented.starts_with("                    case resp.result of\n                        [ result ] ->\n                            update"));
+        let source=format!("module Main exposing (..)\nupdate msg model =\n    case msg of\n        Applied (Ok resp) ->\n            let\n                ( m, c ) =\n{indented}\n            in\n                ( m, Cmd.batch [ Spa.returnedScrolls resp.spaScroll_, c ] )\n");
+        let parsed = syntax::parse(&source, base::FileId(0));
+        assert!(
+            parsed.errors().is_empty(),
+            "generated apply layout: {:?}",
+            parsed.errors()
+        );
     }
 }

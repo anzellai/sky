@@ -104,6 +104,7 @@ type spaTopicSub struct {
 // starts any initial subscriptions, then parks the Go runtime so the browser
 // can deliver events. It never returns.
 func spaRun(cfg any) any {
+	spaScrollCommands = spaScrollQueue{}
 	spaProfileInit()
 	// The Sky.Spa target always emits an rt.SpaFns (typed adapter closures);
 	// asSpaFns unwraps it reflect-free. A missing/foreign config yields nil
@@ -131,6 +132,9 @@ func spaRun(cfg any) any {
 	// case persistence is simply off. Read once here (spa_persist_wasm.go).
 	spaGuard = fieldOrNil(cfg, "Guard")
 	spaSch = newSpaSched(spaRpcNonce())
+	spaSch.domEpoch = func() uint64 { return spaScrollCommands.epoch }
+	spaSch.scrollAuthority = func() uint64 { return spaScrollCommands.authority }
+	spaSch.awaitDOM = spaScrollCommands.afterRender
 	spaSch.onTickNet = spaTicks.network
 	// The input Msgs that may run during a given hold (the split's
 	// commutation table, Spa.withHoldFree). Absent: every Msg waits.
@@ -306,6 +310,7 @@ func spaRun(cfg any) any {
 	// the (deep-link-restored) scroll position.
 	spaSyncURLFromDOM(false)
 	spaLastSettledPath = spaCurrentPath()
+	spaConsumeBootScrolls()
 	interpretCmd(asCmdT(cmd0), spaDispatch)
 	if navCmd != nil {
 		interpretCmd(asCmdT(navCmd), spaDispatch)
@@ -454,6 +459,9 @@ func spaFireOnNavigate() {
 // URL) and by popstate. When an onNavigate hook is set, its step does the
 // render; otherwise we render + reconcile here.
 func spaNavigate(path string) {
+	// popstate/native navigation can run outside the Msg scheduler, including
+	// while a scroll-capable request is in flight. Revoke its old scroll first.
+	spaScrollCommands.supersede()
 	spaApplyURL(path)
 	if spaOnNavigate != nil {
 		spaFireOnNavigate()
@@ -482,6 +490,11 @@ func spaNavigate(path string) {
 		func(prev any) { spaModel = prev },
 		spaReportPanic,
 	)
+	// DOM cancellation may release a scroll hold. Drain only after navigation's
+	// own URL/scroll/subscription post-work, never re-enter it from mid-paint.
+	if spaSch != nil {
+		spaSch.drain(step)
+	}
 }
 
 // spaInstallRouter wires the History-API client router: a document-level click
@@ -796,7 +809,19 @@ func spaReportPanic(stage string, r any) {
 // previous tree (diffTrees) and applies only the resulting patches, so DOM node
 // identity — and therefore a focused input's focus/caret/uncommitted value — is
 // preserved across updates.
-func renderCurrent() {
+// spaScrollCommands belongs to this browser app. Each completed normal paint
+// supersedes older held-frame commands; select catch-up continues the latest.
+var spaScrollCommands spaScrollQueue
+
+func renderCurrent() { renderCurrentWithScroll(false) }
+
+func renderCurrentWithScroll(continuation bool) {
+	painted, held := false, false
+	defer func() {
+		if !painted {
+			spaScrollCommands.cancel()
+		}
+	}()
 	started := spaProfileBeginPhase()
 	app := spaViewMemoState
 	if app == nil {
@@ -860,12 +885,17 @@ func renderCurrent() {
 			// payload (a held region keeps the handlers its DOM was built with).
 			spaNodeHandlers.refresh(plan.DOM)
 			spaPrev = plan.DOM
+			painted, held = true, plan.Held != 0
 			return
 		}
 		spaInstallSelectTracker()
 		NativeInstallCaretTracker()
 		spaPrev = &vn
+		painted = true
 	})
+	if painted {
+		spaScrollCommands.committed(held, continuation, spaApplyScroll)
+	}
 }
 
 // spaReplayHeldInput calls the boot loader's `__skyHydrated` (spa_boot.go)
@@ -1073,7 +1103,16 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 	switch cmd.kind {
 	case "", "none":
 		return
+	case "scrollRpcScope":
+		// A source-bound mixed URL residual/RPC batch captures authority BEFORE
+		// its first effect; construction of the wrapper itself is pure.
+		if spaSch != nil {
+			spaSch.withScrollAuthority(func() { interpretCmd(asCmdT(cmd.payload), dispatch) })
+		}
 	case "batch":
+		if spaIsReturnedScrolls(cmd) && spaSch != nil && !spaSch.allowReturnedScrolls() {
+			return
+		}
 		for _, c := range cmd.batch {
 			interpretCmd(asCmdT(c), dispatch)
 		}
@@ -1101,8 +1140,8 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 		// was built from the model the Msg ran on, so it is sent now, and
 		// several can be in flight. A hold RPC holds the Msg queue until it
 		// answers (spa_rpcqueue.go).
-		hold, _ := cmd.payload.(bool)
-		j := spaSch.issue(cmd.task, cmd.toMsg, hold)
+		hold, dom := spaRpcHoldFlags(cmd.payload)
+		j := spaSch.issueWithDOM(cmd.task, cmd.toMsg, hold, dom)
 		go spaRpcSend(j)
 	case "followUps":
 		// The Msgs a server branch's command produced on the backend (SPA-3):
@@ -1113,6 +1152,12 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 		// Cmd.toIsland: straight to the island runtime (island_wasm.go).
 		if ic, ok := islandCmdOf(cmd); ok {
 			spaIslandCommand(ic)
+		}
+	case "scroll":
+		// Rendering has completed synchronously. Only an actually held DOM
+		// delays this frame's command; no goroutine or animation frame races it.
+		if sc, ok := scrollCmdOf(cmd); ok {
+			spaScrollCommands.command(sc, spaApplyScroll)
 		}
 	case "nav":
 		// Std.Nav.pushUrl / replaceUrl (nav.go). Applied after this step
@@ -1533,4 +1578,34 @@ func spaInstallViewMemoLifecycle() {
 	spaViewMemoPageHide = js.FuncOf(func(js.Value, []js.Value) any { spaResetViewMemo(); return nil })
 	js.Global().Call("addEventListener", "pagehide", spaViewMemoPageHide)
 	spaViewMemoLifecycleInstalled = true
+}
+
+// spaApplyScroll calls the shared, same-origin boot helper without dispatching
+// a Msg or changing model/focus. Missing helpers/targets are harmless.
+func spaApplyScroll(command scrollCmd) {
+	defer func() {
+		if r := recover(); r != nil {
+			spaReportPanic("scroll", r)
+		}
+	}()
+	fn := js.Global().Get("__skyScrollApply")
+	if fn.Type() != js.TypeFunction {
+		return
+	}
+	fn.Invoke(js.ValueOf(map[string]any{"target": command.Target, "top": command.Top, "ifNeeded": command.IfNeeded}))
+}
+
+// spaConsumeBootScrolls consumes only the framework SSR delivery on #app.
+// Removing before parsing gives exact-once behavior even for a malformed wire
+// (the decoder emits the existing loud spaError command without losing model).
+func spaConsumeBootScrolls() {
+	if !spaRoot.Truthy() {
+		return
+	}
+	raw := spaRoot.Call("getAttribute", "data-sky-scrolls")
+	if raw.Type() != js.TypeString {
+		return
+	}
+	spaRoot.Call("removeAttribute", "data-sky-scrolls")
+	interpretCmd(asCmdT(Spa_scrollCommands(raw.String())), spaDispatch)
 }

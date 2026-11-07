@@ -38,6 +38,9 @@ comments, identifiers, or quoted output.
 
 @AGENTS.md
 
+For scrolling from an update, follow the `Std.Nav` guidance in AGENTS.md.
+Use its typed post-render commands for forms and RPC answers.
+
 ## Claude Code — operational notes
 
 Everything about *writing* Sky is in AGENTS.md. This section covers only what

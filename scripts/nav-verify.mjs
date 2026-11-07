@@ -14,7 +14,8 @@
 // Exit: 0 PASS · 2 FAIL · 1 harness error.
 import pw from "playwright";
 import { spawn } from "node:child_process";
-import { dirname } from "node:path";
+import { dirname, resolve, relative } from "node:path";
+import { writeFile, unlink, lstat, readFile } from "node:fs/promises";
 import { guardChild } from "./lib/child-guard.mjs";
 
 function arg(name, def) {
@@ -38,18 +39,40 @@ function check(step, ok, detail) {
   if (!ok) failures.push(step);
 }
 
+const ownedFiles = [];
 async function startApp(bin, port) {
-  const env = { ...process.env, PORT: String(port), SKY_LIVE_PORT: String(port), SKY_CSP: "strict" };
+  const fixtureRoot = resolve(arg('--fixture-root', ''));
+  const cwd = resolve(dirname(dirname(bin)));
+  const known = ['.skyapp/web-app/.split/backend/sky-out/app', '.skyapp/web/sky-out/app'];
+  if (!known.some(p => resolve(fixtureRoot, p) === resolve(bin))) throw new Error('UnexpectedFixtureBinary');
+  if (!arg('--fixture-root', '') || relative(fixtureRoot, cwd).startsWith('..') || !relative(fixtureRoot, cwd)) throw new Error('InvalidOwnedFixtureRoot');
+  for (const [name, value] of [['nav-scroll-target.txt', 'part-'], ['nav-scroll-rpc.txt', 'rpc-target']]) {
+    const path = resolve(cwd, name);
+    await writeFile(path, value, {flag:'wx', mode:0o600});
+    const stat = await lstat(path);
+    ownedFiles.push({path, value, ino:stat.ino, dev:stat.dev});
+  }
+  const env = { PATH: "/usr/bin:/bin", LANG: "C", PORT: String(port), SKY_LIVE_PORT: String(port), SKY_CSP: "strict" };
   const proc = guardChild(spawn(bin, [], { cwd: dirname(dirname(bin)), env }));
   let log = "";
   proc.stdout.on("data", (d) => (log += d));
   proc.stderr.on("data", (d) => (log += d));
   const deadline = Date.now() + 30000;
   while (!/listening/i.test(log)) {
-    if (Date.now() > deadline || proc.exitCode !== null) throw new Error(`${bin} never listened:\n${log}`);
+    if (Date.now() > deadline || proc.exitCode !== null) throw new Error("FixtureDidNotListen");
     await new Promise((r) => setTimeout(r, 100));
   }
   return { proc, log: () => log };
+}
+
+async function stopApp(app) {
+  if (app.proc.exitCode !== null || app.proc.signalCode !== null) return;
+  const exited = new Promise(resolve => app.proc.once('exit', resolve));
+  app.proc.kill('SIGTERM');
+  let timer;
+  const completed = await Promise.race([exited.then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), 5000); })]);
+  clearTimeout(timer);
+  if (!completed) { app.proc.kill('SIGKILL'); await exited; }
 }
 
 async function launch(name) {
@@ -201,6 +224,217 @@ async function plainScenario(browserName, target, port) {
   }
 }
 
+async function installScrollWitness(context) {
+  await context.addInitScript(() => {
+          const traces = [];
+          Object.defineProperty(window, '__navScrollTraces', { value: traces });
+          let implementation;
+          Object.defineProperty(window, '__skyScrollApply', {
+            configurable: true,
+            get() { return implementation; },
+            set(fn) {
+              implementation = function(command) {
+                const snapshot = () => {
+                  const sheet = document.getElementById('sheet');
+                  const outer = document.getElementById('outer');
+                  const node = document.getElementById(command?.target);
+                  const rect = node?.getBoundingClientRect();
+                  const sr = sheet?.getBoundingClientRect();
+                  return {
+                    x: scrollX, y: scrollY, bodyX: document.body?.scrollLeft, bodyY: document.body?.scrollTop,
+                    sheetX: sheet?.scrollLeft, sheetY: sheet?.scrollTop,
+                    outerX: outer?.scrollLeft, outerY: outer?.scrollTop,
+                    targetTop: rect?.top ?? null,
+                    portTop: sr ? sr.top + sheet.clientTop : null,
+                    portHeight: sheet?.clientHeight,
+                    state: document.getElementById('state')?.textContent ?? '',
+                  };
+                };
+                if (typeof window.__navScrollSetup === 'function') { const setup = window.__navScrollSetup; window.__navScrollSetup = null; setup(); }
+                const before = snapshot();
+                const result = fn.apply(this, arguments);
+                if (traces.length >= 128) throw new Error('ScrollTraceOverflow');
+                traces.push({ target: command?.target ?? null, top: command?.top === true, before, after: snapshot() });
+                return result;
+              };
+            },
+          });
+        });
+}
+
+// Scroll witnesses are captured synchronously at the actual command boundary.
+// Waiting for a trace NEVER turns an eventual smooth animation into a pass.
+async function scrollScenario(browserName, target, url) {
+  const browser = await launch(browserName);
+  const { defaultBrowserType, ...phone } = pw.devices['iPhone 13'];
+  try {
+    for (const reducedMotion of ['no-preference', 'reduce']) {
+      const context = await browser.newContext({ ...phone, reducedMotion });
+      try {
+        await installScrollWitness(context);
+        const page = await context.newPage();
+        const errors = [];
+        page.on('pageerror', () => errors.push(1));
+        page.on('console', message => {
+          if(message.type() !== 'error') return;
+          // Fixed public classes only; never retain or print raw browser text.
+          if(/(?:^|[^A-Za-z0-9_])(ScrollFailure|ScrollPayloadRejected|ScrollViewMissing|SpaScrollWire|ScrollQueueOverflow)(?:$|[^A-Za-z0-9_])/.test(message.text())) errors.push(1);
+        });
+        await page.goto(url, { waitUntil: 'load' });
+        await page.locator('#next-part').waitFor();
+        await page.evaluate(() => {
+          document.documentElement.style.cssText += ';overflow-anchor:none;scroll-behavior:smooth;';
+          document.body.style.overflowAnchor = 'none';
+          for (const el of document.querySelectorAll('#sheet *,#outer *')) el.style.flexShrink = '0';
+          window.__navMarker = 1;
+        });
+        const tag = `${target}/${browserName}/${reducedMotion}`;
+        const original = await loc(page);
+        async function fire(id, expected) {
+          const count = await page.evaluate(() => __navScrollTraces.length);
+          await page.evaluate(id => document.getElementById(id).click(), id);
+          await page.waitForFunction(n => __navScrollTraces.length > n, count);
+          const trace = await page.evaluate(n => __navScrollTraces[n], count);
+          check(`${tag} command target ${id}`, expected(trace), 'synchronous command witness');
+          return trace;
+        }
+        const unchanged = t => ['x','y','outerX','outerY','sheetX','sheetY'].every(k => t.before[k] === t.after[k]);
+        const isolated = t => ['x','y','outerX','outerY','sheetX'].every(k => t.before[k] === t.after[k]);
+        const aligned = t => t.after.targetTop !== null && Math.abs(t.after.targetTop - t.after.portTop - 18 - (t.after.portHeight * .1 + 5)) <= 1.5;
+        await page.evaluate(() => {
+          const s = document.getElementById('sheet'), o = document.getElementById('outer');
+          o.scrollTo({left: 35, top: 35, behavior: 'instant'});
+          s.scrollTo({left: 25, top: 0, behavior: 'instant'});
+          scrollTo({left: 45, top: 40, behavior: 'instant'});
+        });
+        check(`${tag} new target absent`, await page.locator('#part-1').count() === 0, 'before update');
+        check(`${tag} nonzero window horizontal setup`, await page.evaluate(() => scrollX > 0), 'real horizontal preservation premise');
+        const first = await fire('next-part', t => t.target === 'part-1' && /PART=1/.test(t.after.state));
+        check(`${tag} immediate margin/calc-padding alignment`, aligned(first), 'no animation wait');
+        check(`${tag} nearest box preserves outer/window/x`, isolated(first), 'exact offsets');
+        const after = await loc(page);
+        check(`${tag} same-address new render`, after.href === original.href && after.len === original.len && after.marker, 'history and realm unchanged');
+        await fire('needed', t => t.target === 'part-1' && unchanged(t));
+        await fire('missing', t => t.target === 'absent-target' && unchanged(t));
+        await fire('hidden', t => t.target === 'hidden-target' && unchanged(t));
+        const server = await fire('server-part', t => t.target === 'part-2' && /PART=2/.test(t.after.state));
+        check(`${tag} server-only delayed File.read scroll is post-render`, aligned(server) && isolated(server), 'new server-derived target');
+        const n = await page.evaluate(() => __navScrollTraces.length);
+        await page.evaluate(() => {
+          document.getElementById('scroll-rpc').click();
+          document.getElementById('move-target').click();
+        });
+        await page.waitForFunction(n => __navScrollTraces.length > n, n);
+        const rpc = await page.evaluate(n => __navScrollTraces[n], n);
+        check(`${tag} no-write RPC scroll precedes later pure movement`, rpc.target === 'rpc-target' && /MOVED=0/.test(rpc.after.state) && aligned(rpc), 'same physical id, strict command boundary');
+        await page.waitForFunction(() => /MOVED=1/.test(document.getElementById('state').textContent));
+        check(`${tag} native anchoring disabled`, await page.evaluate(y => document.getElementById('sheet').scrollTop === y, rpc.after.sheetY), 'later layout cannot repair order');
+        if (target === 'web:app') {
+          const held = await page.evaluate(() => {
+            const n = __navScrollTraces.length;
+            document.getElementById('held-select').focus();
+            document.getElementById('next-part').click();
+            document.getElementById('next-part').click();
+            return n;
+          });
+          // Two messages are processed while the select holds ancestor patches.
+          await waitState(page, s => /PART=4/.test(s), 10000);
+          check(`${tag} held select defers target commit`, await page.locator('#part-4').count() === 0 && await page.evaluate(n => __navScrollTraces.length === n, held), 'no precommit scroll');
+          await page.evaluate(() => document.getElementById('held-select').blur());
+          await page.waitForFunction(n => __navScrollTraces.length > n, held);
+          const heldTraces = await page.evaluate(n => __navScrollTraces.slice(n), held);
+          check(`${tag} select supersession scrolls only committed latest target`, heldTraces.length === 1 && heldTraces[0].target === 'part-4' && aligned(heldTraces[0]), 'latest frame only');
+          const serverHeld = await page.evaluate(() => {
+            const n = __navScrollTraces.length;
+            document.getElementById('held-select').focus();
+            document.getElementById('server-part').click();
+            document.getElementById('next-part').click();
+            return n;
+          });
+          const heldState = await waitState(page, s => /PART=5/.test(s), 10000);
+          check(`${tag} RPC hold retains later message until actual DOM commit`, /PART=5/.test(heldState) && await page.evaluate(n => __navScrollTraces.length === n, serverHeld), 'server result staged, next not released');
+          await page.evaluate(() => document.getElementById('held-select').blur());
+          await page.waitForFunction(n => __navScrollTraces.length >= n + 2, serverHeld);
+          const committed = await page.evaluate(n => __navScrollTraces.slice(n), serverHeld);
+          check(`${tag} RPC select release commits then processes next`, committed.length === 2 && committed[0].target === 'part-5' && committed[1].target === 'part-6' && committed.every(aligned), 'ordered postcommit commands');
+        }
+        const top = await fire('top', t => t.top && t.after.y === 0 && t.after.x === t.before.x && t.after.sheetY === t.before.sheetY && t.after.outerY === t.before.outerY);
+        check(`${tag} explicit top is instant with CSS smooth`, top.after.y === 0, 'synchronous result');
+        // Public geometry fixture is applied at the actual command boundary,
+        // after any Live replacement. It changes layout only, never scroll logic.
+        for (const mode of ['viewport-propagated','root-clip','root-x-clip','body-containment','root-containment']) {
+          await page.evaluate(mode => {
+            window.__navScrollSetup = () => {
+              const html=document.documentElement, body=document.body;
+              html.style.cssText += ';overflow-anchor:none;contain:none;overflow:visible;scroll-behavior:smooth;';
+              body.style.cssText += ';overflow-anchor:none;contain:none;height:240px;width:340px;overflow:auto;scroll-behavior:smooth;';
+              if(mode==='root-clip')html.style.overflow='clip';
+              if(mode==='root-x-clip'){html.style.overflowX='clip';html.style.overflowY='visible';}
+              if(mode==='body-containment')body.style.contain='layout';
+              if(mode==='root-containment')html.style.contain='layout';
+              const target=document.querySelector('[id^="part-"]');
+              for(let el=target?.parentElement;el&&el!==body;el=el.parentElement){el.style.overflow='visible';el.style.height='auto';el.style.maxHeight='none';el.style.flexShrink='0';}
+              scrollTo({left:0,top:0,behavior:'instant'});body.scrollTo({left:0,top:0,behavior:'instant'});
+            };
+          }, mode);
+          const rootCase = await fire('current', t => typeof t.target==='string' && t.target.startsWith('part-'));
+          check(`${tag} ${mode} selects intended vertical port`,
+            mode==='viewport-propagated'
+              ? rootCase.after.y>0 && rootCase.after.bodyY===0
+              : rootCase.after.bodyY>0 && rootCase.after.y===0,
+            'body is a scroll box unless overflow actually propagates');
+        }
+        check(`${tag} no scroll errors`, errors.length === 0, 'classified public fixture');
+      } finally { await context.close(); }
+    }
+  } finally { await browser.close(); }
+}
+
+// Same browser context intentionally shares the Live session cookie. Shared
+// server-model delivery is proved by a new Part appearing in BOTH documents;
+// only the issuing document may receive the accompanying scroll command.
+async function liveOriginScenario(browserName, url) {
+  const browser = await launch(browserName);
+  const { defaultBrowserType, ...phone } = pw.devices['iPhone 13'];
+  const context = await browser.newContext({ ...phone, reducedMotion:'reduce' });
+  try {
+    await installScrollWitness(context);
+    const first=await context.newPage();
+    await first.goto(url,{waitUntil:'load'});await first.locator('#next-part').waitFor();
+    const second=await context.newPage();
+    await second.goto(url,{waitUntil:'load'});await second.locator('#next-part').waitFor();
+    const originErrors=[];
+    for(const page of [first,second]) {
+      page.on('pageerror',()=>originErrors.push(1));
+      page.on('console',message=>{if(message.type()==='error'&&/(?:^|[^A-Za-z0-9_])(ScrollFailure|ScrollPayloadRejected|ScrollViewMissing|SpaScrollWire|ScrollQueueOverflow)(?:$|[^A-Za-z0-9_])/.test(message.text()))originErrors.push(1)});
+    }
+    for(const page of [first,second]) await page.evaluate(() => {
+      document.documentElement.style.overflowAnchor='none';document.body.style.overflowAnchor='none';
+      for(const el of document.querySelectorAll('#outer,#sheet,#sheet *'))el.style.overflowAnchor='none';
+    });
+    const initial=await state(first);const next=Number(field(initial,'PART'))+1;
+    const beforeFirst=await first.evaluate(()=>__navScrollTraces.length);
+    const beforeSecond=await second.evaluate(()=>__navScrollTraces.length);
+    await first.evaluate(()=>document.getElementById('next-part').click());
+    await first.waitForFunction(n=>__navScrollTraces.length>n,beforeFirst);
+    await waitState(second,s=>Number(field(s,'PART'))===next,10000);
+    check(`live/${browserName} two tabs share actual server model`, Number(field(await state(second),'PART'))===next,'same new Part delivered by SSE');
+    check(`live/${browserName} model broadcast does not broadcast scroll`,await second.evaluate(n=>__navScrollTraces.length===n,beforeSecond),'other document receives no scroll');
+    const firstCount=await first.evaluate(()=>__navScrollTraces.length);
+    const secondCount=await second.evaluate(()=>__navScrollTraces.length);
+    await second.evaluate(()=>document.getElementById('scroll-rpc').click());
+    await second.waitForFunction(n=>__navScrollTraces.length>n,secondCount);
+    const own=await second.evaluate(n=>__navScrollTraces[n],secondCount);
+    check(`live/${browserName} scroll-only RPC returns to origin tab`,own.target==='rpc-target','issuing document receives delayed command');
+    // A later model publication is a delivery fence for the observer tab.
+    // This avoids treating a briefly absent, delayed wrong-origin command as a pass.
+    await second.evaluate(()=>document.getElementById('next-part').click());
+    await waitState(first,s=>Number(field(s,'PART'))===next+1,10000);
+    check(`live/${browserName} origin exclusion survives later SSE publication`,Number(field(await state(first),'PART'))===next+1&&await first.evaluate(n=>__navScrollTraces.length===n,firstCount),'shared model delivery fence, no foreign scroll');
+    check(`live/${browserName} origin cases have no scroll errors`,originErrors.length===0,'fixed classes and page errors only');
+  } finally { await context.close();await browser.close(); }
+}
+
 let apps = [];
 try {
   const results = {};
@@ -213,8 +447,10 @@ try {
     for (const b of BROWSERS) {
       results[`${target}/${b}`] = await scenario(b, target, `http://127.0.0.1:${port}/`, app);
       await plainScenario(b, target, port);
+      await scrollScenario(b, target, `http://127.0.0.1:${port}/`);
+      if(target==='live')await liveOriginScenario(b, `http://127.0.0.1:${port}/`);
     }
-    app.proc.kill("SIGKILL");
+    await stopApp(app);
   }
   for (const b of BROWSERS) {
     const s = results[`web:app/${b}`];
@@ -229,9 +465,14 @@ try {
   process.exitCode = failures.length ? 2 : 0;
 } catch (e) {
   console.error("HARNESS ERROR:", e.message);
-  for (const a of apps) console.error(a.log().slice(-2000));
+  console.error("Public fixture failure; child output retained in memory only.");
   process.exitCode = 1;
 } finally {
-  for (const a of apps) a.proc.kill("SIGKILL");
+  for (const a of apps) await stopApp(a);
+  for (const f of ownedFiles) {
+    const stat = await lstat(f.path);
+    if (stat.ino !== f.ino || stat.dev !== f.dev || await readFile(f.path, 'utf8') !== f.value) throw new Error('OwnedFixtureFileChanged');
+    await unlink(f.path);
+  }
   process.exit(process.exitCode ?? 1);
 }
