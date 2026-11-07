@@ -327,3 +327,151 @@ func TestScrollRPCScopeRestoresAfterPanic(t *testing.T) {
 		t.Fatal("scope panic poisoned next request")
 	}
 }
+
+// Cold unseeded boot can issue init and pre-paint onNavigate RPC commands
+// outside drain, before either result arrives. Both are real marked holds.
+func TestScrollRPCBootWaitsForBothMarkedReplies(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(map[bool]string{false: "init-first", true: "navigation-first"}[reverse], func(t *testing.T) {
+			s, q := scrollSchedulerFixture()
+			var order []string
+			apply := func(c scrollCmd) { order = append(order, "scroll:"+c.Target) }
+			run := func(msg any) {
+				name := msg.(string)
+				order = append(order, name)
+				if name != "Next" {
+					q.committed(false, false, apply)
+					if s.allowReturnedScrolls() {
+						q.command(scrollCmd{Target: name}, apply)
+					}
+				}
+			}
+			init := s.issueWithDOM(nil, nil, true, true)
+			nav := s.issueWithDOM(nil, nil, true, true)
+			first, second := init, nav
+			if reverse {
+				first, second = nav, init
+			}
+			s.dispatch("Next", run)
+			s.settle(first, "FirstApplied", run)
+			for _, name := range order {
+				if name == "Next" {
+					t.Fatal("Next overtook the other marked boot request")
+				}
+			}
+			s.settle(second, "SecondApplied", run)
+			want := []string{"FirstApplied", "scroll:FirstApplied", "SecondApplied", "scroll:SecondApplied", "Next"}
+			if s.held() || s.pending() || !reflect.DeepEqual(order, want) {
+				t.Fatalf("both marked replies must commit before Next: %v", order)
+			}
+		})
+	}
+}
+
+func TestScrollRPCBootRetryAndTerminalErrorKeepOtherHolds(t *testing.T) {
+	for _, terminal := range []bool{false, true} {
+		t.Run(map[bool]string{false: "retry-success", true: "terminal-error"}[terminal], func(t *testing.T) {
+			s, q := scrollSchedulerFixture()
+			var order []string
+			apply := func(c scrollCmd) { order = append(order, "scroll:"+c.Target) }
+			run := func(msg any) {
+				name := msg.(string)
+				order = append(order, name)
+				q.committed(false, false, apply)
+				if name == "InitApplied" || name == "RetryApplied" {
+					q.command(scrollCmd{Target: name}, apply)
+				}
+			}
+			init := s.issueWithDOM(nil, nil, true, true)
+			nav := s.issueWithDOM(nil, nil, true, true)
+			s.dispatch("Next", run)
+			s.report(nav, "NetworkErr", run)
+			if !s.held() || !reflect.DeepEqual(order, []string{"NetworkErr"}) {
+				t.Fatal("secondary marked request must report without releasing either hold")
+			}
+			s.settle(init, "InitApplied", run)
+			if !s.held() || !s.pending() {
+				t.Fatal("init completion released the other retrying request")
+			}
+			for _, name := range order {
+				if name == "Next" {
+					t.Fatal("Next overtook pending retry")
+				}
+			}
+			last := "RetryApplied"
+			if terminal {
+				last = "TerminalErr"
+			}
+			s.settleWithDOM(nav, last, run, !terminal)
+			want := []string{"NetworkErr", "InitApplied", "scroll:InitApplied", last}
+			if !terminal {
+				want = append(want, "scroll:RetryApplied")
+			}
+			want = append(want, "Next")
+			if s.held() || s.pending() || !reflect.DeepEqual(order, want) {
+				t.Fatalf("retry/error release order: %v", order)
+			}
+		})
+	}
+}
+
+func TestScrollRPCBootHeldResultsSupersedeOnlyTheirScrolls(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(map[bool]string{false: "init-first", true: "navigation-first"}[reverse], func(t *testing.T) {
+			s, q := scrollSchedulerFixture()
+			var order []string
+			apply := func(c scrollCmd) { order = append(order, "scroll:"+c.Target) }
+			run := func(msg any) {
+				name := msg.(string)
+				order = append(order, name)
+				if name != "Next" {
+					q.committed(true, false, apply)
+					q.command(scrollCmd{Target: name}, apply)
+				}
+			}
+			init := s.issueWithDOM(nil, nil, true, true)
+			nav := s.issueWithDOM(nil, nil, true, true)
+			first, second := init, nav
+			if reverse {
+				first, second = nav, init
+			}
+			s.dispatch("Next", run)
+			s.settle(first, "FirstApplied", run)
+			s.settle(second, "SecondApplied", run)
+			if !s.held() || !reflect.DeepEqual(order, []string{"FirstApplied", "SecondApplied"}) {
+				t.Fatalf("result must bypass other marked/DOM holds without releasing Next: %v", order)
+			}
+			q.committed(false, true, apply)
+			s.drain(run)
+			want := []string{"FirstApplied", "SecondApplied", "scroll:SecondApplied", "Next"}
+			if s.held() || s.pending() || !reflect.DeepEqual(order, want) {
+				t.Fatalf("latest held scroll then Next: %v", order)
+			}
+		})
+	}
+}
+
+func TestScrollRPCMarkedPeerBlocksLegacyHoldFreeExemption(t *testing.T) {
+	s, _ := scrollSchedulerFixture()
+	s.setHoldFree([]string{"Legacy Input"})
+	legacy := s.issue(nil, nil, true)
+	legacy.name = "Legacy"
+	marked := s.issueWithDOM(nil, nil, true, true)
+	if s.holdFreeNow(SkyADT{SkyName: "Input"}) {
+		t.Fatal("legacy hold-free proof does not cover a simultaneous marked request")
+	}
+	var order []string
+	run := func(msg any) { order = append(order, msg.(string)) }
+	s.dispatch("Next", run)
+	s.settle(marked, "MarkedApplied", run)
+	if !s.held() || !reflect.DeepEqual(order, []string{"MarkedApplied"}) {
+		t.Fatal("marked result must run while preserving legacy hold")
+	}
+	if s.holdFreeNow(SkyADT{SkyName: "Input"}) {
+		t.Fatal("queued Next must still prevent a legacy hold-free bypass")
+	}
+	s.settle(legacy, "LegacyApplied", run)
+	if s.held() || !reflect.DeepEqual(order, []string{"MarkedApplied", "LegacyApplied", "Next"}) {
+		t.Fatalf("legacy behavior changed: %v", order)
+	}
+}

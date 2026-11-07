@@ -91,7 +91,7 @@ var liveClientPath = "/_sky/live." + assetHash(liveClientJS) + ".js"
 // runtime (island_client.go), the Std.Ui.Canvas pointer runtime
 // (scene_client.go), the built-in terminal widget (island_terminal.go), then
 // the Live client proper.
-const liveClientJS = scrollClientJS + islandClientJS + sceneClientJS + terminalWidgetJS + selectHoldJS + liveClientCoreJS
+const liveClientJS = islandClientJS + sceneClientJS + terminalWidgetJS + scrollClientJS + selectHoldJS + liveClientCoreJS
 
 // liveClientCoreJS is the Sky.Live client proper.
 const liveClientCoreJS = liveScrollClientJS + `// Sky.Live client (runtime-go/rt/live_client_asset.go). Served as the

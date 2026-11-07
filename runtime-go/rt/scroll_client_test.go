@@ -139,4 +139,41 @@ function fixture() {
  const f=fixture();f.doc.body=f.inner;f.inner.parentElement=f.html;
  f.apply({target:'id'});assert.equal(f.calls[0][0],'window','visible both axes and no containment propagate body overflow');
 }
+{
+ // Proven available forward movement cannot silently disappear in native code.
+ const f=fixture();f.doc.body=f.inner;f.inner.parentElement=f.html;f.html.style.overflowX='clip';f.html.style.overflowY='clip';
+ f.inner.scrollTo=v=>{f.calls.push(['native-noop',v])};
+ f.apply({target:'id'});assert.equal(f.inner.scrollTop,50);assert.equal(f.g.scrollY,70);assert.equal(f.outer.scrollTop,90);
+ assert.equal(f.errors.length,1,'available native movement must report fixed ScrollFailure');assert.deepEqual(f.errors[0],['[sky] ScrollFailure']);
+}
+{
+ // At either clamped boundary, and within one pixel of it, a native no-op is
+ // harmless. Reverse-flow boxes have their zero boundary at the OTHER end.
+ for(const [current,targetTop,reverse] of [[800,405,false],[0,95,false],[799.6,106,false],[50,106,false],[900,405,false],[0,405,true],[-800,5,true],[-900,5,true]]){
+  const f=fixture();f.inner.scrollTop=current;
+  if(reverse)Object.assign(f.inner.style,{display:'flex',flexDirection:'column-reverse'});
+  f.target.getBoundingClientRect=()=>({top:targetTop,height:10});
+  f.inner.scrollTo=v=>{f.calls.push(['boundary-noop',v])};
+  f.apply({target:'id'});assert.equal(f.errors.length,0,'clamp/rounding/reverse boundary must remain harmless');
+ }
+ const f=fixture();f.inner.scrollTop=-100;Object.assign(f.inner.style,{display:'flex',flexDirection:'column-reverse'});
+ f.target.getBoundingClientRect=()=>({top:5,height:10});f.inner.scrollTo=()=>{};f.apply({target:'id'});
+ assert.equal(f.errors.length,1,'available reverse movement must not silently no-op');
+}
+{
+ // A successful visual-viewport-only pan has unchanged layout scrollY. It is
+ // fulfillment, not a native no-op; check the completed visual position.
+ const f=fixture();f.target.parentElement=f.html;f.html.scrollHeight=1000;f.g.visualViewport={offsetTop:100,height:200};
+ f.target.getBoundingClientRect=()=>({top:370-f.g.scrollY,height:10});
+ f.g.scrollTo=v=>{f.calls.push(['visual-pan',v]);f.g.visualViewport.offsetTop=v.top-f.g.scrollY};
+ f.apply({target:'id'});assert.equal(f.g.scrollY,70);assert.equal(f.g.visualViewport.offsetTop,300);assert.equal(f.errors.length,0);
+ const x=fixture();x.target.parentElement=x.html;x.html.scrollHeight=1000;x.g.visualViewport={offsetTop:100,height:200};
+ x.target.getBoundingClientRect=()=>({top:370-x.g.scrollY,height:10});x.g.scrollTo=v=>x.calls.push(['native-noop',v]);
+ x.apply({target:'id'});assert.equal(x.errors.length,1,'one failure after the COMPLETE viewport correction, not one per attempt');
+}
+{
+ const f=fixture();f.html.scrollHeight=2000;f.g.scrollY=500;f.g.scrollTo=()=>{};
+ f.apply({top:true});assert.equal(f.errors.length,1,'available viewport top request cannot silently no-op');
+ const x=fixture();x.html.scrollHeight=2000;x.g.scrollY=0;x.g.scrollTo=()=>{};x.apply({top:true});assert.equal(x.errors.length,0);
+}
 `

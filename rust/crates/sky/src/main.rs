@@ -11222,6 +11222,7 @@ fn stage_ai_device(dist: &Path) -> Result<String, String> {
 }
 const SCENE_CLIENT_GO: &str = include_str!("../../../../runtime-go/rt/scene_client.go");
 const TERMINAL_WIDGET_GO: &str = include_str!("../../../../runtime-go/rt/island_terminal.go");
+const SCROLL_CLIENT_GO: &str = include_str!("../../../../runtime-go/rt/scroll_client.go");
 
 /// The body of the Go raw-string constant `name` (a `const name = ` line
 /// followed by a backquoted literal) in `src`.
@@ -11238,7 +11239,8 @@ fn go_raw_const<'a>(src: &'a str, name: &str) -> Option<&'a str> {
 /// `island_client.go`), the Std.Ui.Canvas pointer runtime (`sceneClientJS`,
 /// `scene_client.go`), the Std.Ui.Canvas canvas painter (`scenePainterJS`,
 /// `scene_client.go`), the built-in terminal widget (`terminalWidgetJS`,
-/// `island_terminal.go`), then the loader (`spaBootLoaderJS`). All are read
+/// `island_terminal.go`), the shared scroll helper (`scrollClientJS`,
+/// `scroll_client.go`), then the loader (`spaBootLoaderJS`). All are read
 /// out of the Go sources, so there is one copy; the SSR page the backend
 /// renders references `/spa-boot.<sha256[:12]>.js` computed from the Go
 /// constant, and a drift would point every SSR page at a file the build never
@@ -11256,9 +11258,11 @@ fn spa_boot_js() -> &'static str {
             .expect("runtime-go/rt/scene_client.go defines scenePainterJS as a raw string");
         let terminal = go_raw_const(TERMINAL_WIDGET_GO, "terminalWidgetJS")
             .expect("runtime-go/rt/island_terminal.go defines terminalWidgetJS as a raw string");
+        let scroll = go_raw_const(SCROLL_CLIENT_GO, "scrollClientJS")
+            .expect("runtime-go/rt/scroll_client.go defines scrollClientJS as a raw string");
         let loader = go_raw_const(SPA_BOOT_GO, "spaBootLoaderJS")
             .expect("runtime-go/rt/spa_boot.go defines spaBootLoaderJS as a raw string");
-        format!("{island}{scene}{painter}{terminal}{loader}")
+        format!("{island}{scene}{painter}{terminal}{scroll}{loader}")
     })
 }
 
@@ -21340,17 +21344,39 @@ echo key > "$ks"
     #[test]
     fn spa_boot_js_matches_the_runtime() {
         // SpaBootJS is `islandClientJS + sceneClientJS + scenePainterJS +
-        // terminalWidgetJS + spaBootLoaderJS` in Go; the Rust copy must be
+        // terminalWidgetJS + scrollClientJS + spaBootLoaderJS` in Go; the Rust copy must be
         // exactly that concatenation.
         let go = include_str!("../../../../runtime-go/rt/spa_boot.go");
         assert!(
             go.contains(
-                "const SpaBootJS = islandClientJS + sceneClientJS + scenePainterJS + terminalWidgetJS + spaBootLoaderJS"
+                "const SpaBootJS = islandClientJS + sceneClientJS + scenePainterJS + terminalWidgetJS + scrollClientJS + spaBootLoaderJS"
             ),
-            "runtime-go/rt/spa_boot.go no longer builds SpaBootJS from the two literals \
+            "runtime-go/rt/spa_boot.go no longer builds SpaBootJS from the six literals \
              spa_boot_js reads; update spa_boot_js with it"
         );
         let js = spa_boot_js();
+        let components = [
+            (ISLAND_CLIENT_GO, "islandClientJS"),
+            (SCENE_CLIENT_GO, "sceneClientJS"),
+            (SCENE_CLIENT_GO, "scenePainterJS"),
+            (TERMINAL_WIDGET_GO, "terminalWidgetJS"),
+            (SCROLL_CLIENT_GO, "scrollClientJS"),
+            (SPA_BOOT_GO, "spaBootLoaderJS"),
+        ];
+        let expected: String = components
+            .iter()
+            .map(|(source, name)| {
+                go_raw_const(source, name).expect("every runtime boot component must exist")
+            })
+            .collect();
+        assert_eq!(
+            js, expected,
+            "static dist must contain all six exact runtime components in order"
+        );
+        assert!(
+            js.contains("g.__skyScrollApply=function(command)"),
+            "shared scroll installer is present"
+        );
         assert!(
             js.starts_with("// Sky widget islands"),
             "the island runtime opens the file"
@@ -21373,6 +21399,32 @@ echo key > "$ks"
         assert!(!js.contains('`'), "a raw-string literal was cut short");
         let name = spa_boot_name();
         assert!(name.starts_with("spa-boot.") && name.ends_with(".js") && name.len() == 24);
+    }
+
+    #[test]
+    fn static_spa_boot_loader_installs_scroll_before_wasm() {
+        let js = spa_boot_js();
+        let terminal = go_raw_const(TERMINAL_WIDGET_GO, "terminalWidgetJS").unwrap();
+        let scroll = go_raw_const(SCROLL_CLIENT_GO, "scrollClientJS").unwrap();
+        let loader = go_raw_const(SPA_BOOT_GO, "spaBootLoaderJS").unwrap();
+        let terminal_at = js
+            .find(terminal)
+            .expect("terminal widget remains before scroll");
+        let scroll_at = js
+            .find(scroll)
+            .expect("static loader must install shared scroll helper");
+        let loader_at = js.find(loader).expect("Wasm loader remains present");
+        assert_eq!(scroll_at, terminal_at + terminal.len());
+        assert_eq!(loader_at, scroll_at + scroll.len());
+        assert_eq!(
+            js.matches("g.__skyScrollApply=function(command)").count(),
+            1
+        );
+        assert!(loader.contains("WebAssembly.instantiateStreaming"));
+        assert!(
+            scroll_at < js.find("WebAssembly.instantiateStreaming").unwrap(),
+            "scroll installation must precede Wasm initialization in static/CDN assets"
+        );
     }
 
     #[test]

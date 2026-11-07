@@ -228,6 +228,17 @@ async function installScrollWitness(context) {
   await context.addInitScript(() => {
           const traces = [];
           Object.defineProperty(window, '__navScrollTraces', { value: traces });
+          let hydrated;
+          Object.defineProperty(window, '__skyHydrated', {
+            configurable: true,
+            get() { return hydrated; },
+            set(fn) {
+              hydrated = function() {
+                window.__navHydrated = true;
+                return fn.apply(this, arguments);
+              };
+            },
+          });
           let implementation;
           Object.defineProperty(window, '__skyScrollApply', {
             configurable: true,
@@ -282,9 +293,13 @@ async function scrollScenario(browserName, target, url) {
         });
         await page.goto(url, { waitUntil: 'load' });
         await page.locator('#next-part').waitFor();
+        if (target === 'web:app') await page.waitForFunction(() => window.__navHydrated === true);
         await page.evaluate(() => {
-          document.documentElement.style.cssText += ';overflow-anchor:none;scroll-behavior:smooth;';
+          document.documentElement.style.cssText += ';overflow-anchor:none;scroll-behavior:smooth;overflow-x:auto;width:100vw;';
           document.body.style.overflowAnchor = 'none';
+          document.body.style.minWidth = '2000px';
+          document.body.style.width = '2000px';
+          document.body.style.overflowX = 'visible';
           for (const el of document.querySelectorAll('#sheet *,#outer *')) el.style.flexShrink = '0';
           window.__navMarker = 1;
         });
@@ -308,7 +323,9 @@ async function scrollScenario(browserName, target, url) {
           scrollTo({left: 45, top: 40, behavior: 'instant'});
         });
         check(`${tag} new target absent`, await page.locator('#part-1').count() === 0, 'before update');
-        check(`${tag} nonzero window horizontal setup`, await page.evaluate(() => scrollX > 0), 'real horizontal preservation premise');
+        const horizontal = await page.evaluate(() => ({ x:scrollX, innerWidth, clientWidth:document.documentElement.clientWidth, scrollWidth:document.documentElement.scrollWidth, visualWidth:visualViewport?.width }));
+        check(`${tag} nonzero window horizontal setup`, horizontal.x > 0, JSON.stringify(horizontal));
+        if (!(horizontal.x > 0)) throw new Error('WindowHorizontalPremiseFailed');
         const first = await fire('next-part', t => t.target === 'part-1' && /PART=1/.test(t.after.state));
         check(`${tag} immediate margin/calc-padding alignment`, aligned(first), 'no animation wait');
         check(`${tag} nearest box preserves outer/window/x`, isolated(first), 'exact offsets');
@@ -360,34 +377,79 @@ async function scrollScenario(browserName, target, url) {
         }
         const top = await fire('top', t => t.top && t.after.y === 0 && t.after.x === t.before.x && t.after.sheetY === t.before.sheetY && t.after.outerY === t.before.outerY);
         check(`${tag} explicit top is instant with CSS smooth`, top.after.y === 0, 'synchronous result');
-        // Public geometry fixture is applied at the actual command boundary,
-        // after any Live replacement. It changes layout only, never scroll logic.
-        for (const mode of ['viewport-propagated','root-clip','root-x-clip','body-containment','root-containment']) {
-          await page.evaluate(mode => {
-            window.__navScrollSetup = () => {
-              const html=document.documentElement, body=document.body;
-              html.style.cssText += ';overflow-anchor:none;contain:none;overflow:visible;scroll-behavior:smooth;';
-              body.style.cssText += ';overflow-anchor:none;contain:none;height:240px;width:340px;overflow:auto;scroll-behavior:smooth;';
-              if(mode==='root-clip')html.style.overflow='clip';
-              if(mode==='root-x-clip'){html.style.overflowX='clip';html.style.overflowY='visible';}
-              if(mode==='body-containment')body.style.contain='layout';
-              if(mode==='root-containment')html.style.contain='layout';
-              const target=document.querySelector('[id^="part-"]');
-              for(let el=target?.parentElement;el&&el!==body;el=el.parentElement){el.style.overflow='visible';el.style.height='auto';el.style.maxHeight='none';el.style.flexShrink='0';}
-              scrollTo({left:0,top:0,behavior:'instant'});body.scrollTo({left:0,top:0,behavior:'instant'});
-            };
-          }, mode);
-          const rootCase = await fire('current', t => typeof t.target==='string' && t.target.startsWith('part-'));
-          check(`${tag} ${mode} selects intended vertical port`,
-            mode==='viewport-propagated'
-              ? rootCase.after.y>0 && rootCase.after.bodyY===0
-              : rootCase.after.bodyY>0 && rootCase.after.y===0,
-            'body is a scroll box unless overflow actually propagates');
-        }
         check(`${tag} no scroll errors`, errors.length === 0, 'classified public fixture');
       } finally { await context.close(); }
     }
   } finally { await browser.close(); }
+}
+
+// Each static body/viewport case gets a fresh document. Its ownership CSS is
+// present in <head> before the body receives its first layout, not mutated at
+// the command boundary. The actual target is still created by typed Next.
+async function installStaticRootCSS(page, url, mode) {
+  const viewport = mode === 'viewport-propagated';
+  const rootOverflow = mode === 'root-clip' ? 'clip' : 'visible';
+  const x = mode === 'root-x-clip' ? 'clip' : rootOverflow;
+  const rootContain = mode === 'root-containment' ? 'layout' : 'none';
+  const bodyContain = mode === 'body-containment' ? 'layout' : 'none';
+  const css = `html{width:100vw!important;overflow-x:${x}!important;overflow-y:${rootOverflow}!important;contain:${rootContain}!important;overflow-anchor:none!important;scroll-behavior:smooth!important}body{margin:0!important;padding:0!important;height:240px!important;min-height:0!important;width:${viewport?'2000':'340'}px!important;min-width:0!important;overflow:auto!important;contain:${bodyContain}!important;scroll-padding:0!important;scroll-behavior:smooth!important;overflow-anchor:none!important}#sky-root,#sky-root>*,#app,#app>*,#outer,#outer>*,#sheet{height:auto!important;max-height:none!important}#sky-root,#sky-root *,#app,#app *{overflow:visible!important;overflow-anchor:none!important;flex-shrink:0!important}`;
+  await page.route(url, async route => {
+    if (route.request().method() !== 'GET' || route.request().resourceType() !== 'document') return route.continue();
+    const response = await route.fetch();
+    const html = await response.text();
+    const nonce = html.match(/<style\b[^>]*\bnonce=(["'])([^"']+)\1[^>]*>/i);
+    if (nonce && !/^[A-Za-z0-9+/_=-]+$/.test(nonce[2])) throw new Error('FixtureNonceShape');
+    const csp = response.headers()['content-security-policy'] || '';
+    if (/style-src[^;]*'nonce-/i.test(csp) && !nonce) throw new Error('FixtureStyleNonceMissing');
+    let inserted = 0;
+    const body = html.replace(/<head\b[^>]*>/i, head => { inserted++; return head + `<style${nonce?' nonce="'+nonce[2]+'"':''}>${css}</style>`; });
+    if (inserted !== 1) throw new Error('FixtureHeadMissing');
+    await route.fulfill({response,body});
+  });
+}
+
+async function rootPortScenarios(browserName, target, url) {
+  const browser = await launch(browserName);
+  const {defaultBrowserType,...phone}=pw.devices['iPhone 13'];
+  const modes=['viewport-propagated','root-clip','root-x-clip','body-containment','root-containment'];
+  try {
+    for(const reducedMotion of ['no-preference','reduce']) for(const mode of modes) {
+      const context=await browser.newContext({...phone,reducedMotion});
+      try {
+        await installScrollWitness(context);const page=await context.newPage();const errors=[];
+        page.on('pageerror',()=>errors.push(1));
+        page.on('console',message=>{if(message.type()==='error'&&/(?:^|[^A-Za-z0-9_])(ScrollFailure|ScrollPayloadRejected|ScrollViewMissing|SpaScrollWire|ScrollQueueOverflow)(?:$|[^A-Za-z0-9_])/.test(message.text()))errors.push(1)});
+        await installStaticRootCSS(page,url,mode);await page.goto(url,{waitUntil:'load'});await page.locator('#next-part').waitFor();
+        if(target==='web:app')await page.waitForFunction(()=>window.__navHydrated===true);
+        const absent=await page.locator('#part-1').count()===0;
+        await page.evaluate(viewport=>{if(viewport)scrollTo({left:45,top:0,behavior:'instant'});else document.body.scrollTo({left:31,top:0,behavior:'instant'});window.__navMarker=1},mode==='viewport-propagated');
+        const before=await loc(page);const n=await page.evaluate(()=>__navScrollTraces.length);
+        await page.evaluate(()=>document.getElementById('next-part').click());await page.waitForFunction(n=>__navScrollTraces.length>n,n);
+        const trace=await page.evaluate(n=>__navScrollTraces[n],n);const after=await loc(page);
+        const viewport=mode==='viewport-propagated';const tag=`${target}/${browserName}/${reducedMotion}/static-${mode}`;
+        check(`${tag} typed Next creates target after render`,absent&&trace.target==='part-1'&&/PART=1/.test(trace.after.state),'new target, not preexisting DOM');
+        check(`${tag} immediate alignment in intended port`,trace.after.targetTop!==null&&Math.abs(trace.after.targetTop-18)<=1.5&&(viewport?trace.after.y>0&&trace.after.bodyY===0:trace.after.bodyY>0&&trace.after.y===trace.before.y),'synchronous helper-return geometry');
+        check(`${tag} nonzero horizontal and outer isolation`,(viewport?trace.before.x>0:trace.before.bodyX>0)&&trace.after.x===trace.before.x&&trace.after.bodyX===trace.before.bodyX&&trace.after.sheetX===trace.before.sheetX&&trace.after.outerX===trace.before.outerX&&trace.after.sheetY===trace.before.sheetY&&trace.after.outerY===trace.before.outerY,'exact preserved offsets');
+        check(`${tag} no navigation or scroll errors`,after.href===before.href&&after.len===before.len&&after.marker&&errors.length===0,'strict normal/static behavior');
+      }finally{await context.close()}
+    }
+    if(browserName==='webkit')for(const mode of ['root-clip','root-x-clip']) {
+      const context=await browser.newContext({...phone,reducedMotion:'reduce'});
+      try {
+        await installScrollWitness(context);const page=await context.newPage();const errors=[];
+        page.on('pageerror',()=>errors.push('PageError'));
+        page.on('console',message=>{if(message.type()!=='error')return;const match=message.text().match(/(?:^|[^A-Za-z0-9_])(ScrollFailure|ScrollPayloadRejected|ScrollViewMissing|SpaScrollWire|ScrollQueueOverflow)(?:$|[^A-Za-z0-9_])/);if(match)errors.push(match[1])});
+        await installStaticRootCSS(page,url,'viewport-propagated');await page.goto(url,{waitUntil:'load'});await page.locator('#next-part').waitFor();if(target==='web:app')await page.waitForFunction(()=>window.__navHydrated===true);
+        const n=await page.evaluate(()=>__navScrollTraces.length);
+        await page.evaluate(mode=>{window.__navScrollSetup=()=>{const style=document.documentElement.style;style.setProperty('overflow-x','clip','important');style.setProperty('overflow-y',mode==='root-clip'?'clip':'visible','important');};document.getElementById('next-part').click()},mode);
+        await page.waitForFunction(n=>__navScrollTraces.length>n,n);const trace=await page.evaluate(n=>__navScrollTraces[n],n);
+        const isolated=['x','y','bodyX','sheetX','sheetY','outerX','outerY'].every(k=>trace.before[k]===trace.after[k]);
+        const fulfilled=isolated&&trace.after.bodyY>trace.before.bodyY&&Math.abs(trace.after.targetTop-18)<=1.5&&errors.length===0;
+        const refused=isolated&&trace.after.bodyY===trace.before.bodyY&&trace.after.targetTop===trace.before.targetTop&&errors.length===1&&errors[0]==='ScrollFailure';
+        check(`${target}/webkit/${mode} native ownership-transition outcome is explicit`,trace.target==='part-1'&&(fulfilled||refused),'immediate fulfillment or unchanged geometry plus exactly one fixed failure');
+      }finally{await context.close()}
+    }
+  }finally{await browser.close()}
 }
 
 // Same browser context intentionally shares the Live session cookie. Shared
@@ -448,6 +510,7 @@ try {
       results[`${target}/${b}`] = await scenario(b, target, `http://127.0.0.1:${port}/`, app);
       await plainScenario(b, target, port);
       await scrollScenario(b, target, `http://127.0.0.1:${port}/`);
+      await rootPortScenarios(b, target, `http://127.0.0.1:${port}/`);
       if(target==='live')await liveOriginScenario(b, `http://127.0.0.1:${port}/`);
     }
     await stopApp(app);

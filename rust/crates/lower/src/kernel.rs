@@ -57,6 +57,7 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
             | ("Set", "empty")
             | ("Array", "empty")
             | ("Cmd", "none")
+            | ("Nav", "scrollToTop")
             | ("Sub", "none")
             | ("Uuid", "v4")
             | ("Uuid", "v7")

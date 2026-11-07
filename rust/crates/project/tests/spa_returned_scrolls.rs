@@ -294,3 +294,35 @@ fn pure_client_kernel_init_keeps_original_client_command() {
     assert!(!shared.contains("spaScroll_"));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+// Cold/static-shell boot precomputes onNavigate's command before paint, then
+// interprets init's command and that command directly. This proves ordinary
+// source can produce BOTH marked requests before either network result; the
+// portable scheduler regression owns their completion/DOM ordering assertions.
+#[test]
+fn ordinary_cold_boot_can_have_two_marked_init_and_navigation_requests() {
+    let source = original()
+        .replace("import Sky.Core.Time as Time", "import Sky.Core.Time as Time\nimport Sky.Core.File as File")
+        .replace("type Msg = Go | Save |", "type Msg = Navigated String | Go | Save |")
+        .replace("saved = 0 }, Cmd.none )", "saved = 0 }, Cmd.batch [ Cmd.perform (File.readFile \"init.txt\" |> Task.map String.length) Saved, Nav.scrollIntoView \"same-id\" ] )")
+        .replace("        Go ->", "        Navigated _ ->\n            let\n                target =\n                    Result.withDefault \"same-id\" (Task.run (File.readFile \"nav.txt\"))\n            in\n                ( model, Nav.scrollIntoView target )\n        Go ->")
+        .replace("Spa.app (Spa.config { init = init, update = update, view = view, subscriptions = subscriptions })", "Spa.app (Spa.config { init = init, update = update, view = view, subscriptions = subscriptions } |> Spa.withRoutes [ Spa.route \"/\" \"home\" ] |> Spa.withOnNavigate Navigated)");
+    assert!(source.contains("Spa.withOnNavigate Navigated"));
+    assert!(source.contains("File.readFile \"init.txt\""));
+    assert!(source.contains("File.readFile \"nav.txt\""));
+    let (dir, front, back, _) = split("two-marked-cold-boot", &source);
+    assert!(
+        front.contains("SpaInitRpc_.rpcScrollHold"),
+        "init must really issue a marked request"
+    );
+    assert!(front.contains("/_rpc/SpaInit_"));
+    assert!(
+        front.contains("Spa.rpcScrollHold"),
+        "onNavigate must really issue a second marked request"
+    );
+    assert!(front.contains("/_rpc/Navigated"));
+    assert!(!front.contains("File.readFile"));
+    assert!(back.contains("File.readFile \"init.txt\""));
+    assert!(back.contains("File.readFile \"nav.txt\""));
+    std::fs::remove_dir_all(dir).unwrap();
+}

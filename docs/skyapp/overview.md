@@ -213,6 +213,13 @@ A deferred render superseded by a newer render loses its scroll commands;
 an RPC's returned scroll also loses its authority when navigation overtakes it.
 No application JavaScript or completion message is needed.
 
+A browser that refuses a valid native scroll reports the fixed `ScrollFailure`
+class; Sky does not move an outer container as a fallback. In the tested WebKit
+build, changing root overflow from visible to clip can leave native body scrolling
+inactive, even though the same layout scrolls correctly when established at page
+load. Keep root scroll ownership stable on affected browsers; Sky does not change
+containment or reparent content to work around that browser limitation.
+
 At session init the `Sky.Http.Server.Request` carries `method` / `host` /
 `path` / `headers` / `params` / `query` / `cookies` (`host` is the name the
 browser used, port included, and is also `headers` `"Host"`). `body` and `remoteAddr` are empty —

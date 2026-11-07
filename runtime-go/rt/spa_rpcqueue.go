@@ -98,6 +98,9 @@ type spaSched struct {
 	hold  *spaRpcJob
 	// domHold is separate: an Applied step may issue a new network hold.
 	domHold *spaRpcJob
+	// Every marked request can be issued at boot before drain starts. Track only
+	// outstanding marked rids; no full-job/model owner or inflight scan is added.
+	scrollNetworkHolds map[string]struct{}
 	// Browser hooks observe only render lineage, never model or DOM values.
 	domEpoch                func() uint64
 	scrollAuthority         func() uint64
@@ -164,7 +167,7 @@ func (s *spaSched) dispatchFrom(msg, src any, run func(any)) {
 // runs now, and every queued Msg is urgent (nothing ordinary waits ahead of it,
 // so it cannot overtake one).
 func (s *spaSched) holdFreeNow(msg any) bool {
-	if s.domHold != nil || s.hold == nil || s.hold.domHold || s.running || s.hold.name == "" || len(s.holdFree) == 0 {
+	if len(s.scrollNetworkHolds) != 0 || s.domHold != nil || s.hold == nil || s.hold.domHold || s.running || s.hold.name == "" || len(s.holdFree) == 0 {
 		return false
 	}
 	for _, q := range s.queue {
@@ -249,7 +252,7 @@ func (s *spaSched) drain(run func(any)) {
 	s.running = true
 	defer func() { s.running = false }()
 	for len(s.queue) > 0 {
-		if (s.hold != nil || s.domHold != nil) && !s.queue[0].urgent {
+		if (s.hold != nil || s.domHold != nil || len(s.scrollNetworkHolds) != 0) && !s.queue[0].urgent {
 			return
 		}
 		q := s.queue[0]
@@ -341,6 +344,10 @@ func (s *spaSched) issueWithDOM(mk, toMsg any, hold, dom bool) *spaRpcJob {
 	j := s.issue(mk, toMsg, hold || dom)
 	j.domHold = dom
 	if dom {
+		if s.scrollNetworkHolds == nil {
+			s.scrollNetworkHolds = make(map[string]struct{})
+		}
+		s.scrollNetworkHolds[j.rid] = struct{}{}
 		if s.scopeAuthorityKnown {
 			j.issueEpoch = s.scopeAuthority
 			j.issueEpochKnown = true
@@ -364,12 +371,21 @@ func (s *spaSched) settleWithDOM(j *spaRpcJob, resultMsg any, run func(any), suc
 		s.tickNetEnd(j.tick)
 	}
 	delete(s.inflight, j.rid)
+	delete(s.scrollNetworkHolds, j.rid)
+	if len(s.scrollNetworkHolds) == 0 {
+		s.scrollNetworkHolds = nil
+	}
 	q := spaQueued{msg: resultMsg}
 	if j.domHold && success {
 		q.dom = j
 	}
-	if s.hold == j {
+	wasPrimary := s.hold == j
+	if wasPrimary {
 		s.hold = nil
+	}
+	// A secondary marked result must also run ahead of all remaining marked
+	// network/DOM holds; otherwise its own barrier would prevent it settling.
+	if wasPrimary || j.domHold {
 		q.urgent = true
 		s.queue = append([]spaQueued{q}, s.queue...)
 	} else {
@@ -382,7 +398,7 @@ func (s *spaSched) settleWithDOM(j *spaRpcJob, resultMsg any, run func(any), suc
 // network failure the Retry overlay will re-send). A hold RPC's report runs
 // ahead of the Msgs it holds, so the app can show the failure; the hold stays.
 func (s *spaSched) report(j *spaRpcJob, errMsg any, run func(any)) {
-	if s.hold == j {
+	if s.hold == j || j.domHold {
 		// Retry is not terminal: preserve the original hold until this same rid
 		// succeeds or settles terminally, rather than letting Next overtake it.
 		s.queue = append([]spaQueued{{msg: errMsg, urgent: true}}, s.queue...)
@@ -399,7 +415,7 @@ func (s *spaSched) pending() bool {
 
 // held reports whether a hold RPC is in flight (later Msgs wait).
 func (s *spaSched) held() bool {
-	return s.hold != nil || s.domHold != nil
+	return s.hold != nil || s.domHold != nil || len(s.scrollNetworkHolds) != 0
 }
 
 // spaGuardedUpdate runs `guard msg model` (when set) before `update`, the

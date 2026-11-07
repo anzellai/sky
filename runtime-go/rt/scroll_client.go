@@ -49,6 +49,30 @@ const scrollClientJS = `(function(g){
       return finite(n)?n:0;
     }finally{if(probe&&probe.parentNode)probe.parentNode.removeChild(probe);}
   }
+  function scrollPosition(box,viewport,doc){
+    if(!viewport)return box.scrollTop;
+    var y=finite(g.scrollY)?g.scrollY:(doc.scrollingElement||doc.documentElement).scrollTop,vv=g.visualViewport;
+    // A successful visual-only pan need not change layout scrollY.
+    if(vv&&finite(vv.pageTop))return vv.pageTop;
+    return y+(vv&&finite(vv.offsetTop)?vv.offsetTop:0);
+  }
+  function scrollIntent(box,top,viewport,doc){
+    var node=viewport?(doc.scrollingElement||doc.documentElement):box;
+    if(!node)return null;
+    var current=scrollPosition(box,viewport,doc),height=viewport?visibleViewport(doc.documentElement.clientHeight).height:node.clientHeight;
+    var extent=node.scrollHeight-height,style=g.getComputedStyle(node);
+    // Diagnose only a provable physical range. Do not invent logical-axis
+    // limits for a different writing mode or an overscrolled native position.
+    if(!finite(current)||!finite(top)||!finite(extent)||extent<=0||(style.writingMode&&style.writingMode!=='horizontal-tb'))return null;
+    var reverse=/^(inline-)?flex$/.test(style.display)&&style.flexDirection==='column-reverse';
+    if((reverse&&current>0)||(!reverse&&current<0)||(reverse&&viewport&&g.visualViewport))return null;
+    var low=reverse?-extent:0,high=reverse?0:extent;
+    if(current<low||current>high)return null;
+    return {before:current,wanted:Math.max(low,Math.min(high,top))};
+  }
+  function checkScroll(intent,box,viewport,doc){
+    if(intent&&Math.abs(intent.wanted-intent.before)>1&&scrollPosition(box,viewport,doc)===intent.before)failure();
+  }
   function instant(box,top,viewport,doc){
     var left=viewport?(finite(g.scrollX)?g.scrollX:doc.scrollingElement.scrollLeft):box.scrollLeft;
     if(!finite(left))left=0;
@@ -68,7 +92,7 @@ const scrollClientJS = `(function(g){
     try{
       if(!command||typeof command!=='object')return;
       var doc=g.document;if(!doc)return;
-      if(command.top===true){instant(g,0,true,doc);return;}
+      if(command.top===true){var topIntent=scrollIntent(g,0,true,doc);instant(g,0,true,doc);checkScroll(topIntent,g,true,doc);return;}
       if(typeof command.target!=='string'||!command.target)return;
       var target=doc.getElementById(command.target);
       if(!target||target.isConnected===false||!target.getClientRects||target.getClientRects().length===0)return;
@@ -110,7 +134,8 @@ const scrollClientJS = `(function(g){
       if(!finite(current))return;
       // Native scrolling clamps the actual range, including reverse-flow boxes.
       // Never request horizontal movement, focus, a Msg, or an outer-box scroll.
-      instant(viewport?g:box,current+targetTop-padding,viewport,doc);
+      var request=current+targetTop-padding,intent=scrollIntent(viewport?g:box,request,viewport,doc);
+      instant(viewport?g:box,request,viewport,doc);
       if(viewport&&visible.visual&&target.isConnected!==false){
         // CSSOM View explicitly records engine disagreement on whether
         // window.scrollTo coordinates the visual and layout viewports. Keep
@@ -123,6 +148,7 @@ const scrollClientJS = `(function(g){
         var delta=afterTop-after.top-padding;
         if(finite(afterTop)&&finite(afterCurrent)&&finite(delta)&&delta!==0)instant(g,afterCurrent+delta,true,doc);
       }
+      checkScroll(intent,viewport?g:box,viewport,doc);
     }catch(_){failure();}
   };
 })(typeof window==='object'?window:globalThis);

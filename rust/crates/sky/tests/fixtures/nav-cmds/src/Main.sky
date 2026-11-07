@@ -236,11 +236,7 @@ view model =
                         , Ui.style "scroll-padding-top" "calc(10% + 5px)"
                         , Ui.style
                               "border-top-width"
-                              (if modBy 2 model.part == 0 then
-                                  "2px"
-
-                              else
-                                  "3px")
+                              (String.fromInt (model.part + 2) ++ "px")
                         , Ui.style "border-top-style" "solid"
                         ]
                         [ Ui.html
