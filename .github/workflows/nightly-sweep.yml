@@ -185,6 +185,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
+      - name: Fingerprint the browser archive platform
+        id: pw-platform
+        run: node scripts/ci/playwright-cache-platform.mjs >> "$GITHUB_OUTPUT"
       # The one writer of the Playwright browser cache (on main); the release
       # gate-web-* jobs restore it (.github/actions/playwright-setup).
       - name: Restore the Playwright browsers
@@ -192,7 +195,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: ms-playwright-v2-${{ steps.pw-platform.outputs.platform }}-${{ hashFiles('package-lock.json') }}
       - name: Cache Go build + module cache
         id: go-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -375,7 +378,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: ms-playwright-v2-${{ steps.pw-platform.outputs.platform }}-${{ hashFiles('package-lock.json') }}
 
   # ── Behavioural corpus (harness tier T2) ────────────────────────────────────
   #
