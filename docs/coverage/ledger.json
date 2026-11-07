@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3245,
+    "stdlib_entries": 3252,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -4557,6 +4557,11 @@
           },
           {
             "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -14468,6 +14473,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14721,6 +14731,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14885,6 +14900,11 @@
           },
           {
             "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -20282,18 +20302,22 @@
           ]
         },
         "Std.Spa": {
-          "count": 24,
+          "count": 28,
           "symbols": [
             "AppConfig",
             "Route",
             "followUps",
+            "readInitScrolls",
             "reportError",
             "reportRpcFailure",
+            "returnedScrolls",
             "route",
             "routeInt",
             "rpc",
             "rpcHold",
+            "rpcScrollHold",
             "rpcWith",
+            "scrollRpcScope",
             "serverRoute",
             "withClientCrypto",
             "withGuard",
@@ -20588,8 +20612,8 @@
           ]
         }
       },
-      "count": 867,
-      "pct_of_denominator": 26.7
+      "count": 871,
+      "pct_of_denominator": 26.8
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21810,18 +21834,22 @@
           ]
         },
         "Std.Spa": {
-          "count": 24,
+          "count": 28,
           "symbols": [
             "AppConfig",
             "Route",
             "followUps",
+            "readInitScrolls",
             "reportError",
             "reportRpcFailure",
+            "returnedScrolls",
             "route",
             "routeInt",
             "rpc",
             "rpcHold",
+            "rpcScrollHold",
             "rpcWith",
+            "scrollRpcScope",
             "serverRoute",
             "withClientCrypto",
             "withGuard",
@@ -22136,7 +22164,7 @@
           ]
         }
       },
-      "count": 982,
+      "count": 986,
       "pct_of_denominator": 30.3
     }
   },
@@ -22348,10 +22376,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/nav-e2e.sh",
-      "modules_imported": 5,
+      "modules_imported": 9,
       "path": "scripts/nav-e2e.sh",
-      "refs_generous": 17,
-      "refs_qualified": 16,
+      "refs_generous": 31,
+      "refs_qualified": 30,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -24024,8 +24052,8 @@
       "id": "flow:spa_split_flow",
       "modules_imported": 43,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 179,
-      "refs_qualified": 171,
+      "refs_generous": 187,
+      "refs_qualified": 179,
       "role": "FlowTest",
       "sky_files": 140,
       "sky_toml_sections": []

@@ -155,6 +155,11 @@ func TestLiveScrollPageGETCarriesMonotonicRenderSequence(t *testing.T) {
 }
 
 func TestLiveScrollClientCommitAndSupersession(t *testing.T) {
+	runLiveScrollProtocolHarness(t, "frames")
+}
+
+func runLiveScrollProtocolHarness(t *testing.T, scenario string) {
+	t.Helper()
 	node := requireNode(t)
 	dir := t.TempDir()
 	client, harness := filepath.Join(dir, "client.js"), filepath.Join(dir, "harness.cjs")
@@ -166,11 +171,29 @@ func TestLiveScrollClientCommitAndSupersession(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, node, harness, client)
+	command := exec.CommandContext(ctx, node, harness, client, scenario)
 	command.Env = []string{"PATH=/usr/bin:/bin", "LANG=C"}
-	if output, err := command.CombinedOutput(); err != nil {
+	output, err := command.CombinedOutput()
+	if err != nil {
 		t.Fatalf("scroll render-commit regression: %v\n%s", err, output)
 	}
+	var result struct {
+		Passed bool `json:"passed"`
+		Checks int  `json:"checks"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("browser protocol must report its executed checks: %v", err)
+	}
+	want := 52
+	if scenario == "nav-order" {
+		want = 60
+	} else if scenario != "frames" {
+		t.Fatalf("unknown browser protocol scenario %q", scenario)
+	}
+	if !result.Passed || result.Checks != want {
+		t.Fatalf("browser protocol %s completed %d checks, want %d with passed=true", scenario, result.Checks, want)
+	}
+	t.Logf("browser protocol scenario=%s checks=%d", scenario, result.Checks)
 }
 
 const liveScrollProtocolHarness = `const fs = require('node:fs');
@@ -181,7 +204,7 @@ let checks = 0;
 const equal = (got, expected) => { checks++; assert.equal(JSON.stringify(got), JSON.stringify(expected)); };
 
 function fixture() {
-  const calls = [], errors = [], timers = [], listeners = {}, windowListeners = {}, moves = [], fragments = [];
+  const calls = [], errors = [], timers = [], listeners = {}, windowListeners = {}, moves = [], fragments = [], ordering = [];
   const state = { target: 'A', held: 'A' };
   let reply = {ok:true,status:200,headers:{get(){return null;}},text:async()=>'',json:async()=>({})};
   const document = {
@@ -201,7 +224,7 @@ function fixture() {
     addEventListener(name,fn){(windowListeners[name] ||= []).push(fn);},scrollTo(){},crypto:{getRandomValues(x){return x;}}
   };
   function move(kind,url){
-    moves.push([kind,url]);const u=new URL(url,location.href);
+    const u=new URL(url,location.href);ordering.push(['move',kind,u.pathname]);moves.push([kind,url]);
     for(const key of ['href','origin','pathname','search','hash'])location[key]=u[key];
   }
   sandbox.window = sandbox;
@@ -209,7 +232,7 @@ function fixture() {
   vm.createContext(sandbox); vm.runInContext(source, sandbox);
   const get = expression => vm.runInContext(expression, sandbox);
   sandbox.__skyApplyPatches = patches => { for(const patch of patches) if(patch.text !== undefined) state.held = patch.text; };
-  sandbox.__skyPatch = body => {const label=/data-test-page="([A-Z])"/.exec(body)?.[1]||body;state.target=label;state.held=label;sandbox.__skyHeld=null;};
+  sandbox.__skyPatch = body => {const label=/data-test-page="([A-Z])"/.exec(body)?.[1]||body;ordering.push(['patch',location.pathname,label]);state.target=label;state.held=label;sandbox.__skyHeld=null;};
   sandbox.__skySendFragment=()=>fragments.push(location.hash);
   function frame(seq, view, apply, commands, base, globalSeq) {
     get('__skyHandleResponse')(seq,null,apply,globalSeq,view,base || '',!!base,commands);
@@ -229,8 +252,8 @@ function fixture() {
     const text='<div data-test-page="'+view+'"></div><script type="application/json" id="sky-live-cfg">'+cfg+'</script>';
     reply={ok:true,status:200,headers:{get:k=>headers[k]||null},text:async()=>text,json:async()=>({})};
   }
-  async function navigate(kind,url){
-    if(kind==='command')await get('__skyNavApply')(url,false);
+  async function navigate(kind,url,replace=false){
+    if(kind==='command')await get('__skyNavApply')(url,replace);
     else if(kind==='click'){
       assert(listeners.click.length>0);
       const anchor={tagName:'A',parentElement:null,hasAttribute:k=>k==='sky-nav',getAttribute:k=>k==='href'?url:null};
@@ -241,9 +264,10 @@ function fixture() {
     }
     await new Promise(resolve=>setImmediate(resolve));
   }
-  return {sandbox,state,calls,errors,document,get,frame,own,select,hold,flush,moves,fragments,setReply,navigate};
+  return {sandbox,state,calls,errors,document,get,frame,own,select,hold,flush,moves,fragments,ordering,setReply,navigate};
 }
 
+function frameScenarios(){
 {
   const f=fixture();
   f.frame(1,'B',()=>{f.state.target='B';f.state.held='B';},[...f.own('part'),{tab:'OTHER',command:{target:'wrong'}}],'A',7);
@@ -303,6 +327,7 @@ function fixture() {
   f.sandbox.console.error=()=>{throw Error('broken logger');};
   f.get('__skyScrollProblem')('SyntheticScrollFailure');checks++;
 }
+}
 async function fetchedPages(){
   for(const kind of ['click','popstate','command']){
     {
@@ -328,5 +353,34 @@ async function fetchedPages(){
     }
   }
 }
-fetchedPages().then(()=>process.stdout.write(JSON.stringify({passed:true,checks})+'\n')).catch(error=>{process.stderr.write(String(error.stack)+'\n');process.exitCode=1;});
+async function navigationOrdering(){
+  for(const mode of ['click','command','replace','popstate']){
+    const kind=mode==='replace'?'command':mode, replace=mode==='replace';
+    const accepted=(page)=>mode==='popstate'?[['patch','/'+page,page]]:
+      [['move',replace?'replace':'push','/'+page],['patch','/'+page,page]];
+    {
+      const f=fixture();f.setReply('B',2,null);await f.navigate(kind,'/B#b',replace);
+      equal(f.ordering,accepted('B'));
+      equal(f.moves.length,mode==='popstate'?0:1);
+      equal(f.state.target,'B');
+    }
+    for(const sequence of [1,2]){
+      const f=fixture();f.frame(2,'B',()=>{f.state.target='B';},undefined);
+      f.setReply('A',sequence,f.own('old-A'));await f.navigate(kind,'/A#old',replace);
+      equal(f.ordering,[]);equal(f.moves,[]);equal(f.calls,[]);equal(f.fragments,[]);
+      equal(f.state.target,'B');
+    }
+    {
+      const f=fixture();f.frame(2,'B',()=>{f.state.target='B';},undefined);
+      f.setReply('L',null,null);await f.navigate(kind,'/L',replace);
+      equal(f.ordering,accepted('L'));equal(f.state.target,'L');
+    }
+  }
+}
+async function main(){
+  if(process.argv[3]==='nav-order')await navigationOrdering();
+  else {frameScenarios();await fetchedPages();}
+  process.stdout.write(JSON.stringify({passed:true,checks})+'\n');
+}
+main().catch(error=>{process.stderr.write(String(error.stack)+'\n');process.exitCode=1;});
 `
