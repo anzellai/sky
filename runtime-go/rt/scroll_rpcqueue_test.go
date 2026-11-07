@@ -47,19 +47,27 @@ func TestScrollRPCHoldWaitsForActualDOMBeforeNext(t *testing.T) {
 }
 
 func TestScrollRPCHoldDisablesHoldFreeExemption(t *testing.T) {
-	s, _ := scrollSchedulerFixture()
+	s, q := scrollSchedulerFixture()
 	s.setHoldFree([]string{"Server Input"})
 	j := s.issueWithDOM(nil, nil, true, true)
 	j.name = "Server"
 	if s.holdFreeNow(SkyADT{SkyName: "Input"}) {
 		t.Fatal("scroll network hold allowed input to overtake")
 	}
-	s.domHold = j
-	s.hold = nil
+	s.settle(j, "Applied", func(any) {
+		q.committed(true, false, func(scrollCmd) {})
+		q.command(scrollCmd{Target: "id"}, func(scrollCmd) {})
+	})
+	if !s.held() || s.pending() {
+		t.Fatal("fixture must reach actual settled-network/held-DOM phase")
+	}
 	if s.holdFreeNow(SkyADT{SkyName: "Input"}) {
 		t.Fatal("scroll DOM hold allowed input to overtake")
 	}
-	s.domHold = nil
+	q.committed(false, true, func(scrollCmd) {})
+	if s.held() || s.pending() {
+		t.Fatal("fixture must complete the old request before testing legacy hold-free behavior")
+	}
 	legacy := s.issue(nil, nil, true)
 	legacy.name = "Server"
 	if !s.holdFreeNow(SkyADT{SkyName: "Input"}) {
