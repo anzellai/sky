@@ -18,13 +18,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - A browser can throw synchronously when starting a fetch, before returning a
   Promise. Sky now returns a classified `Network` error through the Task
   boundary and releases the attempt's timeout and callbacks. Successful fetches
-  and rejected Promises retain their behavior. Unexpected Go programming faults
-  remain visible and also release these resources while unwinding.
+  and rejected Promises retain their behavior. A malformed fetch return value
+  still produces a visible programming fault while releasing these resources.
+- Promise rejection descriptions handle strings, numbers and booleans without
+  reading object properties from them. A rejection object's throwing getter or
+  method, or missing/non-callable `toString`, produces a fixed safe description
+  and a classified `Network` error. Getters and methods are not retried while
+  describing the failure.
 
 ### Migration from v0.29.3
 
 No application source or database schema changes are required. Rebuild and
-redeploy the server and client assets together with Sky 0.29.4.
+redeploy the server and client assets together with Sky 0.29.4. Reload existing
+open tabs to load the rebuilt client.
 
 ## v0.29.3 — faster SPA updates and typed post-render scrolling (2026-11-07)
 
