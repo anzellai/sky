@@ -272,21 +272,43 @@ func invokeBrowserFetch(fetch js.Value, url string, opts js.Value) (promise js.V
 
 // rejectReason extracts a human-readable message from a Promise rejection
 // value (an Error, a string, or anything else).
-func rejectReason(a []js.Value) string {
-	if len(a) == 0 {
-		return "request failed"
+func rejectReason(a []js.Value) (reason string) {
+	reason = "request failed"
+	defer func() {
+		if p := recover(); p != nil {
+			if _, external := p.(js.Error); !external {
+				panic(p)
+			}
+			// A rejection object is untrusted. Do not inspect it again after
+			// a getter or method throws while we describe the original error.
+			reason = "request failed"
+		}
+	}()
+	if len(a) == 0 || !a[0].Truthy() {
+		return reason
 	}
 	v := a[0]
-	if !v.Truthy() {
-		return "request failed"
-	}
-	if m := v.Get("message"); m.Type() == js.TypeString {
-		return m.String()
-	}
-	if v.Type() == js.TypeString {
+	switch v.Type() {
+	case js.TypeString:
 		return v.String()
+	case js.TypeBoolean, js.TypeNumber, js.TypeSymbol:
+		return js.Global().Get("String").Invoke(v).String()
+	case js.TypeObject, js.TypeFunction:
+		// Value.Get is not a protected JavaScript call. Reflect.get through
+		// Call turns an external getter exception into a recoverable js.Error.
+		reflect := js.Global().Get("Reflect")
+		if m := reflect.Call("get", v, "message"); m.Type() == js.TypeString {
+			return m.String()
+		}
+		method := reflect.Call("get", v, "toString")
+		if method.Type() != js.TypeFunction {
+			return reason
+		}
+		// Read the method once and preserve its receiver, including accessors.
+		return reflect.Call("apply", method, v, js.ValueOf([]any{})).String()
+	default:
+		return reason
 	}
-	return v.Call("toString").String()
 }
 
 // fetchResponseHeaders reads a fetch Response's headers into the response's
