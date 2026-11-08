@@ -16,6 +16,10 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
+import Sky.Core.File as File
+import Std.Html as Html
+import Std.Html.Attributes as HA
+import Std.Html.Events as HE
 import Std.App as App
 import Std.Nav as Nav
 import Std.Ui as Ui exposing (Element)
@@ -24,6 +28,9 @@ type alias Model =
     { page : String
     , navs : Int
     , frag : String
+    , part : Int
+    , moved : Bool
+    , selected : String
     , saved : Int
     }
 
@@ -37,11 +44,30 @@ type Msg
     | Save
     | Saved (Result Error Int)
     | Evil
+    | NextPart
+    | ServerPart
+    | ScrollRpc
+    | MoveTarget
+    | Current
+    | Needed
+    | Missing
+    | Hidden
+    | Top
+    | Selected String
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { page = "home", navs = 0, frag = "", saved = 0 }, Cmd.none )
+    ( { page = "home"
+      , navs = 0
+      , frag = ""
+      , saved = 0
+      , part = 0
+      , moved = False
+      , selected = "a"
+      }
+    , Cmd.none
+    )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -83,6 +109,61 @@ update msg model =
         Evil ->
             ( model, Nav.pushUrl "https://example.com/" )
 
+        NextPart ->
+            ( { model | part = model.part + 1 }
+            , Nav.scrollIntoView ("part-" ++ String.fromInt (model.part + 1))
+            )
+
+        ServerPart ->
+            case Task.run
+                     (Time.sleep 150
+                         |> Task.andThen
+                                (\_ -> File.readFile "nav-scroll-target.txt")) of
+
+                Ok prefix ->
+                    ( { model | part = model.part + 1 }
+                    , Nav.scrollIntoView
+                          (prefix ++ String.fromInt (model.part + 1))
+                    )
+
+                Err _ ->
+                    ( model, Nav.scrollIntoView "server-file-error" )
+
+        ScrollRpc ->
+            case Task.run
+                     (Time.sleep 150
+                         |> Task.andThen
+                                (\_ -> File.readFile "nav-scroll-rpc.txt")) of
+
+                Ok target ->
+                    ( model, Nav.scrollIntoView target )
+
+                Err _ ->
+                    ( model, Nav.scrollIntoView "server-file-error" )
+
+        MoveTarget ->
+            ( { model | moved = True }, Cmd.none )
+
+        Current ->
+            ( model, Nav.scrollIntoView ("part-" ++ String.fromInt model.part) )
+
+        Needed ->
+            ( model
+            , Nav.scrollIntoViewIfNeeded ("part-" ++ String.fromInt model.part)
+            )
+
+        Missing ->
+            ( model, Nav.scrollIntoView "absent-target" )
+
+        Hidden ->
+            ( model, Nav.scrollIntoView "hidden-target" )
+
+        Top ->
+            ( model, Nav.scrollToTop )
+
+        Selected value ->
+            ( { model | selected = value }, Cmd.none )
+
 
 button : String -> Msg -> Element Msg
 button id msg =
@@ -102,13 +183,131 @@ view model =
                       ++ " FRAG="
                       ++ model.frag
                       ++ " SAVED="
-                      ++ String.fromInt model.saved))
+                      ++ String.fromInt model.saved
+                      ++ " PART="
+                      ++ String.fromInt model.part
+                      ++ " MOVED="
+                      ++ (if model.moved then
+                             "1"
+
+                         else
+                             "0")))
         , button "go" Go
         , button "home" Home
         , button "frag" Frag
         , button "clear" Clear
         , button "save" Save
         , button "evil" Evil
+        , button "next-part" NextPart
+        , button "server-part" ServerPart
+        , button "scroll-rpc" ScrollRpc
+        , button "move-target" MoveTarget
+        , button "current" Current
+        , button "needed" Needed
+        , button "missing" Missing
+        , button "hidden" Hidden
+        , button "top" Top
+        , Ui.el
+              [ Ui.style "flex-shrink" "0", Ui.style "height" "120px" ]
+              (Ui.text "before outer")
+        , Ui.el
+              [ Ui.htmlAttribute "id" "outer"
+              , Ui.style "flex-shrink" "0"
+              , Ui.style "height" "380px"
+              , Ui.style "width" "340px"
+              , Ui.style "overflow" "auto"
+              , Ui.style "overflow-anchor" "none"
+              ]
+              (Ui.column
+                  [ Ui.style "width" "700px" ]
+                  [ Ui.el
+                        [ Ui.style "flex-shrink" "0"
+                        , Ui.style "height" "100px"
+                        ]
+                        (Ui.text "outer spacer")
+                  , Ui.column
+                        [ Ui.htmlAttribute "id" "sheet"
+                        , Ui.style "flex-shrink" "0"
+                        , Ui.style "height" "260px"
+                        , Ui.style "width" "300px"
+                        , Ui.style "overflow" "auto"
+                        , Ui.style "overflow-anchor" "none"
+                        , Ui.style "scroll-behavior" "smooth"
+                        , Ui.style "scroll-padding-top" "calc(10% + 5px)"
+                        , Ui.style
+                              "border-top-width"
+                              (String.fromInt (model.part + 2) ++ "px")
+                        , Ui.style "border-top-style" "solid"
+                        ]
+                        [ Ui.html
+                              (Html.select
+                                  [ HA.id "held-select"
+                                  , HA.value model.selected
+                                  , HE.onChange Selected
+                                  ]
+                                  [ Html.option
+                                        [ HA.value "a" ]
+                                        [ Html.text "A" ]
+                                  , Html.option
+                                        [ HA.value "b" ]
+                                        [ Html.text "B" ]
+                                  ])
+                        , Ui.el
+                              [ Ui.style "flex-shrink" "0"
+                              , Ui.style "height" "700px"
+                              , Ui.style "width" "650px"
+                              ]
+                              (Ui.text "long form")
+                        , if model.part > 0 then
+                              Ui.el
+                                  [ Ui.htmlAttribute
+                                        "id"
+                                        ("part-" ++ String.fromInt model.part)
+                                  , Ui.style "scroll-margin-top" "18px"
+                                  ]
+                                  (Ui.text "new question")
+
+                          else
+                              Ui.text "no question yet"
+                        , Ui.el
+                              [ Ui.style "flex-shrink" "0"
+                              , Ui.style
+                                    "height"
+                                    (if model.moved then
+                                        "500px"
+
+                                    else
+                                        "80px")
+                              ]
+                              (Ui.text "movable gap")
+                        , Ui.el
+                              [ Ui.htmlAttribute "id" "rpc-target"
+                              , Ui.style "scroll-margin-top" "18px"
+                              ]
+                              (Ui.text "RPC target")
+                        , Ui.el
+                              [ Ui.htmlAttribute "id" "hidden-target"
+                              , Ui.style "display" "none"
+                              ]
+                              (Ui.text "hidden")
+                        , Ui.el
+                              [ Ui.style "flex-shrink" "0"
+                              , Ui.style "height" "900px"
+                              ]
+                              (Ui.text "trailing form")
+                        ]
+                  , Ui.el
+                        [ Ui.style "flex-shrink" "0"
+                        , Ui.style "height" "900px"
+                        ]
+                        (Ui.text "outer tail")
+                  ])
+        , Ui.el
+              [ Ui.style "flex-shrink" "0"
+              , Ui.style "width" "1400px"
+              , Ui.style "height" "1200px"
+              ]
+              (Ui.text "window tail")
         ]
 
 

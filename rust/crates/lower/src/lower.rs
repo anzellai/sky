@@ -139,19 +139,56 @@ impl FfiTable {
 
 mod closure;
 mod numeric;
+mod record_catalog;
+mod retained_types;
+use record_catalog::RecordFields;
+use retained_types::{ParamTypes, ResultTypes, SignatureTy};
+mod spa_capability_domain;
+mod spa_model;
+mod task_discard;
+mod view_memo;
+
+/// One immutable body in its memoised resolved-module owner. Keeping the
+/// owner alive preserves arena storage and ExprIds without deep-copying HIR.
+/// Construction stays private and follows a successful bodies.get(def).
+struct DefBody {
+    owner: std::sync::Arc<hir::ResolveResult>,
+    def: DefId,
+}
+
+impl std::ops::Deref for DefBody {
+    type Target = Body;
+    fn deref(&self) -> &Body {
+        &self.owner.bodies[&self.def]
+    }
+}
+
+// Only adversarial unit fixtures mutate HIR. Copy-on-write leaves the source
+// database and other entries untouched; production has no mutable body access.
+#[cfg(test)]
+impl std::ops::DerefMut for DefBody {
+    fn deref_mut(&mut self) -> &mut Body {
+        std::sync::Arc::make_mut(&mut self.owner)
+            .bodies
+            .get_mut(&self.def)
+            .expect("DefBody retains its validated definition")
+    }
+}
 
 struct DefEntry {
     module_name: String,
     name: String,
-    body: Body,
-    types: BodyTypes,
-    numeric: std::rc::Rc<ty::numeric::NumericElaboration>,
+    body: DefBody,
+    types: std::sync::Arc<BodyTypes>,
+    task_discards: BTreeSet<ExprId>,
+    numeric: std::sync::Arc<ty::numeric::NumericElaboration>,
     /// The declared/derived scheme type (peeled for param types), if any.
-    sig: Option<Ty>,
+    sig: Option<SignatureTy>,
 }
 
 /// A collected type declaration (union or record alias) awaiting emission.
 struct TypeDecl {
+    module_id: ModuleId,
     name: String,
     /// The Sky module that DECLARED this type. Its field / constructor-payload
     /// types must resolve through `nominal_by_module` with this as `cur_mod` (as
@@ -178,6 +215,19 @@ enum TypeDeclKind {
 /// defaults — the runtime reads these via `rt.SkyDefault` (`SKY_*` fallbacks).
 #[derive(Default, Clone)]
 pub struct LowerConfig {
+    /// Resolved Std.Codec (toJson, auto) definitions granted by the build
+    /// driver only while the canonical stdlib source namespace is intact.
+    /// No sky.toml key can grant this. Missing means reference-only encoders.
+    pub trusted_auto_codec: Option<(DefId, DefId)>,
+    /// Actual canonical modules granted by the project source-identity check.
+    /// Namespace spelling alone never grants private reuse capabilities.
+    pub trusted_private_modules: BTreeSet<ModuleId>,
+    /// Compiler driver-only canonical source identity grant. No user setting.
+    pub trusted_view_memo: Vec<(String, String, DefId)>,
+    /// Original canonical stdlib SourceFile identities verified by the build
+    /// driver. Default empty: a matching module/type spelling grants nothing.
+    /// No user configuration key can populate this capability.
+    pub trusted_builtin_adt_modules: HashSet<ModuleId>,
     /// `port` (default 8000 when `None`).
     pub port: Option<String>,
     /// The `[env] prefix` from sky.toml — re-namespaces every runtime `SKY_*`
@@ -267,7 +317,26 @@ pub fn lower_program(db: &dyn TyDb, entry: ModuleId) -> LowerOutput {
 }
 
 pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> LowerOutput {
+    #[cfg(test)]
+    {
+        lower_program_impl(db, entry, cfg, None, None, false)
+    }
+    #[cfg(not(test))]
+    {
+        lower_program_impl(db, entry, cfg)
+    }
+}
+
+fn lower_program_impl(
+    db: &dyn TyDb,
+    entry: ModuleId,
+    cfg: &LowerConfig,
+    #[cfg(test)] observer: Option<&mut dyn FnMut(Vec<retained_types::Snapshot>)>,
+    #[cfg(test)] catalog_observer: Option<&mut dyn FnMut(record_catalog::Snapshot)>,
+    #[cfg(test)] reference_catalog: bool,
+) -> LowerOutput {
     let typer = Typer::new(db);
+    let signature_world = typer.declaration_world_owner();
     let mut warnings: Vec<LowerDiag> = Vec::new();
     let mut errors: Vec<LowerDiag> = Vec::new();
     // Each top-level definition's name span: where a lowering diagnostic points
@@ -363,16 +432,21 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             continue;
         };
         crate::BODIES_TYPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let types = typer.body_types(*m, *d, body);
+        let types = db.body_types_of(*m, *d);
+        let task_discards = task_discard::logical_task_discards(&typer, *d, body, &types);
         let numeric = db.numeric_elaboration_of(*m, *d);
-        let sig = typer.value_sig(*d).map(|s| numeric.signature.apply(&s.ty));
+        let sig = retained_types::signature(&signature_world, *d, &numeric.signature);
         defs.insert(
             *d,
             DefEntry {
                 module_name: db.module_name(*m).to_string(),
                 name: td.name.as_str().to_string(),
-                body: body.clone(),
+                body: DefBody {
+                    owner: std::sync::Arc::clone(resolved),
+                    def: *d,
+                },
                 types,
+                task_discards,
                 numeric,
                 sig,
             },
@@ -517,17 +591,16 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
 
     // record `_R` go-name → declared field (Go-name, Sky type) list, for typing
     // record-literal field values to the struct's declared field types.
-    let mut record_fields: HashMap<String, Vec<(String, Ty)>> = HashMap::new();
-    for d in &type_decls {
-        if let TypeDeclKind::Record(fields) = &d.kind {
-            record_fields.insert(
-                d.go_name.clone(),
-                fields
-                    .iter()
-                    .map(|(n, t)| (capitalize(n), t.clone()))
-                    .collect(),
-            );
-        }
+    let record_fields = record_catalog::build(&type_decls);
+    #[cfg(test)]
+    let record_fields = if reference_catalog {
+        record_catalog::owned_reference(&type_decls)
+    } else {
+        record_fields
+    };
+    #[cfg(test)]
+    if let Some(observer) = catalog_observer {
+        observer(record_catalog::inspect(&type_decls, &env, &record_fields));
     }
 
     // ctor name → (owning Go type name, kind) reverse index + declaration-order tag.
@@ -602,131 +675,17 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // (e.g. `Result Error String`) that a caller's argument (`Result any String`)
     // must be coerced to at the call site (the cross-def unification the global
     // solver would do — recovered here as an explicit boundary coercion).
-    let mut def_param_tys: HashMap<DefId, Vec<Ty>> = HashMap::new();
-    for (d, e) in &defs {
-        // Prefer the DECLARED signature's param types (nominal, e.g.
-        // `RetryPolicy e`) over the body-INFERRED local types. Independent
-        // per-def inference of a record param that a body only field-updates
-        // (`{ p | shouldRetry = … }`) produces a *subset* structural record
-        // (`{ shouldRetry }`), which `sky_ty_to_go` renders as an anonymous
-        // `struct{ ShouldRetry … }`. The caller then passes the full nominal
-        // `RetryPolicy_R` and the boundary-coercion forces a
-        // `rt.Coerce[struct{…}]` between a named struct and a different
-        // anonymous struct — which `go build` rejects. Using the annotated
-        // param type keeps both sides on the nominal `_R` type, so `from == to`
-        // and the coercion elides (doc 07 §3 subset-record case).
-        let sig_ptys = e.sig.as_ref().map(peel_params);
-        // Row-polymorphic params (row var shared param↔result) must present to
-        // callers as `any` — matching the `any` Go signature `lower_def` emits —
-        // so the caller widens its argument instead of coercing it DOWN to a
-        // closed struct (which would drop the row-carried fields).
-        let collides = |t: &Ty| match &sky_ty_to_go(t, &env) {
-            GoTy::Named(n, _) => goty_names_non_model_record(n, &record_fields, &env),
-            _ => false,
-        };
-        let (rp_params, _rp_result) = row_poly_flags(&e.body, &e.types, &collides);
-        let mut ptys = Vec::new();
-        for (i, p) in e.body.params.iter().enumerate() {
-            let inferred = || match &e.body.pats[*p] {
-                Pattern::Var(lid) => e.types.local(*lid).unwrap_or(Ty::Var(Name::new("any"))),
-                _ => Ty::Var(Name::new("any")),
-            };
-            // Take the sig param type when it is concrete enough to be useful
-            // (not a bare type variable — a rigid `msg`/`a` gives no more than
-            // the inferred type and would erase to `any` anyway).
-            let t = match sig_ptys.as_ref().and_then(|ps| ps.get(i)) {
-                Some(st) if !matches!(st, Ty::Var(_)) => st.clone(),
-                // Row-poly + no concrete annotation → `any`.
-                _ if *rp_params.get(i).unwrap_or(&false) => Ty::Var(Name::new("any")),
-                _ => inferred(),
-            };
-            let t = e
-                .numeric
-                .signature
-                .parameter(i)
-                .map_or_else(|| t.clone(), |shape| shape.apply(&t));
-            ptys.push(t);
-        }
-        def_param_tys.insert(*d, ptys);
-    }
-    // per-def result type — the callee's Go return type as seen by a caller (for
-    // arg→param coercion of the return, partial-application closure return, and
-    // Task-returning detection). MUST agree with the type `lower_def` actually
-    // emits as the func's Go return: `lower_def` prefers the DECLARED sig result
-    // (`sig_result_after`) when concrete over the body-inferred one. A body that
-    // only field-updates its record param (`{ post | upvoters = … }`) infers a
-    // *subset* open record (`{ Downvoters, Id, Upvoters | row }` → anon
-    // `struct{…}`), but the func returns the annotated nominal (`State_Post_R`).
-    // If `def_result_tys` reported the subset, a partial-app closure would be
-    // typed `func(_p any) struct{…}` while its body returns the nominal — which
-    // `go build` rejects (19-skyforum toggle map). Mirroring the sig-first rule
-    // keeps both sides on the nominal `_R`. Bare-var / unannotated results fall
-    // back to the body-inferred type, unchanged.
-    let mut def_result_tys: HashMap<DefId, Ty> = HashMap::new();
-    for (d, e) in &defs {
-        let sig_ret = e
-            .sig
-            .as_ref()
-            .map(|s| sig_result_after(s, e.body.params.len()));
-        let collides = |t: &Ty| match &sky_ty_to_go(t, &env) {
-            GoTy::Named(n, _) => goty_names_non_model_record(n, &record_fields, &env),
-            _ => false,
-        };
-        let (_rp_params, rp_result) = row_poly_flags(&e.body, &e.types, &collides);
-        let t = match sig_ret {
-            Some(st) if !matches!(st, Ty::Var(_)) => Some(st),
-            // Row-poly result + no concrete annotation → `any` (matches the `any`
-            // Go return `lower_def` emits + the reflective `rt.RecordUpdate` body).
-            _ if rp_result => Some(Ty::Var(Name::new("any"))),
-            // A row-polymorphic lambda CAF presents its erased function type —
-            // the same one `lower_def` emits (see `caf_lambda_row_poly_ty`).
-            None => caf_lambda_row_poly_ty(&e.body, &e.types).or_else(|| e.types.result.clone()),
-            _ => e.types.result.clone(),
-        };
-        if let Some(t) = t {
-            let t = e
-                .numeric
-                .signature
-                .result_after(e.body.params.len())
-                .map_or_else(|| t.clone(), |shape| shape.apply(&t));
-            def_result_tys.insert(*d, t);
-        }
-    }
-    // A zero-parameter ALIAS of another def (`alias2 = (add2)`) whose own
-    // per-def inference could not see the target's type (an unannotated target
-    // reads back as a bare var) takes the TARGET's result type. `lower_def`
-    // already emits the alias with the target's Go func type (recovered from the
-    // lowered body), so a caller that read the bare var saw `any` and emitted a
-    // curried call on it (`Main_alias2()(3)(4)`) that `go build` rejects while
-    // `sky check` passed. Iterated so an alias of an alias resolves too.
-    for _ in 0..8 {
-        let mut changed = false;
-        for (d, e) in &defs {
-            if !e.body.params.is_empty() || e.sig.is_some() {
-                continue;
-            }
-            let Some(root) = e.body.root else { continue };
-            let Expr::Var(Res::Def(target)) = &e.body.exprs[root] else {
-                continue;
-            };
-            let own_unresolved = match def_result_tys.get(d) {
-                None => true,
-                Some(Ty::Var(_)) | Some(Ty::Error) => true,
-                Some(_) => false,
-            };
-            if !own_unresolved || target == d {
-                continue;
-            }
-            if let Some(tt) = def_result_tys.get(target).cloned() {
-                if !matches!(tt, Ty::Var(_) | Ty::Error) && def_result_tys.get(d) != Some(&tt) {
-                    def_result_tys.insert(*d, tt);
-                    changed = true;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
+    let (def_param_tys, def_result_tys) = retained_types::build_caches(&defs, &env, &record_fields);
+    #[cfg(test)]
+    if let Some(observer) = observer {
+        observer(retained_types::inspect(
+            &typer,
+            &defs,
+            &def_param_tys,
+            &def_result_tys,
+            &env,
+            &record_fields,
+        ));
     }
 
     // ---- kernel-alias map (defs whose body is `Ffi.kernel "X"`) ----
@@ -825,7 +784,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         if !e.body.params.is_empty() {
             return None;
         }
-        let ty = e.sig.clone().or_else(|| e.types.result.clone());
+        let ty = e.sig.as_deref().or(e.types.result.as_ref());
         // Recognise ONLY the stdlib `Sky.Config.Config`, by CONFIDENT nominal
         // identity — never by the bare base `"Config"`. `ty::nominal` qualifies a
         // user-declared type with its DECLARING module (`ty::sig`), so the genuine
@@ -870,6 +829,24 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     device_regs.sort();
     device_regs.dedup();
 
+    // Canonical Codec source alone does not certify ownership of values a raw
+    // Go FFI producer can return/reuse. Gate ALL private capabilities together.
+    let private_caps = (!cfg.trusted_view_memo.is_empty() || cfg.trusted_auto_codec.is_some())
+        && spa_capability_domain::permitted(
+            db.as_sky_db(),
+            &defs,
+            &kernel_alias,
+            &cfg.trusted_private_modules,
+        );
+    let trusted_auto_codec = cfg.trusted_auto_codec.filter(|_| private_caps);
+    let view_grant = if private_caps {
+        cfg.trusted_view_memo.as_slice()
+    } else {
+        &[]
+    };
+    let view_memo_plan = view_memo::plan(main_def, &defs, &kernel_alias, view_grant);
+    let mut view_memo_funcs = Vec::new();
+    let mut view_memo_regions = 0usize;
     // ---- DCE: lower reachable defs, discovering refs as we go ----
     let mut seen: HashSet<DefId> = HashSet::new();
     // Root the work-list at `main` AND (when present) the `config` entry point,
@@ -896,74 +873,100 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             // a value-reference would need a wrapper (tracked when it happens).
             continue;
         }
-        let mut cx = Ctx {
-            db: db.as_sky_db(),
-            defs: &defs,
-            kernel_alias: &kernel_alias,
-            kernel_alias_arity: &kernel_alias_arity,
-            env: &env,
-            record_fields: &record_fields,
-            ctor_owner: &ctor_owner,
-            ctor_tag: &ctor_tag,
-            ctor_arity: &ctor_arity,
-            ctor_in_union: &ctor_in_union,
-            ctor_arity_in_union: &ctor_arity_in_union,
-            ctor_field_gotys: &ctor_field_gotys,
-            sealed_unions: &sealed_unions,
-            def_param_tys: &def_param_tys,
-            def_result_tys: &def_result_tys,
-            def_effect: &def_effect,
-            body: &e.body,
-            types: &e.types,
-            numeric: &e.numeric,
-            numeric_scope: vec![ty::numeric::NumericBinder::Top],
-            local_names: HashMap::new(),
-            local_tys: HashMap::new(),
-            local_counter: 0,
-            container_record_slot: false,
-            record_at_slot: false,
-            discovered: Vec::new(),
-            used_types: HashSet::new(),
-            warnings: Vec::new(),
-            errors: Vec::new(),
-            closure_elem: None,
-            closure_elem_at: None,
-            caf_lambda_ty: None,
-            ffi: &cfg.ffi,
-            ffi_used: BTreeSet::new(),
-            kernel_arity: &cfg.kernel_arity,
-            variadic_kernels: &cfg.variadic_kernels,
-            cur_module: e.module_name.clone(),
-            cur_def: d,
-            goty_memo: HashMap::new(),
-            goty_ref_memo: HashMap::new(),
-            def_span: def_spans.get(&d).copied(),
-            cur_span: None,
-            tco: None,
-            // Only `lower_main` reads this; harmless to carry on every Ctx.
-            apply_config: config_go_name.clone(),
-            device_regs: device_regs.clone(),
-        };
-        let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
-        // determinism (L4): `discovered` is a Vec (ordered), and the two set
-        // drains below are order-INDEPENDENT — they only union into another
-        // set/BTreeSet, so the resulting membership is identical regardless of the
-        // (randomized) HashSet iteration order. `used_go_types` is sorted before it
-        // drives emission (see `tqueue.sort()`); `ffi_used` is a BTreeSet.
-        for r in cx.discovered {
-            if !seen.contains(&r) {
-                work.push(r);
+        for view_memo_copy in [false, true] {
+            if view_memo_copy
+                && !view_memo_plan
+                    .as_ref()
+                    .is_some_and(|p| p.route.contains(&d))
+            {
+                continue;
+            }
+            let mut cx = Ctx {
+                view_memo_sites: if view_memo_copy {
+                    view_memo_plan.as_ref().and_then(|p| p.sites.get(&d))
+                } else {
+                    None
+                },
+                view_memo_regions: 0,
+                trusted_auto_codec,
+                db: db.as_sky_db(),
+                defs: &defs,
+                kernel_alias: &kernel_alias,
+                kernel_alias_arity: &kernel_alias_arity,
+                env: &env,
+                record_fields: &record_fields,
+                ctor_owner: &ctor_owner,
+                ctor_tag: &ctor_tag,
+                ctor_arity: &ctor_arity,
+                ctor_in_union: &ctor_in_union,
+                ctor_arity_in_union: &ctor_arity_in_union,
+                ctor_field_gotys: &ctor_field_gotys,
+                sealed_unions: &sealed_unions,
+                def_param_tys: &def_param_tys,
+                def_result_tys: &def_result_tys,
+                def_effect: &def_effect,
+                body: &e.body,
+                types: &e.types,
+                task_discards: &e.task_discards,
+                numeric: &e.numeric,
+                numeric_scope: vec![ty::numeric::NumericBinder::Top],
+                local_names: HashMap::new(),
+                local_tys: HashMap::new(),
+                local_counter: 0,
+                container_record_slot: false,
+                record_at_slot: false,
+                discovered: Vec::new(),
+                used_types: HashSet::new(),
+                warnings: Vec::new(),
+                errors: Vec::new(),
+                closure_elem: None,
+                closure_elem_at: None,
+                caf_lambda_ty: None,
+                ffi: &cfg.ffi,
+                ffi_used: BTreeSet::new(),
+                kernel_arity: &cfg.kernel_arity,
+                variadic_kernels: &cfg.variadic_kernels,
+                cur_module: e.module_name.clone(),
+                cur_def: d,
+                goty_memo: HashMap::new(),
+                goty_ref_memo: HashMap::new(),
+                def_span: def_spans.get(&d).copied(),
+                cur_span: None,
+                tco: None,
+                // Only `lower_main` reads this; harmless to carry on every Ctx.
+                apply_config: config_go_name.clone(),
+                device_regs: device_regs.clone(),
+            };
+            let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_deref(), d == main_def);
+            // determinism (L4): `discovered` is a Vec (ordered), and the two set
+            // drains below are order-INDEPENDENT — they only union into another
+            // set/BTreeSet, so the resulting membership is identical regardless of the
+            // (randomized) HashSet iteration order. `used_go_types` is sorted before it
+            // drives emission (see `tqueue.sort()`); `ffi_used` is a BTreeSet.
+            for r in cx.discovered {
+                if !seen.contains(&r) {
+                    work.push(r);
+                }
+            }
+            for t in cx.used_types {
+                used_go_types.insert(t);
+            }
+            for m in cx.ffi_used {
+                ffi_used.insert(m);
+            }
+            if view_memo_copy {
+                view_memo_regions += cx.view_memo_regions;
+                for item in def_items {
+                    if let GoItem::Func(f) = item {
+                        view_memo_funcs.push(f);
+                    }
+                }
+            } else {
+                warnings.extend(cx.warnings);
+                errors.extend(cx.errors);
+                funcs.extend(def_items);
             }
         }
-        for t in cx.used_types {
-            used_go_types.insert(t);
-        }
-        for m in cx.ffi_used {
-            ffi_used.insert(m);
-        }
-        warnings.extend(cx.warnings);
-        errors.extend(cx.errors);
-        funcs.extend(def_items);
     }
 
     // ---- type-decl reachability: BFS over Go type names used in emitted code ----
@@ -986,7 +989,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             .get(&gn)
             .or_else(|| type_by_go.get(gn.trim_end_matches("_R")));
         if let Some(decl) = decl {
-            let (items, more) = emit_type_decl(decl, &env, &sealed_unions);
+            let (items, more) =
+                emit_type_decl(decl, &env, &sealed_unions, &cfg.trusted_builtin_adt_modules);
             for m in more {
                 if !seen_types.contains(&m) {
                     tqueue.push(m);
@@ -998,6 +1002,16 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     // deterministic: sort type groups by module then name (declaration proxy).
     type_items.sort_by(|a, b| a.0.cmp(&b.0));
 
+    if let Some(plan) = &view_memo_plan {
+        view_memo::finish(
+            plan,
+            &defs,
+            view_memo_funcs,
+            &mut funcs,
+            &type_items,
+            view_memo_regions,
+        );
+    }
     // ---- assemble the module ----
     let mut items = Vec::new();
     items.push(prologue_init(cfg));
@@ -1418,7 +1432,7 @@ fn def_reference_is_forced(
     d: DefId,
     applied_here: bool,
     defs: &BTreeMap<DefId, DefEntry>,
-    def_result_tys: &HashMap<DefId, Ty>,
+    def_result_tys: &ResultTypes<'_>,
 ) -> bool {
     if applied_here {
         return true;
@@ -1432,7 +1446,7 @@ fn def_reference_is_forced(
         return false;
     }
     // Zero-arity: forced, unless the memoised value is itself a function.
-    !matches!(def_result_tys.get(&d), Some(Ty::Fun(_, _)))
+    !matches!(def_result_tys.get(&d).map(|t| &**t), Some(Ty::Fun(_, _)))
 }
 
 /// Whole-program pre-pass: per def, the freeze-unsafe effect kernel (fresh-value
@@ -1453,7 +1467,7 @@ fn def_reference_is_forced(
 fn compute_def_effect(
     defs: &BTreeMap<DefId, DefEntry>,
     kernel_alias: &HashMap<DefId, String>,
-    def_result_tys: &HashMap<DefId, Ty>,
+    def_result_tys: &ResultTypes<'_>,
 ) -> HashMap<DefId, EffectKind> {
     // Per-def direct kernel effect + outgoing def references (call-graph edges,
     // including references that appear inside lambda bodies).
@@ -1813,6 +1827,7 @@ fn collect_types(
                         TypeDeclKind::Adt(variants)
                     };
                     decls.push(TypeDecl {
+                        module_id: m,
                         name: tname,
                         module: mname.clone(),
                         go_name,
@@ -1883,6 +1898,7 @@ fn collect_types(
                             }
                         );
                         decls.push(TypeDecl {
+                            module_id: m,
                             name: tname,
                             module: mname.clone(),
                             go_name,
@@ -1958,6 +1974,7 @@ fn emit_type_decl(
     decl: &TypeDecl,
     env: &TypeEnv,
     sealed_unions: &HashSet<String>,
+    trusted_builtin_modules: &HashSet<ModuleId>,
 ) -> (Vec<GoItem>, Vec<String>) {
     let mut more: Vec<String> = Vec::new();
     // Resolve declared field / constructor-payload types AS THE DECLARING MODULE,
@@ -1968,6 +1985,16 @@ fn emit_type_decl(
         collect_named(&gt, &mut more);
         gt
     };
+    let parent = format!("{}.{}", decl.module, decl.name);
+    let builtin = trusted_builtin_modules.contains(&decl.module_id)
+        && matches!(
+            parent.as_str(),
+            "Std.Decimal.Decimal" | "Std.Money.Money" | "Std.Money.Currency"
+        );
+    let owner = base::go_string_literal(&format!(
+        "{}:{parent}",
+        if builtin { "builtin" } else { "sky" }
+    ));
     match &decl.kind {
         TypeDeclKind::Iota(variants) => (
             vec![GoItem::Type(
@@ -2118,7 +2145,10 @@ fn emit_type_decl(
             // variants), and the wire JSON factory.
             let mut variant_defs: Vec<(String, usize, Vec<GoTy>)> = Vec::new();
             let mut items: Vec<GoItem> = Vec::new();
-            let mut reg = String::from("func init() { ");
+            let mut reg = format!(
+                "func init() {{ rt.RegisterAdtOwner(\"main.{}\", \"{}\", {owner}); ",
+                decl.go_name, decl.go_name
+            );
             for (i, (cn, args)) in variants.iter().enumerate() {
                 let ftys: Vec<GoTy> = args.iter().map(&mut collect).collect();
                 let vstruct = format!("{}_{}_V", decl.go_name, cn);
@@ -2193,7 +2223,10 @@ fn emit_type_decl(
         }
         TypeDeclKind::Adt(variants) => {
             let mut items = vec![GoItem::Type(decl.go_name.clone(), GoTypeDef::AdtAlias)];
-            let mut reg = String::from("func init() { ");
+            let mut reg = format!(
+                "func init() {{ rt.RegisterAdtOwner(\"main.{}\", \"{}\", {owner}); ",
+                decl.go_name, decl.go_name
+            );
             for (i, (cn, args)) in variants.iter().enumerate() {
                 // ADT payloads are stored in the untyped `Fields []any` bag, so
                 // the constructor params are `any` — call sites pass already-
@@ -2212,7 +2245,7 @@ fn emit_type_decl(
                 let fields: Vec<String> = (0..args.len()).map(|j| format!("v{j}")).collect();
                 // constructor
                 items.push(GoItem::Raw(format!(
-                    "func {}_{}({}) {} {{ return {}{{Tag: {i}, SkyName: \"{cn}\", Fields: []any{{{}}}}} }}",
+                    "func {}_{}({}) {} {{ return {}{{SkyOwner: {owner}, Tag: {i}, SkyName: \"{cn}\", Fields: []any{{{}}}}} }}",
                     decl.go_name,
                     cn,
                     params.join(", "),
@@ -2373,6 +2406,9 @@ fn ty_refs_ambiguous(t: &Ty, ambiguous: &HashSet<String>, declares: &dyn Fn(&str
 // `tqueue` / `type_items`. `used_types` is drained only via a set-union that a
 // later `.sort()` re-orders. So `HashMap` is sound here despite randomized order.
 struct Ctx<'a> {
+    view_memo_sites: Option<&'a Vec<view_memo::Site>>,
+    view_memo_regions: usize,
+    trusted_auto_codec: Option<(DefId, DefId)>,
     db: &'a dyn SkyDb,
     defs: &'a BTreeMap<DefId, DefEntry>,
     kernel_alias: &'a HashMap<DefId, String>,
@@ -2385,7 +2421,7 @@ struct Ctx<'a> {
     /// `withCors`, the only correct source (the curried sig over-counts).
     kernel_alias_arity: &'a HashMap<DefId, usize>,
     env: &'a TypeEnv,
-    record_fields: &'a HashMap<String, Vec<(String, Ty)>>,
+    record_fields: &'a RecordFields<'a>,
     ctor_owner: &'a HashMap<String, (String, NominalKind)>,
     ctor_tag: &'a HashMap<String, usize>,
     ctor_arity: &'a HashMap<String, usize>,
@@ -2395,14 +2431,16 @@ struct Ctx<'a> {
     ctor_field_gotys: &'a HashMap<(String, String), Vec<GoTy>>,
     /// Go names of ADT unions emitted as sealed interfaces (typed variant dispatch).
     sealed_unions: &'a HashSet<String>,
-    def_param_tys: &'a HashMap<DefId, Vec<Ty>>,
-    def_result_tys: &'a HashMap<DefId, Ty>,
+    def_param_tys: &'a ParamTypes<'a>,
+    def_result_tys: &'a ResultTypes<'a>,
     /// Whole-program: the freeze-unsafe effect (fresh-value / mutable-store read)
     /// reachable from each def's body. The memoised-CAF lint uses it to catch a
     /// LAUNDERED effect the direct-kernel scan misses.
     def_effect: &'a HashMap<DefId, EffectKind>,
     body: &'a Body,
     types: &'a BodyTypes,
+    /// Logical effect classification only; never used to choose a Go representation.
+    task_discards: &'a BTreeSet<ExprId>,
     numeric: &'a ty::numeric::NumericElaboration,
     numeric_scope: Vec<ty::numeric::NumericBinder>,
     local_names: HashMap<LocalId, String>,
@@ -2712,6 +2750,9 @@ impl<'a> Ctx<'a> {
     /// for a call to an unannotated def whose result the caller inferred as a
     /// flex var — the callee's own inferred result type.
     fn expr_is_task(&self, e: ExprId) -> bool {
+        if self.task_discards.contains(&e) {
+            return true;
+        }
         if let Some(n) = self.types.expr_app_name(e) {
             if ty::nominal::base(n.as_str()) == "Task" {
                 return true;
@@ -2719,7 +2760,7 @@ impl<'a> Ctx<'a> {
         }
         if let Expr::Call(callee, _) = &self.body.exprs[e] {
             if let Expr::Var(Res::Def(d)) = &self.body.exprs[*callee] {
-                if let Some(Ty::App(n, _)) = self.def_result_tys.get(d) {
+                if let Some(Ty::App(n, _)) = self.def_result_tys.get(d).map(|t| &**t) {
                     return ty::nominal::base(n.as_str()) == "Task";
                 }
             }
@@ -2789,7 +2830,7 @@ impl<'a> Ctx<'a> {
         let (rp_params, rp_result) = row_poly_flags(&self.body, &self.types, &collides);
 
         for (i, p) in param_pats.iter().enumerate() {
-            let (pname, mut pty, binds) = self.bind_param(*p, sig_params.get(i));
+            let (pname, mut pty, binds) = self.bind_param(*p, sig_params.get(i).copied());
             // Erase a genuinely row-polymorphic param to `any`, and re-register
             // the local so the body's reads (`r.age` → `rt.Field`) and updates
             // (`{ r | … }` → `rt.RecordUpdate`) take the reflective any-typed
@@ -2977,7 +3018,7 @@ impl<'a> Ctx<'a> {
                         let is_data = self
                             .def_result_tys
                             .get(&self.cur_def)
-                            .is_some_and(is_stale_data_result);
+                            .is_some_and(|t| is_stale_data_result(t));
                         if is_data {
                             let what = match kind {
                                 EffectKind::Fresh => "a clock/entropy read",
@@ -6559,6 +6600,66 @@ impl<'a> Ctx<'a> {
     }
 
     fn kernel_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        // An editable generated-project marker is not an optimisation proof.
+        // Only this resolved-HIR check can construct the runtime capsule. An
+        // arbitrary callable passed to the internal setter stays reference-only.
+        if go == "rt.Spa_withGeneratedModelEncoder"
+            && args.len() == 2
+            && self.validated_auto_model_encoder(args[0])
+        {
+            let input_type = self.spa_model_input_type(args[0]);
+            let full = self.lower_expr(args[0], &GoTy::Any);
+            let full = self.widen(full);
+            let capsule = GoExpr::new(
+                GoExprKind::StructLit(
+                    "rt.SpaAutoModelEncoder".into(),
+                    vec![("Full".into(), full), ("InputType".into(), input_type)],
+                ),
+                GoTy::Named("rt.SpaAutoModelEncoder".into(), vec![]),
+            );
+            let capsule = self.widen(capsule);
+            let cfg = self.lower_expr(args[1], &GoTy::Any);
+            let cfg = self.widen(cfg);
+            return self.kernel_call_lowered(go, vec![capsule, cfg], actual);
+        }
+
+        if go == "rt.Spa_withPreparedModelEncoder"
+            && args.len() == 4
+            && self.validated_prepared_model_encoder(args[2], args[0], args[1])
+        {
+            // All arguments remain in their original evaluation order. The
+            // independent OLD proof alone grants closed-model optimisation.
+            let closed = self.validated_auto_model_encoder(args[2]);
+            let input_type = self.spa_model_input_type(args[2]);
+            let mut lowered = Vec::new();
+            for (i, expr) in args.iter().enumerate() {
+                let value = self.lower_expr(*expr, &GoTy::Any);
+                let value = self.widen(value);
+                if i == 2 {
+                    let capsule = GoExpr::new(
+                        GoExprKind::StructLit(
+                            "rt.SpaPreparedEncoderProof".into(),
+                            vec![
+                                ("Full".into(), value),
+                                ("InputType".into(), input_type.clone()),
+                                (
+                                    "Closed".into(),
+                                    GoExpr::new(
+                                        GoExprKind::BoolLit(closed),
+                                        GoTy::Bare(Prim::Bool),
+                                    ),
+                                ),
+                            ],
+                        ),
+                        GoTy::Named("rt.SpaPreparedEncoderProof".into(), vec![]),
+                    );
+                    lowered.push(self.widen(capsule));
+                } else {
+                    lowered.push(value);
+                }
+            }
+            return self.kernel_call_lowered(go, lowered, actual);
+        }
         // Sky.Spa client dispatch de-reflection (docs/skyspa/prod-web.md Path A).
         // `Spa.config { init, update, view, subscriptions }` normally lowers its
         // record to an all-`any` anonymous struct the wasm driver
@@ -6622,6 +6723,9 @@ impl<'a> Ctx<'a> {
             if args.len() == 2 {
                 let f = self.lower_expr(args[0], &GoTy::Any);
                 let xs = self.lower_expr(args[1], &GoTy::Any);
+                if let Some(memo) = self.try_view_memo_hof(hof, go, args, &f, &xs, actual) {
+                    return memo;
+                }
                 return self.list_hof_typed(hof, go, f, xs, actual);
             }
         }
@@ -8219,7 +8323,7 @@ impl<'a> Ctx<'a> {
             fn lookup(&self, d: DefId) -> Option<(&str, &str, &Body)> {
                 self.0
                     .get(&d)
-                    .map(|e| (e.module_name.as_str(), e.name.as_str(), &e.body))
+                    .map(|e| (e.module_name.as_str(), e.name.as_str(), &*e.body))
             }
         }
         let findings = crate::store_lint::lint(self.body, &Defs(self.defs));
@@ -8845,7 +8949,7 @@ impl<'a> Ctx<'a> {
                 && self
                     .record_fields
                     .get(n)
-                    .map(|fs| fs.iter().any(|(_, t)| matches!(t, Ty::Fun(..))))
+                    .map(|fs| fs.iter().any(|(_, t)| matches!(&**t, Ty::Fun(..))))
                     .unwrap_or(false));
         let nominal = matches!(actual, GoTy::Named(_, _)) && !generic_func_cfg;
         if nominal {
@@ -8878,7 +8982,7 @@ impl<'a> Ctx<'a> {
             GoTy::Named(n, _) if nominal => self
                 .record_fields
                 .get(n)
-                .map(|fs| fs.iter().map(|(n, t)| (n.clone(), t.clone())).collect())
+                .map(|fs| fs.iter().map(|(n, t)| (n.clone(), (**t).clone())).collect())
                 .unwrap_or_default(),
             _ => HashMap::new(),
         };
@@ -9095,7 +9199,11 @@ impl<'a> Ctx<'a> {
             GoTy::Named(n, _) => self
                 .record_fields
                 .get(n)
-                .map(|fs| fs.iter().map(|(fn_, t)| (fn_.clone(), t.clone())).collect())
+                .map(|fs| {
+                    fs.iter()
+                        .map(|(fn_, t)| (fn_.clone(), (**t).clone()))
+                        .collect()
+                })
                 .unwrap_or_default(),
             _ => HashMap::new(),
         };
@@ -10374,11 +10482,7 @@ fn int_lit(n: i64) -> GoExpr {
 /// Is Go type name `n` a nominal record that is NOT the app's TEA Model? (See
 /// `row_poly_positions`: an open row that lowered to such a record resolved to
 /// it by field name alone.)
-fn goty_names_non_model_record(
-    n: &str,
-    record_fields: &HashMap<String, Vec<(String, Ty)>>,
-    env: &TypeEnv,
-) -> bool {
+fn goty_names_non_model_record(n: &str, record_fields: &RecordFields<'_>, env: &TypeEnv) -> bool {
     record_fields.contains_key(n) && env.model.as_ref().map(|(_, m)| m.as_str()) != Some(n)
 }
 
@@ -10648,11 +10752,11 @@ fn tag_eq(subj: &GoExpr, tag: usize) -> GoExpr {
 
 // ---- free helpers -------------------------------------------------------
 
-fn peel_params(sig: &Ty) -> Vec<Ty> {
+fn peel_params(sig: &Ty) -> Vec<&Ty> {
     let mut out = Vec::new();
     let mut cur = sig;
     while let Ty::Fun(a, b) = cur {
-        out.push((**a).clone());
+        out.push(&**a);
         cur = b;
     }
     out
@@ -11881,6 +11985,169 @@ mod canonical_header_name_tests {
             ("", ""),
         ] {
             assert_eq!(canonical_header_name(input), want, "{input}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod shared_body_owner_tests {
+    use super::*;
+
+    #[test]
+    fn reached_bodies_share_resolved_arenas_and_preserve_expression_ids() {
+        let mut db = hir::SourceDb::new();
+        let parsed = syntax::parse(
+            "module Main exposing (..)\nhelper x = (x, [x, x])\nmain = helper 7\n",
+            base::FileId(0),
+        );
+        assert!(parsed.errors().is_empty() && parsed.error_node_count() == 0);
+        let module = db.add_module("Main", parsed);
+        let resolved = db.resolve(module);
+        let ids: Vec<_> = resolved.top_defs.iter().map(|d| d.def).collect();
+        let body_count = resolved.bodies.len();
+        let entries: Vec<_> = ids
+            .iter()
+            .map(|def| {
+                assert!(resolved.bodies.contains_key(def));
+                DefBody {
+                    owner: std::sync::Arc::clone(&resolved),
+                    def: *def,
+                }
+            })
+            .collect();
+        for entry in &entries {
+            let original = &resolved.bodies[&entry.def];
+            assert!(
+                std::ptr::eq(&**entry, original),
+                "share the actual Body allocation"
+            );
+            assert_eq!(entry.root, original.root);
+            for (id, expression) in entry.exprs.iter() {
+                assert!(
+                    std::ptr::eq(expression, &original.exprs[id]),
+                    "every ExprId must resolve to the original arena allocation"
+                );
+            }
+        }
+        // Dropping a temporary owner must not invalidate entries retained by
+        // lowering; a later source revision must not retarget their arenas.
+        let first = &entries[0];
+        let address = &**first as *const Body;
+        let old_root = first.root;
+        drop(resolved);
+        db.add_module(
+            "Main",
+            syntax::parse(
+                "module Main exposing (..)\nhelper x = 11\nmain = 12\n",
+                base::FileId(0),
+            ),
+        );
+        let current = db.resolve(module);
+        assert!(!std::sync::Arc::ptr_eq(&current, &first.owner));
+        assert_eq!(&**first as *const Body, address);
+        assert_eq!(first.root, old_root);
+        assert_eq!(first.owner.bodies.len(), body_count);
+
+        // The negative-domain fixture's test-only mutation cannot edit the
+        // source snapshot or any other entry sharing that resolved module.
+        let mut edited = DefBody {
+            owner: std::sync::Arc::clone(&first.owner),
+            def: first.def,
+        };
+        let replacement = edited.exprs.alloc(Expr::Int(99));
+        edited.root = Some(replacement);
+        assert_eq!(first.root, old_root);
+        assert!(!std::ptr::eq(&*edited, &**first));
+    }
+}
+
+#[cfg(test)]
+mod borrowed_parameter_owner_tests {
+    use super::*;
+    use std::borrow::Borrow;
+
+    // Works unchanged for the old Vec<Ty> and candidate Vec<&Ty> APIs.
+    fn as_type<T: Borrow<Ty>>(value: &T) -> &Ty {
+        value.borrow()
+    }
+
+    fn wide() -> Ty {
+        Ty::Record(
+            (0..96)
+                .map(|i| {
+                    (
+                        Name::new(&format!("field{i}")),
+                        Ty::Tuple(vec![Ty::app("Int", vec![]), Ty::app("String", vec![])]),
+                    )
+                })
+                .collect(),
+            None,
+        )
+    }
+
+    #[test]
+    fn peeled_parameters_borrow_signature_nodes_without_recursive_copies() {
+        let first = wide();
+        let second = Ty::app("List", vec![wide()]);
+        let signature = Ty::Fun(
+            Box::new(first),
+            Box::new(Ty::Fun(Box::new(second), Box::new(Ty::app("Bool", vec![])))),
+        );
+        let Ty::Fun(first, rest) = &signature else {
+            unreachable!()
+        };
+        let Ty::Fun(second, _) = &**rest else {
+            unreachable!()
+        };
+        let parameters = peel_params(&signature);
+        assert_eq!(parameters.len(), 2);
+        assert!(
+            matches!(&**first, Ty::Record(fields, None) if fields.len() == 96),
+            "fixture must carry a real wide nested parameter"
+        );
+        assert_eq!(as_type(&parameters[0]), &**first);
+        assert_eq!(as_type(&parameters[1]), &**second);
+        // Both signature and peeled results remain alive. Old recursive clones
+        // have equal values but distinct owners; no allocator reuse can mask it.
+        assert!(
+            std::ptr::eq(as_type(&parameters[0]), &**first),
+            "peeling cloned the first full parameter type"
+        );
+        assert!(
+            std::ptr::eq(as_type(&parameters[1]), &**second),
+            "peeling cloned the second nested parameter type"
+        );
+    }
+
+    #[test]
+    fn borrowed_peeling_keeps_original_values_order_arity_and_owned_selection() {
+        for signature in [
+            Ty::Unit,
+            Ty::var("a"),
+            Ty::Fun(Box::new(wide()), Box::new(Ty::Unit)),
+            Ty::Fun(
+                Box::new(Ty::var("a")),
+                Box::new(Ty::Fun(
+                    Box::new(wide()),
+                    Box::new(Ty::app("Task", vec![Ty::app("Error", vec![]), Ty::Unit])),
+                )),
+            ),
+        ] {
+            // Exact original helper is an independent value/order oracle.
+            let original = |sig: &Ty| {
+                let mut out = Vec::new();
+                let mut current = sig;
+                while let Ty::Fun(a, b) = current {
+                    out.push((**a).clone());
+                    current = b;
+                }
+                out
+            };
+            let expected = original(&signature);
+            let actual = peel_params(&signature);
+            assert_eq!(actual.len(), expected.len());
+            let selected_owned: Vec<Ty> = actual.iter().map(|t| as_type(t).clone()).collect();
+            assert_eq!(selected_owned, expected);
         }
     }
 }

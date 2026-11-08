@@ -1,0 +1,104 @@
+{
+  "sourceBaseCommit": "19943469e6c89a48f99d5d11fcc6328ecff27da4",
+  "sourceFilesSha256": {
+    "rust/crates/project/src/child_exit.rs": "05a74c6736b0e1da07fd1f9f19399b424e5bfef9979c8e37e7fd531a1a5330a3",
+    "runtime-go/rt/spa_closed_dict_summary.go": "e18b59164542c45ca9b8809dc7afb54c6fab55eed9ec9b2240b78bca258cb5d3",
+    "runtime-go/rt/spa_closed_encoding.go": "bed13b1e4ed8ea4679562d05c8168396b9b60ab37e5d354e1f5911c85ecf6289",
+    "rust/crates/sky/tests/fixtures/spa-step-cost-collections/src/Main.sky": "f9bacccea1ca36eced0786f7eb94b715dcf69276fa44dfaafbd256eaaf65c15f",
+    "scripts/spa-step-cost-collections-run.sh": "b674bba2981ff3920da9e7efb7c27f2b828954ea62e9c487b1f69847b9dfb372",
+    "scripts/spa-step-cost-collections-verify.mjs": "6cf25dc2f2c5910c3bab3a3b739028e3c3084b85c238460059cae888351b9da2"
+  },
+  "compilerSha256": "ab8e36a7f26b9922b4c994365a820e21419fa6334b50e35facc740eb77e23a43",
+  "gate": "scripts/spa-step-cost-dict-e2e.sh",
+  "passed": true,
+  "elapsedSeconds": 661,
+  "browserModeRuns": 6,
+  "engines": [
+    "chromium",
+    "webkit",
+    "firefox"
+  ],
+  "originalCheckpointsPerRun": 8,
+  "extraOversizeCheckpointsPerRun": 3,
+  "fixture": {
+    "entries": 64,
+    "unchangedLargeValues": 63,
+    "largeValueBytes": 32768,
+    "changedOldValueBytes": 128,
+    "changedNewValueBytes": 7,
+    "persistenceCapBytes": 1500000
+  },
+  "changedEntryWork": [
+    {
+      "browser": "chromium",
+      "mode": "incremental",
+      "fullEncodedBytes": 0,
+      "fieldEncodedBytes": 71,
+      "deferredEncodedBytes": 0,
+      "storageWrites": 0,
+      "storageRemoves": 0,
+      "bridgeBytes": 0
+    },
+    {
+      "browser": "firefox",
+      "mode": "incremental",
+      "fullEncodedBytes": 0,
+      "fieldEncodedBytes": 71,
+      "deferredEncodedBytes": 0,
+      "storageWrites": 0,
+      "storageRemoves": 0,
+      "bridgeBytes": 0
+    },
+    {
+      "browser": "webkit",
+      "mode": "incremental",
+      "fullEncodedBytes": 0,
+      "fieldEncodedBytes": 71,
+      "deferredEncodedBytes": 0,
+      "storageWrites": 0,
+      "storageRemoves": 0,
+      "bridgeBytes": 0
+    },
+    {
+      "browser": "chromium",
+      "mode": "reference",
+      "fullEncodedBytes": 4130961,
+      "fieldEncodedBytes": 0,
+      "deferredEncodedBytes": 0,
+      "storageWrites": 0,
+      "storageRemoves": 0,
+      "bridgeBytes": 0
+    },
+    {
+      "browser": "firefox",
+      "mode": "reference",
+      "fullEncodedBytes": 4130961,
+      "fieldEncodedBytes": 0,
+      "deferredEncodedBytes": 0,
+      "storageWrites": 0,
+      "storageRemoves": 0,
+      "bridgeBytes": 0
+    },
+    {
+      "browser": "webkit",
+      "mode": "reference",
+      "fullEncodedBytes": 4130961,
+      "fieldEncodedBytes": 0,
+      "deferredEncodedBytes": 0,
+      "storageWrites": 0,
+      "storageRemoves": 0,
+      "bridgeBytes": 0
+    }
+  ],
+  "scope": [
+    "Oversized primitive Dict exact NoWrite and prior snapshot reload",
+    "All original Dict collection browser scenarios retained",
+    "Not a sub-cap incremental storage or general changed-key publication claim"
+  ],
+  "constraints": {
+    "memoryGuardUnchanged": true,
+    "browserDeadlineSeconds": 300,
+    "gateBuildCacheDisabledWithoutDeletion": true,
+    "latencyImprovementClaimed": false
+  }
+}

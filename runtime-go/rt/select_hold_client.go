@@ -61,6 +61,7 @@ function __skyHoldBody(body, sel) {
   __skyStartHold(sel, "full body");
   __skyHeld.body = body;
   __skyHeld.patches = [];
+  __skyHeld.scrollDelivery = null; // superseded render commands must not replay
   __skyHeld.all = true;
 }
 // __skyHeldTakes holds p when it addresses a held region: the region itself,
@@ -97,6 +98,7 @@ function __skyFlushHeld(sel) {
     __skyHeld = null;
     if (h.body !== null && typeof __skyPatch === "function") __skyPatch(h.body);
     __skyApplyPatches(h.patches);
+    if (typeof __skyFinishHeldScroll === "function") __skyFinishHeldScroll(h.scrollDelivery);
   }, 0);
 }
 (function() {

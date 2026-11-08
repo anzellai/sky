@@ -1,0 +1,208 @@
+{
+  "source_base_commit": "01de151a7cc13e6d6cf1fc4ac243b473da738cda",
+  "shared_authority_foundation_sha256": "6d410db37dd32b080a3d18bb7c673d69d138ee3ffac9bfcc2d21375cedddde79",
+  "manifest_sha256": "b58ccfa0732328b8f18588f992364de3da072df46f171bf048c5f6b806ca8f7d",
+  "source_files_sha256": {
+    "rust/crates/ty/src/unify.rs": "09e06e7e4af1990db25633e1e9bb7f2db573918ba2d5e63eee5101a9ddbf9a57",
+    "rust/crates/ty/src/sig.rs": "ff003a116dd8beda03c0de3392fd4247b9ef3a5156c204db2c43ceb14771150a",
+    "rust/crates/ty/src/infer_readback_tests.rs": "4c45d9052a05a37d857388aee7898e29793d5a76d3dcbcbfc42c965e02c2caba",
+    "rust/crates/ty/src/unify_ground.rs": "c7645579b8da739323d1fbed0f1994013daed36ed3bb021c857f23e00886a2df",
+    "rust/crates/ty/src/infer.rs": "7dbbef1c69ed3721d9523e4a0175fec447ac5dc1d356d463d736da5115f35044",
+    "rust/crates/skydb/tests/typed_table_growth.rs": "3361dc8e1b7d441e66559a7acad35d94a9640918e0456102df61953dd70e1f63"
+  },
+  "scope": [
+    "Immutable constructor occurrence trees with original dense live IDs and exposure barriers; generic/unproved signatures retain ordinary instantiation.",
+    "Synchronous pipeline-only fresh-result permit after original function publication and successful parameter unification; allocation/rank/error order preserved. Ordinary Call unchanged."
+  ],
+  "stages": [
+    {
+      "task": "constructor-pipeline-original-growth-red",
+      "elapsed_seconds": 10,
+      "log_sha256": "d78d362843349da7d59daaf7b7031344615db9850c44b932ac94a82e04bdef1e",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0,
+      "summaries": 0,
+      "classification": "invalid v1 setup: omitted new module; zero tests executed; not a regression RED"
+    },
+    {
+      "task": "constructor-pipeline-v2-original-growth-red",
+      "elapsed_seconds": 72,
+      "log_sha256": "54839e2a5b5423b5344ae2a40e15f05cf0a662be8f0810a56ebc4f44b90e7908",
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "summaries": 1
+    },
+    {
+      "task": "constructor-pipeline-v2-ty-lib",
+      "elapsed_seconds": 63,
+      "log_sha256": "45fd3e77ae30e79b3ffb030e39625522730d6b52c8cd265e03e31bc412538329",
+      "passed": 140,
+      "failed": 0,
+      "ignored": 1,
+      "summaries": 1
+    },
+    {
+      "task": "constructor-pipeline-v2-original-growth-green",
+      "elapsed_seconds": 73,
+      "log_sha256": "de72b4137df264f9f8405e4aadfd382161f6b212ed9757c662ed84475ccd5c8e",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "summaries": 1
+    },
+    {
+      "task": "constructor-pipeline-v2-complete-broad",
+      "elapsed_seconds": 494,
+      "log_sha256": "456dd140f22ada29db7057274e23135da2bb06ff6e7e176006e9321e4cf1341d",
+      "passed": 1117,
+      "failed": 0,
+      "ignored": 3,
+      "summaries": 117
+    }
+  ],
+  "focused_denominators": {
+    "new_application_uf": 9,
+    "new_application_inference": 1,
+    "constructor_uf": 12,
+    "constructor_inference": 2,
+    "original_forward_authority": 3,
+    "shared_authority_state": 4,
+    "original_accessor_export": 15,
+    "original_accessor_inference": 2
+  },
+  "original_growth": {
+    "activated": true,
+    "sizes": [
+      100,
+      200,
+      400
+    ],
+    "ceiling_unchanged": 2.3,
+    "fixture_body_counters_unchanged": true,
+    "counters": [
+      {
+        "shape": "codec_chain",
+        "phase": "typecheck",
+        "counter": "occurs",
+        "values": [
+          13147,
+          23947,
+          45547
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "codec_chain",
+        "phase": "typecheck",
+        "counter": "record_fields",
+        "values": [
+          5118,
+          9418,
+          18018
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "codec_chain",
+        "phase": "lower",
+        "counter": "occurs",
+        "values": [
+          6088,
+          11288,
+          21688
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "codec_chain",
+        "phase": "lower",
+        "counter": "record_fields",
+        "values": [
+          1722,
+          3122,
+          5922
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "model_app",
+        "phase": "typecheck",
+        "counter": "occurs",
+        "values": [
+          5645,
+          8945,
+          15545
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "model_app",
+        "phase": "typecheck",
+        "counter": "record_fields",
+        "values": [
+          12720,
+          24620,
+          48420
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "model_app",
+        "phase": "lower",
+        "counter": "occurs",
+        "values": [
+          1626,
+          3226,
+          6426
+        ],
+        "ratio": 2.0
+      },
+      {
+        "shape": "model_app",
+        "phase": "lower",
+        "counter": "record_fields",
+        "values": [
+          4708,
+          9408,
+          18808
+        ],
+        "ratio": 2.0
+      }
+    ]
+  },
+  "independent_source_review": "PASS",
+  "formatter": "All six touched files pinned rustfmt 1.95.0; exact tested-source bytes preserved.",
+  "memory_saving_measured": false,
+  "resource_limits_changed": false,
+  "goldens_changed": false,
+  "limitations": [
+    "Measured growth fixture passes; this is not a theorem for arbitrary input programs or model sizes.",
+    "Descriptor metadata retains physical live slots and has memory costs.",
+    "Fresh canonical compiler, current private application and hosted integration remain pending."
+  ],
+  "final_checks": {
+    "coerce_floor": {
+      "passed": true,
+      "elapsed_seconds": 190,
+      "golden_rows": 84,
+      "discovered_projects": 85,
+      "existing_user_excluded_projects": 1,
+      "adapter_exact": 0,
+      "no_dispatch_or_narrow_increase": true,
+      "log_sha256": "d1ec86ed3f75514911b121427e95861f2df769a847847aca829c9b6679621920"
+    },
+    "cargo_fmt": {
+      "passed": true,
+      "elapsed_seconds": 10,
+      "log_sha256": "8251ed952a91d311bdf8468dccbd5218b47899d6b85bcce196972695067f2c75"
+    },
+    "fresh_census": {
+      "passed": true,
+      "elapsed_seconds": 9,
+      "assertions": 53,
+      "log_sha256": "dd35526749252425862cc228f7e8fe426a6c04ec1f904744724de5ae54385e36"
+    }
+  }
+}

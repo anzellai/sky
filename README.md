@@ -153,6 +153,7 @@ The same `view : Model -> Element Msg` paints to the DOM, to terminal cells and 
 
 - **Safety.** Hindley-Milner inference, exhaustive pattern matching, `Result` and `Maybe` instead of null, and typed `Secret` values that redact themselves in every log.
 - **App shapes.** One `Std.App` entry point for a server-driven web UI, a wasm client for web, desktop, iOS and Android, a terminal UI and a CLI. `Sky.Http.Server` for HTTP and JSON APIs. [Std.App](docs/skyapp/overview.md)
+- **UI updates.** SPA updates reuse unchanged immutable data. Typed navigation commands scroll after rendering, including server answers. [Post-render scrolling](docs/skyapp/overview.md)
 - **Data.** `Std.Db` on SQLite or PostgreSQL with the same code, one `Std.Codec` for JSON, XML and tables, and file-based migrations. `sky build --embed` puts PostgreSQL inside your binary, and an app plus its database fits in 1 GB. [Std.Db](docs/skydb/overview.md) · [Sizing](docs/perf/sizing.md)
 - **Files and documents.** `Std.Office.Xlsx` and `Std.Office.Docx` read and write Excel and Word files. `Std.Xml` and `Std.Zip` read hostile input safely. `Std.Image` and `Std.Image.Canvas` resize, re-encode and draw images on the server. [Stdlib](docs/stdlib.md)
 - **Auth, money and crypto.** `Std.Auth` (bcrypt, JWT, roles), `Std.Money` on exact decimals, and XChaCha20, Ed25519, X25519 and Noise sessions for encryption and signatures.

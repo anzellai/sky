@@ -1,0 +1,20 @@
+{
+  "kind": "changed-primitive-dict-red",
+  "implementation_complete": false,
+  "test": "TestSpaChangedDictSummaryEncodesOnlyReplacedPrimitiveValue",
+  "temporary_overlay": true,
+  "elapsed_seconds": 128,
+  "test_seconds": 0.036,
+  "outer_deadline_seconds": 180,
+  "test_deadline_seconds": 120,
+  "correctness_assertions_before_performance_failure_passed": true,
+  "canonical_selected_bytes_before": 35597,
+  "canonical_selected_bytes_after": 35598,
+  "storage_calls": 0,
+  "strict_preparations": 1,
+  "observed_controller_encoded_bytes": 35586,
+  "observed_mixed_encoded_bytes": 35586,
+  "expected_changed_value_encoded_bytes": 131,
+  "expected_performance_assertion_failed": true,
+  "test_patch_sha256": "9edfe2840e60ead629d3d6198b3208013774585f0dc02ea4ce0b3b172b3e1f3b"
+}

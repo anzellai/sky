@@ -185,6 +185,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
+      - name: Fingerprint the browser archive platform
+        id: pw-platform
+        run: node scripts/ci/playwright-cache-platform.mjs >> "$GITHUB_OUTPUT"
       # The one writer of the Playwright browser cache (on main); the release
       # gate-web-* jobs restore it (.github/actions/playwright-setup).
       - name: Restore the Playwright browsers
@@ -192,7 +195,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: ms-playwright-v2-${{ steps.pw-platform.outputs.platform }}-${{ hashFiles('package-lock.json') }}
       - name: Cache Go build + module cache
         id: go-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -283,10 +286,22 @@ jobs:
         timeout-minutes: 10
         # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" webkit
-          npx playwright install webkit
+          bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" webkit firefox
+          npx playwright install webkit firefox
           command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
           scripts/ui-canvas-terminal-e2e.sh
+      - name: Gate — Sky.Spa large-model step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-e2e.sh
+      - name: Sky.Spa mixed-model step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-mixed-e2e.sh
+      - name: Sky.Spa typed Dict step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-dict-e2e.sh
+      - name: Sky.Spa tuple-list step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-tuple-e2e.sh
       # Std.Nav: `update` moves the address bar without a reload (pushUrl,
       # replaceUrl, clearFragment, a server arm's navigation, an off-site URL
       # refused), on Sky.Live and the Sky.Spa client. Chromium + WebKit.
@@ -363,7 +378,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: ms-playwright-v2-${{ steps.pw-platform.outputs.platform }}-${{ hashFiles('package-lock.json') }}
 
   # ── Behavioural corpus (harness tier T2) ────────────────────────────────────
   #

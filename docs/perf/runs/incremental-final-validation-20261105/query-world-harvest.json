@@ -1,0 +1,187 @@
+{
+  "source_base_commit": "852ee1d4bef872adacfc5b6cdbf0ef2d1353be65",
+  "source_files_sha256": {
+    "rust/crates/ty/src/sig.rs": "3876ce70acfbcc5e9ec107c16a05b339cbafa862d58fb7d02cae996dad6007e3",
+    "rust/crates/skydb/src/lib.rs": "396d3d8fda9d632dbc0a190f9d9fd22d48f7654cf3f9aaff1b8bbfff9a3ffeb9",
+    "rust/crates/skydb/tests/callsite_harvest_identity.rs": "29e7130d9c20cf1f52ac0213e21e426bdf21473e167a624361cfa34fcd4b8d1d"
+  },
+  "scope": "Omit unread aggregate pass8 only from the query-world extension; preserve pass7, eager/shared aggregate harvest and conflicts, and demanded per-def overlays",
+  "original_candidate_manifest_sha256": "76383fb611b129b0e8893b0ed55d5c12b4c2f489044ae35a87a886d6a50ab3b4",
+  "test_strengthening": "Eager fixture acceptance before the old aggregate-map assertion, plus a four-revision CAF/caller/fresh/eager parity guard",
+  "independent_source_review": "PASS: complete map reader/mode/self_def census and query dependency direction",
+  "additional_root_delta": "Comment-only correction of obsolete current-tense bare-alias wording; historical descriptions retained",
+  "stages": [
+    {
+      "task": "query-world-harvest-red",
+      "scope": "Initial intended old aggregate-work RED",
+      "elapsed_seconds": 13,
+      "log_sha256": "d46e4be42d6446efa6399124f33951b5e6ba87b7836d1339014fe2a648c7d5db",
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "summaries": 1
+    },
+    {
+      "task": "query-world-harvest-red-accepted",
+      "scope": "Intended RED after eager fixture acceptance precondition",
+      "elapsed_seconds": 11,
+      "log_sha256": "656415757aab246b5a5376ed03fecf319de0c873bebdbc0c5385ed793cd5dc33",
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "summaries": 1
+    },
+    {
+      "task": "query-world-harvest-focused",
+      "scope": "Three focused harvest identity cases GREEN",
+      "elapsed_seconds": 64,
+      "log_sha256": "a7fd44d98bfca0c3215a59ec23f764f4f9711a63e181d4f635cf32f8d9fdc947",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0,
+      "summaries": 1
+    },
+    {
+      "task": "query-world-compiler-broad",
+      "scope": "Zero-test compiler termination by external watchdog; not a semantic failure",
+      "elapsed_seconds": 10,
+      "log_sha256": "f579b2bf86f55295a4e405f9621e644b797b18f0a0cd81f4cb0da474db917f60",
+      "external_signal": 15,
+      "sender_pid": 3455,
+      "tests_or_gate_executed": false
+    },
+    {
+      "task": "query-world-broad-recovered",
+      "scope": "Full ty/lower/database validation including four-revision guard after measured headroom recovery",
+      "elapsed_seconds": 225,
+      "log_sha256": "d9b18a4079855a25d790c07e7a7d375caf417dfa0b28d625c26208e20bc5edeb",
+      "passed": 561,
+      "failed": 0,
+      "ignored": 2,
+      "summaries": 68
+    },
+    {
+      "task": "query-world-format",
+      "scope": "cargo fmt/check and git diff check",
+      "elapsed_seconds": 13,
+      "log_sha256": "18bf957dd335c6068b94bdff0657db617f70ca1943db234509884ca209529b52"
+    },
+    {
+      "task": "query-world-coerce-floor",
+      "scope": "Compiler terminated by external watchdog before coerce gate execution",
+      "elapsed_seconds": 142,
+      "log_sha256": "f29f3fd2e44337a6f1941c86caf7201a30c3750698e3157f5ff6f201530283cc",
+      "external_signal": 15,
+      "sender_pid": 3455,
+      "tests_or_gate_executed": false
+    }
+  ],
+  "external_resource_stops": [
+    {
+      "pid": 84412,
+      "observed_rss_mib": 151,
+      "stage": "broad test compilation",
+      "tests_executed": 0
+    },
+    {
+      "pid": 9019,
+      "observed_rss_mib": 215,
+      "stage": "coerce compiler build",
+      "gate_executed": false
+    }
+  ],
+  "resource_limits_changed": false,
+  "goldens_changed": false,
+  "remaining": [
+    "Full current-source private-app compilation remains blocked by unchanged resource guard; no runtime or memory-saving claim.",
+    "Original growth diagnostic still fails two Codec occurs counters; constructor representation experiment remains unadopted.",
+    "Historical retained-model workload, full private browser matrix and general changed-key persistence remain pending."
+  ],
+  "hosted_ci": {
+    "run": 42260996734,
+    "commit": "885219bda609d79eb048eb75c8251c7c11c4ff70",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": 40
+  },
+  "canonical_build": {
+    "passed": true,
+    "elapsed_seconds": 189,
+    "compiler_sha256": "551d5ae770f47c747c59bab3f8a4d3a1cb59c935b9921855aede6a1783702a0d",
+    "framework_files": 2415,
+    "before_after_source_equal": true,
+    "framework_snapshot_sha256": "c617871575ccd7b698023eb24015535d2110dc602e26f22c6d8518df3df7dd07"
+  },
+  "automatic_public_app50_smoke": {
+    "passed": true,
+    "freshCompilerSha256": "551d5ae770f47c747c59bab3f8a4d3a1cb59c935b9921855aede6a1783702a0d",
+    "sourceSkyFiles": 8,
+    "wasmArtifacts": 2,
+    "matchingSdkScripts": 2,
+    "sdkScriptSha256": "0c949f4996f9a89698e4b5c586de32249c3b69b7baadb64d220073cc04acba14",
+    "fullPrivateAppClaimed": false,
+    "performanceClaimed": false,
+    "elapsed_seconds": 19
+  },
+  "private_current_source_build": {
+    "passed": false,
+    "elapsed_seconds": 27,
+    "classification": "original owned resource guard: swap ceiling",
+    "sampled_process_rss_mib": 1140,
+    "compiler_error_codes": 0,
+    "cleanup": true,
+    "donor_and_destination_files_each_verified": 671,
+    "phase_peaks_bytes": {
+      "check-world-end": 403750912,
+      "check-end": 936804352,
+      "lower-begin": 936804352
+    },
+    "lower_end_observed": false,
+    "memory_saving_claimed": false
+  },
+  "public_step_cost_browser_gate": {
+    "passed": true,
+    "elapsed_seconds": 271,
+    "log_sha256": "bb0c0752a6d2d01e246cf7cacd660d5854ccae853eee191c8693008f49f5d06b",
+    "reports": [
+      {
+        "browser": "chromium",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "chromium",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "webkit",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "webkit",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "firefox",
+        "mode": "reference",
+        "passed": true,
+        "scenarios": 8
+      },
+      {
+        "browser": "firefox",
+        "mode": "incremental",
+        "passed": true,
+        "scenarios": 8
+      }
+    ],
+    "cache": "off: settings and environment cache-key probes not executed",
+    "thresholds_changed": false
+  }
+}

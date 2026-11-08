@@ -219,8 +219,8 @@ func (app *liveApp) deliverSubMsg(sess *liveSession, msg any) {
 	var snap frameSnapshot
 	var patches []Patch
 	var haveFrame bool
-	if body != "" && body != prevShipped {
-		snap = sess.prepareFrameSnapshot(body)
+	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() {
+		snap = sess.prepareDispatchFrameSnapshot(body)
 		sess.lastShippedBody = body
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
 			patches = liveDiff(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)

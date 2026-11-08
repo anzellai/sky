@@ -363,6 +363,14 @@ func spaPersistWrite(st spaKV, life *spaPersistLife, modelJSON string, protected
 	if !ok {
 		return
 	}
+	spaPersistWriteKnownIdentity(st, life, modelJSON, id, uint64(len(modelJSON)), maxBytes)
+}
+
+// The generated field path can establish identity and encoded length without
+// materializing an oversized whole model. Call only after FULL encoding
+// validity is established. modelJSON may be empty only for an oversized value;
+// identity/removal/lifetime transitions still precede the size decision.
+func spaPersistWriteKnownIdentity(st spaKV, life *spaPersistLife, modelJSON, id string, encodedBytes uint64, maxBytes int) {
 	if life.known && life.id != id {
 		st.Remove(spaPersistKey)
 	}
@@ -372,7 +380,7 @@ func spaPersistWrite(st spaKV, life *spaPersistLife, modelJSON string, protected
 	} else if life.heldSignedIn {
 		return
 	}
-	if maxBytes > 0 && len(modelJSON) > maxBytes {
+	if maxBytes > 0 && encodedBytes > uint64(maxBytes) {
 		return
 	}
 	st.Set(spaPersistKey, modelJSON)
@@ -393,20 +401,12 @@ func spaPersistStripFields(modelJSON string, exclude, protected []string) string
 	if err := json.Unmarshal([]byte(modelJSON), &m); err != nil || m == nil {
 		return modelJSON
 	}
-	isProtected := func(f string) bool {
-		for _, p := range protected {
-			if p == f {
-				return true
-			}
-		}
-		return false
-	}
 	removed := false
 	for _, f := range exclude {
-		if isProtected(f) {
-			continue
-		}
 		for _, k := range spaFieldKeys(f) {
+			if spaPersistProtectedWireKey(k, protected) {
+				continue
+			}
 			if _, ok := m[k]; ok {
 				delete(m, k)
 				removed = true
@@ -421,6 +421,19 @@ func spaPersistStripFields(modelJSON string, exclude, protected []string) string
 		return modelJSON
 	}
 	return string(out)
+}
+
+// Test actual wire keys after alias expansion. Checking only the exclusion's
+// source spelling can otherwise remove a protected camelCase/snake_case alias.
+func spaPersistProtectedWireKey(key string, protected []string) bool {
+	for _, field := range protected {
+		for _, alias := range spaFieldKeys(field) {
+			if key == alias {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // spaPersistWinsWithExclude adds the excluded fields to the set a reload takes

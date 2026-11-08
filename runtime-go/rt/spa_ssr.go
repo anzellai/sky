@@ -65,7 +65,7 @@ func spaResultOk(r any) (any, bool) {
 	}
 	// Reflection fallback: read the {Tag, OkValue} fields of any SkyResult[E,A].
 	rv := reflect.ValueOf(r)
-	if rv.Kind() == reflect.Struct {
+	if isSkyResultType(rv.Type()) {
 		tag := rv.FieldByName("Tag")
 		ok := rv.FieldByName("OkValue")
 		if tag.IsValid() && ok.IsValid() && tag.Kind() == reflect.Int {

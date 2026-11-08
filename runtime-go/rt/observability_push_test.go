@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"sky-app/rt/telemetry"
@@ -51,6 +52,57 @@ func (f *fakeIngest) latest() (IngestPayload, bool) {
 		return IngestPayload{}, false
 	}
 	return f.received[len(f.received)-1], true
+}
+
+// deliveryReady is the predicate used by the bounded delivery wait below.
+func (f *fakeIngest) deliveryReady() bool {
+	_, captured := f.latest()
+	return captured
+}
+
+// A handler can have started while its request body is still unread. The
+// delivery wait must observe captured payload publication, not request arrival.
+func TestFakeIngest_DeliveryReadinessWaitsForCapturedBody(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fake := &fakeIngest{}
+		body, writer := io.Pipe()
+		defer body.Close()
+		defer writer.Close()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			request := httptest.NewRequest(http.MethodPost, "http://ingest.test/", body)
+			fake.handler()(httptest.NewRecorder(), request)
+		}()
+		synctest.Wait() // The actual handler is durably blocked in io.ReadAll.
+		if fake.calls.Load() != 1 {
+			t.Fatal("handler did not reach the request-body barrier")
+		}
+		if fake.deliveryReady() {
+			t.Error("request arrival was reported ready before payload capture")
+		}
+		payload, err := json.Marshal(IngestPayload{
+			Namespace: "captured",
+			Logs:      []IngestLog{{Level: "info", Message: "captured"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write(payload); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		<-done
+		if !fake.deliveryReady() {
+			t.Fatal("captured payload was not reported ready")
+		}
+		got, ok := fake.latest()
+		if !ok || got.Namespace != "captured" || len(got.Logs) != 1 || got.Logs[0].Message != "captured" {
+			t.Fatalf("handler did not retain the complete payload: %+v", got)
+		}
+	})
 }
 
 // resetPushExporter — clear the singleton between test cases.
@@ -214,7 +266,7 @@ func TestPushExporter_BatchedDelivery(t *testing.T) {
 	// Wait for at least one tick to fire.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if fake.calls.Load() > 0 {
+		if fake.deliveryReady() {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)

@@ -1,6 +1,10 @@
 package rt
 
 import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"reflect"
 	"regexp"
@@ -25,7 +29,7 @@ func codecAutoRefusedWrite() map[string]any {
 	long := decimal.RequireFromString(strings.Repeat("9", 600))
 	return map[string]any{
 		"Std_Decimal_Decimal": decimalBox(long.Mul(long)),
-		"Std_Money_Money":     SkyADT{SkyName: "Money", Fields: []any{decimalBox(long.Mul(long)), sqlCodeToCurrency("GBP")}},
+		"Std_Money_Money":     canonicalMoneyFixture(long.Mul(long), "GBP"),
 		"Std_Money_Currency":  sqlCodeToCurrency("zz"),
 	}
 }
@@ -71,23 +75,144 @@ func TestCodecAutoEveryReadableStdTypeIsPartial(t *testing.T) {
 	}
 }
 
-// Every stdlib type name the auto reader dispatches on is in
-// codecAutoReadable, so it is partial by construction.
+// The reader dispatches on source-granted parent identity. Keep this inventory
+// independent of codecAutoDeclaredReadable: adding a reader must add a named
+// partial leaf AND a writer-accepted/reader-refused value above. Alias grants
+// are checked through the actual registry, rather than trusting old spellings.
 func TestCodecAutoReaderNamesAreAllReadable(t *testing.T) {
 	src, err := os.ReadFile("codec_auto.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	re := regexp.MustCompile(`declaredType == "(Std_[A-Za-z0-9_]+)"`)
-	found := 0
-	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
-		found++
-		if !codecAutoReadable[m[1]] {
-			t.Errorf("codec_auto.go dispatches on %s, which is not in codecAutoReadable: it would get no write check", m[1])
+	owners, err := codecAutoReaderOwners(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory := map[string]struct{ owner, alias string }{
+		"skyDecimalOwner":  {skyDecimalOwner, "Std_Decimal_Decimal"},
+		"skyMoneyOwner":    {skyMoneyOwner, "Std_Money_Money"},
+		"skyCurrencyOwner": {skyCurrencyOwner, "Std_Money_Currency"},
+	}
+	refused := codecAutoRefusedWrite()
+	for owner := range owners {
+		entry, ok := inventory[owner]
+		if !ok {
+			t.Errorf("reader dispatch %s has no partial/refused-write inventory entry", owner)
+			continue
+		}
+		if codecAutoDeclaredOwner(entry.alias) != entry.owner {
+			t.Errorf("reader %s lacks its actual source-granted declared alias", owner)
+		}
+		if !codecAutoReadable[entry.alias] || !codecAutoDeclaredReadable(entry.alias) {
+			t.Errorf("reader %s alias %s gets no partial write check", owner, entry.alias)
+		}
+		if _, ok := refused[entry.alias]; !ok {
+			t.Errorf("reader %s alias %s has no writer-accepted/reader-refused case", owner, entry.alias)
 		}
 	}
-	if found == 0 {
-		t.Fatal("no `declaredType == \"Std_…\"` dispatch found in codec_auto.go: the scan is stale")
+	for owner := range inventory {
+		if !owners[owner] {
+			t.Errorf("reader inventory %s has no actual decode dispatch: scan or inventory is stale", owner)
+		}
+	}
+}
+
+// Inspect decode functions, not text/comments or encoder-only nominal cases.
+// Every owner lookup must be an explicit equality or switch dispatch. Unknown
+// dispatch syntax fails closed so a refactor cannot silently weaken coverage.
+// Retain a separate check for the retired spelling-based dispatch path.
+func codecAutoReaderOwners(src []byte) (map[string]bool, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), "codec_auto.go", src, 0)
+	if err != nil {
+		return nil, err
+	}
+	owners := map[string]bool{}
+	calls, handled := 0, 0
+	isOwner := func(e ast.Expr) bool {
+		call, ok := e.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		id, ok := call.Fun.(*ast.Ident)
+		return ok && id.Name == "codecAutoDeclaredOwner"
+	}
+	add := func(e ast.Expr) {
+		if err != nil {
+			return
+		}
+		id, ok := e.(*ast.Ident)
+		if !ok {
+			err = fmt.Errorf("owner reader uses an unrecognised owner expression %T", e)
+			return
+		}
+		owners[id.Name] = true
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || !strings.HasPrefix(fn.Name.Name, "codecAutoDecode") {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.CallExpr:
+				if isOwner(n) {
+					calls++
+				}
+			case *ast.BinaryExpr:
+				if n.Op == token.EQL {
+					if isOwner(n.X) {
+						handled++
+						add(n.Y)
+					}
+					if isOwner(n.Y) {
+						handled++
+						add(n.X)
+					}
+				}
+			case *ast.SwitchStmt:
+				if isOwner(n.Tag) {
+					handled++
+					for _, item := range n.Body.List {
+						for _, value := range item.(*ast.CaseClause).List {
+							add(value)
+						}
+					}
+				}
+			case *ast.BasicLit:
+				if n.Kind == token.STRING && strings.HasPrefix(n.Value, `"Std_`) {
+					err = fmt.Errorf("decode contains spelling-based stdlib identity %s: use source-granted owner dispatch", n.Value)
+				}
+			}
+			return true
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	if calls == 0 || handled != calls || len(owners) == 0 {
+		return nil, fmt.Errorf("owner reader scan stale: %d lookups, %d recognised dispatches, %d owners", calls, handled, len(owners))
+	}
+	return owners, nil
+}
+
+func TestCodecAutoReaderOwnerScanDetectsNewOrUnrecognisedDispatch(t *testing.T) {
+	for _, dispatch := range []string{
+		`if codecAutoDeclaredOwner(declaredType) == skyFutureOwner {}`,
+		`switch codecAutoDeclaredOwner(declaredType) { case skyFutureOwner: }`,
+	} {
+		owners, err := codecAutoReaderOwners([]byte("package rt; func codecAutoDecodeFuture() {" + dispatch + "}"))
+		if err != nil || !owners["skyFutureOwner"] || len(owners) != 1 {
+			t.Fatalf("new reader would evade inventory/refused-write requirement: %v, %v", owners, err)
+		}
+	}
+	for _, dispatch := range []string{
+		`if declaredType == "Std_Future_Type" {}`,
+		`use(codecAutoDeclaredOwner(declaredType))`,
+		`if codecAutoDeclaredOwner(declaredType) == "builtin:Std.Future.Type" {}`,
+	} {
+		if _, err := codecAutoReaderOwners([]byte("package rt; func codecAutoDecodeFuture() {" + dispatch + "}")); err == nil {
+			t.Fatal("unknown reader dispatch silently escaped coverage")
+		}
 	}
 }
 
@@ -117,7 +242,7 @@ func TestCodecAutoTupleOfStdTypesRoundTrips(t *testing.T) {
 		Id: "a", Cur: sqlCodeToCurrency("GBP"), Curs: []SkyADT{sqlCodeToCurrency("JPY")},
 		Mc: Just[SkyADT](sqlCodeToCurrency("EUR")),
 		Td: T2[SkyADT, int]{V0: decimalBox(d), V1: 3},
-		Tm: T2[SkyADT, string]{V0: SkyADT{SkyName: "Money", Fields: []any{decimalBox(d), sqlCodeToCurrency("USD")}}, V1: "x"},
+		Tm: T2[SkyADT, string]{V0: canonicalMoneyFixture(d, "USD"), V1: "x"},
 		Tc: T3[int, SkyADT, SkyMaybe[SkyADT]]{V0: 1, V1: sqlCodeToCurrency("CHF"), V2: Just[SkyADT](decimalBox(d))},
 	}
 	enc, err := codecAutoEncodeTyped(reflect.ValueOf(row), "", true)

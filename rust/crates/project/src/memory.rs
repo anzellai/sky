@@ -314,8 +314,41 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn a_childs_peak_is_its_own() {
+        // A fork/exec child may legitimately include the spawning test
+        // process's resident pages in its lifetime highwater. Run the probe
+        // from a fresh, single-test process so parallel compiler tests cannot
+        // give both dd children the same large inherited baseline.
+        const PROBE: &str = "SKY_TEST_OWN_CHILD_RSS_PROBE";
+        if std::env::var_os(PROBE).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "memory::tests::a_childs_peak_is_its_own",
+                    "--test-threads=1",
+                    "--nocapture",
+                ])
+                .env(PROBE, "own-child-v1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated child-RSS probe failed:\n{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("test result: ok. 1 passed; 0 failed; 0 ignored;"),
+                "the exact isolated probe must run one test"
+            );
+            return;
+        }
+        assert!(
+            std::env::var_os(PROBE).as_deref() == Some(std::ffi::OsStr::new("own-child-v1")),
+            "unexpected controlled child-probe marker"
+        );
         let run = |mb: u64| -> u64 {
-            // `dd` allocates (and fills) one buffer of `bs` bytes.
+            // Preserve the real 300 MiB buffer workload and production wait4.
             let mut c = std::process::Command::new("dd")
                 .args([
                     "if=/dev/zero",
@@ -330,10 +363,16 @@ mod tests {
             assert!(e.status.success());
             e.peak_rss.unwrap()
         };
+        let baseline = run(1);
         let big = run(300);
         let small = run(1);
-        assert!(big >= 300 << 20, "{big}");
-        assert!(small < 100 << 20, "the second child reported {small} bytes");
+        assert!(big >= 300 << 20, "large child reported {big} bytes");
+        assert!(
+            baseline < big,
+            "isolated launcher baseline {baseline} cannot distinguish the 300 MiB child {big}"
+        );
+        assert!(small < big,
+                "second child peak {small} must be independent of previous child peak {big}; initial baseline {baseline}");
     }
 
     #[test]

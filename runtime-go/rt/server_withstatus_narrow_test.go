@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -157,15 +158,9 @@ func TestCoerceSkyResponseDoesNotPanic(t *testing.T) {
 	_ = Coerce[stubResponseR](src)
 }
 
-// narrowStructToStruct guards: confirm Tag/V0-shaped ADT or tuple
-// structs do NOT silently narrow to a generic struct shape. This is
-// the soundness gate that lets us add the struct→struct path to
-// Coerce without breaking ADT cross-mod narrowing (which routes via
-// narrowSkyContainer / narrowTupleStruct instead).
-type stubADT struct {
-	Tag       int
-	JustValue any
-}
+// Runtime containers use their own cross-instantiation reconstruction. An
+// ordinary record's integer Tag field does not make it such a container.
+type stubADT = SkyMaybe[any]
 
 type stubGenericRecord struct {
 	Tag  int
@@ -173,20 +168,13 @@ type stubGenericRecord struct {
 }
 
 func TestNarrowStructToStructSkipsADT(t *testing.T) {
-	// narrowStructToStruct sees the source has a Tag field; the target
-	// also happens to have a Tag field but isn't an ADT (no V0/V1).
-	// The function should refuse the narrow because the SOURCE looks
-	// like an ADT — actually no, the guard is on the TARGET shape.
-	// Re-read: narrowStructToStruct guards on the TARGET ("target must
-	// have NO Tag field"). Source-side ADT is handled by narrowSkyContainer
-	// earlier in coerceInner; in Coerce, the SkyResult/SkyMaybe fast
-	// path catches it before the struct→struct branch fires.
-	//
-	// Direct call to narrowStructToStruct verifies the target-Tag guard
-	// rejects the narrow so the strict assertion stays the floor for
-	// genuinely mismatched shapes.
 	srcVal := stubGenericRecord{Tag: 5, Body: "hello"}
-	// Use reflect to construct the call.
+	if _, ok := narrowStructToStruct(reflect.ValueOf(srcVal), reflect.TypeOf(stubADT{})); ok {
+		t.Fatal("ordinary record was narrowed into an actual container")
+	}
+	if _, ok := narrowStructToStruct(reflect.ValueOf(stubADT{Tag: 0, JustValue: 3}), reflect.TypeOf(srcVal)); ok {
+		t.Fatal("actual container was reinterpreted as an ordinary record")
+	}
 	out := Coerce[stubGenericRecord](srcVal)
 	if out.Tag != 5 || out.Body != "hello" {
 		t.Fatalf("identity narrow failed: %+v", out)

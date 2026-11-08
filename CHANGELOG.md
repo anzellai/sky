@@ -11,6 +11,45 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.3 — faster SPA updates and typed post-render scrolling (2026-11-07)
+
+### Improved
+
+- SPA updates reuse unchanged immutable data, prepared codec metadata, encodings
+  and view results where safe. Record duplicate-key validation caches bounded
+  facts about canonical Go types. Unsupported cases keep the reference path;
+  effect order, persistence and results retain their existing semantics. Work
+  that changes or produces a large collection can still scale with its size.
+
+### Added
+
+- `Std.Nav.scrollToTop`, `scrollIntoView` and `scrollIntoViewIfNeeded` scroll
+  after the corresponding DOM commit, including server answers and initial
+  mount. Live and SPA share nearest-container geometry, scroll margin/padding
+  and instant motion. Missing or hidden targets are no-ops; the conditional
+  command leaves an already visible target top alone. Non-DOM targets emit no
+  application message. Superseded renders and navigation cannot replay an
+  older returned scroll command.
+- The tested WebKit build can refuse native body scrolling after a dynamic
+  root-overflow ownership change. The runtime reports `ScrollFailure` and
+  preserves outer scroll positions instead of changing the layout.
+
+### Fixed
+
+- SPA init planning recognises direct stdlib kernel aliases, so server effects
+  such as `File.readFile` stay on the server even without an app helper.
+- Browser-test caches are qualified by platform metadata, preventing a WebKit
+  binary from being restored onto an incompatible Linux distribution.
+
+### Migration from v0.29.2
+
+No application source or database schema migration is required. Rebuild the
+server and client assets with the same Sky version and deploy them together.
+Reload an older open tab if its RPC protocol is refused after deployment. To
+scroll within a multi-step flow, return `Nav.scrollIntoView "part-top"` from
+`update` and give the target element the id `part-top`; no application script
+is needed. See [Std.App](docs/skyapp/overview.md) for the complete example.
+
 ## v0.29.2 — `sky run` hands every app its embedded database (2026-11-01)
 
 - Numeric polymorphism now selects Int or Float representation before literals

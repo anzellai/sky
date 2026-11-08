@@ -1,0 +1,510 @@
+{
+  "source_commit": "e6f26edf07bcda5776a3fe9324bab18fc39ce064",
+  "scope": "profiled public synthetic workload; work counts, not unprofiled latency or arbitrary-model claim",
+  "comparisons": [
+    {
+      "engine": "chromium",
+      "scenario": "ignored-key",
+      "retainedItems": 1000,
+      "reference": {
+        "steps": 10,
+        "encodedBytes": 1281840,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 640920,
+        "storageWrites": 10
+      },
+      "incremental": {
+        "steps": 10,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 10
+      }
+    },
+    {
+      "engine": "chromium",
+      "scenario": "typing",
+      "retainedItems": 1000,
+      "reference": {
+        "steps": 20,
+        "encodedBytes": 2563870,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 1281940,
+        "storageWrites": 20
+      },
+      "incremental": {
+        "steps": 20,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 75,
+        "materializedBytes": 640975,
+        "bridgeBytes": 640975,
+        "storageWrites": 20
+      }
+    },
+    {
+      "engine": "chromium",
+      "scenario": "async-command",
+      "retainedItems": 1000,
+      "reference": {
+        "steps": 2,
+        "encodedBytes": 256408,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 128204,
+        "storageWrites": 2
+      },
+      "incremental": {
+        "steps": 2,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 1,
+        "materializedBytes": 64102,
+        "bridgeBytes": 64102,
+        "storageWrites": 2
+      }
+    },
+    {
+      "engine": "chromium",
+      "scenario": "ignored-key",
+      "retainedItems": 10000,
+      "reference": {
+        "steps": 10,
+        "encodedBytes": 12801840,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 6400920,
+        "storageWrites": 10
+      },
+      "incremental": {
+        "steps": 10,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 10
+      }
+    },
+    {
+      "engine": "chromium",
+      "scenario": "typing",
+      "retainedItems": 10000,
+      "reference": {
+        "steps": 20,
+        "encodedBytes": 25603870,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 12801940,
+        "storageWrites": 20
+      },
+      "incremental": {
+        "steps": 20,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 75,
+        "materializedBytes": 6400975,
+        "bridgeBytes": 6400975,
+        "storageWrites": 20
+      }
+    },
+    {
+      "engine": "chromium",
+      "scenario": "async-command",
+      "retainedItems": 10000,
+      "reference": {
+        "steps": 2,
+        "encodedBytes": 2560408,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 1280204,
+        "storageWrites": 2
+      },
+      "incremental": {
+        "steps": 2,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 1,
+        "materializedBytes": 640102,
+        "bridgeBytes": 640102,
+        "storageWrites": 2
+      }
+    },
+    {
+      "engine": "chromium",
+      "scenario": "oversized-typing",
+      "retainedItems": 100000,
+      "reference": {
+        "steps": 20,
+        "encodedBytes": 256003870,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      },
+      "incremental": {
+        "steps": 20,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 75,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      }
+    },
+    {
+      "engine": "chromium",
+      "scenario": "visible-rows-typing",
+      "retainedItems": 100000,
+      "reference": {
+        "steps": 2,
+        "encodedBytes": 25600417,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      },
+      "incremental": {
+        "steps": 2,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 13,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      }
+    },
+    {
+      "engine": "webkit",
+      "scenario": "ignored-key",
+      "retainedItems": 1000,
+      "reference": {
+        "steps": 10,
+        "encodedBytes": 1281840,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 640920,
+        "storageWrites": 10
+      },
+      "incremental": {
+        "steps": 10,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 10
+      }
+    },
+    {
+      "engine": "webkit",
+      "scenario": "typing",
+      "retainedItems": 1000,
+      "reference": {
+        "steps": 20,
+        "encodedBytes": 2563870,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 1281940,
+        "storageWrites": 20
+      },
+      "incremental": {
+        "steps": 20,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 75,
+        "materializedBytes": 640975,
+        "bridgeBytes": 640975,
+        "storageWrites": 20
+      }
+    },
+    {
+      "engine": "webkit",
+      "scenario": "async-command",
+      "retainedItems": 1000,
+      "reference": {
+        "steps": 2,
+        "encodedBytes": 256408,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 128204,
+        "storageWrites": 2
+      },
+      "incremental": {
+        "steps": 2,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 1,
+        "materializedBytes": 64102,
+        "bridgeBytes": 64102,
+        "storageWrites": 2
+      }
+    },
+    {
+      "engine": "webkit",
+      "scenario": "ignored-key",
+      "retainedItems": 10000,
+      "reference": {
+        "steps": 10,
+        "encodedBytes": 12801840,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 6400920,
+        "storageWrites": 10
+      },
+      "incremental": {
+        "steps": 10,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 10
+      }
+    },
+    {
+      "engine": "webkit",
+      "scenario": "typing",
+      "retainedItems": 10000,
+      "reference": {
+        "steps": 20,
+        "encodedBytes": 25603870,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 12801940,
+        "storageWrites": 20
+      },
+      "incremental": {
+        "steps": 20,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 75,
+        "materializedBytes": 6400975,
+        "bridgeBytes": 6400975,
+        "storageWrites": 20
+      }
+    },
+    {
+      "engine": "webkit",
+      "scenario": "async-command",
+      "retainedItems": 10000,
+      "reference": {
+        "steps": 2,
+        "encodedBytes": 2560408,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 1280204,
+        "storageWrites": 2
+      },
+      "incremental": {
+        "steps": 2,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 1,
+        "materializedBytes": 640102,
+        "bridgeBytes": 640102,
+        "storageWrites": 2
+      }
+    },
+    {
+      "engine": "webkit",
+      "scenario": "oversized-typing",
+      "retainedItems": 100000,
+      "reference": {
+        "steps": 20,
+        "encodedBytes": 256003870,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      },
+      "incremental": {
+        "steps": 20,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 75,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      }
+    },
+    {
+      "engine": "webkit",
+      "scenario": "visible-rows-typing",
+      "retainedItems": 100000,
+      "reference": {
+        "steps": 2,
+        "encodedBytes": 25600417,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      },
+      "incremental": {
+        "steps": 2,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 13,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      }
+    },
+    {
+      "engine": "firefox",
+      "scenario": "ignored-key",
+      "retainedItems": 1000,
+      "reference": {
+        "steps": 10,
+        "encodedBytes": 1281840,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 640920,
+        "storageWrites": 10
+      },
+      "incremental": {
+        "steps": 10,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 10
+      }
+    },
+    {
+      "engine": "firefox",
+      "scenario": "typing",
+      "retainedItems": 1000,
+      "reference": {
+        "steps": 20,
+        "encodedBytes": 2563870,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 1281940,
+        "storageWrites": 20
+      },
+      "incremental": {
+        "steps": 20,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 75,
+        "materializedBytes": 640975,
+        "bridgeBytes": 640975,
+        "storageWrites": 20
+      }
+    },
+    {
+      "engine": "firefox",
+      "scenario": "async-command",
+      "retainedItems": 1000,
+      "reference": {
+        "steps": 2,
+        "encodedBytes": 256408,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 128204,
+        "storageWrites": 2
+      },
+      "incremental": {
+        "steps": 2,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 1,
+        "materializedBytes": 64102,
+        "bridgeBytes": 64102,
+        "storageWrites": 2
+      }
+    },
+    {
+      "engine": "firefox",
+      "scenario": "ignored-key",
+      "retainedItems": 10000,
+      "reference": {
+        "steps": 10,
+        "encodedBytes": 12801840,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 6400920,
+        "storageWrites": 10
+      },
+      "incremental": {
+        "steps": 10,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 10
+      }
+    },
+    {
+      "engine": "firefox",
+      "scenario": "typing",
+      "retainedItems": 10000,
+      "reference": {
+        "steps": 20,
+        "encodedBytes": 25603870,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 12801940,
+        "storageWrites": 20
+      },
+      "incremental": {
+        "steps": 20,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 75,
+        "materializedBytes": 6400975,
+        "bridgeBytes": 6400975,
+        "storageWrites": 20
+      }
+    },
+    {
+      "engine": "firefox",
+      "scenario": "async-command",
+      "retainedItems": 10000,
+      "reference": {
+        "steps": 2,
+        "encodedBytes": 2560408,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 1280204,
+        "storageWrites": 2
+      },
+      "incremental": {
+        "steps": 2,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 1,
+        "materializedBytes": 640102,
+        "bridgeBytes": 640102,
+        "storageWrites": 2
+      }
+    },
+    {
+      "engine": "firefox",
+      "scenario": "oversized-typing",
+      "retainedItems": 100000,
+      "reference": {
+        "steps": 20,
+        "encodedBytes": 256003870,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      },
+      "incremental": {
+        "steps": 20,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 75,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      }
+    },
+    {
+      "engine": "firefox",
+      "scenario": "visible-rows-typing",
+      "retainedItems": 100000,
+      "reference": {
+        "steps": 2,
+        "encodedBytes": 25600417,
+        "fieldEncodedBytes": 0,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      },
+      "incremental": {
+        "steps": 2,
+        "encodedBytes": 0,
+        "fieldEncodedBytes": 13,
+        "materializedBytes": 0,
+        "bridgeBytes": 0,
+        "storageWrites": 0
+      }
+    }
+  ]
+}

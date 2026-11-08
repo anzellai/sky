@@ -649,3 +649,302 @@ fn ground_close_is_skipped_and_changes_nothing() {
         assert!(total >= 12, "closes skipped: {skips:?}");
     });
 }
+
+/// The unchanged source-faithful Codec.object/getter pipeline at a selected
+/// width: a remains open until buildObject; no expected/closed seeding is added.
+fn accessor_codec_source(width: usize) -> String {
+    let fields: Vec<String> = (0..width).map(|i| format!("f{i} : String")).collect();
+    let steps: Vec<String> = (0..width)
+        .map(|i| format!("        |> Codec.field \"f{i}\" .f{i} Codec.string"))
+        .collect();
+    format!(
+        "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\n\
+         import Std.Codec as Codec exposing (Codec)\nimport Std.Log exposing (println)\n\n\
+         type alias Big =\n    {{ {}\n    }}\n\n\
+         bigCodec : Codec Big\nbigCodec =\n    Codec.object Big\n{}\n        |> Codec.buildObject\n\n\
+         main =\n    println \"x\"\n",
+        fields.join("\n    , "), steps.join("\n"))
+}
+
+/// Original-API RED: actual Std.Codec.field consumes compiler-created accessor
+/// functions. Measure the existing real field-copy counter before readback
+/// (which is itself a deliberate raw Record export), then compare all tables.
+#[test]
+fn codec_accessor_rows_reduce_real_inference_copies_without_changing_tables() {
+    on_big_stack(|| {
+        let name = "codec_chain_240";
+        let source = accessor_codec_source(240);
+        assert!(source.contains("bigCodec : Codec Big"));
+        let (db, ids) = program(vec![parse_named(&source)]);
+        let world = World::build(&db);
+        let resolved = db.resolve(ids[0]);
+        let (def, body) = resolved
+            .bodies
+            .iter()
+            .find(|(d, _)| {
+                db.def_loc(**d)
+                    .is_some_and(|loc| loc.name.as_str() == "bigCodec")
+            })
+            .expect("actual annotated bigCodec definition");
+        let mut runs = Vec::new();
+        for no_fast in [false, true] {
+            let mut infer = Infer::new(&world, &db)
+                .with_self_def(Some(*def))
+                .with_inferred(true);
+            infer.no_fast_paths = no_fast;
+            let result = infer.infer_def_vars(body).expect("codec expression");
+            let copies = infer.uf.record_copies_for_test();
+            assert!(
+                infer.errors.is_empty(),
+                "{name}: {:?}",
+                infer.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
+            let mut summary = format!(
+                "vars={} root={} params={:?}",
+                infer.uf.var_count(),
+                infer.read_back(result.0).render(),
+                result
+                    .1
+                    .into_iter()
+                    .map(|v| infer.read_back(v).render())
+                    .collect::<Vec<_>>()
+            );
+            for (e, v) in infer.expr_vars.clone() {
+                summary.push_str(&format!("|{e:?}:{}", infer.read_back(v).render()));
+            }
+            for (l, v) in infer.local_vars.clone() {
+                summary.push_str(&format!("|{l:?}:{}", infer.read_back(v).render()));
+            }
+            summary.push_str(&format!(
+                "|bounds={:?}|obligations={:?}",
+                infer.inferred_bounds, infer.obligations
+            ));
+            assert_eq!(compare_drains(&mut infer, &name), None);
+            runs.push((copies, summary));
+        }
+        assert_eq!(
+            runs[0].1, runs[1].1,
+            "accessor consumption changed inferred tables"
+        );
+        assert!(
+            runs[1].0 >= 120 * 120,
+            "fixture did not exercise wide record copying: {}",
+            runs[1].0
+        );
+        assert!(
+            runs[0].0 * 2 < runs[1].0,
+            "actual Codec.field copies: fast={} reference={}",
+            runs[0].0,
+            runs[1].0
+        );
+    });
+}
+
+#[test]
+fn accessor_quantifier_annotation_and_copied_instance_tables_match_general_path() {
+    on_big_stack(|| {
+        let src = r#"module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+first = .a
+poly x =
+    let
+        get = .a
+        annotated : { r | a : Int } -> Int
+        annotated v = v.a
+    in
+    ( get { a = 1, extra = "one" }, get { a = "two", other = 2 }, annotated x )
+main = ( first { a = 1, b = 2 }, first { a = "s", c = True }, poly { a = 3, tail = () } )
+"#;
+        let (db, ids) = program(vec![parse_named(src)]);
+        let world = World::build(&db);
+        let resolved = db.resolve(ids[0]);
+        for (def, body) in resolved.bodies.iter() {
+            for no_fast in [false, true] {
+                let (infer, _) = drive(&world, &db, *def, body, Mode::Check, no_fast);
+                assert!(
+                    infer.errors.is_empty(),
+                    "quantified accessor must remain accepted: {:?}",
+                    infer.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+                );
+            }
+        }
+        let (n, bad) = check_program(&db, &ids, "accessor quantification and annotations");
+        assert!(n >= 3);
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    });
+}
+
+/// Real original-API work RED: keep v4 accessor optimization enabled on BOTH
+/// runs, changing only ground-constructor representation in the candidate.
+#[test]
+fn ground_constructor_tails_reduce_real_codec_occurs_without_changing_tables() {
+    on_big_stack(|| {
+        let width = 240usize;
+        let source = accessor_codec_source(width);
+        let (db, ids) = program(vec![parse_named(&source)]);
+        let world = World::build(&db);
+        let resolved = db.resolve(ids[0]);
+        let (def, body) = resolved
+            .bodies
+            .iter()
+            .find(|(d, _)| {
+                db.def_loc(**d)
+                    .is_some_and(|l| l.name.as_str() == "bigCodec")
+            })
+            .expect("bigCodec");
+        let mut runs = Vec::new();
+        for reference in [false, true] {
+            let mut infer = Infer::new(&world, &db)
+                .with_self_def(Some(*def))
+                .with_inferred(true);
+            infer.no_ground_constructor = reference;
+            assert_eq!(infer.no_ground_constructor, reference);
+            let result = infer.infer_def_vars(body).unwrap();
+            let occurs = infer.uf.occurs_steps_for_test();
+            assert!(
+                infer.errors.is_empty(),
+                "{:?}",
+                infer.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
+            let mut out = format!(
+                "vars={} root={}",
+                infer.uf.var_count(),
+                infer.read_back(result.0).render()
+            );
+            for v in result.1 {
+                out.push_str(&format!("|param:{}", infer.read_back(v).render()));
+            }
+            for (e, v) in infer.expr_vars.clone() {
+                out.push_str(&format!("|{e:?}:{}", infer.read_back(v).render()));
+            }
+            for (l, v) in infer.local_vars.clone() {
+                out.push_str(&format!("|{l:?}:{}", infer.read_back(v).render()));
+            }
+            out.push_str(&format!(
+                "|bounds={:?}|obligations={:?}",
+                infer.inferred_bounds, infer.obligations
+            ));
+            assert_eq!(compare_drains(&mut infer, "ground constructor codec"), None);
+            runs.push((occurs, out));
+        }
+        assert_eq!(
+            runs[0].1, runs[1].1,
+            "ground representation changed actual inference/table output"
+        );
+        // Even ignoring the wide record result, repeated remaining function
+        // tails alone visit at least the triangular number of arrow nodes.
+        assert!(
+            runs[1].0 >= (width * (width - 1) / 2) as u64,
+            "real constructor-tail premise: {}",
+            runs[1].0
+        );
+        assert!(
+            runs[0].0 * 2 < runs[1].0,
+            "real Codec tail occurs: fast={} reference={}",
+            runs[0].0,
+            runs[1].0
+        );
+    });
+}
+
+#[test]
+fn ground_constructor_namespaces_generics_and_bad_arguments_keep_checker_results() {
+    on_big_stack(|| {
+        let a = r#"module A exposing (..)
+type Color = Red
+type alias Row = { color : Color, count : Int }
+type alias Box a = { value : a }
+"#;
+        let b = r#"module B exposing (..)
+type Color = Blue
+type alias Row = { color : Color, count : Int }
+"#;
+        let main = r#"module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+import A
+import B
+good = ( A.Row A.Red 1, B.Row B.Blue 2, A.Box "x" )
+bad = A.Row B.Blue 1
+main = good
+"#;
+        let (db, ids) = program(vec![parse_named(a), parse_named(b), parse_named(main)]);
+        let world = World::build(&db);
+        let resolved = db.resolve(ids[2]);
+        let mut saw = (false, false);
+        for (def, body) in resolved.bodies.iter() {
+            let name = db.def_loc(*def).unwrap().name;
+            let (fast, fs) = drive(&world, &db, *def, body, Mode::Check, false);
+            let (_, ss) = drive(&world, &db, *def, body, Mode::Check, true);
+            assert_eq!(fs, ss, "{}", name.as_str());
+            if name.as_str() == "good" {
+                assert!(fast.errors.is_empty());
+                saw.0 = true;
+            }
+            if name.as_str() == "bad" {
+                assert!(!fast.errors.is_empty());
+                saw.1 = true;
+            }
+        }
+        assert_eq!(saw, (true, true));
+        let (n, bad) = check_program(&db, &ids, "ground constructor namespace/generic/error");
+        assert!(n >= 3);
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    });
+}
+
+#[test]
+fn owned_pipeline_directions_hofs_errors_numeric_and_all_tables_match_reference() {
+    on_big_stack(|| {
+        let src = r#"module Main exposing (main)
+import Sky.Core.Prelude exposing (..)
+mkPipeRecord x = { value = x, keep = True }
+readPipeValue r = r.value
+callPipeFn f x = x |> f
+numberPipe : number -> number
+numberPipe x = x |> (\v -> v + 1)
+goodForward = mkPipeRecord 1 |> readPipeValue
+goodBackward = readPipeValue <| mkPipeRecord 2
+goodHigher = callPipeFn (\x -> mkPipeRecord x |> readPipeValue) 3
+goodFloat = numberPipe 1.5
+badForward = "s" |> (\x -> x + 1)
+badBackward = (\x -> x + 1) <| "s"
+main = ( goodForward, goodBackward, goodHigher )
+"#;
+        let (db, ids) = program(vec![parse_named(src)]);
+        let world = World::build(&db);
+        let resolved = db.resolve(ids[0]);
+        let mut saw_good = 0;
+        let mut saw_bad = 0;
+        for (def, body) in resolved.bodies.iter() {
+            let name = db.def_loc(*def).unwrap().name;
+            for mode in [Mode::Lower, Mode::Tooling, Mode::Check] {
+                let (mut fast, fs) = drive(&world, &db, *def, body, mode, false);
+                let (_, rs) = drive(&world, &db, *def, body, mode, true);
+                assert_eq!(fs, rs, "{}", name.as_str());
+                assert_eq!(compare_drains(&mut fast, name.as_str()), None);
+                if matches!(mode, Mode::Check) {
+                    if name.as_str().starts_with("good") {
+                        assert!(fast.errors.is_empty());
+                        saw_good += 1;
+                    }
+                    if name.as_str().starts_with("bad") {
+                        assert!(!fast.errors.is_empty());
+                        saw_bad += 1;
+                    }
+                }
+            }
+            let fast = crate::numeric::compute_numeric_elaboration(&world, &db, ids[0], *def);
+            struct Reset(bool);
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    FORCE_GENERAL_PATHS.with(|f| f.set(self.0));
+                }
+            }
+            let reset = Reset(FORCE_GENERAL_PATHS.with(|f| f.replace(true)));
+            let reference = crate::numeric::compute_numeric_elaboration(&world, &db, ids[0], *def);
+            drop(reset);
+            assert_eq!(fast, reference, "numeric {}", name.as_str());
+        }
+        assert_eq!((saw_good, saw_bad), (4, 2));
+    });
+}

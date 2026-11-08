@@ -1,0 +1,17 @@
+module CodecNominalBag exposing (Price(..), Exact(..))
+
+import CodecNominalLeft as Left
+import CodecNominalRight as Right
+
+-- The duplicate qualified Token payload type name forces both unions onto
+-- the legacy rt.SkyADT bag. The exercised constructor payloads are plain
+-- serialisable data; the unused arms establish the representation premise.
+type Price
+    = Money String Int
+    | PriceLeft Left.Token
+    | PriceRight Right.Token
+
+type Exact
+    = Decimal__Internal String
+    | ExactLeft Left.Token
+    | ExactRight Right.Token

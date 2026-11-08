@@ -53,6 +53,10 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
             "withNotFound",
             "withOnNavigate",
             "withHead",
+            "returnedScrolls",
+            "readInitScrolls",
+            "rpcScrollHold",
+            "scrollRpcScope",
         ],
     ),
     (
@@ -61,7 +65,14 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
     ),
     (
         "sky-stdlib/Std/Nav.sky",
-        &["pushUrl", "replaceUrl", "clearFragment"],
+        &[
+            "pushUrl",
+            "replaceUrl",
+            "clearFragment",
+            "scrollToTop",
+            "scrollIntoView",
+            "scrollIntoViewIfNeeded",
+        ],
     ),
     (
         "sky-stdlib/Std/Cli.sky",

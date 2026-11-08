@@ -1,0 +1,30 @@
+{
+  "compiler_sha256": "ab8e36a7f26b9922b4c994365a820e21419fa6334b50e35facc740eb77e23a43",
+  "actual_sigterm_sender_green": true,
+  "signal_exit_preserved": true,
+  "inherited_ignore_preserved": true,
+  "temporary_observer_not_linked_into_compiler": true,
+  "canonical_build_elapsed_seconds": 267,
+  "source_base_commit": "19943469e6c89a48f99d5d11fcc6328ecff27da4",
+  "actual_old_behavioral_red": {
+    "exit": -15,
+    "original_notice": true,
+    "sender_identified": false
+  },
+  "project_unit_tests": {
+    "passed": 5,
+    "failed": 0,
+    "ignored": 0,
+    "elapsed_seconds": 149,
+    "log_sha256": "2d36cbe818228f0a84a064681dcc32922ed34a63b831c659a714120883dde7a9"
+  },
+  "cli_integration_test": {
+    "name": "sky_stopped_by_sigterm_says_so_and_keeps_status_143",
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "elapsed_seconds": 10,
+    "log_sha256": "1989b6593c33af88f9a4c89f413c6c7c1d65bdae598f7aa2b42712618e7a37b3"
+  },
+  "build_note": "A non-incremental rebuild succeeded after an undefined anonymous LLVM symbol in an earlier incremental link. No cache was purged. The earlier interruption sender remains unknown."
+}

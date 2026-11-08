@@ -1,0 +1,178 @@
+{
+  "source_base_commit": "2bcee4b5ffb0bc71521b74a1ddaf112c51b9462c",
+  "source_files_sha256": {
+    "rust/crates/ty/src/unify.rs": "f8f66b53d1619795a26144ab31dbab935174bb7ecc8572c5e87406099e8ebc2b",
+    "rust/crates/ty/src/infer_readback_tests.rs": "50136f44d82d08e7098f413694d8a88e4ae4610b22e0efb06ee6cca910fc24c1",
+    "rust/crates/ty/src/infer.rs": "b967e978b5b7f9c29027ba3b804bbb5669f3b5856de0729d52ffc10e5a780a88"
+  },
+  "scope": "Compiler-owned singleton accessor rows only; ordinary unification remains authoritative for exported, copied, snapshotted or unsupported rows",
+  "frozen_candidate_manifest_sha256": "b79251d6358186450eecf60637ac2697bfaabd1bc9d9536cc3c06f79d02e37fc",
+  "independent_source_review": "scoped pass: publication/clone boundaries, allocation order, ranks and ignored old-row errors",
+  "guards_or_budgets_relaxed": false,
+  "assertions_weakened": false,
+  "stages": [
+    {
+      "task": "accessor-old-export-red",
+      "scope": "Three intended late-field failures in the earlier unadopted prototype",
+      "elapsed_seconds": 52,
+      "log_sha256": "0db24fc35a5a3c48f9004416706cf6f43cff39e8a01164e365b2c19cad1f0535",
+      "passed": 0,
+      "failed": 3,
+      "ignored": 0,
+      "summaries": 1
+    },
+    {
+      "task": "accessor-real-codec-work-red",
+      "scope": "Workload-premise failure; not a valid work RED",
+      "elapsed_seconds": 33,
+      "log_sha256": "439ee41223d560690a86f335b705f31065f79de22fb619899a84f3a1fee6c0b5",
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "summaries": 1,
+      "observations": [
+        "fixture did not exercise wide record copying: 7499"
+      ]
+    },
+    {
+      "task": "accessor-real-codec240-work-red",
+      "scope": "Current baseline actual 240-field Codec chain: intended reduction assertion RED",
+      "elapsed_seconds": 34,
+      "log_sha256": "f15071bb6595c4cdd82bdebb5201c0ca7902cb3db036a0e0010bf25cf03b8e81",
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "summaries": 1,
+      "observations": [
+        "actual Codec.field copies: fast=29399 reference=29399"
+      ]
+    },
+    {
+      "task": "accessor-v3-focused",
+      "scope": "Closed-only candidate: correctness pass, real open-codec applicability failure",
+      "elapsed_seconds": 33,
+      "log_sha256": "afd09dc045c68e8ceccb9afb732e2d3ceaca95adaa1dea97811b27005f0162c3",
+      "passed": 10,
+      "failed": 1,
+      "ignored": 0,
+      "summaries": 1,
+      "observations": [
+        "actual Codec.field copies: fast=29399 reference=29399"
+      ]
+    },
+    {
+      "task": "accessor-v4-focused",
+      "scope": "Open/closed candidate: fifteen UF and two inference checks GREEN",
+      "elapsed_seconds": 34,
+      "log_sha256": "0d978c3b2ed34341d37ba65142050cb543a98dd2596f15635ab23e677cf53523",
+      "passed": 17,
+      "failed": 0,
+      "ignored": 0,
+      "summaries": 1
+    },
+    {
+      "task": "accessor-v4-compiler-broad",
+      "scope": "Full type/lower/database suites",
+      "elapsed_seconds": 305,
+      "log_sha256": "4156bde37e3a571423c54e8deb3b3ac97d205d1731be94b418d85741366b8977",
+      "passed": 559,
+      "failed": 0,
+      "ignored": 2,
+      "summaries": 68
+    },
+    {
+      "task": "accessor-v4-original-growth",
+      "scope": "Original ignored growth diagnostic explicitly executed under unchanged bound",
+      "elapsed_seconds": 10,
+      "log_sha256": "8cadc167a2b3e1f3754a7178a9cb140a8840cfb7975be9c668e2b0bac5c1151a",
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "summaries": 1,
+      "growth_observations": [
+        "codec_chain/typecheck/occurs: 143640 -> 426340 -> 1531740 (increments 282700, 1105400, ratio 3.91)",
+        "codec_chain/typecheck/record_fields: 21251 -> 25551 -> 34151 (increments 4300, 8600, ratio 2.00)",
+        "codec_chain/lower/occurs: 52040 -> 193190 -> 745490 (increments 141150, 552300, ratio 3.91)",
+        "codec_chain/lower/record_fields: 1722 -> 3122 -> 5922 (increments 1400, 2800, ratio 2.00)",
+        "model_app/typecheck/occurs: 44234 -> 47534 -> 54134 (increments 3300, 6600, ratio 2.00)",
+        "model_app/typecheck/record_fields: 28853 -> 40753 -> 64553 (increments 11900, 23800, ratio 2.00)",
+        "model_app/lower/occurs: 1626 -> 3226 -> 6426 (increments 1600, 3200, ratio 2.00)",
+        "model_app/lower/record_fields: 4708 -> 9408 -> 18808 (increments 4700, 9400, ratio 2.00)"
+      ]
+    },
+    {
+      "task": "accessor-v4-format",
+      "scope": "cargo fmt/check and git diff check",
+      "elapsed_seconds": 16,
+      "log_sha256": "18bf957dd335c6068b94bdff0657db617f70ca1943db234509884ca209529b52"
+    }
+  ],
+  "actual_codec_copy_reduction": "Strict unchanged assertion proves candidate copies less than half the 29399-field reference count; exact candidate count not separately instrumented",
+  "remaining": [
+    "Two codec constructor-arrow occurs counters still have doubling ratio 3.91; the original overall 2.3 growth gate remains red.",
+    "Original growth ignore is unchanged and was explicitly executed.",
+    "No application latency, peak-memory saving, persistence-protocol or universal-scaling claim.",
+    "The complete private application remains resource-stopped; the corrected hosted memory-test oracle requires fresh hosted validation."
+  ],
+  "coerce_floor": {
+    "passed": true,
+    "elapsed_seconds": 202,
+    "golden_rows_measured": 84,
+    "golden_rows_total": 84,
+    "projects_discovered": 85,
+    "adapter_count_exact": 0,
+    "dispatch_or_narrow_widened": false,
+    "golden_changed": false,
+    "log_sha256": "a066d8b4525244ffc75de327a59da58e2e2ff95a5f28647b7cd6629a29320a2f"
+  },
+  "canonical_build": {
+    "passed": true,
+    "elapsed_seconds": 227,
+    "code_commit": "d16cf2091fd2698aa41a48e9df2d54bfea5ccb5b",
+    "compiler_sha256": "fa3f15caa45fe76a102fdda8984bb4fe26f59fc88e702f650b98c79826e92072",
+    "log_sha256": "17352125af4f2543862c441ce6ea92d68ac49003b20238c27cce78c358a9a284"
+  },
+  "public_app50_automatic_smoke": {
+    "passed": true,
+    "elapsed_seconds": 31,
+    "source_files": 8,
+    "wasm_copies": 2,
+    "matching_sdk_loader_copies": 2,
+    "log_sha256": "0c2af20de40c28bbf700a8d0e385b4c3c623a8108c13ab5e5c19fba80e492c56",
+    "performance_comparison_claimed": false
+  },
+  "full_project_suite": {
+    "passed": 519,
+    "failed": 0,
+    "ignored": 2,
+    "summaries": 49,
+    "elapsed_seconds": 224,
+    "log_sha256": "20be3b05ceb8838e51eec178b92180032334338f2954eca2f2dad21ea48c973a"
+  },
+  "hosted_ci": {
+    "run_id": 42246342362,
+    "url": "https://github.com/anzellai/sky/actions/runs/42246342362",
+    "head_sha": "d16cf2091fd2698aa41a48e9df2d54bfea5ccb5b",
+    "successful_jobs": 38,
+    "failed_jobs": [
+      "test-rest",
+      "ci-green"
+    ],
+    "failure_test": "memory::tests::a_childs_peak_is_its_own",
+    "observed_small_child_peak_bytes": 109051904,
+    "failed_assertion": "small child peak below fixed100MiB",
+    "build_performance_gates_passed": true,
+    "test_oracle_corrected_after_this_run": true
+  },
+  "private_current_build": {
+    "completed": false,
+    "resource_stopped": true,
+    "elapsed_seconds": 25,
+    "guard": "unchanged owned swap ceiling",
+    "observed_process_rss_mib": 1158,
+    "stage": "source lowering",
+    "checker_diagnostic_codes": 0,
+    "cleanup": true,
+    "performance_improvement_claimed": false
+  }
+}

@@ -13,11 +13,13 @@ authority the README status banner points at.
 
 ## Where the version lives
 
-The single source of truth for "what version is this" is the **newest
-`## vX.Y.Z` heading in [`CHANGELOG.md`](CHANGELOG.md)**. The README status
-banner and `AGENTS.md`'s "Current line" are checked against it by a gate
-(`rust/crates/xtask/tests/docs_state_the_current_version.rs`), so they cannot
-silently drift. Current line at the time of writing: **v0.23.x**.
+The single source of truth for "what version is this" is **`[workspace.package]
+version` in [`rust/Cargo.toml`](rust/Cargo.toml)**. A release bumps it in the
+same commit as the newest `## vX.Y.Z` heading in [`CHANGELOG.md`](CHANGELOG.md).
+The release workflow checks that the tag, workspace version and heading agree.
+The README status banner and `AGENTS.md`'s "Current line" are checked against
+the changelog by `rust/crates/xtask/tests/docs_state_the_current_version.rs`.
+Current line: **v0.29.x**.
 
 ## Pre-1.0 (0.x) — the reality today
 

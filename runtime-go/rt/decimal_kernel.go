@@ -47,7 +47,7 @@ func decimalBox(d decimal.Decimal) SkyADT {
 			panic(fmt.Sprintf("rt.Decimal.range: a Decimal with exponent %d is outside the Decimal range (exponent -%d to %d)", e, decimalExponentMax, decimalExponentMax))
 		}
 	}
-	return SkyADT{Tag: 0, SkyName: "Decimal__Internal", Fields: []any{d}}
+	return SkyADT{SkyOwner: skyDecimalOwner, Tag: 0, SkyName: "Decimal__Internal", Fields: []any{d}}
 }
 
 // decimalExponentMax bounds the exponent of every Decimal (decimalBox) and

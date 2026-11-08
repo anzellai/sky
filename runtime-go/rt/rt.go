@@ -66,6 +66,8 @@ type SkyResult[E any, A any] struct {
 	ErrValue E
 }
 
+func (SkyResult[E, A]) skyResultValue() {}
+
 func Ok[E any, A any](v A) SkyResult[E, A] {
 	return SkyResult[E, A]{Tag: 0, OkValue: v}
 }
@@ -82,6 +84,8 @@ type SkyMaybe[A any] struct {
 	Tag       int
 	JustValue A
 }
+
+func (SkyMaybe[A]) skyMaybeValue() {}
 
 func Just[A any](v A) SkyMaybe[A] {
 	return SkyMaybe[A]{Tag: 0, JustValue: v}
@@ -430,7 +434,7 @@ func ResultCoerce[E any, A any](src any) SkyResult[E, A] {
 // coerceInner).
 func reflectResultFields(src any) (tag int64, okField, errField reflect.Value, found bool) {
 	rv := reflect.ValueOf(src)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyResultType(rv.Type()) {
 		tagField := rv.FieldByName("Tag")
 		okField := rv.FieldByName("OkValue")
 		errField := rv.FieldByName("ErrValue")
@@ -495,7 +499,7 @@ func MaybeCoerce[A any](src any) SkyMaybe[A] {
 // fallback, compiled once here (see reflectResultFields).
 func reflectMaybeFields(src any) (tag int64, justField reflect.Value, found bool) {
 	rv := reflect.ValueOf(src)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyMaybeType(rv.Type()) {
 		tagField := rv.FieldByName("Tag")
 		justField := rv.FieldByName("JustValue")
 		if tagField.IsValid() && justField.IsValid() &&
@@ -576,7 +580,7 @@ func coerceInnerSlow(v any, z any) any {
 	// values) and a function signature (which declares a concrete
 	// inner type).
 	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyValueContainerType(rv.Type()) {
 		tagField := rv.FieldByName("Tag")
 		if tagField.IsValid() &&
 			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
@@ -584,7 +588,7 @@ func coerceInnerSlow(v any, z any) any {
 			if zt != nil && zt.Kind() == reflect.Struct {
 				// SkyMaybe[T]: fields Tag + JustValue
 				justField := rv.FieldByName("JustValue")
-				if justField.IsValid() && zt.NumField() >= 2 && zt.Field(0).Name == "Tag" {
+				if isSkyMaybeType(rv.Type()) && isSkyMaybeType(zt) {
 					out := reflect.New(zt).Elem()
 					out.FieldByName("Tag").SetInt(tagField.Int())
 					if tagField.Int() == 0 {
@@ -616,7 +620,7 @@ func coerceInnerSlow(v any, z any) any {
 				// SkyResult[E, A]: fields Tag + OkValue + ErrValue
 				okField := rv.FieldByName("OkValue")
 				errField := rv.FieldByName("ErrValue")
-				if okField.IsValid() && errField.IsValid() {
+				if isSkyResultType(rv.Type()) && isSkyResultType(zt) {
 					out := reflect.New(zt).Elem()
 					out.FieldByName("Tag").SetInt(tagField.Int())
 					if tagField.Int() == 0 {
@@ -909,7 +913,7 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 	if isSkyTaskType(target) && src.CanInterface() {
 		return taskReflectValue(src.Interface(), target)
 	}
-	if src.Type().ConvertibleTo(target) && safeReflectConvert(src.Kind(), target.Kind()) {
+	if src.Type().ConvertibleTo(target) && safeReflectConvert(src.Kind(), target.Kind()) && nominalContainerConversion(src.Type(), target) {
 		return src.Convert(target)
 	}
 	if target.Kind() == reflect.Map && src.Kind() == reflect.Map {
@@ -1012,8 +1016,8 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 // runtime FFI struct (`rt.HttpResponse`, `rt.SkyRequest`, etc.) that
 // the runtime returns. Targets are guarded:
 //
-//  1. Target must have NO Tag field (i.e. NOT an ADT — those route via
-//     narrowSkyContainer).
+//  1. Neither source nor target may be a runtime container or ADT. A normal
+//     record's Tag field is not a container discriminator.
 //  2. Target must have NO V0/V1 fields (NOT a tuple — narrowTupleStruct).
 //  3. At least one source field name must match a target field name
 //     (so completely unrelated structs don't accidentally narrow).
@@ -1024,7 +1028,8 @@ func narrowStructToStruct(src reflect.Value, target reflect.Type) (reflect.Value
 	if target.NumField() == 0 {
 		return reflect.Value{}, false
 	}
-	if f, ok := target.FieldByName("Tag"); ok && (f.Type.Kind() == reflect.Int || f.Type.Kind() == reflect.Int64) {
+	if isSkyValueContainerType(target) || isSkyAdtType(target) || target.Implements(skyVariantIfaceType) ||
+		isSkyValueContainerType(src.Type()) || isSkyAdtType(src.Type()) || src.Type().Implements(skyVariantIfaceType) {
 		return reflect.Value{}, false
 	}
 	if _, ok := target.FieldByName("V0"); ok {
@@ -1136,12 +1141,16 @@ func narrowTupleStruct(src reflect.Value, target reflect.Type) (reflect.Value, b
 // reflect and setting them on a freshly-allocated target-typed value
 // (narrowing each inner field per narrowReflectValue rules).
 //
-// Detection: any struct whose first field is named "Tag" and whose
-// remaining fields match a known Sky container shape. Non-Sky structs
-// fall through to the generic fail path.
+// Detection uses actual runtime container identities. A record with matching
+// field names is never narrowed as a container.
 func narrowSkyContainer(src reflect.Value, target reflect.Type) (reflect.Value, bool) {
 	if isSkyTaskType(target) && src.CanInterface() {
 		return taskReflectValue(src.Interface(), target), true
+	}
+	if !((isSkyMaybeType(src.Type()) && isSkyMaybeType(target)) ||
+		(isSkyResultType(src.Type()) && isSkyResultType(target)) ||
+		(isSkyAdtType(src.Type()) && isSkyAdtType(target))) {
+		return reflect.Value{}, false
 	}
 	tagF := src.FieldByName("Tag")
 	if !tagF.IsValid() {
@@ -1940,7 +1949,7 @@ var errorKindLabels = []string{
 // logs and user-facing messages.
 func renderSkyError(v any) (string, bool) {
 	rv := reflect.ValueOf(derefPointer(unwrapAny(v)))
-	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+	if !rv.IsValid() || !isSkyAdtType(rv.Type()) {
 		return "", false
 	}
 	nameF := rv.FieldByName("SkyName")
@@ -2331,7 +2340,7 @@ func ResultTag(v any) int {
 		return r.Tag
 	}
 	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyResultType(rv.Type()) {
 		f := rv.FieldByName("Tag")
 		if f.IsValid() {
 			return int(f.Int())
@@ -2349,7 +2358,7 @@ func MaybeTag(v any) int {
 		return m.Tag
 	}
 	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyMaybeType(rv.Type()) {
 		f := rv.FieldByName("Tag")
 		if f.IsValid() {
 			return int(f.Int())
@@ -2370,7 +2379,7 @@ func ResultOk(v any) any {
 		return r.OkValue
 	}
 	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyResultType(rv.Type()) {
 		f := rv.FieldByName("OkValue")
 		if f.IsValid() {
 			return f.Interface()
@@ -2387,7 +2396,7 @@ func ResultErr(v any) any {
 		return r.ErrValue
 	}
 	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyResultType(rv.Type()) {
 		f := rv.FieldByName("ErrValue")
 		if f.IsValid() {
 			return f.Interface()
@@ -2404,7 +2413,7 @@ func MaybeJust(v any) any {
 		return m.JustValue
 	}
 	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyMaybeType(rv.Type()) {
 		f := rv.FieldByName("JustValue")
 		if f.IsValid() {
 			return f.Interface()
@@ -2424,13 +2433,6 @@ func AdtTag(v any) int {
 	}
 	if a, ok := v.(SkyADT); ok {
 		return a.Tag
-	}
-	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Struct {
-		f := rv.FieldByName("Tag")
-		if f.IsValid() {
-			return int(f.Int())
-		}
 	}
 	return -1
 }
@@ -2458,13 +2460,6 @@ func AdtField(v any, idx int) any {
 			return nil
 		}
 		return a.Fields[idx]
-	}
-	rv := reflect.ValueOf(v)
-	if rv.Kind() == reflect.Struct {
-		f := rv.FieldByName("Fields")
-		if f.IsValid() && f.Kind() == reflect.Slice && idx >= 0 && idx < f.Len() {
-			return f.Index(idx).Interface()
-		}
 	}
 	return nil
 }
@@ -3043,6 +3038,7 @@ func structHasUnexportedField(t reflect.Type) bool {
 }
 
 func deepEq(a, b any) bool {
+	a, b = ffiUnwrapGoFunc(a), ffiUnwrapGoFunc(b)
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
@@ -3718,7 +3714,7 @@ func List_filterMapAnyT(fn any, xs []any) []any {
 		}
 		// reflect fallback for typed SkyMaybe[T]
 		rv := reflect.ValueOf(r)
-		if rv.Kind() == reflect.Struct {
+		if rv.IsValid() && isSkyMaybeType(rv.Type()) {
 			tag := rv.FieldByName("Tag")
 			val := rv.FieldByName("JustValue")
 			if tag.IsValid() && val.IsValid() &&
@@ -4178,7 +4174,7 @@ func RecordUpdate(base any, updates map[string]any) any {
 		}
 		if nv.Type().AssignableTo(f.Type()) {
 			f.Set(nv)
-		} else if nv.Type().ConvertibleTo(f.Type()) {
+		} else if nv.Type().ConvertibleTo(f.Type()) && nominalContainerConversion(nv.Type(), f.Type()) {
 			f.Set(nv.Convert(f.Type()))
 		} else {
 			// Narrow via the same recursive coercion helpers `rt.Coerce`
@@ -4550,6 +4546,11 @@ type SkyADT struct {
 	Tag     int
 	SkyName string
 	Fields  []any
+	// SkyOwner is the resolved declaring Sky module and type, emitted by the
+	// compiler. It is provenance, never a constructor-name or Go-name guess.
+	// Gob preserves it; old Gob values decode with an empty owner. JSON wire
+	// input cannot supply it: reconstruction uses the expected ADT registry.
+	SkyOwner string `json:"-"`
 }
 
 // adtTagRegistry maps (owning ADT, constructor) → Tag for
@@ -4908,7 +4909,7 @@ func anyResultView(result any) (int, any, any) {
 		return r.Tag, r.OkValue, r.ErrValue
 	}
 	rv := reflect.ValueOf(result)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyResultType(rv.Type()) {
 		tagField := rv.FieldByName("Tag")
 		okField := rv.FieldByName("OkValue")
 		errField := rv.FieldByName("ErrValue")
@@ -4936,7 +4937,7 @@ func Result_withDefault(def any, result any) any {
 	// through to reflect on the struct shape — same approach ResultCoerce
 	// uses for its generic fallback.
 	rv := reflect.ValueOf(result)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyResultType(rv.Type()) {
 		tagField := rv.FieldByName("Tag")
 		okField := rv.FieldByName("OkValue")
 		if tagField.IsValid() && okField.IsValid() &&
@@ -5231,7 +5232,7 @@ func anyMaybeView(maybe any) (int, any) {
 		return m.Tag, m.JustValue
 	}
 	rv := reflect.ValueOf(maybe)
-	if rv.Kind() == reflect.Struct {
+	if rv.IsValid() && isSkyMaybeType(rv.Type()) {
 		tagField := rv.FieldByName("Tag")
 		justField := rv.FieldByName("JustValue")
 		if tagField.IsValid() && justField.IsValid() &&
@@ -6414,15 +6415,9 @@ func coerceHead(v any, z any) (any, coerceStep) {
 	// (e.g. func values).
 	if v != nil {
 		if rvSrc := reflect.ValueOf(v); rvSrc.IsValid() && rvSrc.Kind() == reflect.Struct {
-			if rvSrc.FieldByName("Tag").IsValid() && rvSrc.FieldByName("OkValue").IsValid() ||
-				rvSrc.FieldByName("Tag").IsValid() && rvSrc.FieldByName("JustValue").IsValid() {
+			if isSkyValueContainerType(rvSrc.Type()) {
 				targetTy := reflect.TypeOf(z)
-				isResultTarget := false
-				if targetTy != nil {
-					tyStr := targetTy.String()
-					isResultTarget = strings.HasPrefix(tyStr, "rt.SkyResult[") ||
-						strings.HasPrefix(tyStr, "rt.SkyMaybe[")
-				}
+				isResultTarget := isSkyValueContainerType(targetTy)
 				if !isResultTarget {
 					// The shell returns `u` if it holds T, else continues
 					// with `v = u`.
@@ -6470,7 +6465,7 @@ func coerceTail(v any, z any, exact reflect.Type) (any, coerceStep) {
 	if rv.IsValid() && targetTy != nil {
 		// Numeric-widening (safe subset).
 		if rv.Type().ConvertibleTo(targetTy) {
-			if safeReflectConvert(rv.Kind(), targetTy.Kind()) {
+			if safeReflectConvert(rv.Kind(), targetTy.Kind()) && nominalContainerConversion(rv.Type(), targetTy) {
 				return rv.Convert(targetTy).Interface(), coerceDone
 			}
 		}
@@ -6571,7 +6566,7 @@ func coerceTail(v any, z any, exact reflect.Type) (any, coerceStep) {
 			if elem.Type().AssignableTo(targetTy) {
 				return elem.Interface(), coerceDone
 			}
-			if elem.Type().ConvertibleTo(targetTy) && safeReflectConvert(elem.Kind(), targetTy.Kind()) {
+			if elem.Type().ConvertibleTo(targetTy) && safeReflectConvert(elem.Kind(), targetTy.Kind()) && nominalContainerConversion(elem.Type(), targetTy) {
 				return elem.Convert(targetTy).Interface(), coerceDone
 			}
 		}
@@ -6690,26 +6685,11 @@ func CoerceFuncSlot[T any](v any) T {
 // that expect the raw T. Without this, every such site panics with
 // "interface {} is rt.SkyResult[...], not <expected>".
 // isSkyContainer reports whether v is a Sky container struct
-// (SkyResult / SkyMaybe / SkyADT shape) — usable as a precondition
+// (SkyResult / SkyMaybe) — usable as a precondition
 // for unwrapAny when the caller can't risk an `u != v` comparison
 // on an uncomparable source type (slices, maps, funcs).
 func isSkyContainer(v any) bool {
-	if v == nil {
-		return false
-	}
-	rv := reflect.ValueOf(v)
-	if rv.Kind() != reflect.Struct {
-		return false
-	}
-	tagF := rv.FieldByName("Tag")
-	if !tagF.IsValid() {
-		return false
-	}
-	if tagF.Kind() != reflect.Int && tagF.Kind() != reflect.Int64 {
-		return false
-	}
-	return rv.FieldByName("OkValue").IsValid() ||
-		rv.FieldByName("JustValue").IsValid()
+	return v != nil && isSkyValueContainerType(reflect.TypeOf(v))
 }
 
 func unwrapAny(v any) any {
@@ -6717,7 +6697,7 @@ func unwrapAny(v any) any {
 		return v
 	}
 	rv := reflect.ValueOf(v)
-	if rv.Kind() != reflect.Struct {
+	if !isSkyValueContainerType(rv.Type()) {
 		return v
 	}
 	tagF := rv.FieldByName("Tag")
@@ -6730,12 +6710,12 @@ func unwrapAny(v any) any {
 	}
 	// SkyResult: unwrap Ok (Tag==0 → OkValue)
 	okF := rv.FieldByName("OkValue")
-	if okF.IsValid() && tagF.Int() == 0 {
+	if isSkyResultType(rv.Type()) && okF.IsValid() && tagF.Int() == 0 {
 		return unwrapAny(okF.Interface())
 	}
 	// SkyMaybe: unwrap Just (Tag==0 → JustValue)
 	justF := rv.FieldByName("JustValue")
-	if justF.IsValid() && tagF.Int() == 0 {
+	if isSkyMaybeType(rv.Type()) && justF.IsValid() && tagF.Int() == 0 {
 		return justF.Interface()
 	}
 	return v
@@ -10353,7 +10333,7 @@ func SkyFfiFieldSet(value any, recv any, field string) any {
 		vv := reflect.ValueOf(value)
 		if vv.Type().AssignableTo(f.Type()) {
 			f.Set(vv)
-		} else if vv.Type().ConvertibleTo(f.Type()) {
+		} else if vv.Type().ConvertibleTo(f.Type()) && nominalContainerConversion(vv.Type(), f.Type()) {
 			f.Set(vv.Convert(f.Type()))
 		} else {
 			return Err[any, any](ErrFfi(field + ": value type incompatible with field"))
@@ -10397,7 +10377,7 @@ func SkyFfiReflectCall(fn reflect.Value, hasError bool, args []any) any {
 		}
 		v := reflect.ValueOf(a)
 		if v.Type() != pt {
-			if v.Type().ConvertibleTo(pt) {
+			if v.Type().ConvertibleTo(pt) && nominalContainerConversion(v.Type(), pt) {
 				v = v.Convert(pt)
 			} else if pt.Kind() == reflect.Interface && v.Type().Implements(pt) {
 				// fine — reflect will accept an interface-satisfying value
@@ -10572,7 +10552,7 @@ func skyCallDirect(rv reflect.Value, args []any) any {
 			// that satisfies the interface — most Sky-internal dispatch
 			// is all-any so this is the common path.
 			vals[i] = av
-		case av.Type().ConvertibleTo(pt) && safeReflectConvert(av.Kind(), pt.Kind()):
+		case av.Type().ConvertibleTo(pt) && safeReflectConvert(av.Kind(), pt.Kind()) && nominalContainerConversion(av.Type(), pt):
 			// Numeric widening / same-kind reinterpret. Whitelist gated
 			// to avoid Go's surprise int→string ASCII reinterpret etc.
 			// (See rt.Coerce for the same rule.)
@@ -10708,7 +10688,7 @@ func skyValueAsType(v any, t reflect.Type) reflect.Value {
 		return rv
 	case t.Kind() == reflect.Interface && rv.Type().Implements(t):
 		return rv
-	case rv.Type().ConvertibleTo(t) && safeReflectConvert(rv.Kind(), t.Kind()):
+	case rv.Type().ConvertibleTo(t) && safeReflectConvert(rv.Kind(), t.Kind()) && nominalContainerConversion(rv.Type(), t):
 		return rv.Convert(t)
 	case rv.Kind() == reflect.Func && t.Kind() == reflect.Func:
 		return adaptSkyFuncValue(rv, t)

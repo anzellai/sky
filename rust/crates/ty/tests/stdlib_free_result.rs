@@ -98,6 +98,29 @@ const ALLOWED: &[(&str, &str)] = &[
         "Std.Nav.replaceUrl",
         "phantom: a Cmd/Sub that only performs an effect never delivers a `msg`; the route change reaches `update` through the app's own typed routing",
     ),
+    // These exact DOM-only constructors carry no msg, task or toMsg. Evidence:
+    // TestNavScrollPayloads and TestScrollNoDOMRunnersDoNotDispatch in rt.
+    // scroll_phantom_exceptions_keep_their_exact_cmd_contract below pins their
+    // concrete inputs, Cmd-only phantom result and exact runtime symbol.
+    (
+        "Std.Nav.scrollToTop",
+        "phantom: the DOM-only scroll command never delivers a `msg`",
+    ),
+    (
+        "Std.Nav.scrollIntoView",
+        "phantom: the DOM-only scroll command never delivers a `msg`",
+    ),
+    (
+        "Std.Nav.scrollIntoViewIfNeeded",
+        "phantom: the DOM-only scroll command never delivers a `msg`",
+    ),
+    // Strict decoding constructs only those no-message scroll leaves, none,
+    // or a classified-error command; it cannot decode a task/toMsg/Msg.
+    // Evidence: TestScrollDecodedCommandsDoNotDispatchMessages in rt.
+    (
+        "Std.Spa.returnedScrolls",
+        "phantom: strict decoding returns only no-message scroll batches or error commands",
+    ),
     (
         "Std.Spa.reportError",
         "phantom: a Cmd/Sub that only performs an effect never delivers a `msg`",
@@ -382,6 +405,183 @@ fn the_gate_sees_the_known_shapes() {
     // A Sky-bodied stdlib function with a free result is checked by the
     // type checker, so it is not a hit.
     assert!(!found.contains_key("Std.Html.text"), "{found:?}");
+}
+
+// The new exceptions are deliberately narrower than arbitrary free results.
+// Check syntax structure, not whitespace or a formatted annotation string.
+fn unparen_type(mut node: SyntaxNode) -> SyntaxNode {
+    while node.kind() == SyntaxKind::TypeParen {
+        let parts = types_under(&node);
+        if parts.len() != 1 {
+            break;
+        }
+        node = parts[0].clone();
+    }
+    node
+}
+
+fn type_atom_is(node: &SyntaxNode, kind: SyntaxKind, name: &str) -> bool {
+    let node = unparen_type(node.clone());
+    if node.kind() != kind {
+        return false;
+    }
+    let identifiers: Vec<_> = node
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| {
+            matches!(
+                token.kind(),
+                SyntaxKind::UpperIdent | SyntaxKind::LowerIdent
+            )
+        })
+        .collect();
+    identifiers.len() == 1 && identifiers[0].text() == name
+}
+
+fn scroll_phantom_signature_is_safe(signature: &SyntaxNode, string_inputs: usize) -> bool {
+    let (params, result) = params_and_result(signature);
+    if params.len() != string_inputs
+        || params
+            .iter()
+            .any(|param| !type_atom_is(param, SyntaxKind::TypeCon, "String"))
+    {
+        return false;
+    }
+    let result = unparen_type(result);
+    if result.kind() != SyntaxKind::TypeApp {
+        return false;
+    }
+    let parts = types_under(&result);
+    matches!(parts.as_slice(), [head, message]
+        if type_atom_is(head, SyntaxKind::TypeCon, "Cmd")
+            && type_atom_is(message, SyntaxKind::TypeVar, "msg"))
+}
+
+#[test]
+fn scroll_phantom_exceptions_keep_their_exact_cmd_contract() {
+    let contracts = [
+        ("Std.Nav", "scrollToTop", 0, "Nav_scrollToTop"),
+        ("Std.Nav", "scrollIntoView", 1, "Nav_scrollIntoView"),
+        (
+            "Std.Nav",
+            "scrollIntoViewIfNeeded",
+            1,
+            "Nav_scrollIntoViewIfNeeded",
+        ),
+        ("Std.Spa", "returnedScrolls", 1, "Spa_scrollCommands"),
+    ];
+    for (module, name, inputs, symbol) in contracts {
+        let path = repo_root()
+            .join("sky-stdlib")
+            .join(module.replace('.', "/") + ".sky");
+        let source = std::fs::read_to_string(path).unwrap();
+        let parse = syntax::parse(&source, base::FileId(0));
+        assert!(parse.errors().is_empty(), "{module}: invalid source");
+        let tree = parse.tree();
+        let annotation = tree
+            .decls()
+            .find_map(|decl| match decl {
+                ast::Decl::TypeAnno(annotation)
+                    if annotation.name().is_some_and(|n| n.text() == name) =>
+                {
+                    annotation.ty()
+                }
+                _ => None,
+            })
+            .expect("the audited phantom constructor must retain its annotation");
+        assert!(scroll_phantom_signature_is_safe(annotation.syntax(), inputs),
+            "{module}.{name}: exception covers only fixed String inputs and Cmd msg, never free Task/Result/data");
+        let value = tree
+            .decls()
+            .find_map(|decl| match decl {
+                ast::Decl::Value(value) if value.name().is_some_and(|n| n.text() == name) => {
+                    Some(value)
+                }
+                _ => None,
+            })
+            .expect("the audited phantom constructor must retain its value");
+        assert_eq!(
+            value.params().map_or(0, |params| params.params().count()),
+            0,
+            "{module}.{name}: audited kernel alias must remain point-free"
+        );
+        let Some(ast::Expr::Call(call)) = value.body() else {
+            panic!("{module}.{name}: expected audited kernel alias");
+        };
+        let parts = call.parts();
+        let [callee, argument] = parts.as_slice() else {
+            panic!("{module}.{name}: kernel alias arity changed");
+        };
+        assert!(matches!(callee, ast::Expr::QualRef(_)) && matches!(argument, ast::Expr::Literal(_)),
+            "{module}.{name}: audited kernel binding must remain one qualified kernel call and a literal");
+        let identifiers: Vec<_> = callee
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| {
+                matches!(
+                    token.kind(),
+                    SyntaxKind::UpperIdent | SyntaxKind::LowerIdent
+                )
+            })
+            .map(|token| token.text().to_string())
+            .collect();
+        assert_eq!(
+            identifiers,
+            vec!["Ffi".to_string(), "kernel".to_string()],
+            "{module}.{name}: kernel binding changed"
+        );
+        let literal = argument
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .find(|token| token.kind() == SyntaxKind::String)
+            .expect("the audited kernel symbol must be a literal");
+        assert_eq!(
+            serde_json::from_str::<String>(literal.text()).unwrap(),
+            symbol,
+            "{module}.{name}: the no-message proof belongs to one exact runtime kernel"
+        );
+    }
+}
+
+#[test]
+fn scroll_phantom_contract_rejects_general_free_results_and_inputs() {
+    fn safe(signature: &str, inputs: usize) -> bool {
+        let source = format!("module Main exposing (..)\naudit : {signature}\naudit = value\n");
+        let parse = syntax::parse(&source, base::FileId(0));
+        assert!(parse.errors().is_empty(), "synthetic annotation must parse");
+        let annotation = parse
+            .tree()
+            .decls()
+            .find_map(|decl| match decl {
+                ast::Decl::TypeAnno(annotation) => annotation.ty(),
+                _ => None,
+            })
+            .unwrap();
+        scroll_phantom_signature_is_safe(annotation.syntax(), inputs)
+    }
+    assert!(safe("Cmd msg", 0));
+    assert!(safe("(String) -> (Cmd (msg))", 1));
+    for (signature, inputs) in [
+        ("Task Error msg", 0),
+        ("Result Error msg", 0),
+        ("msg", 0),
+        ("List msg", 0),
+        ("Cmd (List msg)", 0),
+        ("Cmd (msg, other)", 0),
+        ("Cmd any", 0),
+        ("String -> Result Error msg", 1),
+        ("any -> Cmd msg", 1),
+        ("msg -> Cmd msg", 1),
+        ("String -> String -> Cmd msg", 1),
+        ("String -> Cmd msg", 0),
+    ] {
+        assert!(
+            !safe(signature, inputs),
+            "unsafe phantom contract admitted: {signature}"
+        );
+    }
 }
 
 // ---- Auth.verifyToken : Secret -> String -> Result Error Json.Value ---------

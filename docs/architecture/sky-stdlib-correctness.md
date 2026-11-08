@@ -700,7 +700,25 @@ forced — either by explicit `Task.run` (a one-shot CLI) or by the
 runtime entry point (`App.run`, `Server.listen`). A `let _ = TaskExpr`
 inside Sky source is auto-forced by the compiler via
 `rt.AnyTaskRun`. This is structural — the compiler emits the wrap;
-the user does not opt in.
+the user does not opt in. Classification follows the statically known Task
+type, including signature-constrained parameters, aliases, local helpers and
+lambda contexts. A wildcard inside a tuple destructure does not force its slot:
+lowering evaluates the whole tuple RHS once, then extracts or drops its fields
+as data. Ordinary
+function values and unconstrained polymorphic values remain latent.
+
+The lowerer keeps logical Task-discard metadata separate from its body-only
+Go representation tables (`rust/crates/lower/src/lower/task_discard.rs`). A
+definition with unresolved root-discard sites and a solved signature receives
+one additional signature-seeded inference pass. It reads only the selected
+solved type heads, avoiding a complete annotated-table materialization. Only
+the Task classification is retained; temporary inference state is dropped. Existing Go
+parameter, result and coercion types continue through the existing body-type
+and signature handling. This restores omitted forcing without changing their
+representation.
+
+The existing body-typing counter does not count this additional inference pass;
+compile-growth checks must also measure the actual compiler work and time.
 
 **Synchronous panic gate (v0.15.43)**: every emitted `func main()`
 starts with `defer rt.LogPanicAndExit()`. A panic in synchronous

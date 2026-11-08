@@ -1,0 +1,11 @@
+{
+  "base_commit": "2365815f180dca59c19d94fb61f1d39d69c95038",
+  "source_state": "phase4 uncommitted source; runtime digest below",
+  "runtime_production_tree_sha256": "27d4e5eb92c2a23c3b277b369434131a72575e93d3f047c7f373216f5adf8bab",
+  "compiler_sha256": "f9e18721fdcd0d7028987c2f33fd8e2f032a3feb9e2645edb67e1b2f4f38b52a",
+  "profiling_enabled": true,
+  "repeats_per_browser_mode": 1,
+  "physical_device_validation": false,
+  "timing_claim": "diagnostic single run; no cross-device or universal latency claim",
+  "harness_note": "Final consistent six-browser rerun PASS283s. Oversized typing uses ten one-character automation actions in every browser/mode; same twenty application messages and unchanged deadlines."
+}

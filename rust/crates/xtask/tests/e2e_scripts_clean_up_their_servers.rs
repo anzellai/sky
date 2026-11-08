@@ -56,52 +56,116 @@ fn repo() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."))
 }
 
-/// Every file under the repository with one of `exts`, as (repo-relative
-/// path, contents). Build output and dot-directories are skipped.
-fn files_with(exts: &[&str]) -> Vec<(String, String)> {
-    fn walk(dir: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for e in rd.flatten() {
-            let p = e.path();
-            let name = e.file_name().to_string_lossy().to_string();
-            if p.is_dir() {
-                let skip = matches!(
-                    name.as_str(),
-                    "target" | "node_modules" | "sky-out" | "local-target" | ".split"
-                ) || name.starts_with('.');
-                if !skip {
-                    walk(&p, exts, out);
-                }
-            } else if p
+/// Tracked and nonignored new product files with one of `exts`.
+/// Frozen run records retain their separate historical-source policy.
+fn product_files_with(root: &Path, exts: &[&str]) -> Result<Vec<(String, String)>, String> {
+    let inventory = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ])
+        .output()
+        .map_err(|_| "cannot execute Git product-source inventory".to_owned())?;
+    if !inventory.status.success() {
+        return Err("Git product-source inventory failed".to_owned());
+    }
+    let paths = std::str::from_utf8(&inventory.stdout)
+        .map_err(|_| "Git product-source inventory contains a non-UTF-8 path".to_owned())?;
+    let mut paths: Vec<_> = paths.split('\0').filter(|p| !p.is_empty()).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let mut files = Vec::new();
+    for rel in paths {
+        if FROZEN_PREFIXES.iter().any(|prefix| rel.starts_with(prefix))
+            || !Path::new(rel)
                 .extension()
-                .and_then(|x| x.to_str())
-                .is_some_and(|x| exts.contains(&x))
-            {
-                out.push(p);
-            }
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| exts.contains(&ext))
+        {
+            continue;
+        }
+        let text = std::fs::read_to_string(root.join(rel))
+            .map_err(|_| format!("cannot read product source {rel}"))?;
+        files.push((rel.to_owned(), text));
+    }
+    Ok(files)
+}
+
+fn files_with(exts: &[&str]) -> Vec<(String, String)> {
+    product_files_with(&repo(), exts).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn product_inventory_excludes_ignored_artifacts_but_checks_tracked_and_new_scripts() {
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).expect("remove product-inventory fixture");
         }
     }
-    let root = repo();
-    let mut files = Vec::new();
-    walk(&root, exts, &mut files);
-    files.sort();
-    files
-        .into_iter()
-        .filter_map(|p| {
-            let rel = p
-                .strip_prefix(&root)
-                .ok()?
-                .to_string_lossy()
-                .replace('\\', "/");
-            if FROZEN_PREFIXES.iter().any(|f| rel.starts_with(f)) {
-                return None;
-            }
-            let text = std::fs::read_to_string(&p).ok()?;
-            Some((rel, text))
-        })
-        .collect()
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "sky-cleanup-product-inventory-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&root).expect("claim product-inventory fixture exclusively");
+    let fixture = Fixture(root);
+    let root = &fixture.0;
+    let git = |args: &[&str]| {
+        let result = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .expect("execute fixture Git");
+        assert!(result.status.success(), "fixture Git command failed");
+    };
+    git(&["init", "--quiet"]);
+    std::fs::create_dir(root.join("private")).unwrap();
+    std::fs::create_dir_all(root.join("docs/perf/runs")).unwrap();
+    std::fs::write(root.join(".gitignore"), "private/\n").unwrap();
+    let offending = "sleep 30 &\nAPP_PID=$!\n";
+    for path in [
+        "tracked.sh",
+        "private/tracked.sh",
+        "public-new.sh",
+        "private/ignored.sh",
+        "docs/perf/runs/frozen.sh",
+    ] {
+        std::fs::write(root.join(path), offending).unwrap();
+    }
+    git(&["add", "--force", "--", "tracked.sh", "private/tracked.sh"]);
+    let files = product_files_with(root, &["sh"]).expect("enumerate fixture product sources");
+    assert_eq!(
+        files.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+        ["private/tracked.sh", "public-new.sh", "tracked.sh"]
+    );
+    for (_, text) in &files {
+        assert!(text
+            .lines()
+            .any(|line| keeps_background_pid(shell_code(line))));
+        assert!(
+            trapped_signals(text).is_empty(),
+            "offending product script must remain visible"
+        );
+    }
+    assert!(
+        product_files_with(&root.join("missing"), &["sh"]).is_err(),
+        "inventory command failures must not become an empty passing scan"
+    );
+    std::fs::remove_file(root.join("tracked.sh")).unwrap();
+    assert!(
+        product_files_with(root, &["sh"]).is_err(),
+        "unreadable tracked sources must not silently disappear from checks"
+    );
 }
 
 /// The code part of a shell line (a `#` comment dropped; a `#` inside a word
@@ -477,25 +541,37 @@ fn the_guard_lets_the_child_end_its_own_children() {
 // 40 s later, until `with_timeout` kills it (exit 124).
 // ---------------------------------------------------------------------------
 
-/// The body of the LAST `finally { … }` block in `text` (brace-matched), or
-/// `None` when there is no `finally`.
-fn last_finally_block(text: &str) -> Option<&str> {
-    let at = text.rfind("finally")?;
-    let open = at + text[at..].find('{')?;
-    let mut depth = 0usize;
-    for (i, c) in text[open..].char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&text[open + 1..open + i]);
+/// The LAST outer `finally` block, with its offset. A nested `finally`
+/// belongs to that same cleanup path; selecting it alone misses browser close
+/// performed by the enclosing cleanup before a bounded backend wait.
+fn last_finally_block(text: &str) -> Option<(usize, &str)> {
+    let mut selected = None;
+    let mut outer_end = 0;
+    for (at, _) in text.match_indices("finally") {
+        if at < outer_end {
+            continue;
+        }
+        let Some(relative_open) = text[at..].find('{') else {
+            continue;
+        };
+        let open = at + relative_open;
+        let mut depth = 0usize;
+        for (i, c) in text[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        selected = Some((at, &text[open + 1..open + i]));
+                        outer_end = open + i + 1;
+                        break;
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
-    None
+    selected
 }
 
 /// A Node script that launches a browser and tears down in a `finally` must,
@@ -505,10 +581,9 @@ fn browser_teardown_gap(text: &str) -> Option<&'static str> {
     if !text.contains(".launch(") {
         return None;
     }
-    let block = last_finally_block(text)?;
+    let (from, block) = last_finally_block(text)?;
     // `process.exit` in the block, or in the top-level code after it (which
     // runs whenever the `catch` swallowed the error).
-    let from = text.rfind("finally").unwrap_or(0);
     let ends = text[from..].contains("process.exit(");
     let closes = block.contains("browser.close(") || block.contains("browser?.close(");
     if ends || closes {
@@ -561,6 +636,14 @@ fn a_browser_verifier_ends_on_its_error_path() {
         "if (b) { await b.close(); }\n  try { await browser?.close(); } catch {}",
     );
     assert!(browser_teardown_gap(&closes).is_none());
+    // A nested backend-wait timer cleanup does not replace the browser's
+    // enclosing finally. Keep rejecting the same shape without browser close.
+    let nested = "const browser = await chromium.launch();\ntry { await go(); } finally {\n  await browser.close();\n  try { await waitForExit(); } finally { stopDelay.abort(); }\n}\n";
+    assert!(browser_teardown_gap(nested).is_none());
+    let missing_close = nested.replace("await browser.close();", "");
+    assert!(browser_teardown_gap(&missing_close).is_some());
+    let exits_after = format!("{missing_close}process.exit(process.exitCode ?? 1);\n");
+    assert!(browser_teardown_gap(&exits_after).is_none());
 }
 
 /// Lines of an e2e shell script that run `node` with no `with_timeout` bound,

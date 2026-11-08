@@ -348,6 +348,21 @@ fn a_nearly_full_disk_is_not_stored_to() {
     let floor = [("SKY_GATE_CACHE_MIN_FREE_MB", "999999999")];
     let (ok, log) = w.build(&floor, &[]);
     assert!(ok && log.contains("not stored"), "{log}");
+    let notice = log
+        .lines()
+        .find_map(|line| line.strip_prefix("gate-cache: not stored ("))
+        .expect("missing disk-space diagnostic");
+    let (free_mb, floor_mb) = notice
+        .strip_suffix(" MB)")
+        .and_then(|line| line.split_once(" MB free, floor "))
+        .expect("disk-space diagnostic must state free and floor MB");
+    let free_mb = free_mb.parse::<u64>().expect("free MB must be numeric");
+    let floor_mb = floor_mb.parse::<u64>().expect("floor MB must be numeric");
+    assert_eq!(floor_mb, floor[0].1.parse::<u64>().unwrap());
+    assert!(
+        free_mb < floor_mb,
+        "disk-space diagnostic must be below the floor"
+    );
     let (_, log) = w.build(&floor, &[]);
     assert!(
         log.contains("MISS"),

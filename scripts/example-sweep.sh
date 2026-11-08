@@ -9,6 +9,7 @@
 # Flags:
 #   --build-only      only clean-build every example (default: runtime too)
 #   --no-clean        keep existing sky-out/ .skycache/ (faster iteration)
+#   --keep-go-cache   leave the shared Go build cache to its owner
 #   --workdir DIR     copy examples/* into DIR/examples/ and run there
 #                     instead of mutating the in-tree examples/. Fixes
 #                     bug #381: a sweep racing other readers by rm -rf'ing
@@ -53,6 +54,7 @@ source "$ROOT/scripts/lib/concurrency.sh"
 
 BUILD_ONLY=0
 CLEAN=1
+KEEP_GO_CACHE=0
 WORKDIR=""
 JOBS_OVERRIDE=""
 LIST_ONLY=0
@@ -69,6 +71,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --build-only) BUILD_ONLY=1; shift ;;
         --no-clean)   CLEAN=0; shift ;;
+        --keep-go-cache) KEEP_GO_CACHE=1; shift ;;
         --list)       LIST_ONLY=1; shift ;;
         --shard)
             shift
@@ -683,7 +686,7 @@ fi
 # non-zero on Linux CI (v0.16.3 549d4701 build-and-test failure).
 go_cache_dir="${HOME}/Library/Caches/go-build"
 [[ -d "$go_cache_dir" ]] || go_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/go-build"
-if [[ -d "$go_cache_dir" ]]; then
+if [[ $KEEP_GO_CACHE -eq 0 && -d "$go_cache_dir" ]]; then
     cache_kb=$(du -sk "$go_cache_dir" 2>/dev/null | awk '{print $1}')
     cache_kb=${cache_kb:-0}
     free_kb=$(df -k / 2>/dev/null | awk 'NR==2 {print $4}')

@@ -1,0 +1,51 @@
+{
+  "source_base": "86e0aac3dc2f9fbae7cf5b8eab2e0d1cebf42026",
+  "source_state": "cycle3 working changes; attached to same commit as these reports",
+  "fixture": "rust/crates/sky/tests/fixtures/spa-step-cost",
+  "profiling_enabled": true,
+  "repeats": 1,
+  "cpu_throttle": 1,
+  "retained_items": [
+    1000,
+    10000
+  ],
+  "model_sizes_approx_bytes": [
+    64000,
+    640000
+  ],
+  "limitations": [
+    "diagnostic counters and timings, not production latency estimates",
+    "no profiling-disabled timing baseline yet",
+    "no 100K retained-entry or 200-visible-row scenario in this run",
+    "incremental mode still encodes complete changed next model, writes every snapshot and renders every message"
+  ],
+  "toolchain": {
+    "cargo": "1.95.0",
+    "rustc": "1.95.0",
+    "go": "1.26.10",
+    "node": "22.23.4",
+    "playwright": "1.59.1"
+  },
+  "playwright_browser_manifest": [
+    {
+      "name": "chromium",
+      "revision": "1217",
+      "browserVersion": "147.0.7727.15"
+    },
+    {
+      "name": "chromium-headless-shell",
+      "revision": "1217",
+      "browserVersion": "147.0.7727.15"
+    },
+    {
+      "name": "firefox",
+      "revision": "1511",
+      "browserVersion": "148.0.2"
+    },
+    {
+      "name": "webkit",
+      "revision": "2272",
+      "browserVersion": "26.4"
+    }
+  ]
+}

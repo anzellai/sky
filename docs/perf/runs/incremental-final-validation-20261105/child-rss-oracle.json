@@ -1,0 +1,52 @@
+{
+  "source_base_commit": "d16cf2091fd2698aa41a48e9df2d54bfea5ccb5b",
+  "source_file": "rust/crates/project/src/memory.rs",
+  "source_sha256": "b6fa943ae09d0d1563852b4a3f60911761ce9d6a03d5ec0d47b64a58a14d435c",
+  "production_before_test_module_identical": true,
+  "production_memory_limits_changed": false,
+  "workload_mib": 300,
+  "existing_test_count_changed": false,
+  "new_ignore_or_skip": false,
+  "ci_discovery": {
+    "run_id": 42246342362,
+    "job_id": 127989433591,
+    "test": "memory::tests::a_childs_peak_is_its_own",
+    "observed_small_peak_bytes": 109051904,
+    "old_assertion": "small peak below fixed 100 MiB",
+    "large_assertion_minimum_bytes": 314572800,
+    "statuses_passed": true,
+    "precise_parent_rss_observed": false
+  },
+  "oracle": "Fresh exact one-test launcher; 1 MiB before, unchanged 300 MiB workload, 1 MiB after; baseline must be below large peak and final small peak must remain below large peak",
+  "cumulative_api_falsifier": {
+    "failed_at_intended_independence_assertion": true,
+    "compiler_or_setup_failure": false,
+    "outer_test_cases": 1,
+    "elapsed_seconds": 62,
+    "log_sha256": "2408ea5a2636e93d7389faba444a9c217c12d624bf226c5c9da195771c29e185"
+  },
+  "green": {
+    "outer_tests_passed": 1,
+    "inner_exact_test_count_asserted": 1,
+    "elapsed_seconds": 58,
+    "log_sha256": "c4b4bfdc460ef92ea766ff11623970a1be6d71b53f4a06d797370658cc027524"
+  },
+  "related_checks": {
+    "memory_tests_passed": 6,
+    "static_skip_policy_tests_passed": 10,
+    "config_census_passed": true,
+    "elapsed_seconds": 111,
+    "log_sha256": "4f0e6ebb5e075a4921dd6b885b7c4dd4397349740872a8ce680f55932ab188c8"
+  },
+  "format": {
+    "passed": true,
+    "elapsed_seconds": 13,
+    "log_sha256": "18bf957dd335c6068b94bdff0657db617f70ca1943db234509884ca209529b52"
+  },
+  "platform_scope": "Actual local Unix validation; Linux CI rediscovery of the corrected oracle remains pending. Inherited pre-exec RSS is a permitted mechanism, not a measured explanation of the exact CI parent.",
+  "sources": [
+    "https://github.com/torvalds/linux/blob/v6.11/kernel/fork.c#L1579",
+    "https://github.com/torvalds/linux/blob/v6.11/fs/exec.c#L1025",
+    "https://man7.org/linux/man-pages/man2/getrusage.2.html"
+  ]
+}

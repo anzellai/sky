@@ -350,7 +350,7 @@ gate_cached_build() { # <sky-binary> <project-dir> [--artefact <rel>]... [--clea
     free_kb=$(df -k "$dir" 2>/dev/null | awk 'NR==2 {print $4}')
     floor_kb=$(( ${SKY_GATE_CACHE_MIN_FREE_MB:-20480} * 1024 ))
     if [ -n "$free_kb" ] && [ "$free_kb" -lt "$floor_kb" ]; then
-        echo "gate-cache: not stored (20 20 12 61 79 80 81 98 33 100 204 250 395 398 399 400 701( free_kb / 1024 )) MB free, floor $(( floor_kb / 1024 )) MB)" >&2
+        echo "gate-cache: not stored ($(( free_kb / 1024 )) MB free, floor $(( floor_kb / 1024 )) MB)" >&2
         return 0
     fi
 

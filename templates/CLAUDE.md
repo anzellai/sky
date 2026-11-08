@@ -15,6 +15,8 @@
 > `v0.28.md`, `v0.29.md`).
 > Numeric instantiation and function application follow the rules in
 > https://github.com/anzellai/sky/blob/main/docs/language/types.md.
+> Task execution and tuple discard rules are in
+> https://github.com/anzellai/sky/blob/main/docs/language/syntax.md.
 
 ## Response style (INVIOLABLE)
 
@@ -35,6 +37,9 @@ This rule governs prose in chat and in reports. It does not change code, code
 comments, identifiers, or quoted output.
 
 @AGENTS.md
+
+For scrolling from an update, follow the `Std.Nav` guidance in AGENTS.md.
+Use its typed post-render commands for forms and RPC answers.
 
 ## Claude Code — operational notes
 

@@ -115,14 +115,14 @@ pub fn env_inputs() -> Vec<(&'static str, String)> {
         .collect()
 }
 
-/// `go env GOVERSION`, or `None` when `go` cannot say (then no memo).
+/// Public Go toolchain version metadata, or None (then no memo).
 pub fn go_version() -> Option<String> {
-    let o = std::process::Command::new("go")
-        .args(["env", "GOVERSION"])
-        .output()
-        .ok()?;
-    let v = String::from_utf8_lossy(&o.stdout).trim().to_string();
-    (o.status.success() && !v.is_empty()).then_some(v)
+    crate::go_tool_metadata::version_using(std::ffi::OsStr::new("go"), None)
+}
+
+/// Match toolchain auto-selection to the module where go get actually runs.
+pub fn go_version_in(dir: &Path) -> Option<String> {
+    crate::go_tool_metadata::version_using(std::ffi::OsStr::new("go"), Some(dir))
 }
 
 fn entry(out_dir: &Path, key: &str) -> PathBuf {

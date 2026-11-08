@@ -410,7 +410,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2271,
+      "expected_assertions": 2287,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3245,
+    "stdlib_entries": 3252,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -1021,12 +1021,12 @@
     "units_by_role": {
       "Conformance": 1,
       "Example": 70,
-      "FlowTest": 63,
+      "FlowTest": 65,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 152
+    "units_total": 154
   },
   "surfaces": [
     {
@@ -4561,6 +4561,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -5373,6 +5378,16 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-step-cost-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-mixed-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -6060,6 +6075,11 @@
           },
           {
             "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-mixed-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -7116,6 +7136,16 @@
           },
           {
             "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-mixed-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -8341,6 +8371,16 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-step-cost-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-mixed-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -8990,6 +9030,16 @@
           },
           {
             "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-mixed-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -11635,6 +11685,16 @@
           },
           {
             "by": "e2e:scripts/spa-stale-handler-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-mixed-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -14413,6 +14473,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14666,6 +14731,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14830,6 +14900,11 @@
           },
           {
             "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -15619,6 +15694,11 @@
           },
           {
             "by": "flow:numeric_overflow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:numeric_polymorphism_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -17087,6 +17167,16 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-step-cost-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-mixed-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -18325,6 +18415,16 @@
           },
           {
             "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-step-cost-mixed-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -20202,18 +20302,22 @@
           ]
         },
         "Std.Spa": {
-          "count": 24,
+          "count": 28,
           "symbols": [
             "AppConfig",
             "Route",
             "followUps",
+            "readInitScrolls",
             "reportError",
             "reportRpcFailure",
+            "returnedScrolls",
             "route",
             "routeInt",
             "rpc",
             "rpcHold",
+            "rpcScrollHold",
             "rpcWith",
+            "scrollRpcScope",
             "serverRoute",
             "withClientCrypto",
             "withGuard",
@@ -20508,8 +20612,8 @@
           ]
         }
       },
-      "count": 867,
-      "pct_of_denominator": 26.7
+      "count": 871,
+      "pct_of_denominator": 26.8
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21730,18 +21834,22 @@
           ]
         },
         "Std.Spa": {
-          "count": 24,
+          "count": 28,
           "symbols": [
             "AppConfig",
             "Route",
             "followUps",
+            "readInitScrolls",
             "reportError",
             "reportRpcFailure",
+            "returnedScrolls",
             "route",
             "routeInt",
             "rpc",
             "rpcHold",
+            "rpcScrollHold",
             "rpcWith",
+            "scrollRpcScope",
             "serverRoute",
             "withClientCrypto",
             "withGuard",
@@ -22056,7 +22164,7 @@
           ]
         }
       },
-      "count": 982,
+      "count": 986,
       "pct_of_denominator": 30.3
     }
   },
@@ -22268,10 +22376,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/nav-e2e.sh",
-      "modules_imported": 5,
+      "modules_imported": 9,
       "path": "scripts/nav-e2e.sh",
-      "refs_generous": 17,
-      "refs_qualified": 16,
+      "refs_generous": 31,
+      "refs_qualified": 30,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -22368,6 +22476,30 @@
       "path": "scripts/spa-stale-handler-e2e.sh",
       "refs_generous": 15,
       "refs_qualified": 14,
+      "role": "FlowTest",
+      "sky_files": 1,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "e2e:scripts/spa-step-cost-e2e.sh",
+      "modules_imported": 7,
+      "path": "scripts/spa-step-cost-e2e.sh",
+      "refs_generous": 21,
+      "refs_qualified": 20,
+      "role": "FlowTest",
+      "sky_files": 1,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "e2e:scripts/spa-step-cost-mixed-e2e.sh",
+      "modules_imported": 8,
+      "path": "scripts/spa-step-cost-mixed-e2e.sh",
+      "refs_generous": 23,
+      "refs_qualified": 22,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -23858,12 +23990,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:numeric_polymorphism_flow",
-      "modules_imported": 6,
+      "modules_imported": 7,
       "path": "rust/crates/sky/tests/numeric_polymorphism_flow.rs",
-      "refs_generous": 15,
+      "refs_generous": 16,
       "refs_qualified": 15,
       "role": "FlowTest",
-      "sky_files": 1,
+      "sky_files": 2,
       "sky_toml_sections": []
     },
     {
@@ -23920,8 +24052,8 @@
       "id": "flow:spa_split_flow",
       "modules_imported": 43,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 179,
-      "refs_qualified": 171,
+      "refs_generous": 187,
+      "refs_qualified": 179,
       "role": "FlowTest",
       "sky_files": 140,
       "sky_toml_sections": []
@@ -24077,9 +24209,9 @@
       "modules_imported": 67,
       "path": "tests/conformance",
       "refs_generous": 1050,
-      "refs_qualified": 1023,
+      "refs_qualified": 1024,
       "role": "Conformance",
-      "sky_files": 59,
+      "sky_files": 65,
       "sky_toml_sections": []
     }
   ]

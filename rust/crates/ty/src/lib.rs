@@ -30,6 +30,7 @@ mod obligations;
 pub mod pubsub_topic;
 pub mod re2_syntax;
 pub mod reject_corpus;
+mod retained_body;
 pub mod shared;
 mod sig;
 pub mod stdlib_bodies;
@@ -38,7 +39,8 @@ mod unify;
 pub mod variance;
 
 pub use check::{
-    check_modules, check_modules_with_world, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
+    check_modules, check_modules_with_world, check_modules_with_world_without_report_types,
+    BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
 };
 pub use db::{compute_body_types, compute_body_types_with, TyDb};
 pub use infer::RecordOverlay;
@@ -46,7 +48,7 @@ pub use sig::{
     body_updates_a_param, caller_param_records, callsite_param_records_for, declared_param_record,
     direct_callees, fold_param_records, record_alias_fields, update_base_defs, variant_arg_types,
     variant_arg_types_qualified, wants_callsite_harvest, CallerParamRecords, ParamRecordSeen,
-    World,
+    World, WorldDecls,
 };
 pub use unify::{SuperType, UnionFind};
 

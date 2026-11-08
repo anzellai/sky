@@ -1012,6 +1012,13 @@ jobs:
       - name: Falsifier verification (group 1)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only lsp,erasure-path-uses-an-index,console-analytics-queries-are-bounded,analytics-prune-errors-are-reported,apps-dispatch-destructive,roundtrip,sky-fmt-check,stdlib-bodies
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
 
   gate-falsifiers-2:
     runs-on: ubuntu-latest
@@ -1027,6 +1034,13 @@ jobs:
       - name: Falsifier verification (group 2)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only apps-ffi-scale,config-surface,analytics-retention-survives-a-panic,apps-dispatch,corpus-manifest
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
 
   gate-falsifiers-3:
     runs-on: ubuntu-latest
@@ -1039,6 +1053,13 @@ jobs:
       - name: Falsifier verification (group 3)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only build-growth-linear,kernel-members,verify-cli,live-time-every-mutex-survives-a-panic,periodic-loops-recover-per-cycle,jobs-complete-failure-is-reported,config-migration
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
 
   gate-falsifiers-4:
     runs-on: ubuntu-latest
@@ -1051,6 +1072,13 @@ jobs:
       - name: Falsifier verification (group 4)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only config-matrix,cli-verbs,corpus-emit-shape,sky-verify,apps-ledger,apps-bundled,config-migrate
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
       # Denominator + ledger + config-migration ratchets. These do not test the
       # compiler; they assert that the coverage + config-migration claims shipped
       # alongside it are still true and still current. `config-migration --check`
@@ -1076,6 +1104,13 @@ jobs:
       - name: Falsifier verification (group 5)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only conformance,corpus-reject,sky-suites,shared-world,apps-relay,reject,coverage-ledger
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
 
   gate-falsifiers-6:
     runs-on: ubuntu-latest
@@ -1105,6 +1140,13 @@ jobs:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
           DATABASE_URL: postgres://sky:sky@localhost:5432/sky?sslmode=disable
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only spa-diff-fuzz,corpus-witness,corpus-isolation,apps-ledger-postgres,apps-fieldbook
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
 
   gate-falsifiers-7:
     runs-on: ubuntu-latest
@@ -1134,6 +1176,13 @@ jobs:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
           DATABASE_URL: postgres://sky:sky@localhost:5432/sky?sslmode=disable
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only build-new-dir-compiles-nothing,apps-fleet,apps-dispatch-postgres,store-query-postgres
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
 
   gate-falsifiers-8:
     runs-on: ubuntu-latest
@@ -1148,6 +1197,13 @@ jobs:
       - name: Falsifier verification (group 8 — the T2 behavioural corpus, shards 1 and 2)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus-1,corpus-2
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
 
   gate-falsifiers-9:
     runs-on: ubuntu-latest
@@ -1159,6 +1215,13 @@ jobs:
       - name: Falsifier verification (group 9 — the T2 behavioural corpus, shards 3 and 4)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus-3,corpus-4
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
 
   # gate-falsifiers-10 — the Std.Ai gates (v0.28.0) and fmt-clean: the T1
   # training, serving, device and streaming gates and the T2
@@ -1175,6 +1238,13 @@ jobs:
       - name: Falsifier verification (group 10 — Std.Ai and fmt-clean)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,ai-device-partition,spa-wasm-server-only,fmt-clean
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1377,6 +1447,13 @@ jobs:
         timeout-minutes: 60
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only ai-device-privacy,ai-device-csp
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1450,6 +1527,13 @@ jobs:
         env:
           SKY_LIVE_TESTS: require
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only ai-device-ios-sim
+      - name: Retain falsifier proof ledger
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: falsifier-proofs-${{ github.job }}-${{ github.run_attempt }}
+          path: docs/coverage/falsifier-proofs.json
+          if-no-files-found: error
+          retention-days: 7
 
   # gate-ai-device-android — the Android counterpart on an x86_64 emulator
   # with KVM: the JNI engine for x86_64 is built here (NDK 27.0.12077973) and
@@ -1783,6 +1867,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
       - uses: ./.github/actions/playwright-setup
+        with:
+          browsers: chromium webkit firefox
       - name: Sky.Spa wasm client e2e (restore, stale handlers, RPC consistency, examples)
         timeout-minutes: 18
         run: |
@@ -1792,6 +1878,18 @@ jobs:
           scripts/spa-rpc-consistency-e2e.sh
           scripts/spa-examples-e2e.sh
           scripts/spa-client-crypto-e2e.sh
+      - name: Sky.Spa large-model step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-e2e.sh
+      - name: Sky.Spa mixed-model step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-mixed-e2e.sh
+      - name: Sky.Spa typed Dict step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-dict-e2e.sh
+      - name: Sky.Spa tuple-list step cost and reference semantics
+        timeout-minutes: 5
+        run: scripts/spa-step-cost-tuple-e2e.sh
       - name: Sky.Live client e2e (handler addressing, input authority)
         timeout-minutes: 6
         run: scripts/live-client-e2e.sh

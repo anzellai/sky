@@ -27,9 +27,12 @@ var (
 	// invoked directly (a plain Go call), NOT via reflect.Value.Call, so the
 	// steady-state TEA loop carries no reflection. spaInit/spaUpdate repack
 	// their ( model, Cmd ) tuple result into SkyTuple2 (V0=model, V1=cmd).
-	spaInit   func(any) SkyTuple2
-	spaUpdate func(any, any) SkyTuple2
-	spaView   func(any) any
+	spaInit                       func(any) SkyTuple2
+	spaUpdate                     func(any, any) SkyTuple2
+	spaView                       func(any) any
+	spaViewMemoState              *spaViewMemoApp
+	spaViewMemoLifecycleInstalled bool
+	spaViewMemoPageHide           js.Func
 	// spaSubs is the config's `subscriptions : model -> Sub msg` (nil when the
 	// config omits it). Evaluated after every dispatch to reconcile timers.
 	spaSubs func(any) any
@@ -101,6 +104,8 @@ type spaTopicSub struct {
 // starts any initial subscriptions, then parks the Go runtime so the browser
 // can deliver events. It never returns.
 func spaRun(cfg any) any {
+	spaScrollCommands = spaScrollQueue{}
+	spaProfileInit()
 	// The Sky.Spa target always emits an rt.SpaFns (typed adapter closures);
 	// asSpaFns unwraps it reflect-free. A missing/foreign config yields nil
 	// closures — but codegen guarantees a SpaFns for every real client.
@@ -108,6 +113,9 @@ func spaRun(cfg any) any {
 	spaInit = fns.Init
 	spaUpdate = fns.Update
 	spaView = fns.View
+	spaResetViewMemo()
+	spaViewMemoState = newSpaViewMemoApp(fns)
+	spaInstallViewMemoLifecycle()
 	// subscriptions is a required config field as of P3, but SpaFns.Subs is nil
 	// when the config omits it so an older/partial config degrades to "no subs"
 	// rather than trapping.
@@ -124,11 +132,21 @@ func spaRun(cfg any) any {
 	// case persistence is simply off. Read once here (spa_persist_wasm.go).
 	spaGuard = fieldOrNil(cfg, "Guard")
 	spaSch = newSpaSched(spaRpcNonce())
+	spaSch.domEpoch = func() uint64 { return spaScrollCommands.epoch }
+	spaSch.scrollAuthority = func() uint64 { return spaScrollCommands.authority }
+	spaSch.awaitDOM = spaScrollCommands.afterRender
 	spaSch.onTickNet = spaTicks.network
 	// The input Msgs that may run during a given hold (the split's
 	// commutation table, Spa.withHoldFree). Absent: every Msg waits.
 	spaSch.setHoldFree(spaStringList(fieldOrNil(cfg, "HoldFree")))
 	spaModelEncoder = fieldOrNil(cfg, "ModelEncoder")
+	spaGeneratedModelEncoder, _ = fieldOrNil(cfg, "GeneratedAutoModelEncoder").(bool)
+	spaNextModelEncoding = spaModelEncoding{full: spaEncodeModel, generated: spaGeneratedModelEncoder && !spaStepReference}
+	spaFieldPersistenceState = spaFieldPersistence{}
+	spaGeneratedModelInputType = fieldOrNil(cfg, "GeneratedModelInputType")
+	preparedEncoder, _ := fieldOrNil(cfg, "PreparedAutoModelEncoder").(SpaPreparedModelEncoder)
+	spaMixedPersistenceState = spaMixedPersistence{encoder: preparedEncoder, generatedClosed: spaGeneratedModelEncoder}
+	spaResetPersistBridge()
 	spaPersistProt = spaStringList(fieldOrNil(cfg, "PersistProtectedFields"))
 	spaPersistSeed = spaStringList(fieldOrNil(cfg, "PersistSeedFields"))
 	spaPersistExclude = spaStringList(fieldOrNil(cfg, "PersistExcludeFields"))
@@ -281,6 +299,10 @@ func spaRun(cfg any) any {
 	// the first-paint hydration affordance (`<html data-sky-hydrating>` → progress
 	// cursor + top bar, liveBaseCSS). From here a click lands on a live handler.
 	spaClearHydratingMarker()
+	if spaStepProfiling {
+		// Harness readiness: SSR markup alone does not prove wasm handlers exist.
+		spaProfileReady()
+	}
 	// Reconcile the address bar to the mounted view's [data-sky-path] marker
 	// (push=false: the loaded URL is already correct — a mount must never mint a
 	// history entry). Then seed the navigation tracker to the mounted path so the
@@ -288,6 +310,7 @@ func spaRun(cfg any) any {
 	// the (deep-link-restored) scroll position.
 	spaSyncURLFromDOM(false)
 	spaLastSettledPath = spaCurrentPath()
+	spaConsumeBootScrolls()
 	interpretCmd(asCmdT(cmd0), spaDispatch)
 	if navCmd != nil {
 		interpretCmd(asCmdT(navCmd), spaDispatch)
@@ -436,6 +459,9 @@ func spaFireOnNavigate() {
 // URL) and by popstate. When an onNavigate hook is set, its step does the
 // render; otherwise we render + reconcile here.
 func spaNavigate(path string) {
+	// popstate/native navigation can run outside the Msg scheduler, including
+	// while a scroll-capable request is in flight. Revoke its old scroll first.
+	spaScrollCommands.supersede()
 	spaApplyURL(path)
 	if spaOnNavigate != nil {
 		spaFireOnNavigate()
@@ -464,6 +490,11 @@ func spaNavigate(path string) {
 		func(prev any) { spaModel = prev },
 		spaReportPanic,
 	)
+	// DOM cancellation may release a scroll hold. Drain only after navigation's
+	// own URL/scroll/subscription post-work, never re-enter it from mid-paint.
+	if spaSch != nil {
+		spaSch.drain(step)
+	}
 }
 
 // spaInstallRouter wires the History-API client router: a document-level click
@@ -640,6 +671,14 @@ func spaClosestAnchor(node js.Value) js.Value {
 // each Msg runs once, in arrival order, and the model mutation + render +
 // effect + subscription reconciliation always happen together.
 func step(msg any) {
+	if spaStepProfiling {
+		previous := spaActiveStepMetrics
+		spaActiveStepMetrics = &spaStepMetrics{}
+		defer func() {
+			spaProfilePublish(spaActiveStepMetrics)
+			spaActiveStepMetrics = previous
+		}()
+	}
 	// The whole transition runs under the portable panic guard (spa_step.go):
 	// Sky.Live's server dispatch recovers a panicking update/view to a 500 and
 	// the session survives; this gives the wasm client the same net on its
@@ -658,6 +697,8 @@ func step(msg any) {
 			renderCurrent()
 		},
 		func(cmd any) {
+			started := spaProfileBeginPhase()
+			defer spaProfileEndPhase(started, spaProfilePost)
 			// A msg-driven render is the programmatic-Navigate case: the address
 			// bar still shows the previous page, so a [data-sky-path] change here
 			// is a real, Back-able navigation (push=true), mirroring Sky.Live's
@@ -683,6 +724,8 @@ func step(msg any) {
 // spaGuardedStep is update behind the client guard (Spa.withGuard): a rejected
 // Msg keeps the model, runs no Cmd, and is reported on the console.
 func spaGuardedStep(msg, model any) SkyTuple2 {
+	started := spaProfileBeginPhase()
+	defer spaProfileEndPhase(started, spaProfileUpdate)
 	pair, rejected, reason := spaGuardedUpdate(spaGuard, spaUpdate, msg, model)
 	if rejected {
 		if c := js.Global().Get("console"); c.Truthy() {
@@ -766,62 +809,93 @@ func spaReportPanic(stage string, r any) {
 // previous tree (diffTrees) and applies only the resulting patches, so DOM node
 // identity — and therefore a focused input's focus/caret/uncommitted value — is
 // preserved across updates.
-func renderCurrent() {
-	vn := HtmlToVNode(spaView(spaModel))
-	assignSkyIDs(&vn, "r")
-	// Parity with the server (HtmlRenderWithHandlers): hoist media-query /
-	// pseudo-class (:hover/:focus) / transition / animation markers into scoped
-	// <style> children. Without this pass `Ui.breakpoint` / `Ui.onPseudo` etc.
-	// are INERT in the wasm client (their data-sky-mq/pc markers are never
-	// consumed) — responsive + hover styling silently do nothing.
-	applyStyleInjections(&vn)
-	if spaPrev == nil {
-		// SSR first paint (design §4.4): when the mount was server-rendered
-		// (data-sky-ssr) AND the freshly-computed tree is provably hydratable,
-		// ATTACH handlers to the existing server DOM in place instead of wiping +
-		// rebuilding — preserving node identity so there is no flash. Otherwise
-		// (no SSR, or a server DOM that spaCanHydrate refused) fall back
-		// to today's full spaMount, which is always correct.
-		if spaShouldHydrate(spaRoot, vn) {
-			spaHydrate(spaRoot, vn)
-		} else {
-			spaMount(spaRoot, vn)
+// spaScrollCommands belongs to this browser app. Each completed normal paint
+// supersedes older held-frame commands; select catch-up continues the latest.
+var spaScrollCommands spaScrollQueue
+
+func renderCurrent() { renderCurrentWithScroll(false) }
+
+func renderCurrentWithScroll(continuation bool) {
+	painted, held := false, false
+	defer func() {
+		if !painted {
+			spaScrollCommands.cancel()
 		}
-		// Every listener is bound: widget events held until now go out.
-		spaIslandHostReady()
-	} else {
-		// clientState tells diffTrees what the focused input actually shows
-		// right now, so it skips emitting a value patch that would only
-		// re-assert (and caret-reset) the user's own in-flight typing. This is
-		// what keeps the typing case a MINIMAL patch set.
-		//
-		// spaPlanRender also holds back the patches that would close an open
-		// <select>'s picker, and returns the tree the DOM really holds after
-		// the rest: the new tree, with each held region keeping its old
-		// subtree. That tree is what spaPrev records, so the next render once
-		// the select is closed re-sends what was held. Recording &vn here
-		// lost those patches for good.
+	}()
+	started := spaProfileBeginPhase()
+	app := spaViewMemoState
+	if app == nil {
+		app = newSpaViewMemoApp(SpaFns{View: spaView})
+	}
+	app.render(spaModel, spaStepReference, func(html any) {
+		spaProfileEndPhase(started, spaProfileView)
+		started = spaProfileBeginPhase()
+		vn := HtmlToVNode(html)
+		spaProfileEndPhase(started, spaProfileVNode)
+		started = spaProfileBeginPhase()
+		assignSkyIDs(&vn, "r")
+		// Parity with the server (HtmlRenderWithHandlers): hoist media-query /
+		// pseudo-class (:hover/:focus) / transition / animation markers into scoped
+		// <style> children. Without this pass `Ui.breakpoint` / `Ui.onPseudo` etc.
+		// are INERT in the wasm client (their data-sky-mq/pc markers are never
+		// consumed) — responsive + hover styling silently do nothing.
+		applyStyleInjections(&vn)
+		spaProfileEndPhase(started, spaProfileStyle)
+		started = spaProfileBeginPhase()
+		defer spaProfileEndPhase(started, spaProfilePatch)
+		if spaPrev == nil {
+			// SSR first paint (design §4.4): when the mount was server-rendered
+			// (data-sky-ssr) AND the freshly-computed tree is provably hydratable,
+			// ATTACH handlers to the existing server DOM in place instead of wiping +
+			// rebuilding — preserving node identity so there is no flash. Otherwise
+			// (no SSR, or a server DOM that spaCanHydrate refused) fall back
+			// to today's full spaMount, which is always correct.
+			if spaShouldHydrate(spaRoot, vn) {
+				spaHydrate(spaRoot, vn)
+			} else {
+				spaMount(spaRoot, vn)
+			}
+			// Every listener is bound: widget events held until now go out.
+			spaIslandHostReady()
+		} else {
+			// clientState tells diffTrees what the focused input actually shows
+			// right now, so it skips emitting a value patch that would only
+			// re-assert (and caret-reset) the user's own in-flight typing. This is
+			// what keeps the typing case a MINIMAL patch set.
+			//
+			// spaPlanRender also holds back the patches that would close an open
+			// <select>'s picker, and returns the tree the DOM really holds after
+			// the rest: the new tree, with each held region keeping its old
+			// subtree. That tree is what spaPrev records, so the next render once
+			// the select is closed re-sends what was held. Recording &vn here
+			// lost those patches for good.
+			spaInstallSelectTracker()
+			NativeInstallCaretTracker()
+			plan := spaPlanRender(spaPrev, &vn, snapshotFocusedInput(), spaCurrentSelect())
+			// While a control's own input Msgs wait behind a hold RPC, the model
+			// is behind what the control shows: leave its value alone until they
+			// have run (spa_typing.go).
+			plan.Apply = spaKeepTyped(plan.Apply, spaTypingIDs())
+			missing := spaApplyPatches(plan.Apply, spaPrev, &vn)
+			spaNoteHeld(plan)
+			spaResyncMissing(missing, *plan.DOM)
+			// The diff compares handlers by constructor name, so a payload-only
+			// change emits no patch and no rebind. Refresh every element's handler
+			// slot from the recorded tree so its listener dispatches the CURRENT
+			// payload (a held region keeps the handlers its DOM was built with).
+			spaNodeHandlers.refresh(plan.DOM)
+			spaPrev = plan.DOM
+			painted, held = true, plan.Held != 0
+			return
+		}
 		spaInstallSelectTracker()
 		NativeInstallCaretTracker()
-		plan := spaPlanRender(spaPrev, &vn, snapshotFocusedInput(), spaCurrentSelect())
-		// While a control's own input Msgs wait behind a hold RPC, the model
-		// is behind what the control shows: leave its value alone until they
-		// have run (spa_typing.go).
-		plan.Apply = spaKeepTyped(plan.Apply, spaTypingIDs())
-		missing := spaApplyPatches(plan.Apply, spaPrev, &vn)
-		spaNoteHeld(plan)
-		spaResyncMissing(missing, *plan.DOM)
-		// The diff compares handlers by constructor name, so a payload-only
-		// change emits no patch and no rebind. Refresh every element's handler
-		// slot from the recorded tree so its listener dispatches the CURRENT
-		// payload (a held region keeps the handlers its DOM was built with).
-		spaNodeHandlers.refresh(plan.DOM)
-		spaPrev = plan.DOM
-		return
+		spaPrev = &vn
+		painted = true
+	})
+	if painted {
+		spaScrollCommands.committed(held, continuation, spaApplyScroll)
 	}
-	spaInstallSelectTracker()
-	NativeInstallCaretTracker()
-	spaPrev = &vn
 }
 
 // spaReplayHeldInput calls the boot loader's `__skyHydrated` (spa_boot.go)
@@ -1029,7 +1103,16 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 	switch cmd.kind {
 	case "", "none":
 		return
+	case "scrollRpcScope":
+		// A source-bound mixed URL residual/RPC batch captures authority BEFORE
+		// its first effect; construction of the wrapper itself is pure.
+		if spaSch != nil {
+			spaSch.withScrollAuthority(func() { interpretCmd(asCmdT(cmd.payload), dispatch) })
+		}
 	case "batch":
+		if spaIsReturnedScrolls(cmd) && spaSch != nil && !spaSch.allowReturnedScrolls() {
+			return
+		}
 		for _, c := range cmd.batch {
 			interpretCmd(asCmdT(c), dispatch)
 		}
@@ -1057,8 +1140,8 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 		// was built from the model the Msg ran on, so it is sent now, and
 		// several can be in flight. A hold RPC holds the Msg queue until it
 		// answers (spa_rpcqueue.go).
-		hold, _ := cmd.payload.(bool)
-		j := spaSch.issue(cmd.task, cmd.toMsg, hold)
+		hold, dom := spaRpcHoldFlags(cmd.payload)
+		j := spaSch.issueWithDOM(cmd.task, cmd.toMsg, hold, dom)
 		go spaRpcSend(j)
 	case "followUps":
 		// The Msgs a server branch's command produced on the backend (SPA-3):
@@ -1069,6 +1152,12 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 		// Cmd.toIsland: straight to the island runtime (island_wasm.go).
 		if ic, ok := islandCmdOf(cmd); ok {
 			spaIslandCommand(ic)
+		}
+	case "scroll":
+		// Rendering has completed synchronously. Only an actually held DOM
+		// delays this frame's command; no goroutine or animation frame races it.
+		if sc, ok := scrollCmdOf(cmd); ok {
+			spaScrollCommands.command(sc, spaApplyScroll)
 		}
 	case "nav":
 		// Std.Nav.pushUrl / replaceUrl (nav.go). Applied after this step
@@ -1472,4 +1561,51 @@ func spaFreshTick(ms int) {
 		return
 	}
 	spaSch.dispatchTick(spaTickMsg(t.msg, nowMillis()), ms, step)
+}
+
+// Reboot, sign-out and page teardown invalidate active epochs and owners.
+// The event listener is page-owned and reads the current app, retaining no old
+// model, frame or source callback from a prior boot.
+func spaResetViewMemo() {
+	if spaViewMemoState != nil {
+		spaViewMemoState.reset()
+	}
+}
+func spaInstallViewMemoLifecycle() {
+	if spaViewMemoLifecycleInstalled {
+		return
+	}
+	spaViewMemoPageHide = js.FuncOf(func(js.Value, []js.Value) any { spaResetViewMemo(); return nil })
+	js.Global().Call("addEventListener", "pagehide", spaViewMemoPageHide)
+	spaViewMemoLifecycleInstalled = true
+}
+
+// spaApplyScroll calls the shared, same-origin boot helper without dispatching
+// a Msg or changing model/focus. Missing helpers/targets are harmless.
+func spaApplyScroll(command scrollCmd) {
+	defer func() {
+		if r := recover(); r != nil {
+			spaReportPanic("scroll", r)
+		}
+	}()
+	fn := js.Global().Get("__skyScrollApply")
+	if fn.Type() != js.TypeFunction {
+		return
+	}
+	fn.Invoke(js.ValueOf(map[string]any{"target": command.Target, "top": command.Top, "ifNeeded": command.IfNeeded}))
+}
+
+// spaConsumeBootScrolls consumes only the framework SSR delivery on #app.
+// Removing before parsing gives exact-once behavior even for a malformed wire
+// (the decoder emits the existing loud spaError command without losing model).
+func spaConsumeBootScrolls() {
+	if !spaRoot.Truthy() {
+		return
+	}
+	raw := spaRoot.Call("getAttribute", "data-sky-scrolls")
+	if raw.Type() != js.TypeString {
+		return
+	}
+	spaRoot.Call("removeAttribute", "data-sky-scrolls")
+	interpretCmd(asCmdT(Spa_scrollCommands(raw.String())), spaDispatch)
 }

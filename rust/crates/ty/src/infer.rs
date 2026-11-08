@@ -134,6 +134,10 @@ pub struct Infer<'a> {
     /// A skyType is parsed only when a reference to it is first instantiated,
     /// and at most once per run — never the whole surface.
     ffi_schemes: HashMap<(Name, Name), Scheme>,
+    /// Immutable declaration descriptors only, local to this fixed World run.
+    ground_constructors: HashMap<DefId, Option<std::sync::Arc<crate::unify::GroundShape>>>,
+    #[cfg(test)]
+    no_ground_constructor: bool,
     /// Let-generalisation (doc 06 §"Let-generalisation"): a let binder that
     /// passes the value restriction (a function, or a syntactic value),
     /// generalised over the flex vars its type does not share with the
@@ -220,6 +224,9 @@ impl<'a> Infer<'a> {
             pin_number: false,
             cur_span: None,
             ffi_schemes: HashMap::new(),
+            ground_constructors: HashMap::new(),
+            #[cfg(test)]
+            no_ground_constructor: false,
             poly_locals: HashMap::new(),
             poly_insts: Vec::new(),
             last_vr: None,
@@ -539,6 +546,43 @@ impl<'a> Infer<'a> {
             }
         }
         (out_e, out_l)
+    }
+
+    /// Same solved inference as annotated tables, but only Task head booleans
+    /// for selected expressions. No type readback or table drain is needed.
+    pub(crate) fn infer_def_task_heads(
+        &mut self,
+        body: &Body,
+        selected: &std::collections::BTreeSet<ExprId>,
+    ) -> std::collections::BTreeSet<ExprId> {
+        if selected.is_empty() || self.infer_def_vars(body).is_none() {
+            return Default::default();
+        }
+        self.selected_task_heads(selected)
+    }
+
+    fn selected_task_heads(
+        &mut self,
+        selected: &std::collections::BTreeSet<ExprId>,
+    ) -> std::collections::BTreeSet<ExprId> {
+        let mut tasks = std::collections::BTreeSet::new();
+        for (expr, var) in std::mem::take(&mut self.expr_vars) {
+            if !selected.contains(&expr) {
+                continue;
+            }
+            if self
+                .uf
+                .app_name(var)
+                .is_some_and(|name| crate::nominal::base(name.as_str()) == "Task")
+            {
+                tasks.insert(expr);
+            } else {
+                // Match infer_def_tables' last-write-wins ExprId map, even
+                // when a later record replaces an earlier Task classification.
+                tasks.remove(&expr);
+            }
+        }
+        tasks
     }
 
     /// The inference half of [`Infer::infer_def_typed`]: type the params, seed
@@ -1783,14 +1827,11 @@ impl<'a> Infer<'a> {
                 result
             }
             Expr::Accessor(field) => {
-                let fv = self.uf.fresh_flex();
-                let row = self.uf.fresh_flex();
-                let mut map = std::collections::BTreeMap::new();
-                map.insert(field.clone(), fv);
-                let rec = self
-                    .uf
-                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
-                self.fun(rec, fv)
+                #[cfg(test)]
+                if self.no_fast_paths {
+                    return self.uf.fresh_accessor_reference(field.clone());
+                }
+                self.uf.fresh_accessor(field.clone())
             }
             Expr::Access(base, field) => {
                 let tb = self.infer_expr(body, *base);
@@ -1913,6 +1954,7 @@ impl<'a> Infer<'a> {
     /// (a name that spells a bound, `comparable`, carries it). `None` for a
     /// binding with no annotation, or when the annotation cannot be read.
     fn let_anno_inst(&mut self, d: &hir::LocalDef) -> Option<LetAnnoInst> {
+        self.uf.revoke_accessor_rows();
         let anno = d.anno.as_ref()?;
         if d.pat.is_some() || d.binders.len() != 1 {
             return None;
@@ -2006,6 +2048,7 @@ impl<'a> Infer<'a> {
     /// are NOT reachable from the enclosing scope or from the let's other
     /// binders — HM's `ftv(τ) \ ftv(Γ)`.
     fn generalise_let_group(&mut self, body: &Body, defs: &[hir::LocalDef], group: &[usize]) {
+        self.uf.revoke_accessor_rows();
         // Decide the deferred bound obligations first, so a bound on a custom
         // type's argument reaches the variable before it is quantified (an
         // instance copies a bounded variable, not a pending obligation).
@@ -2114,6 +2157,7 @@ impl<'a> Infer<'a> {
     /// replacing each quantified root by a fresh var (keeping a super-var's
     /// constraint) and sharing everything else.
     fn instantiate_local(&mut self, generic: TyVarId, quantified: &[TyVarId]) -> TyVarId {
+        self.uf.revoke_accessor_rows();
         let mut memo: HashMap<TyVarId, TyVarId> = HashMap::new();
         for &q in quantified {
             let r = self.uf.find(q);
@@ -2369,7 +2413,7 @@ impl<'a> Infer<'a> {
                 // e.g. `SkyResult[any,any]` vs `SkyResult[any,[]any]`).
                 if let Some(s) = self.world.value_sigs.get(&def) {
                     let s = s.clone();
-                    return self.instantiate(&s);
+                    return self.instantiate_record_constructor(def, &s);
                 }
                 if self.self_def == Some(def) {
                     return self.recursive_type.unwrap_or_else(|| self.uf.fresh_flex());
@@ -2572,18 +2616,20 @@ impl<'a> Infer<'a> {
                 self.unify(tr, boolt);
                 self.con("Bool", vec![])
             }
-            // pipes: a |> (a -> b) => b   ;   (a -> b) <| a => b
-            "|>" => {
-                let b = self.uf.fresh_flex();
-                let f = self.fun(tl, b);
-                self.unify(tr, f);
-                b
-            }
-            "<|" => {
-                let b = self.uf.fresh_flex();
-                let f = self.fun(tr, b);
-                self.unify(tl, f);
-                b
+            // Pipes use the private synchronous fresh-result factory.
+            // Ordinary Call's diagnostic prepass remains on its original path.
+            "|>" | "<|" => {
+                let (function, argument) = if op == "|>" { (tr, tl) } else { (tl, tr) };
+                #[cfg(test)]
+                if self.no_fast_paths {
+                    let b = self.uf.fresh_flex();
+                    let f = self.fun(argument, b);
+                    self.unify(function, f);
+                    return b;
+                }
+                let (result, outcome) = self.uf.unify_application(function, argument);
+                self.finish_unify(outcome);
+                result
             }
             // composition: (a->b) >> (b->c) => a->c  ; (b->c) << (a->b) => a->c
             ">>" => {
@@ -2796,6 +2842,28 @@ impl<'a> Infer<'a> {
     }
 
     // ---- instantiation (doc 06 §"Generalisation & instantiation") -------
+
+    fn instantiate_record_constructor(&mut self, def: DefId, s: &Scheme) -> TyVarId {
+        #[cfg(test)]
+        if self.no_fast_paths || self.no_ground_constructor {
+            return self.instantiate(s);
+        }
+        if !s.vars.is_empty()
+            || !matches!(&s.ty, Ty::Fun(..))
+            || !self.world.is_record_constructor(self.db, def)
+        {
+            return self.instantiate(s);
+        }
+        let shape = self
+            .ground_constructors
+            .entry(def)
+            .or_insert_with(|| crate::unify::GroundShape::constructor(&s.ty))
+            .clone();
+        match shape {
+            Some(shape) => self.uf.fresh_ground_constructor(shape),
+            None => self.instantiate(s),
+        }
+    }
 
     pub(crate) fn instantiate(&mut self, s: &Scheme) -> TyVarId {
         let mut sub: HashMap<String, TyVarId> = HashMap::new();
@@ -3564,6 +3632,31 @@ mod tests {
     use super::*;
     use hir::SourceDb;
     use std::collections::HashSet;
+
+    #[test]
+    fn selected_task_heads_use_last_record_for_duplicate_expression_ids() {
+        let db = SourceDb::new();
+        let world = World::build(&db);
+        let mut infer = Infer::new(&world, &db);
+        let mut body = Body::default();
+        let expr = body.exprs.alloc(Expr::Int(0));
+        let selected = std::collections::BTreeSet::from([expr]);
+        let error = infer
+            .uf
+            .fresh(Content::Structure(FlatTy::App(Name::new("Error"), vec![])));
+        let value = infer
+            .uf
+            .fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let task = infer.uf.fresh(Content::Structure(FlatTy::App(
+            Name::new("Task"),
+            vec![error, value],
+        )));
+        let unknown = infer.uf.fresh_flex();
+        infer.expr_vars = vec![(expr, task), (expr, unknown)];
+        assert!(infer.selected_task_heads(&selected).is_empty());
+        infer.expr_vars = vec![(expr, unknown), (expr, task)];
+        assert_eq!(infer.selected_task_heads(&selected), selected);
+    }
 
     const SRC: &str = "module Main exposing (main)\n\
         type alias P = { name : String, tags : List String, inner : { a : String, b : ( String, String ) } }\n\

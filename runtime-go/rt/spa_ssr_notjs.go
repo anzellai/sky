@@ -213,6 +213,10 @@ func spaSsrSettleRoundFull(model, cmd, update any) (any, bool) {
 	full := true
 	switch c.kind {
 	case "none", "":
+	case "scroll":
+		// SSR has no DOM and emits no Msg. Leave this command unfinished
+		// so the mounted browser still runs it after its first render.
+		full = false
 	case "batch":
 		for _, sub := range c.batch {
 			var subFull bool

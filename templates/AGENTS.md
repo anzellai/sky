@@ -135,7 +135,7 @@ desktop only; a `web:app` build refuses it) and put it behind sign-in.
 | Concern | Default |
 |---|---|
 | UI | `Std.Ui` (typed, no CSS). `Std.Html` only for raw markup. |
-| Sky.Live navigation | Every internal link is `sky-nav` (`Attr.attribute "sky-nav" ""` on `<a>`). ONE persistent SSE per session; a plain `<a href>` full-reload opens a fresh SSE each page and can freeze the tab. The URL fragment (`#…`) never reaches the server: read it with `Sub.onFragment toMsg` (at load and on every change). To move the address bar from `update`, return `Nav.pushUrl "/path"` / `Nav.replaceUrl "/path"` / `Nav.clearFragment` (`import Std.Nav as Nav`; same-origin only): it routes like a `sky-nav` link, with no reload. |
+| Sky.Live navigation | Every internal link is `sky-nav` (`Attr.attribute "sky-nav" ""` on `<a>`). ONE persistent SSE per session; a plain `<a href>` full-reload opens a fresh SSE each page and can freeze the tab. The URL fragment (`#…`) never reaches the server: read it with `Sub.onFragment toMsg` (at load and on every change). To move the address bar from `update`, return `Nav.pushUrl "/path"` / `Nav.replaceUrl "/path"` / `Nav.clearFragment` (`import Std.Nav as Nav`; same-origin only): it routes like a `sky-nav` link, with no reload. For an update-driven scroll, return `Nav.scrollIntoView "target-id"` (or `scrollIntoViewIfNeeded` / `scrollToTop`). It runs after the corresponding DOM commit, including a server answer. Use `Ui.htmlAttribute "id" "target-id"` on the target. No app JavaScript is needed. |
 | Auth | `Std.Auth` — bcrypt + HS256 JWT cookies. `Auth.login` / `Auth.register` return `Task Error Int` (the user id). Never `fmt`-print a secret. |
 | Password forms | `Ui.form [Ui.onSubmit DoSignIn]` with a typed record arg. Never per-keystroke `onInput` on a password field. |
 | Third-party JS widgets | A widget island: `Ui.island { name, id, props } attrs` (or `Html.island`) is an element the widget owns (the server never patches inside it). Register the widget from a same-origin file loaded with `<script defer>` (`window.Sky.island "name" { mount(el, props, send), update(props), command(name, payload), destroy() }`, no inline script). Decode its events with `Ui.onIslandEvent type decoder toMsg`; send it commands with `Cmd.toIsland id name payload`. Keep what matters in the model and pass it back in `props`: a remount starts from `props`. |
@@ -401,8 +401,11 @@ users. The app code does not change — only the DSN does.
 Every observable side effect returns `Task Error a` (`File.*`, `Http.*`, `Db.*`,
 `Time.now`, `Random.*`, `Log.*`, `System.*` except `getenvOr`). Pure stays bare
 (`String.*`, `List.*`, `Crypto.sha256`); fallible-pure returns `Result e a` /
-`Maybe a` (`String.toInt`, JSON decoders). A discarded `let _ = TaskExpr` is
-auto-forced. Bridge with `Task.fromResult` / `Task.andThenResult` /
+`Maybe a` (`String.toInt`, JSON decoders). A root `let _ = TaskExpr` runs the
+Task once when its type is known statically, including from an annotation. A wildcard inside a tuple pattern
+discards Task data without running it. Ordinary function values and
+unconstrained polymorphic discards stay latent. Bridge with `Task.fromResult` /
+`Task.andThenResult` /
 `Task.onError`. Top-level `apiKey = System.getenv "K" |> Task.run |> Result.withDefault ""`
 still needs the explicit `Task.run`. Every `File.*` failure has its kind
 (v0.29.1): a missing path is `NotFound`, a refused one `PermissionDenied`, a
@@ -411,7 +414,10 @@ path that already exists `Conflict`, anything else `Io`. Match the kind, never
 
 **Go FFI (`sky add`) is the one exception, on purpose: it returns `Result
 Error a`, not a Task.** The Go call runs where the expression is evaluated, and
-the Result is its outcome (a Go error, a nil or a recovered panic is `Err`).
+the Result reports Go errors, conversion failures, nil-receiver access and
+recovered panics as `Err`. Pointers to plain data use `Maybe`; opaque Go nil
+handles may be returned and forwarded to another Go binding. Accessing a nil
+handle through a method or field yields `Err`.
 Handling it at each call site marks where the code leaves Sky's guarantees, so
 prefer the stdlib and keep FFI for what it does not cover. To run a call later,
 off `update` (for example with `Cmd.perform`), wrap it yourself:

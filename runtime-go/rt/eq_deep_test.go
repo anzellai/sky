@@ -28,10 +28,9 @@ func TestDeepEqUnexportedFieldsDoNotPanic(t *testing.T) {
 		}
 		return decimalBox(d)
 	}
-	usd := SkyADT{Tag: 0, SkyName: "USD"}
-	m1 := SkyADT{Tag: 0, SkyName: "Money", Fields: []any{box("12.99"), usd}}
-	m2 := SkyADT{Tag: 0, SkyName: "Money", Fields: []any{box("12.99"), usd}}
-	m3 := SkyADT{Tag: 0, SkyName: "Money", Fields: []any{box("0.01"), usd}}
+	m1 := canonicalMoneyFixture(decimal.RequireFromString("12.99"), "USD")
+	m2 := canonicalMoneyFixture(decimal.RequireFromString("12.99"), "USD")
+	m3 := canonicalMoneyFixture(decimal.RequireFromString("0.01"), "USD")
 
 	if !AsBool(Eq(m1, m2)) {
 		t.Error("equal Money values compared unequal")

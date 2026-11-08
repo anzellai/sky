@@ -1,0 +1,31 @@
+{
+  "change": "Share immutable complete inference results between the Salsa memo, database bridge and lowering; retain owned tooling copies.",
+  "red": {
+    "exit": 101,
+    "elapsed_seconds": 95,
+    "tests_executed": 1,
+    "assertion": "inference consumers must share the memo table and owned signature",
+    "log_sha256": "9ef78b90be59e9e65b8d86c34b38cb7587ec2f719404c817e1e74c201b0be90a"
+  },
+  "green": {
+    "command": "cargo test -p skydb -p lower",
+    "exit": 0,
+    "elapsed_seconds": 76,
+    "passed": 118,
+    "failed": 0,
+    "ignored": 1,
+    "ownership_regression_passed": true,
+    "log_sha256": "3f1ea0adb2f18fa76064c992b5f0d660cad9999f269cb69a2d456bb9925787ae"
+  },
+  "invariants": [
+    "Repeated query/database calls share the same complete immutable result",
+    "An old owner remains unchanged across source edits",
+    "Edited inference matches a fresh database including the signature",
+    "Mutating the tooling copy cannot change the memo"
+  ],
+  "scope_limits": [
+    "Memory savings have not been measured",
+    "Existing ignored unifier-growth regression was separately executed and fails; fix remains in progress",
+    "No historical-app build success or fresh compiler claim from these unit tests"
+  ]
+}

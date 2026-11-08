@@ -1,0 +1,15 @@
+{
+  "change": "Restore numeric free-space MB output without changing gate-cache policy.",
+  "synthetic_bash_probe": {
+    "original": "RED",
+    "corrected": "GREEN"
+  },
+  "integration_suite": {
+    "command": "cargo test -p xtask --test gate_build_cache",
+    "passed": 17,
+    "failed": 0,
+    "ignored": 0,
+    "log_sha256": "514320aab9ad45fc7a7456c49d6090467483abe5bbf7628e9b6f21a4e8f52f8a"
+  },
+  "cache_scope": "Integration tests use their own disposable fixture caches; no shared build cache was purged."
+}
