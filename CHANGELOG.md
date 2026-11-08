@@ -11,6 +11,21 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.4 — browser fetch exceptions return classified errors (2026-11-08)
+
+### Fixed
+
+- A browser can throw synchronously when starting a fetch, before returning a
+  Promise. Sky now returns a classified `Network` error through the Task
+  boundary and releases the attempt's timeout and callbacks. Successful fetches
+  and rejected Promises retain their behavior. Unexpected Go programming faults
+  remain visible and also release these resources while unwinding.
+
+### Migration from v0.29.3
+
+No application source or database schema changes are required. Rebuild and
+redeploy the server and client assets together with Sky 0.29.4.
+
 ## v0.29.3 — faster SPA updates and typed post-render scrolling (2026-11-07)
 
 ### Improved
