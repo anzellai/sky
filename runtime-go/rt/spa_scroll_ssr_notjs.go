@@ -11,7 +11,7 @@ import (
 // Remove only scroll leaves, without executing any command. Iterative batch
 // frames avoid introducing a new recursion limit; non-scroll leaves are exact
 // original values. The collected order is the original settle visitation order.
-func spaStripScrolls(value any) (any, []scrollCmd, bool) {
+func spaStripScrolls(value any) (any, []spaBrowserCommand, bool) {
 	type frame struct {
 		value   any
 		cmd     cmdT
@@ -22,7 +22,7 @@ func spaStripScrolls(value any) (any, []scrollCmd, bool) {
 	}
 	stack := []frame{{value: value}}
 	var result any
-	out := []scrollCmd{}
+	out := []spaBrowserCommand{}
 	invalid := false
 	finish := func(v any, changed bool) {
 		stack = stack[:len(stack)-1]
@@ -45,9 +45,9 @@ func spaStripScrolls(value any) (any, []scrollCmd, bool) {
 			f.cmd = c
 			f.entered = true
 			switch c.kind {
-			case "scroll":
-				s, ok := scrollCmdOf(c)
-				if !ok || (s.Top && (s.Target != "" || s.IfNeeded)) {
+			case "scroll", "nav":
+				s, ok := spaBrowserLeaf(c)
+				if !ok {
 					invalid = true
 				} else {
 					out = append(out, s)
@@ -76,12 +76,12 @@ func spaStripScrolls(value any) (any, []scrollCmd, bool) {
 	}
 	return result, out, invalid
 }
-func spaScrollsJSON(commands []scrollCmd, invalid bool) string {
+func spaScrollsJSON(commands []spaBrowserCommand, invalid bool) string {
 	if invalid {
 		return `{"version":0,"commands":[]}`
 	}
 	if commands == nil {
-		commands = []scrollCmd{}
+		commands = []spaBrowserCommand{}
 	}
 	b, err := json.Marshal(spaScrollWire{spaScrollWireVersion, commands})
 	if err != nil {
@@ -125,7 +125,7 @@ func Spa_ssrSettleFullScrolls(model, cmd, update any) any {
 
 // Combine independent FULLY settled init/request/nav groups in actual order.
 func Spa_joinScrolls(wires any) string {
-	commands := []scrollCmd{}
+	commands := []spaBrowserCommand{}
 	for _, v := range spaAsListPortable(wires) {
 		text := AsString(v)
 		if text == "" {
@@ -140,7 +140,7 @@ func Spa_joinScrolls(wires any) string {
 			if !ok {
 				return `{"version":0,"commands":[]}`
 			}
-			s, ok := scrollCmdOf(c)
+			s, ok := spaBrowserLeaf(c)
 			if !ok {
 				return `{"version":0,"commands":[]}`
 			}

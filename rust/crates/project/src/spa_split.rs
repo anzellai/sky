@@ -2610,7 +2610,7 @@ pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> 
 }
 
 const RETURNED_SCROLL_PROTOCOL_MARKER: &str =
-    "\n-- returned-scroll-wire-v1: response/init envelopes and SSR boot command data\n";
+    "\n-- returned-browser-command-wire-v2: response/init envelopes and SSR boot command data (scroll + nav)\n";
 
 fn returned_scroll_route(handler: &str, enabled: bool) -> String {
     if enabled {
@@ -4043,7 +4043,33 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .iter()
         .map(|r| (r.ctor.clone(), r.msg_arg_tys.clone()))
         .collect();
-    let returned_scrolls = spa_partition::returned_scrolls_reachable(&db, entry);
+    // Returned browser commands (wire v2): a reachable scroll, or a URL
+    // navigation that a SERVER branch (through any helper: the branch's
+    // transitive effect families) or a server-run `init` reaches. A server
+    // outcome's navigation is evaluated on the server and carried back in its
+    // answer, so it keeps the scope and the control flow that created it. An
+    // app whose navigations all run in the client keeps its wire unchanged.
+    let server_navigates = report
+        .branches
+        .iter()
+        .any(|b| b.server && b.effect_families.iter().any(|f| f == "Nav"));
+    let init_server_navigates = {
+        let init_mod = spa_partition::find_config_field_def(&db, &check_ids, entry, "init")
+            .and_then(|d| db.def_loc(d).map(|l| l.module))
+            .unwrap_or(entry);
+        // The same predicate `plan_init_rpc` uses to run `init` on the server
+        // (direct server kernels and qualified references included).
+        spa_partition::init_reaches_url_navigation(&db, init_mod)
+            && init_reaches_server(
+                &db,
+                init_mod,
+                &tainted_def_ids(&db, &report),
+                report.client_crypto,
+            )
+    };
+    let returned_scrolls = spa_partition::returned_scrolls_reachable(&db, entry)
+        || server_navigates
+        || init_server_navigates;
     let mut arm_routes =
         ArmRoutes::from_report(&report.branches, &routes, &report.chaining_branches);
     arm_routes.returned_scrolls = returned_scrolls;
@@ -7971,6 +7997,34 @@ fn tainted_refs_in(
 ///
 /// `Ok(None)` when `init` reaches no server-tainted binding (it stays
 /// verbatim). An `Err` names a shape the split cannot rewrite.
+fn init_decl_range(decl: &syntax::ast::Decl) -> (usize, usize) {
+    let node = decl.syntax();
+    (
+        u32::from(node.text_range().start()) as usize,
+        u32::from(node.text_range().end()) as usize,
+    )
+}
+
+/// Whether `plan_init_rpc` runs `init`'s command on the server: its body
+/// reaches a server-only binding or kernel. One predicate for both, so the
+/// returned-command mode and the init RPC plan cannot disagree.
+fn init_reaches_server(
+    db: &SkyDatabase,
+    init_mod: ModuleId,
+    tainted: &HashSet<DefId>,
+    client_crypto: bool,
+) -> bool {
+    let parse = db.module_parse(init_mod);
+    parse
+        .tree()
+        .decls()
+        .find(|d| decl_name(d).as_deref() == Some("init") && is_value_decl(d))
+        .is_some_and(|decl| {
+            !tainted_refs_in(db, init_mod, tainted, init_decl_range(&decl), client_crypto)
+                .is_empty()
+        })
+}
+
 fn plan_init_rpc(
     db: &SkyDatabase,
     init_mod: ModuleId,
@@ -7991,9 +8045,7 @@ fn plan_init_rpc(
     else {
         return Ok(None);
     };
-    let node = decl.syntax();
-    let d0 = u32::from(node.text_range().start()) as usize;
-    let d1 = u32::from(node.text_range().end()) as usize;
+    let (d0, d1) = init_decl_range(&decl);
     let refs = tainted_refs_in(db, init_mod, tainted, (d0, d1), client_crypto);
     if refs.is_empty() {
         return Ok(None);
@@ -8114,7 +8166,12 @@ fn plan_init_rpc(
         )?);
     }
     let nav = NavNames::of_module(&file, &src);
-    if spa_partition::init_reaches_url_navigation(db, init_mod) && nav.names_nav(&cmd_text) {
+    // With returned browser commands the server's settled init command carries
+    // its navigation back in the init answer (never copied source).
+    if !returned_scrolls
+        && spa_partition::init_reaches_url_navigation(db, init_mod)
+        && nav.names_nav(&cmd_text)
+    {
         residual.push(nav_residual(
             &tuple,
             &src,
@@ -12158,8 +12215,11 @@ fn gen_frontend_update(
                 residual.push(native_residual(arm.syntax(), src, alias, f.tainted, &m)?);
             }
             // Std.Nav: the navigation moves the browser, so the client runs it,
-            // as Sky.Live runs it when the update returns.
-            if arm_routes.arm_navigates(arm_index, &m) {
+            // as Sky.Live runs it when the update returns. With returned
+            // browser commands (always, once `update` reaches a navigation) the
+            // server evaluates the outcome's actual command and the answer
+            // carries the navigation back; no source is copied to the client.
+            if !arm_routes.returned_scrolls && arm_routes.arm_navigates(arm_index, &m) {
                 residual.push(nav_residual(
                     arm.syntax(),
                     src,

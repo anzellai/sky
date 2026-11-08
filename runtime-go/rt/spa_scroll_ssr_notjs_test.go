@@ -26,7 +26,7 @@ func TestSpaScrollSSRSettlesOnceAndOwnsOnlyFinishedScrolls(t *testing.T) {
 	}
 }
 func TestSpaScrollSSRUnfinishedGroupDoesNotDuplicateBootCommand(t *testing.T) {
-	cmd := cmdT{kind: "batch", batch: []any{scrollTest("later", false, false), Nav_pushUrl("/elsewhere")}}
+	cmd := cmdT{kind: "batch", batch: []any{scrollTest("later", false, false), cmdT{kind: "unknown"}}}
 	result := Spa_ssrSettleFullScrolls(1, cmd, func(any, any) any { t.Fatal("no update expected"); return nil }).(T3[any, bool, string])
 	if result.V1 || result.V2 != "" {
 		t.Fatal("unfinished group published boot scroll")
@@ -49,19 +49,39 @@ func TestSpaScrollSSRPageAttributeIsEscapedAndOnlyFrameworkRootChanged(t *testin
 	}
 }
 func TestSpaScrollSSRStripDeepBatchPreservesOtherLeaves(t *testing.T) {
-	var c any = cmdT{kind: "batch", batch: []any{scrollTest("deep", false, false), Nav_replaceUrl("#")}}
+	var c any = cmdT{kind: "batch", batch: []any{scrollTest("deep", false, false), cmdT{kind: "unknown"}}}
 	for i := 0; i < 10000; i++ {
 		c = cmdT{kind: "batch", batch: []any{c}}
 	}
 	clean, commands, bad := spaStripScrolls(c)
-	if bad || len(commands) != 1 || commands[0].Target != "deep" {
+	if bad || len(commands) != 1 || *commands[0].Target != "deep" {
 		t.Fatal("deep data extraction")
 	}
 	for i := 0; i < 10000; i++ {
 		clean = clean.(cmdT).batch[0]
 	}
 	leaf := clean.(cmdT).batch[1].(cmdT)
-	if leaf.kind != "nav" {
+	if leaf.kind != "unknown" {
 		t.Fatal("other leaf changed")
+	}
+}
+
+func TestSpaReturnedNavigationSSRFullAndUnfinishedOwnership(t *testing.T) {
+	command := Cmd_batch([]any{Nav_replaceUrl("#"), Nav_scrollIntoView("ready"), Nav_pushUrl("/next")})
+	result := Spa_ssrSettleFullScrolls(1, command, func(any, any) any { t.Fatal("unexpected update"); return nil }).(T3[any, bool, string])
+	if !result.V1 {
+		t.Fatal("data-only browser commands did not settle")
+	}
+	decoded, e := spaDecodeScrolls(result.V2)
+	if e != nil || len(decoded.batch) != 3 {
+		t.Fatal("missing full boot effects")
+	}
+	joined, e := spaDecodeScrolls(Spa_joinScrolls([]any{result.V2, "", result.V2}))
+	if e != nil || len(joined.batch) != 6 {
+		t.Fatal("join lost command data")
+	}
+	unfinished := Spa_ssrSettleFullScrolls(1, Cmd_batch([]any{command, cmdT{kind: "rpc"}}), func(any, any) any { t.Fatal("unexpected update"); return nil }).(T3[any, bool, string])
+	if unfinished.V1 || unfinished.V2 != "" {
+		t.Fatal("unfinished group published browser effects")
 	}
 }

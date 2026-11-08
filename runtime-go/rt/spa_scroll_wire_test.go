@@ -41,7 +41,7 @@ func TestSpaScrollWireCollectsActualBatchWithoutRunningEffects(t *testing.T) {
 	}
 }
 func TestSpaScrollWireMalformedIsLoudAndPreservesAppliedModel(t *testing.T) {
-	bad := []string{`null`, `{}`, `{"version":2,"commands":[]}`, `{"version":1,"commands":null}`, `{"version":1,"version":1,"commands":[]}`, `{"Version":1,"commands":[]}`, `{"version":1,"commands":[{}]}`, `{"version":1,"commands":[{"target":"x","top":true,"ifNeeded":false}]}`, `{"version":1,"commands":[{"target":"x","top":false,"ifNeeded":false,"unknown":0}]}`, `{"version":1,"commands":[]} []`}
+	bad := []string{`null`, `{}`, `{"version":99,"commands":[]}`, `{"version":2,"commands":null}`, `{"version":2,"version":2,"commands":[]}`, `{"Version":2,"commands":[]}`, `{"version":2,"commands":[{}]}`, `{"version":2,"commands":[{"kind":"scroll","target":"x","top":true,"ifNeeded":false}]}`, `{"version":2,"commands":[{"kind":"scroll","target":"x","top":false,"ifNeeded":false,"unknown":0}]}`, `{"version":2,"commands":[]} []`}
 	for _, wire := range bad {
 		c := Spa_scrollCommands(wire)
 		if c.kind != "spaError" {
@@ -58,7 +58,7 @@ func TestSpaScrollWireLegacyMissingAndValidEmpty(t *testing.T) {
 	if Spa_scrollCommands("").kind != "none" {
 		t.Fatal("legacy response acquired effect")
 	}
-	if len(scrollLeaves(t, `{"version":1,"commands":[]}`)) != 0 {
+	if len(scrollLeaves(t, `{"version":2,"commands":[]}`)) != 0 {
 		t.Fatal("empty acquired effect")
 	}
 }
@@ -77,7 +77,7 @@ func TestSpaScrollInitEnvelopeVersionAndLegacy(t *testing.T) {
 	if old.Tag != 0 || old.OkValue.(T2[string, string]).V1 != "" {
 		t.Fatal("legacy failed")
 	}
-	for _, wire := range []string{`{"version":2,"followUps":"[]","scrolls":""}`, `{"version":1,"followUps":"[]","scrolls":"bad"}`, `{"version":1,"followUps":"[]","scrolls":"","x":0}`} {
+	for _, wire := range []string{`{"version":99,"followUps":"[]","scrolls":""}`, `{"version":2,"followUps":"[]","scrolls":"bad"}`, `{"version":2,"followUps":"[]","scrolls":"","x":0}`} {
 		if Spa_readInitScrolls(wire).(SkyResult[any, any]).Tag != 1 {
 			t.Fatal("bad envelope accepted")
 		}
@@ -126,7 +126,7 @@ func TestSpaScrollWireReturnedMarkerIsExactAndPreservesLeaves(t *testing.T) {
 	if spaIsReturnedScrolls(raw) || spaIsReturnedScrolls(Spa_scrollCommands("")) || spaIsReturnedScrolls(Spa_scrollCommands(`{"version":99,"commands":[]}`)) {
 		t.Fatal("marker widened beyond successfully decoded sideband")
 	}
-	if !spaIsReturnedScrolls(Spa_scrollCommands(`{"version":1,"commands":[]}`)) {
+	if !spaIsReturnedScrolls(Spa_scrollCommands(`{"version":2,"commands":[]}`)) {
 		t.Fatal("valid empty sideband lost provenance")
 	}
 }

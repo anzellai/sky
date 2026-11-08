@@ -9,13 +9,19 @@ import "strings"
 // Only command data and its scheduler completion (never a DOM node) are retained.
 type spaScrollQueue struct {
 	held      bool
-	pending   []scrollCmd
+	pending   []cmdT
 	epoch     uint64
 	authority uint64
 	done      func()
 }
 
 func (q *spaScrollQueue) command(c scrollCmd, apply func(scrollCmd)) {
+	q.browserCommand(cmdT{kind: "scroll", payload: c}, func(c cmdT) { v, _ := scrollCmdOf(c); apply(v) })
+}
+
+// browserCommand retains the complete returned primitive batch behind the same
+// DOM barrier. It does not serialize ordinary concurrent Cmd effects.
+func (q *spaScrollQueue) browserCommand(c cmdT, apply func(cmdT)) {
 	if q.held {
 		q.pending = append(q.pending, c)
 		return
@@ -55,6 +61,14 @@ func (q *spaScrollQueue) afterRender(before uint64, done func()) {
 }
 
 func (q *spaScrollQueue) committed(held, continuation bool, apply func(scrollCmd)) {
+	q.committedBrowser(held, continuation, func(c cmdT) {
+		v, ok := scrollCmdOf(c)
+		if ok {
+			apply(v)
+		}
+	})
+}
+func (q *spaScrollQueue) committedBrowser(held, continuation bool, apply func(cmdT)) {
 	var cancelled func()
 	if !continuation {
 		q.pending = nil

@@ -37,18 +37,18 @@ func TestScrollDecodedCommandsDoNotDispatchMessages(t *testing.T) {
 		leaves           []scrollCmd
 		full             bool
 	}{
-		{name: "top", wire: `{"version":1,"commands":[{"target":"","top":true,"ifNeeded":false}]}`, kind: "batch", leaves: []scrollCmd{{Top: true}}},
-		{name: "target", wire: `{"version":1,"commands":[{"target":"literal[]世界","top":false,"ifNeeded":false}]}`, kind: "batch", leaves: []scrollCmd{{Target: "literal[]世界"}}},
-		{name: "needed", wire: `{"version":1,"commands":[{"target":"optional","top":false,"ifNeeded":true}]}`, kind: "batch", leaves: []scrollCmd{{Target: "optional", IfNeeded: true}}},
-		{name: "ordered", wire: `{"version":1,"commands":[{"target":"","top":true,"ifNeeded":false},{"target":"part","top":false,"ifNeeded":true}]}`, kind: "batch", leaves: []scrollCmd{{Top: true}, {Target: "part", IfNeeded: true}}},
-		{name: "empty", wire: `{"version":1,"commands":[]}`, kind: "batch", full: true},
+		{name: "top", wire: `{"version":2,"commands":[{"kind":"scroll","target":"","top":true,"ifNeeded":false}]}`, kind: "batch", leaves: []scrollCmd{{Top: true}}},
+		{name: "target", wire: `{"version":2,"commands":[{"kind":"scroll","target":"literal[]世界","top":false,"ifNeeded":false}]}`, kind: "batch", leaves: []scrollCmd{{Target: "literal[]世界"}}},
+		{name: "needed", wire: `{"version":2,"commands":[{"kind":"scroll","target":"optional","top":false,"ifNeeded":true}]}`, kind: "batch", leaves: []scrollCmd{{Target: "optional", IfNeeded: true}}},
+		{name: "ordered", wire: `{"version":2,"commands":[{"kind":"scroll","target":"","top":true,"ifNeeded":false},{"kind":"scroll","target":"part","top":false,"ifNeeded":true}]}`, kind: "batch", leaves: []scrollCmd{{Top: true}, {Target: "part", IfNeeded: true}}},
+		{name: "empty", wire: `{"version":2,"commands":[]}`, kind: "batch", full: true},
 		{name: "legacy-missing", kind: "none", full: true},
 		{name: "malformed", wire: `{`, kind: "spaError"},
-		{name: "unknown-kind", wire: `{"version":1,"commands":[{"kind":"perform","target":"x","top":false,"ifNeeded":false}]}`, kind: "spaError"},
-		{name: "message", wire: `{"version":1,"commands":[{"target":"x","top":false,"ifNeeded":false,"msg":{"tag":"Next"}}]}`, kind: "spaError"},
-		{name: "callback", wire: `{"version":1,"commands":[{"target":"x","top":false,"ifNeeded":false,"toMsg":"Next","task":"effect"}]}`, kind: "spaError"},
-		{name: "envelope-message", wire: `{"version":1,"commands":[],"msg":"Next"}`, kind: "spaError"},
-		{name: "envelope-callback", wire: `{"version":1,"commands":[],"callback":"Next"}`, kind: "spaError"},
+		{name: "unknown-kind", wire: `{"version":2,"commands":[{"kind":"perform","target":"x","top":false,"ifNeeded":false}]}`, kind: "spaError"},
+		{name: "message", wire: `{"version":2,"commands":[{"kind":"scroll","target":"x","top":false,"ifNeeded":false,"msg":{"tag":"Next"}}]}`, kind: "spaError"},
+		{name: "callback", wire: `{"version":2,"commands":[{"kind":"scroll","target":"x","top":false,"ifNeeded":false,"toMsg":"Next","task":"effect"}]}`, kind: "spaError"},
+		{name: "envelope-message", wire: `{"version":2,"commands":[],"msg":"Next"}`, kind: "spaError"},
+		{name: "envelope-callback", wire: `{"version":2,"commands":[],"callback":"Next"}`, kind: "spaError"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

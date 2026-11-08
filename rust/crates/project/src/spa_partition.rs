@@ -1114,8 +1114,9 @@ pub(crate) fn returned_scrolls_reachable(db: &dyn SkyDb, entry: ModuleId) -> boo
 }
 pub(crate) fn init_reaches_url_navigation(db: &dyn SkyDb, module: ModuleId) -> bool {
     def_by_name(db, module, "init")
-        .is_some_and(|init| resolved_kernel_reachable(db, init, &["Nav_pushUrl", "Nav_replaceUrl"]))
+        .is_some_and(|init| resolved_kernel_reachable(db, init, URL_NAV_KERNELS))
 }
+const URL_NAV_KERNELS: &[&str] = &["Nav_pushUrl", "Nav_replaceUrl"];
 
 fn app_reaches_kernel(db: &dyn SkyDb, graph: &Graph, targets: &[&str]) -> bool {
     graph
@@ -7660,7 +7661,8 @@ fn trim_span(src: &str, r: (u32, u32)) -> Option<(u32, u32)> {
 /// differential split fuzzer tags each one with its leaf number, so the two
 /// runs it compares show which leaf each took. A leaf inside a helper is not
 /// listed (its command still shows in the command shape).
-/// Constructors whose returned command may contain a DOM scroll. Unknown
+/// Constructors whose returned command may contain a DOM scroll or a URL
+/// navigation. Unknown
 /// commands fail closed only in a scroll-enabled app. This reads resolved
 /// command leaves, never source names or model read/write sets.
 pub(crate) fn returned_scroll_heads(db: &dyn SkyDb, module: ModuleId) -> Option<HashSet<String>> {
@@ -7696,7 +7698,10 @@ pub(crate) fn returned_scroll_heads(db: &dyn SkyDb, module: ModuleId) -> Option<
         }
         for (leaf, _) in leaves {
             match leaf {
-                CmdLeaf::Scroll | CmdLeaf::Unresolvable => {
+                // A URL navigation is returned command data too: the server
+                // evaluates the outcome's command, the client runs it after
+                // the answer renders.
+                CmdLeaf::Scroll | CmdLeaf::Nav | CmdLeaf::Unresolvable => {
                     heads.insert(head.clone());
                 }
                 CmdLeaf::Perform {
