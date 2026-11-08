@@ -23,12 +23,13 @@ package rt
 //
 // Lifecycle marker (Step 6): for Msgs the developer KNOWS are noisy
 // heartbeats, `Std.Live.lifecycle msg` wraps them with metadata
-// that makes the dispatcher skip even the metric bump on no-op
-// dispatches. Belt-and-braces on top of the diff filter.
+// that suppresses the no-op log line. Counters and histograms still
+// record every dispatch, including these lifecycle messages.
 
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -46,10 +47,11 @@ import (
 // Created at the top of liveApp.dispatch; consumed by Observe()
 // after update + view return.
 type MsgLogContext struct {
-	MsgName      string // constructor name (e.g. "EditDraft", "Tick")
-	IsLifecycle  bool   // marked via Std.Live.lifecycle
-	StartTime    time.Time
-	OldModelHash uint64 // hash(model) BEFORE update
+	MsgName                string // constructor name (e.g. "EditDraft", "Tick")
+	IsLifecycle            bool   // marked via Std.Live.lifecycle
+	StartTime              time.Time
+	OldModelHash           uint64 // hash(model) BEFORE update
+	OldModelHashIncomplete bool   // partial hashes never certify an unchanged model
 	// SessionID — the Sky.Live session this dispatch belongs to.
 	// Populated by BeginMsgLogForSession (the dispatcher knows the
 	// session; pass it through). Empty for non-Live dispatch sites.
@@ -73,12 +75,17 @@ type MsgLogContext struct {
 // update mutates model in place, so reading the hash after update
 // would always equal new hash (= no-op detection broken).
 func BeginMsgLog(msgValue, model any) MsgLogContext {
-	return MsgLogContext{
-		MsgName:      ExtractMsgName(msgValue),
-		IsLifecycle:  isLifecycleMsg(msgValue),
-		StartTime:    time.Now(),
-		OldModelHash: hashAny(model),
+	// Preserve name/lifecycle/start-time evaluation before hashing so the
+	// dispatch latency continues to include the old-model hash cost.
+	ctx := MsgLogContext{
+		MsgName:     ExtractMsgName(msgValue),
+		IsLifecycle: isLifecycleMsg(msgValue),
+		StartTime:   time.Now(),
 	}
+	oldHash, complete := hashAnyResult(model, time.Time{})
+	ctx.OldModelHash = oldHash
+	ctx.OldModelHashIncomplete = !complete
+	return ctx
 }
 
 // BeginMsgLogForSession is the session-aware variant the Sky.Live
@@ -116,9 +123,14 @@ func BeginMsgLogForSession(msgValue, model any, sid string) MsgLogContext {
 // instead of the ring buffer (container evicts before ring readers
 // see the entry).
 func ObserveMsgLog(ctx MsgLogContext, newModel any, cmd any, err error) {
+	observeMsgLogWithDeadline(ctx, newModel, cmd, err, time.Time{})
+}
+
+// Zero deadline preserves the normal per-hash cooperative budget.
+func observeMsgLogWithDeadline(ctx MsgLogContext, newModel any, cmd any, err error, deadline time.Time) {
 	elapsed := time.Since(ctx.StartTime)
-	newHash := hashAny(newModel)
-	noop := ctx.OldModelHash == newHash && cmdIsNone(cmd) && err == nil
+	newHash, complete := hashAnyResult(newModel, deadline)
+	noop := !ctx.OldModelHashIncomplete && complete && ctx.OldModelHash == newHash && cmdIsNone(cmd) && err == nil
 
 	outcome := "ok"
 	if err != nil {
@@ -170,16 +182,31 @@ func emitMsgLog(level string, ctx MsgLogContext, elapsed time.Duration, noop boo
 	}
 	if IsServerless() {
 		// Single JSON line to stderr — Cloud Run / Lambda capture.
-		// Minimal allocation: no encoding/json round trip.
 		errStr := ""
 		if err != nil {
 			errStr = err.Error()
 		}
-		fmt.Fprintf(serverlessStderr(),
-			`{"ts":"%s","level":"%s","msg":"msg_dispatch","req_id":"%s","name":"%s","noop":%t,"lifecycle":%t,"latency_ms":%.3f,"error":"%s"}`+"\n",
-			time.Now().UTC().Format(time.RFC3339Nano),
-			level, reqID, ctx.MsgName, noop, ctx.IsLifecycle,
-			float64(elapsed.Microseconds())/1000.0, errStr)
+		encoder := json.NewEncoder(serverlessStderr())
+		encoder.SetEscapeHTML(false)
+		// Keep the existing field order and three-decimal numeric latency.
+		// Encode only primitive values, never the caller's error object.
+		_ = encoder.Encode(struct {
+			Timestamp string      `json:"ts"`
+			Level     string      `json:"level"`
+			Message   string      `json:"msg"`
+			RequestID string      `json:"req_id"`
+			Name      string      `json:"name"`
+			Noop      bool        `json:"noop"`
+			Lifecycle bool        `json:"lifecycle"`
+			LatencyMS json.Number `json:"latency_ms"`
+			Error     string      `json:"error"`
+		}{
+			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+			Level:     level, Message: "msg_dispatch", RequestID: reqID,
+			Name: ctx.MsgName, Noop: noop, Lifecycle: ctx.IsLifecycle,
+			LatencyMS: json.Number(strconv.FormatFloat(float64(elapsed.Microseconds())/1000.0, 'f', 3, 64)),
+			Error:     errStr,
+		})
 		return
 	}
 	fields := map[string]string{
@@ -283,7 +310,8 @@ type lifecycleMsg struct {
 
 // Live_lifecycle is the FFI binding for Sky.Live.lifecycle.
 // Wraps `msg` so the runtime dispatcher recognises it as a noisy
-// heartbeat and skips even the metric bump on no-op dispatches.
+// heartbeat and suppresses the log line on no-op dispatches. Metrics
+// still record every dispatch.
 //
 // Sky-side signature: `lifecycle : msg -> msg`.
 //
@@ -356,7 +384,8 @@ func cmdIsNone(cmd any) bool {
 // Implementation: walk the value via reflect, feed every primitive
 // + map-entry-sorted-key + slice-element into a SHA-256 digest,
 // fold to the leading 8 bytes. Slow path (~200 ns for a small
-// record) but correct for the Sky type universe.
+// record), but this is an observational fingerprint, not a collision-free
+// semantic equality proof.
 //
 // Caching: each Msg dispatch hashes the model twice (once before,
 // once after update). Caching one across calls isn't safe because
@@ -366,26 +395,43 @@ func cmdIsNone(cmd any) bool {
 //
 // Pathological case: an enormous model (50 MB user record) hashed
 // twice per dispatch dominates the budget. Fallback when hashing
-// exceeds 1 ms: return a "definitely changed" sentinel that forces
-// the dispatch to log unconditionally. Future: per-field
-// memoisation in v1.x.
+// reaches its cooperative time/depth limit: mark the result incomplete.
+// Observe never treats an incomplete digest as proof of no change. The
+// budget does not preempt a single reflection/sort/conversion/write. No
+// digest is reused across dispatches.
 func hashAny(v any) uint64 {
+	value, _ := hashAnyResult(v, time.Time{})
+	return value
+}
+
+// hashAnyResult keeps truncation separate from the digest. A partial prefix
+// may equal another partial or complete digest; it never proves equality.
+// The time budget is cooperative: individual reflection, sorting, Dict
+// conversion and digest writes are not preempted by this walker.
+func hashAnyResult(v any, deadline time.Time) (value uint64, complete bool) {
 	h := hashPool.Get().(*hashState)
 	h.reset()
 	defer hashPool.Put(h)
-	deadline := time.Now().Add(1 * time.Millisecond)
+	if deadline.IsZero() {
+		deadline = time.Now().Add(time.Millisecond)
+	}
 	walkHash(h, reflect.ValueOf(v), 0, deadline)
-	return h.sum()
+	return h.sum(), !h.incomplete
 }
 
 const hashMaxDepth = 32 // bounds recursion on cyclic data structures
 
 func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
+	if h.incomplete {
+		return
+	}
 	if depth > hashMaxDepth {
+		h.incomplete = true
 		h.writeString("<depth-limit>")
 		return
 	}
 	if !time.Now().Before(deadline) {
+		h.incomplete = true
 		h.writeString("<timeout>")
 		return
 	}
@@ -393,8 +439,21 @@ func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
 		h.writeString("<invalid>")
 		return
 	}
-	// Dereference pointer / interface.
+	// Bound pure pointer/interface cycles too: they do not recurse into
+	// walkHash, so recursive depth checks alone cannot stop them.
+	unwrapDepth := 0
 	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
+		if unwrapDepth >= hashMaxDepth {
+			h.incomplete = true
+			h.writeString("<depth-limit>")
+			return
+		}
+		if !time.Now().Before(deadline) {
+			h.incomplete = true
+			h.writeString("<timeout>")
+			return
+		}
+		unwrapDepth++
 		if rv.IsNil() {
 			h.writeString("<nil>")
 			return
@@ -436,6 +495,9 @@ func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
 		h.writeString("[")
 		for i := 0; i < rv.Len(); i++ {
 			walkHash(h, rv.Index(i), depth+1, deadline)
+			if h.incomplete {
+				return
+			}
 			h.writeString(",")
 		}
 		h.writeString("]")
@@ -450,8 +512,14 @@ func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
 		})
 		for _, k := range keys {
 			walkHash(h, k, depth+1, deadline)
+			if h.incomplete {
+				return
+			}
 			h.writeString(":")
 			walkHash(h, rv.MapIndex(k), depth+1, deadline)
+			if h.incomplete {
+				return
+			}
 			h.writeString(",")
 		}
 		h.writeString("}")
@@ -474,13 +542,16 @@ func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
 			h.writeString(rv.Type().Field(i).Name)
 			h.writeString("=")
 			walkHash(h, rv.Field(i), depth+1, deadline)
+			if h.incomplete {
+				return
+			}
 			h.writeString(",")
 		}
 		h.writeString(">")
 	case reflect.Func, reflect.Chan, reflect.UnsafePointer:
-		// Functions / channels / unsafe — opaque, hash by identity
-		// (pointer value). Two distinct closures still hash
-		// distinct; same closure across calls hashes the same.
+		// Preserve the existing opaque pointer feed. For functions this is
+		// a code pointer: closures with different captures can share it.
+		// This observational hash does not establish opaque-value equality.
 		h.writeUint(uint64(rv.Pointer()))
 	default:
 		h.writeString("?")
@@ -491,11 +562,12 @@ func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
 // bytes because Go's hash/fnv has known weak distribution on
 // length-prefixed string sequences (and we feed those frequently
 // in walkHash). SHA-256 is overkill for the security claim but
-// trivially fast at ~1 GB/s — within our 1 ms budget for any
-// model up to ~1 MB.
+// used only for observational model comparison. The cooperative cutoff
+// cannot preempt an individual reflection/sort/conversion/digest write.
 type hashState struct {
-	buf    [16]byte // scratch for int/uint encoding
-	digest hashAccumulator
+	incomplete bool     // budget/depth exhaustion, reset on every pooled use
+	buf        [16]byte // scratch for int/uint encoding
+	digest     hashAccumulator
 }
 
 type hashAccumulator interface {
@@ -510,7 +582,7 @@ var hashPool = sync.Pool{
 	},
 }
 
-func (h *hashState) reset()               { h.digest.Reset() }
+func (h *hashState) reset()               { h.digest.Reset(); h.incomplete = false }
 func (h *hashState) writeString(s string) { h.digest.Write([]byte(s)) }
 func (h *hashState) writeInt(n int64) {
 	binary.LittleEndian.PutUint64(h.buf[:8], uint64(n))
