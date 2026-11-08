@@ -12,6 +12,8 @@
 #   scripts/preflight-tag.sh              # full sweep
 #   scripts/preflight-tag.sh --skip-web   # skip Playwright (CI envs without browsers)
 #   scripts/preflight-tag.sh --skip-cli   # skip CLI sweep
+#   scripts/preflight-tag.sh --ci-run RUNID [--commit MAIN_COMMIT]
+#     verifies the full nonpublishing release workflow; no local rebuild
 #
 # Why this exists: shipping v0.13.0 + v0.13.1 with the Std.Ui event-
 # emission regression (AsListT[any] returned nil on typed slices,
@@ -23,6 +25,14 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# CI is the full release gate (CLAUDE.md §0.2.1). This authenticated mode
+# verifies its exact source tree and records CI provenance, never local tests.
+for arg in "$@"; do
+    case "$arg" in
+        --ci-run|--ci-run=*) exec python3 -I -B "$REPO_ROOT/scripts/preflight-ci.py" "$@" ;;
+    esac
+done
 
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
