@@ -3,6 +3,7 @@
 package noisewasm
 
 import (
+	"reflect"
 	"syscall/js"
 	"testing"
 
@@ -20,6 +21,7 @@ return (() => {
   const originalClearTimeout = globalThis.clearTimeout;
   let callbacks = [], active = new Set(), next = 0x40000000;
   let fetchCalls = 0, armed = 0, cleared = 0;
+  let messageGets = 0, toStrings = 0;
   const wrap = promise => ({
     then(callback) {
       callbacks.push(callback);
@@ -50,6 +52,27 @@ return (() => {
             options.method !== "POST" || options.body !== "public body") {
           throw new Error("public fixture request contract");
         }
+        if (mode.startsWith("rejection-")) {
+          let value;
+          switch (mode) {
+            case "rejection-error": value = new TypeError("public error rejection"); break;
+            case "rejection-string": value = "public string rejection"; break;
+            case "rejection-number": value = 42; break;
+            case "rejection-boolean": value = true; break;
+            case "rejection-message-getter":
+              value = Object.defineProperty({}, "message", {get() {
+                messageGets++; throw new TypeError("public message getter");
+              }}); break;
+            case "rejection-to-string":
+              value = {toString() {
+                toStrings++; throw new TypeError("public toString failure");
+              }}; break;
+            case "rejection-no-to-string": value = Object.create(null); break;
+            case "rejection-noncallable-to-string": value = {toString: 42}; break;
+            default: throw new Error("public rejection fixture mode");
+          }
+          return wrap(Promise.reject(value));
+        }
         if (mode === "synchronous-throw") {
           throw new TypeError("public synchronous fetch failure");
         }
@@ -73,7 +96,7 @@ return (() => {
     },
     snapshot() {
       return {fetchCalls, armed, cleared, active: active.size,
-              callbacks: callbacks.length};
+              callbacks: callbacks.length, messageGets, toStrings};
     },
     releasedCallbacks() {
       const originalError = console.error;
@@ -162,5 +185,54 @@ func TestWasmFetchProgrammingPanicStaysLoud(t *testing.T) {
 		state.Get("cleared").Int() != 1 || state.Get("active").Int() != 0 ||
 		state.Get("callbacks").Int() != 1 || fixture.Call("releasedCallbacks").Int() != 1 {
 		t.Fatal("programming-panic unwind retained the actual timeout/callback")
+	}
+}
+
+// The host gate also runs each of these in a separate Node process: a fatal
+// callback panic in one reason must not hide the remaining rejection shapes.
+func TestWasmFetchRejectionFormatting(t *testing.T) {
+	cases := []struct {
+		name    string
+		message string
+		gets    int
+		strings int
+	}{
+		{"rejection-error", "public error rejection", 0, 0},
+		{"rejection-string", "public string rejection", 0, 0},
+		{"rejection-number", "42", 0, 0},
+		{"rejection-boolean", "true", 0, 0},
+		{"rejection-message-getter", "request failed", 1, 0},
+		{"rejection-to-string", "request failed", 0, 1},
+		{"rejection-no-to-string", "request failed", 0, 0},
+		{"rejection-noncallable-to-string", "request failed", 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := js.Global().Get("Function").New(fetchBoundaryFixtureJS).Invoke()
+			fixture.Call("install", tc.name)
+			t.Cleanup(func() { fixture.Call("restore") })
+			result := rt.Task_run(rt.TaskCoerceT[rt.SkyADT, rt.HttpResponse](
+				rt.Http_post("/__sky_public_fetch_boundary__", "public body")))
+			if result.Tag != 1 || rt.AdtField(result.ErrValue, 0) != 1 {
+				t.Fatal("valid JavaScript rejection did not return classified Network Task Err")
+			}
+			info := reflect.ValueOf(rt.AdtField(result.ErrValue, 1))
+			if info.Kind() != reflect.Struct {
+				t.Fatal("Network error did not retain its structured Error info")
+			}
+			message := info.FieldByName("Message")
+			if !message.IsValid() || message.Kind() != reflect.String || message.String() != "http.post: "+tc.message {
+				t.Fatal("Network error did not preserve a safe rejection description")
+			}
+			state := fixture.Call("snapshot")
+			if state.Get("fetchCalls").Int() != 1 || state.Get("armed").Int() != 1 ||
+				state.Get("cleared").Int() != 1 || state.Get("active").Int() != 0 ||
+				state.Get("callbacks").Int() != 3 || fixture.Call("releasedCallbacks").Int() != 3 {
+				t.Fatal("rejection formatting retained an actual timer/callback")
+			}
+			if state.Get("messageGets").Int() != tc.gets || state.Get("toStrings").Int() != tc.strings {
+				t.Fatal("rejection formatting repeated a foreign getter or method")
+			}
+		})
 	}
 }

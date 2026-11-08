@@ -170,12 +170,15 @@ func TestNoiseWasmInitiatorInteropsWithNativeResponder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the wasm initiator failed: %v\n%s", err, out)
 	}
-	for _, name := range []string{"TestWasmKeysAreRandom", "TestWasmInitiatorTalksToNativeResponder", "TestWasmAeadAndMacInteropWithNative", "TestWasmHttpResponseHeadersAreCanonical", "TestWasmFetchBoundary", "TestWasmFetchProgrammingPanicStaysLoud"} {
+	for _, name := range []string{"TestWasmKeysAreRandom", "TestWasmInitiatorTalksToNativeResponder", "TestWasmAeadAndMacInteropWithNative", "TestWasmHttpResponseHeadersAreCanonical", "TestWasmFetchBoundary", "TestWasmFetchProgrammingPanicStaysLoud", "TestWasmFetchRejectionFormatting"} {
 		if !strings.Contains(string(out), "--- PASS: "+name) {
 			t.Fatalf("the wasm test %s did not pass:\n%s", name, out)
 		}
 	}
 	if n := strings.Count(string(out), "    --- PASS: TestWasmFetchBoundary/"); n != 3 {
 		t.Fatalf("the actual fetch boundary executed %d passing cases, want 3:\n%s", n, out)
+	}
+	if n := strings.Count(string(out), "    --- PASS: TestWasmFetchRejectionFormatting/"); n != 8 {
+		t.Fatalf("the actual rejection formatter executed %d passing cases, want 8:\n%s", n, out)
 	}
 }
