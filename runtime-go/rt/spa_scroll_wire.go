@@ -9,18 +9,62 @@ import (
 	"io"
 )
 
-const spaScrollWireVersion = 1
+const spaScrollWireVersion = 2
 const spaScrollWireProblem = "SpaScrollWire: malformed returned scroll command"
 
 type spaScrollWire struct {
-	Version  int         `json:"version"`
-	Commands []scrollCmd `json:"commands"`
+	Version  int                 `json:"version"`
+	Commands []spaBrowserCommand `json:"commands"`
+}
+
+// spaBrowserCommand is a closed, data-only wire union. Pointers preserve
+// required false/empty values while rejecting fields belonging to another kind.
+type spaBrowserCommand struct {
+	Kind     string  `json:"kind"`
+	Target   *string `json:"target,omitempty"`
+	Top      *bool   `json:"top,omitempty"`
+	IfNeeded *bool   `json:"ifNeeded,omitempty"`
+	URL      *string `json:"url,omitempty"`
+	Replace  *bool   `json:"replace,omitempty"`
+}
+
+func spaBrowserLeaf(c cmdT) (spaBrowserCommand, bool) {
+	switch c.kind {
+	case "scroll":
+		v, ok := scrollCmdOf(c)
+		if !ok || (v.Top && (v.Target != "" || v.IfNeeded)) {
+			return spaBrowserCommand{}, false
+		}
+		return spaBrowserCommand{Kind: "scroll", Target: &v.Target, Top: &v.Top, IfNeeded: &v.IfNeeded}, true
+	case "nav":
+		v, ok := navCmdOf(c)
+		if !ok || navTargetError(v.URL) != "" {
+			return spaBrowserCommand{}, false
+		}
+		return spaBrowserCommand{Kind: "nav", URL: &v.URL, Replace: &v.Replace}, true
+	}
+	return spaBrowserCommand{}, false
+}
+func (v spaBrowserCommand) command() (cmdT, bool) {
+	switch v.Kind {
+	case "scroll":
+		if v.Target == nil || v.Top == nil || v.IfNeeded == nil || v.URL != nil || v.Replace != nil || (*v.Top && (*v.Target != "" || *v.IfNeeded)) {
+			return Cmd_none(), false
+		}
+		return cmdT{kind: "scroll", payload: scrollCmd{Target: *v.Target, Top: *v.Top, IfNeeded: *v.IfNeeded}}, true
+	case "nav":
+		if v.URL == nil || v.Replace == nil || v.Target != nil || v.Top != nil || v.IfNeeded != nil || navTargetError(*v.URL) != "" {
+			return Cmd_none(), false
+		}
+		return cmdT{kind: "nav", payload: navCmd{URL: *v.URL, Replace: *v.Replace}}, true
+	}
+	return Cmd_none(), false
 }
 
 // Spa_collectScrolls walks the ACTUAL returned command, including opaque helper
 // results. Preserve depth-first batch order; never run a perform/task/toMsg.
 func Spa_collectScrolls(cmd any) string {
-	commands := make([]scrollCmd, 0)
+	commands := make([]spaBrowserCommand, 0)
 	stack := []any{cmd}
 	for len(stack) > 0 {
 		c := stack[len(stack)-1]
@@ -34,9 +78,9 @@ func Spa_collectScrolls(cmd any) string {
 			for i := len(ct.batch) - 1; i >= 0; i-- {
 				stack = append(stack, ct.batch[i])
 			}
-		case "scroll":
-			s, ok := scrollCmdOf(ct)
-			if !ok || (s.Top && (s.Target != "" || s.IfNeeded)) {
+		case "scroll", "nav":
+			s, ok := spaBrowserLeaf(ct)
+			if !ok {
 				return `{"version":0,"commands":[]}`
 			}
 			commands = append(commands, s)
@@ -53,7 +97,7 @@ func Spa_collectScrolls(cmd any) string {
 // parser consumes only JSON primitives and never invokes a user method.
 func spaScrollWireKey(key string) bool {
 	switch key {
-	case "version", "commands", "target", "top", "ifNeeded", "followUps", "scrolls":
+	case "version", "commands", "kind", "url", "replace", "target", "top", "ifNeeded", "followUps", "scrolls":
 		return true
 	}
 	return false
@@ -120,31 +164,43 @@ func spaDecodeScrolls(wire string) (cmdT, error) {
 	if wire == "" {
 		return Cmd_none(), nil
 	}
-	type item struct {
-		Target   *string `json:"target"`
-		Top      *bool   `json:"top"`
-		IfNeeded *bool   `json:"ifNeeded"`
-	}
 	var value struct {
-		Version  *int   `json:"version"`
-		Commands []item `json:"commands"`
+		Version  *int              `json:"version"`
+		Commands []json.RawMessage `json:"commands"`
 	}
 	if spaScrollJSON(wire, &value) != nil || value.Version == nil || *value.Version != spaScrollWireVersion || value.Commands == nil {
 		return Cmd_none(), errors.New(spaScrollWireProblem)
 	}
 	batch := make([]any, 0, len(value.Commands))
-	for _, x := range value.Commands {
-		if x.Target == nil || x.Top == nil || x.IfNeeded == nil || (*x.Top && (*x.Target != "" || *x.IfNeeded)) {
+	for _, raw := range value.Commands {
+		var x spaBrowserCommand
+		var fields map[string]json.RawMessage
+		if spaScrollJSON(string(raw), &x) != nil || json.Unmarshal(raw, &fields) != nil {
 			return Cmd_none(), errors.New(spaScrollWireProblem)
 		}
-		batch = append(batch, cmdT{kind: "scroll", payload: scrollCmd{Target: *x.Target, Top: *x.Top, IfNeeded: *x.IfNeeded}})
+		expected := 4
+		if x.Kind == "nav" {
+			expected = 3
+		}
+		if len(fields) != expected {
+			return Cmd_none(), errors.New(spaScrollWireProblem)
+		}
+		c, ok := x.command()
+		if !ok {
+			return Cmd_none(), errors.New(spaScrollWireProblem)
+		}
+		batch = append(batch, c)
 	}
+
 	return cmdT{kind: "batch", batch: batch}, nil
 }
 
 // Spa_scrollCommands never applies DOM work itself. A malformed response is a
 // loud framework error Cmd, so the already-applied model delta is preserved.
 type spaReturnedScrolls struct{}
+
+// Client-only postcommit authority; never serialized.
+type spaReturnedBrowserOrigin struct{ authority uint64 }
 
 func spaIsReturnedScrolls(command cmdT) bool {
 	_, ok := command.payload.(spaReturnedScrolls)
@@ -227,4 +283,61 @@ func Spa_scrollRpcScope(command any) SkyCmd {
 		return cmdT{kind: "spaError", payload: ErrDecode("SpaScrollWire: invalid RPC scope")}
 	}
 	return cmdT{kind: "scrollRpcScope", payload: c}
+}
+
+// spaReturnedLeaves flattens a returned command batch to its leaves in
+// depth-first batch order (iterative: no new recursion limit).
+func spaReturnedLeaves(cmd cmdT) []cmdT {
+	out := []cmdT{}
+	stack := []any{cmd}
+	for len(stack) > 0 {
+		c, ok := stack[len(stack)-1].(cmdT)
+		stack = stack[:len(stack)-1]
+		if !ok {
+			continue
+		}
+		if c.kind == "batch" {
+			for i := len(c.batch) - 1; i >= 0; i-- {
+				stack = append(stack, c.batch[i])
+			}
+			continue
+		}
+		if c.kind != "" && c.kind != "none" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func spaReturnedHasNav(leaves []cmdT) bool {
+	for _, c := range leaves {
+		if c.kind == "nav" {
+			return true
+		}
+	}
+	return false
+}
+
+// spaRunReturnedInOrder runs a returned batch's leaves one after another, in
+// batch order, while the batch still owns the page. `expected` is the scroll
+// authority the batch was accepted under; any change to it before a leaf runs
+// (a newer navigation, a newer render) cancels the rest. A leaf's OWN
+// navigation advances the authority by exactly one step, which the batch then
+// owns; a larger change means something else intervened, so the rest stop.
+func spaRunReturnedInOrder(leaves []cmdT, expected uint64, current func() uint64, run func(cmdT)) {
+	for _, c := range leaves {
+		if current() != expected {
+			return
+		}
+		before := current()
+		run(c)
+		after := current()
+		switch {
+		case after == before:
+		case c.kind == "nav" && after == before+1:
+			expected = after
+		default:
+			return
+		}
+	}
 }

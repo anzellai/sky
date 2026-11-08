@@ -15,6 +15,20 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- A Sky.Spa server branch whose navigation uses a value the server computed
+  (`Ok f -> ( model, Nav.pushUrl ("/forms/" ++ f.id) )`) no longer breaks the
+  build with `Undefined name` in the generated client. The server now evaluates
+  the command of the outcome it took, and the answer carries `Nav.pushUrl`,
+  `Nav.replaceUrl` and `Nav.clearFragment` back with the returned scrolls (the
+  wire is version 2). The client runs them after the answer renders, as Sky.Live
+  does. Before, the split copied the navigation source into the client and ran
+  it when the request was sent, so it could also navigate before an `Err`
+  branch or a refused guard decided not to. A server branch that navigates now
+  holds later Msgs until it answers. A navigation in a client branch is
+  unchanged, and an app with no server navigation keeps its wire.
+
+- Serverless Msg logs escape metadata and error descriptions as JSON, preserving single-line records and existing field types.
+
 - A browser can throw synchronously when starting a fetch, before returning a
   Promise. Sky now returns a classified `Network` error through the Task
   boundary and releases the attempt's timeout and callbacks. Successful fetches
@@ -25,6 +39,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   method, or missing/non-callable `toString`, produces a fixed safe description
   and a classified `Network` error. Getters and methods are not retried while
   describing the failure.
+
+- Sky.Live message logging treats a model hash cut off by its cooperative
+  budget or depth limit as unknown, so an incomplete comparison cannot
+  suppress a log as unchanged. Pointer/interface cycles also stop as unknown.
+  Complete hashes keep their existing observational fingerprint behavior;
+  this is not a collision-free comparison of opaque values.
 
 ### Migration from v0.29.3
 

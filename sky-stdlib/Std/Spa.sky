@@ -390,7 +390,8 @@ rpcScrollHold bodyCodec respCodec url body toMsg =
 
 
 -- | Internal generated mixed-command scope. Its interpreter captures the
--- render origin before an immediate navigation residual can change it.
+-- render origin before an immediate client residual (a `Std.Native` effect)
+-- runs. Server navigations are never residuals: they return in the answer.
 scrollRpcScope : Cmd msg -> Cmd msg
 scrollRpcScope =
     Ffi.kernel "Spa_scrollRpcScope"

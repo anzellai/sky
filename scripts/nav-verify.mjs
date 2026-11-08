@@ -46,7 +46,7 @@ async function startApp(bin, port) {
   const known = ['.skyapp/web-app/.split/backend/sky-out/app', '.skyapp/web/sky-out/app'];
   if (!known.some(p => resolve(fixtureRoot, p) === resolve(bin))) throw new Error('UnexpectedFixtureBinary');
   if (!arg('--fixture-root', '') || relative(fixtureRoot, cwd).startsWith('..') || !relative(fixtureRoot, cwd)) throw new Error('InvalidOwnedFixtureRoot');
-  for (const [name, value] of [['nav-scroll-target.txt', 'part-'], ['nav-scroll-rpc.txt', 'rpc-target']]) {
+  for (const [name, value] of [['nav-scroll-target.txt', 'part-'], ['nav-scroll-rpc.txt', 'rpc-target'], ['nav-open.txt', 'form-42']]) {
     const path = resolve(cwd, name);
     await writeFile(path, value, {flag:'wx', mode:0o600});
     const stat = await lstat(path);
@@ -183,6 +183,36 @@ async function scenario(browserName, target, url, app) {
     check(`${tag} save: the navigation runs`, us === "/about" && field(ss, "PAGE") === "about", `${us} ${ss}`);
     check(`${tag} save: the server result arrives`, field(ss, "SAVED") === "7", ss);
     out.save = ss;
+
+    // ---- open: a server outcome's navigation, built from a server value -----
+    // The server matches `Ok f`, evaluates the returned command and the answer
+    // carries the navigation. A Msg sent while it is in flight (frag) runs after
+    // the answer, as on Sky.Live: the arm holds later Msgs.
+    await page.click("#open");
+    await page.click("#frag");
+    const ua = await waitUrl(page, (u) => u === "/about?form=form-42#sec", 10000);
+    const sa = await waitState(page, (v) => v.includes("FRAG=sec"), 10000);
+    check(`${tag} open: the server-derived URL runs, then the held Msg`, ua === "/about?form=form-42#sec" && field(sa, "PAGE") === "about", `${ua} ${sa}`);
+    check(`${tag} open: no error`, field(sa, "ERR") === "", sa);
+    out.open = sa;
+
+    // ---- open-missing: the Err branch writes the model, never navigates -----
+    const lm0 = await loc(page);
+    await page.click("#open-missing");
+    const sm = await waitState(page, (v) => v.includes("ERR=missing"), 10000);
+    await page.waitForTimeout(500);
+    const lm = await loc(page);
+    check(`${tag} open-missing: the error branch runs`, field(sm, "ERR") === "missing", sm);
+    check(`${tag} open-missing: no navigation`, lm.href === lm0.href && lm.len === lm0.len && lm.marker, `${lm0.href} -> ${lm.href}`);
+
+    // ---- deny: the guard refuses, so nothing navigates ------------------------
+    await page.click("#deny");
+    await page.waitForTimeout(300);
+    const ld0 = await loc(page);
+    await page.click("#open");
+    await page.waitForTimeout(1500);
+    const ld = await loc(page);
+    check(`${tag} deny: a refused guard does not navigate`, ld.href === ld0.href && ld.len === ld0.len && ld.marker, `${ld0.href} -> ${ld.href}`);
 
     // ---- evil: a URL off the site is refused ---------------------------------
     const le0 = await loc(page);
@@ -518,7 +548,7 @@ try {
   for (const b of BROWSERS) {
     const s = results[`web:app/${b}`];
     const l = results[`live/${b}`];
-    for (const k of ["go", "save"]) {
+    for (const k of ["go", "save", "open"]) {
       const sp = s[k].replace(/NAVS=\d+ /, "");
       const lp = l[k].replace(/NAVS=\d+ /, "");
       check(`${b}: ${k} matches Sky.Live`, sp === lp, `web:app "${s[k]}" / live "${l[k]}"`);

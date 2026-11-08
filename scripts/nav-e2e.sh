@@ -12,8 +12,12 @@
 #   home   replaceUrl: the route runs, no new history entry
 #   frag   pushUrl "#sec": no page moves, Sub.onFragment receives it
 #   clear  clearFragment: the fragment leaves the address bar, no new entry
-#   save   a server arm's navigation runs (the Sky.Spa client runs it when it
-#          sends the request) and the server result still arrives
+#   save   a server arm's navigation runs (the server evaluates the command,
+#          the answer carries it, the client runs it after the render) and the
+#          server result still arrives
+#   open   a server arm navigates to a URL built from a value it matched on a
+#          server read (`Ok f`), and a Msg sent meanwhile runs after it; its
+#          `Err` branch and a refused guard do not navigate
 #   evil   a URL off the site is refused, and the refusal is logged
 #   plain  a page with no Sub.onFragment opened at `/plain#x` keeps its
 #          first paint (the load-time fragment report is a no-op)

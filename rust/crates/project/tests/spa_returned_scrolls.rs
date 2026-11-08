@@ -77,7 +77,7 @@ fn server_computed_scroll_and_helper_batch_return_after_response_not_send_time()
     source.push_str("\n\nscrollHelper : String -> Cmd Msg\nscrollHelper id =\n    Cmd.batch [ Nav.scrollIntoView id, Nav.scrollIntoViewIfNeeded id, scrollTop ]\n\n\nscrollTop : Cmd Msg\nscrollTop =\n    Nav.scrollToTop\n");
     let (dir, front, back, shared) = split("server-id", &source);
     assert!(shared.contains("spaScroll_ : String"));
-    assert!(shared.contains("returned-scroll-wire-v1"));
+    assert!(shared.contains("returned-browser-command-wire-v2"));
     assert!(back.contains("spaCollectScrolls_ cmd"));
     assert!(back.contains("Server.withStatus 409"));
     assert!(back.contains("(spaScrollWireGuard_ saveHandler)"));
@@ -218,7 +218,7 @@ fn no_write_server_scroll_holds_later_msgs_without_fake_model_io() {
 }
 
 #[test]
-fn mixed_server_scroll_and_url_residual_capture_origin_before_navigation() {
+fn mixed_server_scroll_and_url_navigation_return_with_the_answer() {
     let mut source = original().replace(
         "import Sky.Core.Time as Time",
         "import Sky.Core.Time as Time\nimport Sky.Core.File as File",
@@ -227,22 +227,26 @@ fn mixed_server_scroll_and_url_residual_capture_origin_before_navigation() {
     let end = source[start..].find("        Saved (Ok n)").unwrap() + start;
     source.replace_range(start..end, "        Save ->\n            let\n                target =\n                    Result.withDefault \"old-id\" (Task.run (File.readFile \"target.txt\"))\n            in\n                ( model, Cmd.batch [ Nav.scrollIntoView target, Nav.pushUrl \"/about\" ] )\n\n");
     let (dir, front, back, _) = split("mixed-nav-scroll", &source);
+    // The server evaluates the outcome's actual command; the answer carries
+    // the scroll AND the navigation, in batch order. No source is copied into
+    // the client at send time (it could use a value only the server has).
     assert!(
-        front.contains("Spa.scrollRpcScope (Cmd.batch ["),
-        "mixed residual must capture origin before it navigates"
+        !front.contains("Spa.scrollRpcScope"),
+        "a server navigation must not run as a send-time client residual"
+    );
+    assert!(!front.contains("Cmd.batch [ Nav.scrollIntoView target"));
+    assert!(
+        !front.contains("target ="),
+        "server-bound let escaped into frontend"
     );
     assert!(front.contains("Spa.rpcScrollHold"));
-    assert!(
-        front.contains("Nav.pushUrl \"/about\""),
-        "URL residual must remain immediate and unchanged"
-    );
     assert!(!front.contains("File.readFile"));
     assert!(back.contains("spaCollectScrolls_ cmd"));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
-fn init_mixed_scroll_and_url_residual_capture_origin_before_navigation() {
+fn init_mixed_scroll_and_url_navigation_return_with_the_init_answer() {
     let source = original()
         .replace("import Sky.Core.Time as Time", "import Sky.Core.Time as Time\nimport Sky.Core.File as File")
         .replace("saved = 0 }, Cmd.none )", "saved = 0 }, Cmd.batch [ Cmd.perform (File.readFile \"target.txt\" |> Task.map String.length) Saved, Nav.scrollToTop, Nav.pushUrl \"/about\" ] )");
@@ -251,9 +255,12 @@ fn init_mixed_scroll_and_url_residual_capture_origin_before_navigation() {
         !front.contains("File.readFile"),
         "server-only init task escaped into frontend"
     );
-    assert!(front.contains("SpaInitRpc_.scrollRpcScope (SpaInitCmd_.batch ["));
+    assert!(
+        !front.contains("SpaInitRpc_.scrollRpcScope"),
+        "init navigation returns in the init answer, not as a send-time residual"
+    );
+    assert!(!front.contains("SpaInitCmd_.batch"));
     assert!(front.contains("SpaInitRpc_.rpcScrollHold"));
-    assert!(front.contains("Nav.pushUrl \"/about\""));
     assert!(back.contains("spaInitScrollResponse_ spaInitCmd_"));
     std::fs::remove_dir_all(dir).unwrap();
 }

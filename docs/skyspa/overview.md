@@ -755,7 +755,7 @@ These are real, current scope boundaries — not roadmap optimism:
   `Sub.onFragment` (the client reads `location.hash` at load and on every
   `hashchange`), `Std.Nav` (`pushUrl` / `replaceUrl` / `clearFragment`: the
   History API, then the route like a link click; a server branch's navigation
-  runs in the client when it sends the request; `scrollToTop` /
+  is returned with its answer and runs after it renders; `scrollToTop` /
   `scrollIntoView` / `scrollIntoViewIfNeeded` run after the corresponding DOM
   commit, with a server branch's scroll returned alongside its answer) and
   `Sky.Core.WebSocket` (the browser WebSocket API, above).

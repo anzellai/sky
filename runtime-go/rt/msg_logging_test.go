@@ -118,10 +118,21 @@ func TestCmdIsNone_Perform(t *testing.T) {
 
 // ─── hashAny ──────────────────────────────────────────────────
 
+// Byte-oracle assertions require a complete walk; scheduling cutoffs are
+// covered separately through the actual public/shared logging paths.
+func completeHashFixture(t *testing.T, value any) uint64 {
+	t.Helper()
+	hash, complete := hashAnyResult(value, time.Now().Add(time.Hour))
+	if !complete {
+		t.Fatal("byte-oracle fixture must have a complete hash")
+	}
+	return hash
+}
+
 func TestHashAny_SameValueSameHash(t *testing.T) {
 	a := map[string]any{"count": 1, "name": "alice"}
 	b := map[string]any{"count": 1, "name": "alice"}
-	if hashAny(a) != hashAny(b) {
+	if completeHashFixture(t, a) != completeHashFixture(t, b) {
 		t.Errorf("structurally-equal values must hash equal")
 	}
 }
@@ -129,7 +140,7 @@ func TestHashAny_SameValueSameHash(t *testing.T) {
 func TestHashAny_DiffValueDiffHash(t *testing.T) {
 	a := map[string]any{"count": 1}
 	b := map[string]any{"count": 2}
-	if hashAny(a) == hashAny(b) {
+	if completeHashFixture(t, a) == completeHashFixture(t, b) {
 		t.Errorf("count=1 and count=2 must hash differently")
 	}
 }
@@ -137,15 +148,15 @@ func TestHashAny_DiffValueDiffHash(t *testing.T) {
 func TestHashAny_MapOrderInvariant(t *testing.T) {
 	a := map[string]any{"a": 1, "b": 2, "c": 3}
 	b := map[string]any{"c": 3, "a": 1, "b": 2}
-	if hashAny(a) != hashAny(b) {
+	if completeHashFixture(t, a) != completeHashFixture(t, b) {
 		t.Errorf("map hashing must be order-invariant (got %d vs %d)",
-			hashAny(a), hashAny(b))
+			completeHashFixture(t, a), completeHashFixture(t, b))
 	}
 }
 
 func TestHashAny_NilStable(t *testing.T) {
 	// Multiple calls on nil should be deterministic.
-	if hashAny(nil) != hashAny(nil) {
+	if completeHashFixture(t, nil) != completeHashFixture(t, nil) {
 		t.Errorf("hash(nil) must be deterministic")
 	}
 }
@@ -177,16 +188,16 @@ func TestHashAny_FloatNoPanic(t *testing.T) {
 
 func TestHashAny_FloatBitPatternHashes(t *testing.T) {
 	// +0 and -0 hash distinctly (IEEE bit patterns differ).
-	if hashAny(0.0) == hashAny(math.Copysign(0.0, -1.0)) {
+	if completeHashFixture(t, 0.0) == completeHashFixture(t, math.Copysign(0.0, -1.0)) {
 		t.Error("+0 and -0 should hash distinctly under bit-pattern hashing")
 	}
 	// 1.0 and 1.0000000001 hash distinctly (sanity check).
-	if hashAny(1.0) == hashAny(1.0000000001) {
+	if completeHashFixture(t, 1.0) == completeHashFixture(t, 1.0000000001) {
 		t.Error("nearby floats should hash distinctly")
 	}
 	// Float and int with same numeric value hash distinctly (different
 	// reflect.Kind paths).
-	if hashAny(1.0) == hashAny(1) {
+	if completeHashFixture(t, 1.0) == completeHashFixture(t, 1) {
 		t.Error("float 1.0 and int 1 should hash distinctly")
 	}
 }
@@ -200,10 +211,19 @@ func observeAndCaptureLog(t *testing.T, msg any, oldModel, newModel any, cmd any
 	telemetry.ResetDefault()
 	withServerlessEnv(t, nil) // VM mode → ring buffer captures
 	ctx := BeginMsgLog(msg, oldModel)
-	// Synthetic elapsed: set start to past so ObserveMsgLog computes
-	// a sane latency.
+	// These tests pin the log decision conditional on a complete hash.
+	// Use the actual shared body with an explicit future deadline rather
+	// than assuming the production cooperative budget survives scheduling.
+	deadline := time.Now().Add(time.Hour)
+	oldHash, complete := hashAnyResult(oldModel, deadline)
+	if !complete {
+		t.Fatal("log-decision fixture must have a complete old hash")
+	}
+	ctx.OldModelHash = oldHash
+	ctx.OldModelHashIncomplete = false
+	// Synthetic elapsed: retain the existing log-latency fixture.
 	ctx.StartTime = time.Now().Add(-10 * time.Millisecond)
-	ObserveMsgLog(ctx, newModel, cmd, err)
+	observeMsgLogWithDeadline(ctx, newModel, cmd, err, deadline)
 	logs := telemetry.Default().RecentLogs(0)
 	for _, l := range logs {
 		// emitMsgLog formats Message as "msg_dispatch <MsgName>" so
@@ -295,23 +315,23 @@ func TestObserveMsgLog_Error_ErrorLevel(t *testing.T) {
 func TestObserveMsgLog_BumpsCounterEveryDispatch(t *testing.T) {
 	telemetry.ResetDefault()
 	withServerlessEnv(t, nil)
-	msg := SkyADT{SkyName: "Tick"}
+	const counterMsg = "ObserveCounterEveryDispatchFixture"
+	msg := SkyADT{SkyName: counterMsg}
 	model := map[string]any{"x": 0}
-	// 100 noop dispatches
+	// 100 actual dispatches, including one fixed error outcome.
+	// Its distinct label series must not hide the other 99 increments.
 	for i := 0; i < 100; i++ {
 		ctx := BeginMsgLog(msg, model)
-		ObserveMsgLog(ctx, model, cmdT{kind: "none"}, nil)
-	}
-	snap := telemetry.Default().Snapshot()
-	for _, s := range snap {
-		if s.Name == "sky_live_msg_total" && s.Labels["name"] == "Tick" {
-			if s.Value != 100 {
-				t.Errorf("expected counter=100 across noop dispatches, got %v", s.Value)
-			}
-			return
+		var dispatchErr error
+		if i == 0 {
+			dispatchErr = errors.New("public mixed-outcome control")
 		}
+		ObserveMsgLog(ctx, model, cmdT{kind: "none"}, dispatchErr)
 	}
-	t.Errorf("counter for Tick never registered")
+	total, ok, failed := observeCounterFixtureTotals(t, counterMsg)
+	if total != 100 || ok != 99 || failed != 1 {
+		t.Fatalf("counter partition: total=%.0f ok=%.0f error=%.0f; want 100/99/1", total, ok, failed)
+	}
 }
 
 func TestObserveMsgLog_HistogramObservesEveryDispatch(t *testing.T) {
@@ -395,4 +415,74 @@ func TestObserveMsgLog_PicksUpCurrentRequestID(t *testing.T) {
 		}
 	}
 	t.Errorf("Msg log not emitted")
+}
+
+// Aggregate the actual metric across its bounded noop/outcome label domain.
+// The owned static name excludes unrelated application/subscription producers.
+func observeCounterFixtureTotals(t *testing.T, name string) (total, ok, failed float64) {
+	t.Helper()
+	found := false
+	for _, sample := range telemetry.Default().Snapshot() {
+		if sample.Name != "sky_live_msg_total" || sample.Labels["name"] != name {
+			continue
+		}
+		found = true
+		if sample.Type != "counter" || len(sample.Labels) != 3 ||
+			(sample.Labels["noop"] != "true" && sample.Labels["noop"] != "false") {
+			t.Fatal("unexpected dispatch counter schema")
+		}
+		total += sample.Value
+		switch sample.Labels["outcome"] {
+		case "ok":
+			ok += sample.Value
+		case "error":
+			failed += sample.Value
+		default:
+			t.Fatal("unexpected dispatch outcome")
+		}
+	}
+	if !found {
+		t.Fatal("owned dispatch counter never registered")
+	}
+	return
+}
+
+func TestObserveMsgLog_MixedCounterControl(t *testing.T) {
+	telemetry.ResetDefault()
+	withServerlessEnv(t, nil)
+	const name = "ObserveMixedCounterControlFixture"
+	msg := SkyADT{SkyName: name}
+	model := map[string]any{"x": 0}
+	for i := 0; i < 100; i++ {
+		ctx := BeginMsgLog(msg, model)
+		var dispatchErr error
+		if i == 0 {
+			dispatchErr = errors.New("public mixed-outcome control")
+		}
+		ObserveMsgLog(ctx, model, cmdT{kind: "none"}, dispatchErr)
+	}
+	// A metric for another producer must not inflate this assertion.
+	telemetry.Default().Inc("sky_live_msg_total", map[string]string{
+		"name": "UnrelatedCounterControlFixture", "noop": "false", "outcome": "error",
+	})
+	total, ok, failed := observeCounterFixtureTotals(t, name)
+	if total != 100 || ok != 99 || failed != 1 {
+		t.Fatalf("counter partition: total=%.0f ok=%.0f error=%.0f; want 100/99/1", total, ok, failed)
+	}
+}
+
+func TestObserveMsgLog_NoopCounterControl(t *testing.T) {
+	telemetry.ResetDefault()
+	withServerlessEnv(t, nil)
+	const name = "ObserveNoopCounterControlFixture"
+	msg := SkyADT{SkyName: name}
+	model := map[string]any{"x": 0}
+	for i := 0; i < 100; i++ {
+		ctx := BeginMsgLog(msg, model)
+		ObserveMsgLog(ctx, model, cmdT{kind: "none"}, nil)
+	}
+	total, ok, failed := observeCounterFixtureTotals(t, name)
+	if total != 100 || ok != 100 || failed != 0 {
+		t.Fatalf("counter partition: total=%.0f ok=%.0f error=%.0f; want 100/100/0", total, ok, failed)
+	}
 }

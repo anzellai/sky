@@ -7,9 +7,15 @@ module Main exposing (main)
 --   home     a client arm replaces the entry with `/`
 --   frag     a client arm pushes `#sec`: no page moves, Sub.onFragment sees it
 --   clear    `Nav.clearFragment`: the fragment leaves the address bar
---   save     a SERVER arm (a timer read) returns a navigation too: the client
---            runs it when it sends the request, as Sky.Live runs it
+--   save     a SERVER arm (a timer read) returns a navigation too: the server
+--            evaluates the command, the answer carries the navigation and the
+--            client runs it after the answer renders, as Sky.Live runs it
 --   evil     a URL off the site is refused; the address bar does not move
+--   open     a SERVER arm behind an owner guard matches `Ok f` on a server read
+--            and navigates to a URL built from `f`: the server evaluates the
+--            command and the answer carries the navigation (never `f` itself)
+--   open-missing   the same arm's `Err` branch writes an error, no navigation
+--   deny     the guard refuses: no navigation, no error
 --   plain    `/plain` has no Sub.onFragment: a page opened at `/plain#x`
 --            keeps its first paint (the load-time fragment report is a no-op)
 
@@ -32,7 +38,12 @@ type alias Model =
     , moved : Bool
     , selected : String
     , saved : Int
+    , owner : Bool
+    , error : String
     }
+
+type alias Form =
+    { id : String }
 
 type Msg
     = Navigated String
@@ -54,6 +65,8 @@ type Msg
     | Hidden
     | Top
     | Selected String
+    | Open String
+    | Deny
 
 
 init : () -> ( Model, Cmd Msg )
@@ -65,6 +78,8 @@ init _ =
       , part = 0
       , moved = False
       , selected = "a"
+      , owner = True
+      , error = ""
       }
     , Cmd.none
     )
@@ -164,6 +179,38 @@ update msg model =
         Selected value ->
             ( { model | selected = value }, Cmd.none )
 
+        Open key ->
+            requireOwner
+                model
+                (\_ ->
+                    case readForm key of
+
+                        Ok f ->
+                            ( model, Nav.pushUrl ("/about?form=" ++ f.id) )
+
+                        Err _ ->
+                            ( { model | error = "missing" }, Cmd.none ))
+
+        Deny ->
+            ( { model | owner = False }, Cmd.none )
+
+
+requireOwner : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )
+requireOwner model proceed =
+    if model.owner then
+        proceed ()
+
+    else
+        ( model, Cmd.none )
+
+
+readForm : String -> Result Error Form
+readForm key =
+    Task.run
+        (Time.sleep 300
+            |> Task.andThen (\_ -> File.readFile ("nav-" ++ key ++ ".txt"))
+            |> Task.map (\v -> { id = String.trim v }))
+
 
 button : String -> Msg -> Element Msg
 button id msg =
@@ -186,6 +233,8 @@ view model =
                       ++ String.fromInt model.saved
                       ++ " PART="
                       ++ String.fromInt model.part
+                      ++ " ERR="
+                      ++ model.error
                       ++ " MOVED="
                       ++ (if model.moved then
                              "1"
@@ -198,6 +247,9 @@ view model =
         , button "clear" Clear
         , button "save" Save
         , button "evil" Evil
+        , button "open" (Open "open")
+        , button "open-missing" (Open "missing")
+        , button "deny" Deny
         , button "next-part" NextPart
         , button "server-part" ServerPart
         , button "scroll-rpc" ScrollRpc

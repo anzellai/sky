@@ -10201,12 +10201,15 @@ main =
     let _ = std::fs::remove_dir_all(&proj);
 }
 
-/// Std.Nav in a SERVER arm: the navigation moves the browser, so the client
-/// runs it when it sends the request (as Sky.Live runs it when the update
-/// returns), and the RPC still runs the server half. The browser behaviour is
-/// driven by `scripts/nav-e2e.sh`.
+/// Std.Nav in a SERVER arm: the server evaluates the command of the outcome it
+/// took and the answer carries the navigation back (returned browser commands,
+/// wire v2). The client runs it after the answer renders, as Sky.Live runs it
+/// when the update returns. No navigation source is copied into the client: it
+/// may use a value only the server has (`Open` matches `Ok f` on a server read
+/// and navigates to a URL built from `f`). The browser behaviour is driven by
+/// `scripts/nav-e2e.sh`.
 #[test]
-fn a_server_arm_navigation_runs_in_the_client() {
+fn a_server_arm_navigation_returns_with_the_answer() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (proj, out, log) = web_app_build("nav-cmds", &[]);
     assert!(
@@ -10216,10 +10219,14 @@ fn a_server_arm_navigation_runs_in_the_client() {
     );
     let front = split_file(&proj, "frontend/src/Main.sky");
     assert!(
-        front.contains(
-            "Cmd.batch [ Cmd.batch [ Nav.pushUrl \"/about\" ], Spa.rpc saveReqCodec saveRespCodec \"/_rpc/Save\""
-        ),
-        "the client runs the server arm's navigation when it sends the RPC:\n{front}"
+        front.contains("Spa.rpcScrollHold saveReqCodec saveRespCodec \"/_rpc/Save\"")
+            && front.contains("Spa.rpcScrollHold openReqCodec openRespCodec \"/_rpc/Open\""),
+        "a navigating server arm holds and returns its commands:\n{front}"
+    );
+    assert!(
+        !front.contains("Nav.pushUrl \"/about\" ], Spa.")
+            && !front.contains("\"/about?form=\" ++ f.id"),
+        "no server navigation source is copied into the client:\n{front}"
     );
     if required(Need::Go, have_go()) {
         assert!(out.status.success(), "the web:app build failed:\n{log}");
@@ -10359,11 +10366,12 @@ fn the_wire_hash_and_legacy_follow_ups_are_generated() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
-/// A server arm whose navigation the split cannot isolate (a helper returns
-/// it) is refused: the backend cannot move the browser, and dropping the
-/// navigation would be silent.
+/// A server arm whose navigation a helper returns builds: the server evaluates
+/// the actual command (the helper included) and returns the navigation as
+/// data. It used to be refused, because the split copied navigation source
+/// into the client.
 #[test]
-fn a_server_arm_navigation_the_split_cannot_isolate_is_refused() {
+fn a_server_arm_navigation_through_a_helper_returns_with_the_answer() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (proj, out, log) = web_app_build(
         "nav-cmds",
@@ -10380,13 +10388,19 @@ fn a_server_arm_navigation_the_split_cannot_isolate_is_refused() {
             ),
         ],
     );
-    assert!(!out.status.success(), "must be refused:\n{log}");
     assert!(
-        log.contains(
-            "server branch `Save` returns a navigation (`Std.Nav`) the split could not isolate"
-        ),
-        "{log}"
+        !log.contains("could not isolate"),
+        "a helper-built server navigation is returned, never refused:\n{log}"
     );
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        !front.contains("Cmd.batch [ goAbout")
+            && front.contains("Spa.rpcScrollHold saveReqCodec saveRespCodec \"/_rpc/Save\""),
+        "the helper call stays on the server:\n{front}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(out.status.success(), "the web:app build failed:\n{log}");
+    }
     let _ = std::fs::remove_dir_all(&proj);
 }
 

@@ -894,7 +894,7 @@ func renderCurrentWithScroll(continuation bool) {
 		painted = true
 	})
 	if painted {
-		spaScrollCommands.committed(held, continuation, spaApplyScroll)
+		spaScrollCommands.committedBrowser(held, continuation, func(c cmdT) { interpretCmd(c, spaDispatch) })
 	}
 }
 
@@ -1104,13 +1104,48 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 	case "", "none":
 		return
 	case "scrollRpcScope":
-		// A source-bound mixed URL residual/RPC batch captures authority BEFORE
-		// its first effect; construction of the wrapper itself is pure.
+		// A source-bound mixed client residual/RPC batch captures authority
+		// BEFORE its first effect; construction of the wrapper itself is pure.
 		if spaSch != nil {
 			spaSch.withScrollAuthority(func() { interpretCmd(asCmdT(cmd.payload), dispatch) })
 		}
 	case "batch":
-		if spaIsReturnedScrolls(cmd) && spaSch != nil && !spaSch.allowReturnedScrolls() {
+		if spaIsReturnedScrolls(cmd) {
+			if len(cmd.batch) == 0 {
+				return
+			}
+			if spaSch != nil && !spaSch.allowReturnedScrolls() {
+				return
+			}
+			origin := spaScrollCommands.authority
+			// The private marker is consumed exactly once; defer ALL returned leaves
+			// until their own render commits, then use the ordinary interpreter.
+			cmd.payload = spaReturnedBrowserOrigin{authority: origin}
+			spaScrollCommands.browserCommand(cmd, func(c cmdT) { interpretCmd(c, dispatch) })
+			return
+		}
+		if origin, ok := cmd.payload.(spaReturnedBrowserOrigin); ok {
+			if origin.authority != spaScrollCommands.authority {
+				return
+			}
+			leaves := spaReturnedLeaves(cmd)
+			if !spaReturnedHasNav(leaves) {
+				// Scroll-only: the committed render runs them now, in order.
+				for _, c := range leaves {
+					interpretCmd(c, dispatch)
+				}
+				return
+			}
+			// A route change runs the TEA step again, so navigation runs after
+			// this step returns. ONE goroutine runs every leaf in batch order
+			// (one goroutine per leaf would let the scheduler reorder them).
+			go spaRunReturnedInOrder(leaves, origin.authority, func() uint64 { return spaScrollCommands.authority }, func(c cmdT) {
+				if nc, ok := navCmdOf(c); ok {
+					spaNavApply(nc)
+					return
+				}
+				interpretCmd(c, dispatch)
+			})
 			return
 		}
 		for _, c := range cmd.batch {

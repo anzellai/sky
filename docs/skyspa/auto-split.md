@@ -1598,21 +1598,29 @@ is. "The failure above is in the SYNTHESISED client entry" is gone.
 **Navigation (`Std.Nav`).** `Nav.pushUrl` / `Nav.replaceUrl` /
 `Nav.clearFragment` are a client effect: an arm that only navigates stays in
 the client, and the wasm client applies the History API and routes like a
-link click (`spaNavigate`). A server arm that also navigates keeps its
-navigation leaf in the client: the leaf is lifted out of the arm's command and
-run when the client sends the request (the same residual `Std.Native` uses),
-as Sky.Live runs it when the update returns. The backend's copy of the leaf
-is then already applied. A navigation the split cannot isolate (a helper that
-returns it) is refused at build time, never dropped. A continuation arm that
-navigates is never settled on the server.
+link click (`spaNavigate`). A server arm that also navigates returns its
+navigation with the answer (v0.29.4): the server evaluates the command of the
+outcome it took (a `case` on a server read, a guard, a helper, a nested
+`Cmd.batch`), the runtime collects its `Std.Nav` leaves as data in batch order
+(`Spa_collectScrolls`, the returned-command wire version 2, beside the returned
+scrolls), and the client runs them after the answer renders, as Sky.Live runs
+them when the update returns. No navigation source is copied into the client,
+so its URL may use a value only the server has, and an `Err` branch or a
+refused guard navigates nowhere. Such an arm holds later Msgs
+(`Spa.rpcScrollHold`). A returned navigation is checked as a whole: a payload
+with an unknown field, a wrong type or an off-site URL is refused before any of
+its commands runs. A newer navigation cancels a returned one that has not run.
+An app whose navigations are all in client arms keeps its wire unchanged. A
+continuation arm that navigates is never settled on the server.
 
 Tests: the fixtures `spa-path-dep-record` (with its `lib/` package),
 `spa-follow-bare-name` and `nav-cmds`, driven by the `spa_split_flow.rs` tests
 `a_record_alias_from_a_path_dependency_crosses_the_split`,
 `a_follow_up_payload_type_is_resolved_by_its_module_not_its_bare_name`,
 `a_device_key_on_a_continuation_is_still_refused`,
-`a_server_arm_navigation_runs_in_the_client` and
-`a_server_arm_navigation_the_split_cannot_isolate_is_refused`; the unit tests
+`a_server_arm_navigation_returns_with_the_answer` and
+`a_server_arm_navigation_through_a_helper_returns_with_the_answer`, the
+`project` tests `spa_returned_navigation.rs`; the unit tests
 `spa_split::type_identity_tests` and `split_diag::tests`; the browser e2e
 `scripts/nav-e2e.sh` (Sky.Live and web:app, Chrome and WebKit, strict CSP).
 

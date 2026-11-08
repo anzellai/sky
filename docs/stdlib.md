@@ -838,11 +838,13 @@ not change.
 
 Sky.Live moves the tab whose action caused the update (for work no tab started,
 such as a timer, one tab of the session; a tab that has not connected yet gets
-it when it connects). Sky.Spa applies it in the wasm client; in a server
-branch the client runs the navigation when it sends the request, and the split
-refuses a server branch whose navigation it cannot isolate (put the
-`Nav.pushUrl …` directly in the branch's command). A terminal target has no
-address bar and ignores it.
+it when it connects). Sky.Spa applies it in the wasm client. In a server branch
+the server evaluates the command of the outcome it took, and the answer carries
+the navigation back: the client runs it after the answer renders, as Sky.Live
+does. So the URL may use a value only the server has (`Ok f -> ( model,
+Nav.pushUrl ("/forms/" ++ f.id) )`), and an `Err` branch or a refused guard
+navigates nowhere. Such a branch holds later Msgs until it answers. A terminal
+target has no address bar and ignores it.
 
 ### `Time` — clock + duration
 
