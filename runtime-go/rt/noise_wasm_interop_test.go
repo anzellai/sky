@@ -170,7 +170,7 @@ func TestNoiseWasmInitiatorInteropsWithNativeResponder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the wasm initiator failed: %v\n%s", err, out)
 	}
-	for _, name := range []string{"TestWasmKeysAreRandom", "TestWasmInitiatorTalksToNativeResponder", "TestWasmAeadAndMacInteropWithNative", "TestWasmHttpResponseHeadersAreCanonical", "TestWasmFetchBoundary"} {
+	for _, name := range []string{"TestWasmKeysAreRandom", "TestWasmInitiatorTalksToNativeResponder", "TestWasmAeadAndMacInteropWithNative", "TestWasmHttpResponseHeadersAreCanonical", "TestWasmFetchBoundary", "TestWasmFetchProgrammingPanicStaysLoud"} {
 		if !strings.Contains(string(out), "--- PASS: "+name) {
 			t.Fatalf("the wasm test %s did not pass:\n%s", name, out)
 		}

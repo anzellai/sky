@@ -231,18 +231,43 @@ func fetchOnce(method, url, body string, resend bool) (SkyResult[any, any], spaO
 	})
 	timer = global.Call("setTimeout", onTimeout, int(spaFetchTimeout/time.Millisecond))
 
-	fetch.Invoke(url, opts).Call("then", onResp).Call("catch", onErr)
+	// Cleanup also runs if the host violates the Promise contract below. Those
+	// programming faults still panic; a started timeout must not retain its
+	// Go callbacks while that panic unwinds.
+	defer func() {
+		global.Call("clearTimeout", timer)
+		onResp.Release()
+		onErr.Release()
+		onText.Release()
+		onTextErr.Release()
+		onTimeout.Release()
+	}()
+
+	promise, started := invokeBrowserFetch(fetch, url, opts)
+	if started {
+		promise.Call("then", onResp).Call("catch", onErr)
+	} else {
+		finish(Err[any, any](ErrNetwork("http."+lower+": fetch could not be started")), spaNetworkOutcome())
+	}
 
 	res := <-ch
-	global.Call("clearTimeout", timer)
-	// Settled exactly once; the other callbacks will never fire now, so it is
-	// safe to release them all from here (outside any callback invocation).
-	onResp.Release()
-	onErr.Release()
-	onText.Release()
-	onTextErr.Release()
-	onTimeout.Release()
 	return res.r, res.o
+}
+
+// invokeBrowserFetch contains only the host invocation. JavaScript can throw
+// before fetch returns a Promise (so Promise.catch cannot observe it). Map
+// that external exception to the caller's Network result; never swallow a Go
+// programming panic or an invalid Promise returned by an altered host API.
+func invokeBrowserFetch(fetch js.Value, url string, opts js.Value) (promise js.Value, started bool) {
+	defer func() {
+		if p := recover(); p != nil {
+			if _, external := p.(js.Error); !external {
+				panic(p)
+			}
+			started = false
+		}
+	}()
+	return fetch.Invoke(url, opts), true
 }
 
 // rejectReason extracts a human-readable message from a Promise rejection

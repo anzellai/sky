@@ -56,6 +56,7 @@ return (() => {
         if (mode === "promise-reject") {
           return wrap(Promise.reject(new TypeError("public promise rejection")));
         }
+        if (mode === "malformed-promise") return 42;
         if (mode !== "success") throw new Error("public fixture mode");
         return wrap(Promise.resolve({
           status: 200,
@@ -138,5 +139,28 @@ func TestWasmFetchBoundary(t *testing.T) {
 				t.Fatal("fetch retained a published Go callback after settling")
 			}
 		})
+	}
+}
+
+// A non-Promise result is a host programming contract violation, not a fetch
+// exception. It must stay loud while the actual timeout/callback is retired.
+func TestWasmFetchProgrammingPanicStaysLoud(t *testing.T) {
+	fixture := js.Global().Get("Function").New(fetchBoundaryFixtureJS).Invoke()
+	fixture.Call("install", "malformed-promise")
+	t.Cleanup(func() { fixture.Call("restore") })
+	var caught any
+	func() {
+		defer func() { caught = recover() }()
+		_ = rt.Task_run(rt.TaskCoerceT[rt.SkyADT, rt.HttpResponse](
+			rt.Http_post("/__sky_public_fetch_boundary__", "public body")))
+	}()
+	if _, programming := caught.(*js.ValueError); !programming {
+		t.Fatalf("invalid host Promise must retain its Go programming panic, got %T", caught)
+	}
+	state := fixture.Call("snapshot")
+	if state.Get("fetchCalls").Int() != 1 || state.Get("armed").Int() != 1 ||
+		state.Get("cleared").Int() != 1 || state.Get("active").Int() != 0 ||
+		state.Get("callbacks").Int() != 1 || fixture.Call("releasedCallbacks").Int() != 1 {
+		t.Fatal("programming-panic unwind retained the actual timeout/callback")
 	}
 }
