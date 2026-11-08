@@ -2,7 +2,10 @@
 
 package rt
 
-import "syscall/js"
+import (
+	"syscall/js"
+	"time"
+)
 
 // Built-in Sky.Spa connection-error overlay: when a Cmd.perform (an auto-split
 // RPC, or any Http call) fails because the server is unreachable, the runtime
@@ -200,6 +203,11 @@ func spaInstallRecovery() {
 	}
 	on(win, "online", spaRecoverNow)
 	on(win, "focus", spaRecoverNow)
+	// A navigation has started: hold every request attempt until the page
+	// goes away or stays (spa_leave.go). pageshow (a page that stayed, or a
+	// back/forward cache restore) releases them at once.
+	on(win, "beforeunload", func() { spaLeave.leave(time.Now()) })
+	on(win, "pageshow", spaLeave.stayed)
 	on(win, "pageshow", visible)
 	on(doc, "resume", visible)
 	hidden := func() {

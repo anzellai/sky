@@ -1101,6 +1101,8 @@ window.addEventListener("pagehide", function() {
 });
 // bfcache restore (Back/Forward): the SSE was closed on pagehide, so reopen it.
 window.addEventListener("pageshow", function(e) {
+  // The page is in use again: it is not leaving (a held re-send goes on).
+  __skyLeavingUntil = 0;
   if (e.persisted && __skySSE === null && __skySseReopenTimer === null) {
     __skySsePathNext = true;
     __skyOpenSSE();
@@ -1416,10 +1418,21 @@ function __skyScheduleRetry() {
   __skyRetryAttempts++;
   // 500, 1000, 2000, 4000, 8000, 16000, 16000, … (capped)
   var delay = Math.min(__skyRetryBaseMs * Math.pow(2, __skyRetryAttempts - 1), __skyRetryMaxMs);
-  __skyRetryTimer = setTimeout(function() {
+  var resend = function() {
+    // A page that is leaving (beforeunload) re-sends nothing: WebKit cancels
+    // the request in flight at a navigation, and a re-sent POST from the
+    // unloading page is refused at the call site and reported as a page
+    // error. Wait for the leaving window to end (a page that stays: a
+    // download, a 204) or for pageshow, which clears it.
+    var wait = __skyLeavingUntil - Date.now();
+    if (wait > 0) {
+      __skyRetryTimer = setTimeout(resend, wait);
+      return;
+    }
     __skyRetryTimer = null;
     __skyDrainQueue();
-  }, delay);
+  };
+  __skyRetryTimer = setTimeout(resend, delay);
 }
 function __skyDrainQueue() {
   if (__skyEventQueue.length === 0) return;

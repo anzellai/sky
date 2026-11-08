@@ -19,6 +19,10 @@
 #          server read (`Ok f`), and a Msg sent meanwhile runs after it; its
 #          `Err` branch and a refused guard do not navigate
 #   evil   a URL off the site is refused, and the refusal is logged
+#   leave  a request in flight when a slow navigation starts raises no page
+#          error (WebKit cancels it; the client re-sends nothing while the
+#          page is leaving), and after a `beforeunload` with no navigation
+#          the request still completes
 #   plain  a page with no Sub.onFragment opened at `/plain#x` keeps its
 #          first paint (the load-time fragment report is a no-op)
 #

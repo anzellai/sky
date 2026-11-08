@@ -397,6 +397,14 @@ retry code and no network banner (v0.27.3, `runtime-go/rt/spa_retry.go`).
   the time the page was away made it look old (v0.27.6).
 - **Recovery signals.** `online`, the page becoming visible again, `pageshow`
   and `focus` re-send the head of the queue at once, with a fresh budget.
+- **A page that is leaving sends nothing (v0.29.5).** From `beforeunload` (a
+  link to a server page, a typed address, `location.assign`) the page counts
+  as leaving for 10 s, and no request attempt starts, new or re-sent. WebKit
+  cancels every request in flight when a navigation starts, and a request
+  started on the unloading page is refused and reported as a page error. If
+  the page goes away, nothing was sent. If it stays (a download, a 204), the
+  request goes on when the window ends, or at once on `pageshow`. The Sky.Live
+  client holds its event re-sends the same way.
 - **Protecting a recovering server.** A retry token bucket per origin (10
   tokens; a failure costs 1, a success refunds 0.1; below 5 no automatic
   retry starts) and, after a 429 or 503, client-side adaptive throttling of

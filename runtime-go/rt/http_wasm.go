@@ -112,6 +112,9 @@ func fetchBlocking(method, url, body string) SkyResult[any, any] {
 // with a fresh budget (spaRetryCoord.done).
 func fetchOnce(method, url, body string, resend bool) (SkyResult[any, any], spaOutcome) {
 	lower := strings.ToLower(method)
+	// A page that is leaving starts no attempt (spa_leave.go): the request is
+	// held until the page goes away (nothing sent) or stays (it proceeds).
+	spaLeave.wait(time.Now, time.After)
 	global := js.Global()
 	fetch := global.Get("fetch")
 	if fetch.Type() != js.TypeFunction {
