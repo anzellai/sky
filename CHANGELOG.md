@@ -11,6 +11,28 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.5 — a page that is leaving sends no request (2026-11-08)
+
+### Fixed
+
+- A Sky.Spa client no longer starts a request on a page that is leaving.
+  WebKit (Safari) cancels every request in flight when a navigation starts
+  (a link to a server page, a typed address, `location.assign`). The client
+  then re-sent the cancelled RPC after its back-off, from the unloading page,
+  and WebKit refused it and reported "Fetch API cannot load … due to access
+  control checks" as a page error. From `beforeunload` the page now counts as
+  leaving for 10 s and starts no attempt, new or re-sent. If the page goes
+  away, nothing was sent. If it stays (a download, a 204 answer), the request
+  goes on when the window ends, or at once on `pageshow`.
+- The Sky.Live client holds its event re-sends the same way: a re-sent
+  `/_sky/event` POST waits while the page is leaving, and `pageshow` ends the
+  leaving window.
+
+### Migration from v0.29.4
+
+No application source or database change is required. Rebuild and redeploy
+the server and client assets together with Sky 0.29.5.
+
 ## v0.29.4 — browser fetch exceptions return classified errors (2026-11-08)
 
 ### Fixed

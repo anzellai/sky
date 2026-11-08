@@ -234,6 +234,49 @@ async function scenario(browserName, target, url, app) {
 // The client reports the fragment at load. With no subscriber the report is a
 // no-op: the page keeps its first paint (it used to be patched with an empty
 // body, which blanked the page).
+// A page that is leaving starts no request. WebKit cancels a request in flight
+// when a navigation starts; a re-sent attempt on the unloading page was refused
+// at the call site and reported as a page error ("… due to access control
+// checks"). A page that stays after `beforeunload` (a download, a 204) still
+// completes its request when the leaving window ends.
+async function leaveScenario(browserName, target, url) {
+  const tag = `${target}/${browserName}`;
+  const browser = await launch(browserName);
+  try {
+    // Leaving: the next page answers slowly, so the old page lives on while
+    // its cancelled RPC would be re-sent.
+    const page = await browser.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.route("**/about", async (r) => { await new Promise((ok) => setTimeout(ok, 2500)); await r.continue(); });
+    // Hold the RPC answer too, so it is surely in flight when the navigation starts.
+    await page.route("**/_rpc/Open*", async (r) => { await new Promise((ok) => setTimeout(ok, 3000)); await r.continue().catch(() => {}); });
+    await page.goto(url, { waitUntil: "load" });
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => document.getElementById("open").click());
+    await page.waitForTimeout(300);
+    await page.goto(url + "about", { waitUntil: "load" });
+    await page.waitForTimeout(1500);
+    check(`${tag} leave: a request in flight at a navigation raises no page error`, errors.length === 0, errors.join(" | ") || "none");
+    await page.close();
+
+    // Staying: `beforeunload` with no navigation. The held request goes on.
+    const stay = await browser.newPage();
+    const stayErrors = [];
+    stay.on("pageerror", (e) => stayErrors.push(e.message));
+    await stay.goto(url, { waitUntil: "load" });
+    await stay.waitForTimeout(1500);
+    await stay.evaluate(() => window.dispatchEvent(new Event("beforeunload")));
+    await stay.evaluate(() => document.getElementById("open").click());
+    const u = await waitUrl(stay, (v) => v === "/about?form=form-42", 20000);
+    check(`${tag} stay: a page that stays completes its request`, u === "/about?form=form-42", u);
+    check(`${tag} stay: no page errors`, stayErrors.length === 0, stayErrors.join(" | ") || "none");
+    await stay.close();
+  } finally {
+    await browser.close();
+  }
+}
+
 async function plainScenario(browserName, target, port) {
   const browser = await launch(browserName);
   const tag = `${target}/${browserName}`;
@@ -539,6 +582,7 @@ try {
     for (const b of BROWSERS) {
       results[`${target}/${b}`] = await scenario(b, target, `http://127.0.0.1:${port}/`, app);
       await plainScenario(b, target, port);
+      await leaveScenario(b, target, `http://127.0.0.1:${port}/`);
       await scrollScenario(b, target, `http://127.0.0.1:${port}/`);
       await rootPortScenarios(b, target, `http://127.0.0.1:${port}/`);
       if(target==='live')await liveOriginScenario(b, `http://127.0.0.1:${port}/`);
