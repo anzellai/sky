@@ -125,6 +125,9 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Offline CI-backed release preflight contracts
+        working-directory: .
+        run: python3 -I -B scripts/test-preflight-ci.py -v
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable

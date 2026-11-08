@@ -423,6 +423,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Offline CI-backed release preflight contracts
+        run: python3 -I -B scripts/test-preflight-ci.py -v
       - name: Require the tagged commit's per-commit ci-green to be SUCCESS
         env:
           GH_TOKEN: ${{ github.token }}
