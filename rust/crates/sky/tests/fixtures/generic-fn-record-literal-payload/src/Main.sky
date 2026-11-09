@@ -1,0 +1,316 @@
+module Main exposing (main)
+
+import Lib
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Tuple as Tuple
+import Std.Log exposing (println)
+
+type alias Wiring model =
+    { restore : String -> Maybe model
+    , persist : model -> String
+    }
+
+type alias Holder model =
+    { name : String
+    , just : Maybe (Wiring model)
+    , ok : Result String (Wiring model)
+    , err : Result (Wiring model) Int
+    , plain : Wiring model
+    }
+
+type alias Outer model =
+    { inner : Wiring model
+    , n : Int
+    }
+
+type alias Fixed =
+    { show : Int -> String
+    , n : Int
+    }
+
+type Box a
+    = Boxed a
+    | NoBox
+
+
+useW : Wiring Int -> String
+useW w =
+    w.persist 41 ++ "/"
+        ++ (case w.restore "7" of
+
+               Just n ->
+                   String.fromInt n
+
+               Nothing ->
+                   "none")
+
+
+useLib : Lib.Wiring Int -> String
+useLib w =
+    useW { restore = w.restore, persist = w.persist }
+
+
+fromMaybe : Maybe (Wiring Int) -> String
+fromMaybe m =
+    case m of
+
+        Just w ->
+            useW w
+
+        Nothing ->
+            "none"
+
+
+fromOk : Result String (Wiring Int) -> String
+fromOk r =
+    case r of
+
+        Ok w ->
+            useW w
+
+        Err e ->
+            e
+
+
+fromErr : Result (Wiring Int) Int -> String
+fromErr r =
+    case r of
+
+        Ok _ ->
+            "ok"
+
+        Err w ->
+            useW w
+
+
+first : Wiring Int
+first =
+    { restore = \_ -> Nothing, persist = \_ -> "0" }
+
+
+start : Holder Int
+start =
+    { name = "h", just = Nothing, ok = Err "unset", err = Ok 0, plain = first }
+
+
+-- The reported shape: a record update whose field is `Maybe (Wiring model)`.
+setAll : (model -> String) -> (String -> Maybe model) -> Holder model -> Holder model
+setAll p r h =
+    { h
+        | just = Just { restore = r, persist = p }
+        , ok = Ok { restore = r, persist = p }
+        , err = Err { restore = r, persist = p }
+        , plain = { restore = r, persist = p }
+    }
+
+
+setJustBare p r h =
+    { h | just = Just { restore = r, persist = p } }
+
+
+makeJust : (model -> String) -> (String -> Maybe model) -> Maybe (Wiring model)
+makeJust p r =
+    Just { restore = r, persist = p }
+
+
+makeJustBare p r =
+    Just { restore = r, persist = p }
+
+
+makeOk : (model -> String) -> (String -> Maybe model) -> Result String (Wiring model)
+makeOk p r =
+    Ok { restore = r, persist = p }
+
+
+makeErr : (model -> String) -> (String -> Maybe model) -> Result (Wiring model) Int
+makeErr p r =
+    Err { restore = r, persist = p }
+
+
+makeNested : (model -> String) -> (String -> Maybe model) -> Maybe (Maybe (Wiring model))
+makeNested p r =
+    Just (Just { restore = r, persist = p })
+
+
+makeLambda : (model -> String) -> (String -> Maybe model) -> Maybe (Wiring model)
+makeLambda p =
+    \r -> Just { restore = r, persist = p }
+
+
+makeLet : (model -> String) -> (String -> Maybe model) -> Maybe (Wiring model)
+makeLet p r =
+    let
+        w = { restore = r, persist = p }
+    in
+        Just w
+
+
+makeIf : Bool -> (model -> String) -> (String -> Maybe model) -> Maybe (Wiring model)
+makeIf b p r =
+    Just
+        (if b then
+            { restore = r, persist = p }
+
+        else
+            { restore = \_ -> Nothing, persist = p })
+
+
+makeBox : (model -> String) -> (String -> Maybe model) -> Box (Wiring model)
+makeBox p r =
+    Boxed { restore = r, persist = p }
+
+
+makeTuple : (model -> String) -> (String -> Maybe model) -> ( Wiring model, Int )
+makeTuple p r =
+    ( { restore = r, persist = p }, 1 )
+
+
+makeList : (model -> String) -> (String -> Maybe model) -> List (Wiring model)
+makeList p r =
+    [ { restore = r, persist = p } ]
+
+
+makeCons : (model -> String) -> (String -> Maybe model) -> List (Wiring model)
+makeCons p r =
+    { restore = r, persist = p } :: []
+
+
+makeDict : (model -> String) -> (String -> Maybe model) -> Dict.Dict String (Wiring model)
+makeDict p r =
+    Dict.fromList [ ( "k", { restore = r, persist = p } ) ]
+
+
+makeMapped : (model -> String) -> Maybe (String -> Maybe model) -> Maybe (Wiring model)
+makeMapped p mr =
+    Maybe.map (\r -> { restore = r, persist = p }) mr
+
+
+makeOuter : (model -> String) -> (String -> Maybe model) -> Maybe (Outer model)
+makeOuter p r =
+    Just { inner = { restore = r, persist = p }, n = 1 }
+
+
+concrete : Maybe (Wiring Int)
+concrete =
+    Just { restore = String.toInt, persist = String.fromInt }
+
+
+fixed : Maybe Fixed
+fixed =
+    Just { show = String.fromInt, n = 41 }
+
+
+localLib : Maybe (Lib.Wiring Int)
+localLib =
+    Just { restore = String.toInt, persist = String.fromInt }
+
+
+main =
+    let
+        h = setAll String.fromInt String.toInt start
+        line tag v = println (tag ++ " " ++ v)
+        _ = line "updateJust" (fromMaybe h.just)
+        _ = line "updateOk" (fromOk h.ok)
+        _ = line "updateErr" (fromErr h.err)
+        _ = line "updatePlain" (useW h.plain)
+        _ =
+            line
+                "updateBare"
+                (fromMaybe (setJustBare String.fromInt String.toInt start).just)
+        _ =
+            line "untouched" (fromMaybe start.just ++ "," ++ useW start.plain)
+        _ = line "just" (fromMaybe (makeJust String.fromInt String.toInt))
+        _ =
+            line
+                "justBare"
+                (fromMaybe (makeJustBare String.fromInt String.toInt))
+        _ = line "ok" (fromOk (makeOk String.fromInt String.toInt))
+        _ = line "err" (fromErr (makeErr String.fromInt String.toInt))
+        _ =
+            line
+                "nested"
+                (fromMaybe
+                    (Maybe.andThen
+                        identity
+                        (makeNested String.fromInt String.toInt)))
+        _ =
+            line "lambda" (fromMaybe (makeLambda String.fromInt String.toInt))
+        _ = line "let" (fromMaybe (makeLet String.fromInt String.toInt))
+        _ = line "if" (fromMaybe (makeIf True String.fromInt String.toInt))
+        _ =
+            line
+                "box"
+                (case makeBox String.fromInt String.toInt of
+
+                    Boxed w ->
+                        useW w
+
+                    NoBox ->
+                        "none")
+        _ =
+            line
+                "tuple"
+                (useW (Tuple.first (makeTuple String.fromInt String.toInt)))
+        _ =
+            line
+                "list"
+                (String.join
+                    ","
+                    (List.map useW (makeList String.fromInt String.toInt)))
+        _ =
+            line
+                "cons"
+                (String.join
+                    ","
+                    (List.map useW (makeCons String.fromInt String.toInt)))
+        _ =
+            line
+                "dict"
+                (fromMaybe (Dict.get "k" (makeDict String.fromInt String.toInt)))
+        _ =
+            line
+                "mapped"
+                (fromMaybe (makeMapped String.fromInt (Just String.toInt)))
+        _ =
+            line
+                "outer"
+                (fromMaybe
+                    (Maybe.map .inner (makeOuter String.fromInt String.toInt)))
+        _ = line "concrete" (fromMaybe concrete)
+        _ =
+            line
+                "fixed"
+                (case fixed of
+
+                    Just f ->
+                        f.show f.n
+
+                    Nothing ->
+                        "none")
+        cfg = Lib.base |> Lib.withWiring String.fromInt String.toInt
+        _ =
+            line
+                "crossModule"
+                (case cfg.wiring of
+
+                    Just w ->
+                        useLib w
+
+                    Nothing ->
+                        "none")
+        _ =
+            line
+                "crossLocal"
+                (case localLib of
+
+                    Just w ->
+                        useLib w
+
+                    Nothing ->
+                        "none")
+    in
+        ()

@@ -167,3 +167,12 @@ coordinate    = { defect = "value_cycle", rposition = "bare", rimport = "plain" 
 expect        = "reject"
 expect_stdout = ""
 summary       = "FIXED: two top-level values defined in terms of each other passed `sky check` and `go build`, then deadlocked on the first read. Now refused at check time, [E1018] BAD RECURSION, naming the cycle `a -> b -> a`."
+
+[[repro]]
+file          = "generic-fn-record-in-maybe.sky"
+issue         = "v0.29.6 (found by a downstream build)"
+stratum       = "generic_fn_record_slot"
+coordinate    = { gfr_slot = "just", gfr_site = "poly_update", gfr_annot = "annotated" }
+expect        = "accept"
+expect_stdout = "41/restored\nno wiring"
+summary       = "FIXED: a record literal of functions in `Just`, inside a record update whose field is a parameterised record alias (`Maybe (Wiring model)`), passed `sky check` and failed `go build`: it was built as the all-`any` struct `struct{ Persist any; Restore any }` and handed to `rt.Just[Main_Wiring_R[any]]`. It is now built as the nominal record."

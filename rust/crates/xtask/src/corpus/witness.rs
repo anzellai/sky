@@ -29,8 +29,8 @@
 
 use super::axes::{
     Assignment, Axis, Stratum, ALIAS_NAMES, ANON_ROLE, AS_BINDER, COLLIDER, COLLISION, DICT_KEY,
-    EDGE, EQ_PAIR, ERASURE, GA_SLOT, IMPORT_SHAPE, INNER, LETREC_GROUP, LET_USES, POSITION,
-    QUAL_USE, SHADOW, TASK_CALLEE,
+    EDGE, EQ_PAIR, ERASURE, GA_SLOT, GFR_SITE, IMPORT_SHAPE, INNER, LETREC_GROUP, LET_USES,
+    POSITION, QUAL_USE, SHADOW, TASK_CALLEE,
 };
 use super::gen;
 use super::runner;
@@ -109,6 +109,11 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
         // that call each other are what failed `go build`. Each group size is
         // a different program, so the group axis is witnessed.
         "let_mutual_recursion" => (LETREC_GROUP, "self"),
+        // v0.29.6. A literal in the body of a polymorphic def always built; the
+        // same literal inside a record update of a polymorphic holder failed
+        // `go build`. Each site is a different program, so the site axis is
+        // witnessed.
+        "generic_fn_record_slot" => (GFR_SITE, "poly_def"),
         other => panic!("no axis-under-test declared for stratum {other:?}"),
     }
 }

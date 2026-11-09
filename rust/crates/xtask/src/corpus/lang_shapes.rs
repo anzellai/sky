@@ -12,8 +12,9 @@
 
 use super::axes::{
     Assignment, ACC_POS, ANON_DEPTH, ANON_ROLE, AS_BINDER, EQ_CARRIER, EQ_PAIR, GA_PARAMS, GA_SITE,
-    GA_SLOT, LETREC_DEP, LETREC_GROUP, LETREC_SITE, LET_BINDING, LET_SITE, LET_USES, LIST_IMPORT,
-    NESTED_PAYLOAD, QUAL_PATH, QUAL_USE, STEP_SITE, TASK_CALLEE, TASK_LINK, TASK_RESULT, UNION_REP,
+    GA_SLOT, GFR_ANNOT, GFR_SITE, GFR_SLOT, LETREC_DEP, LETREC_GROUP, LETREC_SITE, LET_BINDING,
+    LET_SITE, LET_USES, LIST_IMPORT, NESTED_PAYLOAD, QUAL_PATH, QUAL_USE, STEP_SITE, TASK_CALLEE,
+    TASK_LINK, TASK_RESULT, UNION_REP,
 };
 use super::gen::{Body, SURVIVOR, UPDATED};
 
@@ -642,5 +643,126 @@ pub fn let_mutual_recursion(a: &Assignment) -> (Body, String) {
             check,
         },
         expected,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// generic_fn_record_slot (v0.29.6)
+// ---------------------------------------------------------------------------
+
+/// A record literal of FUNCTIONS that builds a parametric record alias
+/// (`Wiring model = { restore : String -> Maybe model, persist : model ->
+/// String }`) lands in a slot: a builtin container, a user ADT, a tuple, a
+/// record field, a list literal or a cons. It is written in the body of a
+/// polymorphic def, in a record update of a polymorphic holder (the reported
+/// shape: `{ cfg | wiring = Just { restore = r, persist = p } }`), or at
+/// `Wiring Int`. The record update built the literal as the all-`any` struct
+/// and handed it to `rt.Just[Main_Wiring_R[any]]`: `sky check` passed and `go
+/// build` failed. Every case calls BOTH functions read back from the slot
+/// (`persist 41`, `restore "7"`), so a dropped or swapped field cannot print
+/// `41/7`; the holder starts with a different wiring (`0/none`), so an update
+/// that did not land cannot print it either.
+pub fn generic_fn_record_slot(a: &Assignment) -> (Body, String) {
+    let annotated = match a.get(GFR_ANNOT) {
+        "annotated" => true,
+        "unannotated" => false,
+        other => panic!("generic_fn_record_slot: unknown gfr_annot {other:?}"),
+    };
+    // The slot type (`{w}` stands for the record type), the expression that
+    // fills it (`{v}` stands for the literal) and the reader's body.
+    let (slot_ty, slot_expr, read) = match a.get(GFR_SLOT) {
+        "just" => (
+            "Maybe ({w})",
+            "Just {v}",
+            "case s of\n        Just w ->\n            useW w\n\n        Nothing ->\n            \"none\"",
+        ),
+        "ok" => (
+            "Result String ({w})",
+            "Ok {v}",
+            "case s of\n        Ok w ->\n            useW w\n\n        Err e ->\n            e",
+        ),
+        "err" => (
+            "Result ({w}) Int",
+            "Err {v}",
+            "case s of\n        Ok _ ->\n            \"ok\"\n\n        Err w ->\n            useW w",
+        ),
+        "adt" => (
+            "Box ({w})",
+            "Boxed {v}",
+            "case s of\n        Boxed w ->\n            useW w\n\n        NoBox ->\n            \"none\"",
+        ),
+        "tuple" => ("( {w}, Int )", "( {v}, 1 )", "useW (Tuple.first s)"),
+        "field" => ("{ held : {w} }", "{ held = {v} }", "useW s.held"),
+        "list" => (
+            "List ({w})",
+            "[ {v} ]",
+            "String.join \",\" (List.map useW s)",
+        ),
+        "cons" => (
+            "List ({w})",
+            "{v} :: []",
+            "String.join \",\" (List.map useW s)",
+        ),
+        other => panic!("generic_fn_record_slot: unknown gfr_slot {other:?}"),
+    };
+    let ty_at = |w: &str| slot_ty.replace("{w}", w);
+    let expr_of = |v: &str| slot_expr.replace("{v}", v);
+    let poly_lit = "{ restore = r, persist = p }";
+    let int_lit = "{ restore = String.toInt, persist = String.fromInt }";
+    // The holder's starting wiring, which the update must replace.
+    let first_lit = "{ restore = \\_ -> Nothing, persist = \\_ -> \"0\" }";
+    let sig = |line: String| if annotated { line } else { String::new() };
+    let (site_decls, check) = match a.get(GFR_SITE) {
+        "poly_def" => (
+            format!(
+                "{}make p r =\n    {}\n",
+                sig(format!(
+                    "make : (model -> String) -> (String -> Maybe model) -> {}\n",
+                    ty_at("Wiring model")
+                )),
+                expr_of(poly_lit)
+            ),
+            "fromSlot (make String.fromInt String.toInt)".to_string(),
+        ),
+        "poly_update" => (
+            format!(
+                "type alias Holder model =\n    {{ name : String, slot : {} }}\n\n\n\
+                 {}withIt p r h =\n    {{ h | slot = {} }}\n",
+                ty_at("Wiring model"),
+                sig(format!(
+                    "withIt : (model -> String) -> (String -> Maybe model) -> Holder model -> Holder model\n"
+                )),
+                expr_of(poly_lit)
+            ),
+            format!(
+                "fromSlot (withIt String.fromInt String.toInt {{ name = \"h\", slot = {} }}).slot",
+                expr_of(first_lit)
+            ),
+        ),
+        "concrete" => (
+            format!(
+                "{}made =\n    {}\n",
+                sig(format!("made : {}\n", ty_at("Wiring Int"))),
+                expr_of(int_lit)
+            ),
+            "fromSlot made".to_string(),
+        ),
+        other => panic!("generic_fn_record_slot: unknown gfr_site {other:?}"),
+    };
+    let decls = format!(
+        "type alias Wiring model =\n    {{ restore : String -> Maybe model\n    , persist : model -> String\n    }}\n\n\n\
+         type Box a\n    = Boxed a\n    | NoBox\n\n\n\
+         useW : Wiring Int -> String\nuseW w =\n    w.persist 41\n        ++ \"/\"\n        ++ (case w.restore \"7\" of\n                Just n ->\n                    String.fromInt n\n\n                Nothing ->\n                    \"none\"\n           )\n\n\n\
+         fromSlot : {} -> String\nfromSlot s =\n    {read}\n\n\n{site_decls}",
+        ty_at("Wiring Int")
+    );
+    (
+        Body {
+            imports: "import Sky.Core.String as String\nimport Sky.Core.List as List\nimport Sky.Core.Tuple as Tuple\n"
+                .to_string(),
+            decls,
+            check,
+        },
+        "41/7".to_string(),
     )
 }

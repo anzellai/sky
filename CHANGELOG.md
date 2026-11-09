@@ -13,6 +13,23 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+### Fixed
+
+- **A record of functions in `Just`, `Ok` or `Err` failed `go build`.** With
+  `type alias Wiring model = { restore : String -> Maybe model, persist :
+  model -> String }` and a field `wiring : Maybe (Wiring model)`,
+  `{ cfg | wiring = Just { restore = r, persist = p } }` passed `sky check`
+  and failed with `cannot use struct{Persist any; Restore any}{…} as
+  Main_Wiring_R[any] value in argument to rt.Just[Main_Wiring_R[any]]`. The
+  record was built as an untyped struct. It is now built as the
+  `Wiring` record, so the program builds and runs. The same holds for `Ok`
+  and `Err`, for a record built in a function with no annotation, and for two
+  modules that declare the same record alias. (`rust/crates/lower/src/lower.rs`,
+  `rust/crates/lower/src/goty.rs`; `codegen_generic_fn_record_literal_flow.rs`,
+  build and run, 25 shapes; corpus stratum `generic_fn_record_slot`, 48 cases,
+  6 of which failed before; pinned repro
+  `corpus/repro/generic-fn-record-in-maybe.sky`.)
+
 ### Performance
 
 - `Json.Encode.encode`, `Codec.toJson` of a `Codec.auto` value, the Sky.Spa

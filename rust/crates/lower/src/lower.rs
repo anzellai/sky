@@ -3714,6 +3714,12 @@ impl<'a> Ctx<'a> {
                     record_at_slot = true;
                 }
             }
+            if let (Expr::Record(fields), GoTy::Named(..)) = (&self.body.exprs[e], expected) {
+                if self.slot_typed_generic_fn_record(fields, expected) {
+                    actual = expected.clone();
+                    record_at_slot = true;
+                }
+            }
         }
         // The same principle for an EMPTY list literal: `[]` has no element to
         // carry an identity, so a concrete slice slot (`training = []` in a
@@ -5258,7 +5264,8 @@ impl<'a> Ctx<'a> {
                 .enumerate()
                 .map(|(i, a)| {
                     let slot = ftys.get(i).unwrap_or(&GO_ANY);
-                    self.container_record_slot = from_container && matches!(slot, GoTy::Struct(_));
+                    self.container_record_slot =
+                        from_container && matches!(slot, GoTy::Struct(_) | GoTy::Named(..));
                     let x = self.lower_expr(*a, slot);
                     self.container_record_slot = false;
                     x
@@ -5320,6 +5327,14 @@ impl<'a> Ctx<'a> {
         let record_literal_slot = match (elem, args) {
             (GoTy::Struct(_), [a]) => match &self.body.exprs[*a] {
                 Expr::Record(fields) => Self::slot_typed_fn_record(fields, elem),
+                _ => false,
+            },
+            // The same for a GENERIC nominal record element with a function field
+            // (`Just { restore = r, persist = p }` at `Maybe (Wiring model)`,
+            // v0.29.6): `rt.Just[Main_Wiring_R[any]]` is monomorphised to the
+            // nominal, so the literal must be built AS that nominal.
+            (GoTy::Named(_, targs), [a]) if !targs.is_empty() => match &self.body.exprs[*a] {
+                Expr::Record(fields) => self.slot_typed_generic_fn_record(fields, elem),
                 _ => false,
             },
             _ => false,
@@ -5451,9 +5466,34 @@ impl<'a> Ctx<'a> {
         let narrow_payload = |this: &mut Self, args: Vec<GoExpr>, payload: Option<&GoTy>| {
             let records = this.record_fields;
             let is_record = |n: &str| records.contains_key(n);
+            // The all-`any` record literal (`struct{ F any; … }`) against a
+            // nominal record whose field `F` is a FUNCTION: Go never assigns
+            // `any` to a func field, so this argument cannot compile as it is.
+            // The literal itself is built at the nominal where the argument IS a
+            // literal (`builtin_container_fn_field_gotys`); this catches every
+            // other route by which that literal reaches the payload (v0.29.6).
+            let any_into_fn_record = |from: &GoTy, to: &GoTy| match (from, to) {
+                (GoTy::Struct(fs), GoTy::Named(n, _)) => records
+                    .get(n.as_str())
+                    .map(|decl| {
+                        decl.iter().any(|(dn, t)| {
+                            matches!(&**t, Ty::Fun(..))
+                                && fs
+                                    .iter()
+                                    .any(|(f, ft)| f.as_str() == dn && *ft == GoTy::Any)
+                        })
+                    })
+                    .unwrap_or(false),
+                _ => false,
+            };
             args.into_iter()
                 .map(|a| match payload {
-                    Some(p) if go_unassignable(&a.ty, p, &is_record) => this.coerce_if_needed(a, p),
+                    Some(p)
+                        if go_unassignable(&a.ty, p, &is_record)
+                            || any_into_fn_record(&a.ty, p) =>
+                    {
+                        this.coerce_if_needed(a, p)
+                    }
                     _ => a,
                 })
                 .collect::<Vec<_>>()
@@ -8914,6 +8954,30 @@ impl<'a> Ctx<'a> {
         lit == dec
     }
 
+    /// A record literal whose fields are exactly those of the GENERIC nominal
+    /// record `slot` (`Main_Wiring_R[any]`), which has a function field. This is
+    /// the shape `lower_record` would otherwise build as the all-`any` TEA-cfg
+    /// literal (`generic_func_cfg`), which no typed container accepts.
+    fn slot_typed_generic_fn_record(&self, fields: &[(Name, ExprId)], slot: &GoTy) -> bool {
+        let GoTy::Named(n, targs) = slot else {
+            return false;
+        };
+        if targs.is_empty() {
+            return false;
+        }
+        let Some(decl) = self.record_fields.get(n.as_str()) else {
+            return false;
+        };
+        if !decl.iter().any(|(_, t)| matches!(&**t, Ty::Fun(..))) {
+            return false;
+        }
+        let mut lit: Vec<String> = fields.iter().map(|(n, _)| capitalize(n.as_str())).collect();
+        let mut dec: Vec<String> = decl.iter().map(|(n, _)| n.clone()).collect();
+        lit.sort_unstable();
+        dec.sort_unstable();
+        lit == dec
+    }
+
     fn lower_record(&mut self, fields: &[(Name, ExprId)], actual: &GoTy) -> GoExpr {
         // A func-field record literal that is the element of a builtin
         // container ctor is built at the container's concrete struct: each func
@@ -8944,7 +9008,13 @@ impl<'a> Ctx<'a> {
         // here too. Tightly scoped to the newly-generic func-field case so every
         // other record (incl. non-generic nominal func-field records) is
         // byte-identical.
-        let generic_func_cfg = matches!(actual, GoTy::Named(n, args)
+        // Not when the literal was adopted at a typed container slot
+        // (`slot_typed`, set from `builtin_container_fn_field_gotys`): there the
+        // container is monomorphised to this nominal, so the all-`any` form is a
+        // `go build` error (v0.29.6), and each func field lowers at its typed
+        // slot instead (eta-adapted by `coerce_if_needed`, doc 14 lever §5.1).
+        let generic_func_cfg = !slot_typed
+            && matches!(actual, GoTy::Named(n, args)
             if !args.is_empty()
                 && self
                     .record_fields
