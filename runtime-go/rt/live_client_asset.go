@@ -1101,8 +1101,10 @@ window.addEventListener("pagehide", function() {
 });
 // bfcache restore (Back/Forward): the SSE was closed on pagehide, so reopen it.
 window.addEventListener("pageshow", function(e) {
-  // The page is in use again: it is not leaving (a held re-send goes on).
-  __skyLeavingUntil = 0;
+  // A back/forward cache restore: the page is in use again, it is not leaving
+  // (a held reload goes on). The first pageshow of a load does not end it: it
+  // can come after a navigation has started.
+  if (e.persisted) __skyLeavingUntil = 0;
   if (e.persisted && __skySSE === null && __skySseReopenTimer === null) {
     __skySsePathNext = true;
     __skyOpenSSE();

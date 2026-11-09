@@ -15,6 +15,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- A Sky.Spa page that a navigation leaves while its client is still starting
+  sends no request and raises no page error. The leaving-page rule of v0.29.5
+  started only once the wasm client ran, so a link followed during the load
+  still let the first server call (`SpaInit_`) start on the unloading page,
+  which WebKit reports as "Fetch API cannot load ... due to access control
+  checks". The boot loader now listens for `beforeunload` before the wasm
+  starts and the client takes that state when it starts. A wasm download that
+  WebKit cancels for the navigation is no longer a page error ("Load failed");
+  if the page stays, the loader starts the client again. On Sky.Spa and
+  Sky.Live only a back/forward cache restore ends the leaving time early, not
+  the first `pageshow` of a load, which can come after the navigation started.
 - `examples/11-fyne-stopwatch` is a working stopwatch again (#51). It showed
   only a label: its Go helper was no longer called. The helper is now a local
   Go module, `stopwatch/`, added with `sky add ./stopwatch`, and `Main.sky`
