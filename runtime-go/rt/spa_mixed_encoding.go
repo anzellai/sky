@@ -261,7 +261,7 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 		field := &fields[i]
 		if field.closed == nil {
 			out.Work.Marshals++
-			encoded, err := json.Marshal(field.raw)
+			encoded, err := jsonMarshalTree(field.raw)
 			field.encoded, field.marshalErr = string(encoded), err
 			field.size, field.null = uint64(len(encoded)), spaIsNullRaw(encoded)
 			out.Work.EncodedBytes = spaSizeAdd(out.Work.EncodedBytes, uint64(len(encoded)))

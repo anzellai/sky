@@ -777,7 +777,7 @@ func rawToSqlArg(raw any, kind, col string) (any, error) {
 	}
 	switch kind {
 	case "blob":
-		b, err := json.Marshal(raw)
+		b, err := jsonMarshalTree(raw)
 		if err != nil {
 			return nil, fmt.Errorf("column %q is JSON, and the value does not encode as JSON: %v", col, err)
 		}
@@ -1343,7 +1343,7 @@ func Db_queryObjects(connArg, sqlArg, paramsArg, colspecArg any) any {
 				obj.keys = append(obj.keys, name)
 				obj.vals = append(obj.vals, val)
 			}
-			b, err := json.Marshal(obj)
+			b, err := jsonMarshalTree(obj)
 			if err != nil {
 				return Err[any, any](ErrDecode("Store: marshal: " + err.Error()))
 			}
@@ -1424,7 +1424,7 @@ func Db_queryObjectGroups(connArg, sqlArg, paramsArg, groupsArg any) any {
 					obj.keys = append(obj.keys, name)
 					obj.vals = append(obj.vals, val)
 				}
-				b, err := json.Marshal(obj)
+				b, err := jsonMarshalTree(obj)
 				if err != nil {
 					return Err[any, any](ErrDecode("Store: marshal: " + err.Error()))
 				}

@@ -140,7 +140,7 @@ func spaEncodeModelField(value reflect.Value, declared string) ([]byte, bool) {
 	if err != nil {
 		return nil, false
 	}
-	encoded, err := json.Marshal(raw)
+	encoded, err := jsonMarshalTree(raw)
 	return encoded, err == nil
 }
 
