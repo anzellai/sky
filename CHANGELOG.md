@@ -11,6 +11,29 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## Unreleased
+
+### Performance
+
+- `Json.Encode.encode`, `Codec.toJson` of a `Codec.auto` value, the Sky.Spa
+  saved model, the SSR seed and the server-call answers write their JSON in
+  one pass. Before, every nested object was encoded on its own and then
+  scanned again by each enclosing level. The bytes are the same as before for
+  every value, including HTML escaping, U+2028 and U+2029, invalid UTF-8 and
+  the float format. A value that cannot be JSON (a NaN or infinite `Float`)
+  still fails as the classified `JsonEncodeFailure`, with the same message.
+- A Sky.Spa client no longer builds bytes it cannot store. A Model field the
+  compiler cannot prove plain (such as a `Json.Value`) is walked, not written,
+  when it is excluded from the saved model, when only the previous Model's
+  sign-out check needs it, and when the saved model is already over the
+  1.5 MB limit. Every encoder effect and failure still happens, in the same
+  order.
+- A Sky.Spa client whose model encoder the runtime cannot look inside (for
+  example a `withClientCrypto` app) parses the encoded model once per message
+  instead of up to four times, and reuses the previous message's parse for the
+  sign-out check. The saved bytes, the identity rules and the sign-out
+  behaviour are unchanged.
+
 ## v0.29.5 — a page that is leaving sends no request (2026-11-08)
 
 ### Fixed

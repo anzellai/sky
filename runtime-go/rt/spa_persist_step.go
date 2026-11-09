@@ -43,6 +43,20 @@ func spaPersistStepWithCodec(prev, next any, encode func(any) string, write func
 }
 
 func spaPersistStepWithEncoding(prev, next any, encode func(any) string, write func(string), protected []string, generated bool, cache *spaModelEncoding, observe func(spaPersistMetrics)) bool {
+	return spaPersistStepCore(prev, next, encode, write, spaSessionClearedByStep, protected, generated, cache, observe)
+}
+
+// spaPersistStepReference is the reference path's step: the same encoder
+// calls, write and sign-out check in the same order as spaPersistStep with the
+// spaPersistWrite(spaPersistStripFields(…)) writer, but the next JSON is
+// parsed once for the identity, the exclusions and the sign-out check, and
+// the previous JSON reuses the last step's parse when it is the same text.
+func spaPersistStepReference(prev, next any, encode func(any) string, ref *spaReferencePersist, observe func(spaPersistMetrics)) bool {
+	defer ref.finish()
+	return spaPersistStepCore(prev, next, encode, ref.write, ref.cleared, ref.protected, false, nil, observe)
+}
+
+func spaPersistStepCore(prev, next any, encode func(any) string, write func(string), sessionCleared func(prevJSON, nextJSON string, protected []string) bool, protected []string, generated bool, cache *spaModelEncoding, observe func(spaPersistMetrics)) bool {
 	metrics := spaPersistMetrics{}
 	encodeModel := func(model any, isNext bool) string {
 		var start time.Time
@@ -96,10 +110,10 @@ func spaPersistStepWithEncoding(prev, next any, encode func(any) string, write f
 	if len(protected) != 0 && !skipPrevious {
 		prevJSON := encodeModel(prev, false)
 		if observe == nil {
-			cleared = spaSessionClearedByStep(prevJSON, nextJSON, protected)
+			cleared = sessionCleared(prevJSON, nextJSON, protected)
 		} else {
 			start := time.Now()
-			cleared = spaSessionClearedByStep(prevJSON, nextJSON, protected)
+			cleared = sessionCleared(prevJSON, nextJSON, protected)
 			metrics.SessionNanos += time.Since(start).Nanoseconds()
 		}
 	}

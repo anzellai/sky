@@ -118,6 +118,7 @@ type spaMixedInvocationField struct {
 	reused     bool
 	generation int
 	closed     *spaClosedEncodingResult
+	partial    bool // walked and measured only: encoded is empty, size exact
 }
 
 // Every logical invocation owns its own recovery boundary. Failure produces no
@@ -256,18 +257,60 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 	}
 	// PHASE B: marshal/error/panic order matches jsonOrderedObject.MarshalJSON.
 	// Unknown values are the captured A results, not freshly read model fields.
+	//
+	// Bytes nobody reads are not built. A non-protected unknown field is only
+	// WALKED and measured (every delegated Marshaler still runs, in order, every
+	// error is still raised here, and its exact size is still known) when its
+	// bytes cannot reach storage: the previous-model call reads protected
+	// nullness only, an excluded field is never stored, and once the selected
+	// snapshot is past CapBytes it is not written.
+	selectedBytes, selectedCount := uint64(2), 0 // "{}" plus the members so far
 	for i := range d.fields {
 		observeMetadata()
 		field := &fields[i]
 		if field.closed == nil {
 			out.Work.Marshals++
-			encoded, err := jsonMarshalTree(field.raw)
-			field.encoded, field.marshalErr = string(encoded), err
-			field.size, field.null = uint64(len(encoded)), spaIsNullRaw(encoded)
-			out.Work.EncodedBytes = spaSizeAdd(out.Work.EncodedBytes, uint64(len(encoded)))
+			limit := -1
+			if !protected[i] {
+				if options.PreviousOnly || !selected[i] {
+					limit = 0
+				} else {
+					prefix := selectedBytes + uint64(len(d.fields[i].keyJSON)) + 1
+					if selectedCount > 0 {
+						prefix++
+					}
+					if prefix >= uint64(options.CapBytes) {
+						limit = 0
+					} else {
+						limit = options.CapBytes - int(prefix)
+					}
+				}
+			}
+			if limit < 0 {
+				encoded, err := jsonMarshalTree(field.raw)
+				field.encoded, field.marshalErr = string(encoded), err
+				field.size, field.null = uint64(len(encoded)), spaIsNullRaw(encoded)
+			} else {
+				encoded, size, err := jsonMarshalTreeCapped(field.raw, limit)
+				field.marshalErr, field.size = err, uint64(size)
+				if err == nil && size > limit {
+					field.partial = true // nullness is read for protected fields only
+				} else {
+					field.encoded, field.null = string(encoded), spaIsNullRaw(encoded)
+				}
+			}
+			out.Work.EncodedBytes = spaSizeAdd(out.Work.EncodedBytes, field.size)
 		}
 		if field.marshalErr != nil {
 			panic("rt.JsonEnc_encode: cannot encode the value as JSON: " + field.marshalErr.Error())
+		}
+		if selected[i] {
+			if selectedCount > 0 {
+				selectedBytes = spaSizeAdd(selectedBytes, 1)
+			}
+			selectedBytes = spaSizeAdd(selectedBytes, uint64(len(d.fields[i].keyJSON))+1)
+			selectedBytes = spaSizeAdd(selectedBytes, field.size)
+			selectedCount++
 		}
 		observeMetadata()
 	}
@@ -306,7 +349,7 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 	// need only success/nullness certificates unless configuration changes.
 	for pass := 0; pass < 2; pass++ {
 		for i, field := range fields {
-			if field.closed != nil || selected[i] != (pass == 0) || (!next.fields[i].valid && len(field.encoded) > 256) || len(field.encoded) > remaining {
+			if field.closed != nil || field.partial || selected[i] != (pass == 0) || (!next.fields[i].valid && len(field.encoded) > 256) || len(field.encoded) > remaining {
 				continue
 			}
 			next.fields[i].raw = field.encoded

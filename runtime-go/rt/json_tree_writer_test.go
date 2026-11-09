@@ -343,7 +343,8 @@ func TestJsonTreeWriterSeededDifferential(t *testing.T) {
 }
 
 // TestJsonTreeWriterCappedStopsWithSameErrors checks the byte limit: under the
-// limit it gives the full bytes, over it reports over = true, and either way
+// limit it gives the full bytes, over it gives none, it always reports the
+// exact size, and either way
 // it reaches the same error and calls the same Marshalers in the same order.
 func TestJsonTreeWriterCappedStopsWithSameErrors(t *testing.T) {
 	r := &jsonTreeRand{s: 77}
@@ -351,15 +352,16 @@ func TestJsonTreeWriterCappedStopsWithSameErrors(t *testing.T) {
 		tree := r.tree(0, 5)
 		full, ferr := jsonMarshalTree(tree)
 		for _, limit := range []int{0, 1, 7, len(full) - 1, len(full), len(full) + 3} {
-			out, over, err := jsonMarshalTreeCapped(tree, limit)
+			out, size, err := jsonMarshalTreeCapped(tree, limit)
+			over := size > limit
 			if jsonTreeErrText(err) != jsonTreeErrText(ferr) {
 				t.Fatalf("tree %d limit %d: error %v, want %v", i, limit, err, ferr)
 			}
 			if ferr != nil {
 				continue
 			}
-			if over != (len(full) > limit) {
-				t.Fatalf("tree %d limit %d: over=%v for %d bytes", i, limit, over, len(full))
+			if size != len(full) {
+				t.Fatalf("tree %d limit %d: size %d for %d bytes", i, limit, size, len(full))
 			}
 			if !over && !bytes.Equal(out, full) {
 				t.Fatalf("tree %d limit %d: bytes differ", i, limit)
@@ -375,9 +377,9 @@ func TestJsonTreeWriterCappedStopsWithSameErrors(t *testing.T) {
 	_, refErr := jsonTreeReference(tree, 0)
 	refCalls := calls
 	calls = nil
-	_, over, err := jsonMarshalTreeCapped(tree, 10)
-	if over || jsonTreeErrText(err) != refErr || fmt.Sprint(calls) != fmt.Sprint(refCalls) {
-		t.Fatalf("capped walk changed failure or effects: over=%v err=%v calls=%v want %v %v", over, err, calls, refErr, refCalls)
+	_, size, err := jsonMarshalTreeCapped(tree, 10)
+	if size != 0 || jsonTreeErrText(err) != refErr || fmt.Sprint(calls) != fmt.Sprint(refCalls) {
+		t.Fatalf("capped walk changed failure or effects: size=%v err=%v calls=%v want %v %v", size, err, calls, refErr, refCalls)
 	}
 }
 
@@ -385,9 +387,9 @@ func TestJsonTreeWriterCappedDoesNotGrowPastLimit(t *testing.T) {
 	blob := strings.Repeat("b", 8<<20)
 	tree := jsonOrderedObject{keys: []string{"a", "blob", "z"}, vals: []any{"small", blob, int64(1)}}
 	allocs := testing.AllocsPerRun(5, func() {
-		_, over, err := jsonMarshalTreeCapped(tree, 1_500_000)
-		if !over || err != nil {
-			panic("expected over cap")
+		out, size, err := jsonMarshalTreeCapped(tree, 1_500_000)
+		if out != nil || size != len(blob)+len(`{"a":"small","blob":"","z":1}`) || err != nil {
+			panic("expected over cap with the exact size")
 		}
 	})
 	// The writer never copies the 8 MB string: one small initial buffer only.

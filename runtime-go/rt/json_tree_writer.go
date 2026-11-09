@@ -48,13 +48,15 @@ var jsonOrderedObjectType = reflect.TypeOf(jsonOrderedObject{})
 const jsonSliceCycleDepth = 1000
 
 // jsonTreeWriter carries the optional byte limit. limit < 0 means no limit.
-// Once the output passes the limit the writer stops writing (over = true) but
-// keeps walking the rest of the tree with the same order, the same json.Marshal
-// calls for delegated values and the same errors, so a limit never changes
-// which failure or which side effect an encode produces.
+// Once the output passes the limit the writer stops writing (over = true) and
+// only counts (size), but it keeps walking the rest of the tree in the same
+// order, with the same json.Marshal calls for delegated values and the same
+// errors, so a limit never changes which failure or which side effect an
+// encode produces, nor the encoded length it reports.
 type jsonTreeWriter struct {
 	limit int
 	over  bool
+	size  int // the whole encoded length so far, valid once over
 }
 
 // jsonMarshalTree is json.Marshal(v) for a phase-1 tree, in one pass.
@@ -63,33 +65,36 @@ func jsonMarshalTree(v any) ([]byte, error) {
 	return w.appendValue(make([]byte, 0, 256), v, 0)
 }
 
-// jsonMarshalTreeCapped is jsonMarshalTree with a byte limit. When the encoding
-// is longer than limit it returns over = true and no bytes; the walk still
-// visits every node, so the error (and every delegated Marshaler call) is
-// exactly the one jsonMarshalTree would give.
-func jsonMarshalTreeCapped(v any, limit int) (out []byte, over bool, err error) {
+// jsonMarshalTreeCapped is jsonMarshalTree with a byte limit. size is always
+// the exact length of the encoding. When size > limit it returns no bytes and
+// stops building them as soon as the limit is passed; the walk still visits
+// every node, so the error (and every delegated Marshaler call) is exactly the
+// one jsonMarshalTree would give.
+func jsonMarshalTreeCapped(v any, limit int) (out []byte, size int, err error) {
 	if limit < 0 {
 		limit = 0
 	}
 	w := jsonTreeWriter{limit: limit}
-	out, err = w.appendValue(make([]byte, 0, 256), v, 0)
+	out, err = w.appendValue(make([]byte, 0, min(256, limit+1)), v, 0)
 	if err != nil {
-		return nil, false, err
+		return nil, 0, err
 	}
-	if w.over || len(out) > limit {
-		return nil, true, nil
+	if w.over {
+		return nil, w.size, nil
 	}
-	return out, false, nil
+	return out, len(out), nil
 }
 
 // fits reports whether n more bytes may be appended. When they may not, the
-// writer switches to walk-only mode and drops what it has written.
+// writer switches to count-only mode (dropping what it has written) or, in
+// that mode already, counts them.
 func (w *jsonTreeWriter) fits(b []byte, n int) bool {
 	if w.over {
+		w.size += n
 		return false
 	}
 	if w.limit >= 0 && len(b)+n > w.limit {
-		w.over = true
+		w.over, w.size = true, len(b)+n
 		return false
 	}
 	return true
@@ -138,9 +143,6 @@ func (w *jsonTreeWriter) appendValue(b []byte, v any, sliceDepth int) ([]byte, e
 	case string:
 		return w.appendString(b, x), nil
 	case int64:
-		if w.over {
-			return b, nil
-		}
 		var tmp [24]byte
 		return w.appendBytes(b, strconv.AppendInt(tmp[:0], x, 10)), nil
 	case bool:
@@ -152,9 +154,6 @@ func (w *jsonTreeWriter) appendValue(b []byte, v any, sliceDepth int) ([]byte, e
 		return w.appendBytes(b, jsonNullBytes), nil
 	case float64:
 		if !math.IsNaN(x) && !math.IsInf(x, 0) {
-			if w.over {
-				return b, nil
-			}
 			var tmp [32]byte
 			return w.appendBytes(b, jsonAppendFloat64(tmp[:0], x)), nil
 		}
@@ -207,12 +206,15 @@ var (
 // (a control character other than \n \r \t, invalid UTF-8, U+2028, U+2029) is
 // given to json.Marshal whole, so those rules stay encoding/json's own.
 func (w *jsonTreeWriter) appendString(b []byte, s string) []byte {
-	if w.over {
-		return b
+	// The encoding is never shorter than the string plus its two quotes, so a
+	// string that cannot fit is counted, never copied.
+	if !w.over && w.limit >= 0 && len(b)+len(s)+2 > w.limit {
+		w.over, w.size = true, len(b)
+		b = b[:0]
 	}
-	// The encoding is never shorter than the string plus its two quotes.
-	if !w.fits(b, len(s)+2) {
-		return b[:0]
+	if w.over {
+		w.size += jsonStringLen(s)
+		return b
 	}
 	mark := len(b)
 	b = append(b, '"')
@@ -260,10 +262,41 @@ func (w *jsonTreeWriter) appendString(b []byte, s string) []byte {
 	b = append(b, s[start:]...)
 	b = append(b, '"')
 	if w.limit >= 0 && len(b) > w.limit {
-		w.over = true
+		w.over, w.size = true, len(b)
 		return b[:0]
 	}
 	return b
+}
+
+// jsonStringLen is len(appendString(s)) without building it.
+func jsonStringLen(s string) int {
+	n := 2
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c < utf8.RuneSelf {
+			switch {
+			case jsonStringSafe[c]:
+				n++
+			case c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t':
+				n += 2
+			case c == '<' || c == '>' || c == '&':
+				n += 6
+			default:
+				q, _ := json.Marshal(s)
+				return len(q)
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if (r == utf8.RuneError && size == 1) || r == '\u2028' || r == '\u2029' {
+			q, _ := json.Marshal(s)
+			return len(q)
+		}
+		n += size
+		i += size
+	}
+	return n
 }
 
 func (w *jsonTreeWriter) appendStringCanonical(b []byte, s string) []byte {

@@ -23,9 +23,7 @@ func (p *spaMixedPersistence) step(prev, next any, full func(any) string, st spa
 		if p.profiling {
 			observe = func(m spaPersistMetrics) { metrics = m }
 		}
-		cleared = spaPersistStep(prev, next, full, func(blob string) {
-			spaPersistWrite(st, life, spaPersistStripFields(blob, exclude, protected), protected, capBytes)
-		}, protected, observe)
+		cleared = spaPersistStepReference(prev, next, full, &spaReferencePersist{st: st, life: life, exclude: exclude, protected: protected, capBytes: capBytes}, observe)
 		return
 	}
 	previousCache := p.cache
@@ -65,7 +63,7 @@ func (p *spaMixedPersistence) step(prev, next any, full func(any) string, st spa
 			start = time.Now()
 		}
 		if candidate.Reference {
-			spaPersistWrite(st, life, spaPersistStripFields(candidate.FullJSON, exclude, protected), protected, capBytes)
+			spaPersistWriteJSON(st, life, candidate.FullJSON, exclude, protected, capBytes)
 		} else {
 			spaPersistWriteKnownIdentity(st, life, candidate.Payload, candidate.Identity, candidate.EncodedBytes, capBytes)
 		}
