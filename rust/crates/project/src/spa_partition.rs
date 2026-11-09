@@ -1780,7 +1780,8 @@ pub struct ModelFieldTy {
     /// For a non-primitive type this is a best-effort surface rendering
     /// (`List Todo`) — the authoritative shape for codec resolution is [`ty`].
     pub ty_name: String,
-    /// The `Std.Codec` combinator for a primitive field (`Codec.int`), or `None`
+    /// The `Std.Codec` combinator for a primitive field (`SpaCodec_.int`, under
+    /// the alias the split reserves), or `None`
     /// when the field's type is non-primitive. The `spa-split` generator resolves
     /// the non-primitive case against the project's own `Codec <T>` bindings /
     /// `Codec.list`, using [`ty`].
@@ -1799,10 +1800,10 @@ fn field_ty_codec(t: &ty::Ty) -> ModelFieldTy {
         if args.is_empty() {
             let tail = name.as_str().rsplit('.').next().unwrap_or(name.as_str());
             let codec = match tail {
-                "Int" => Some("Codec.int"),
-                "String" => Some("Codec.string"),
-                "Bool" => Some("Codec.bool"),
-                "Float" => Some("Codec.float"),
+                "Int" => Some("SpaCodec_.int"),
+                "String" => Some("SpaCodec_.string"),
+                "Bool" => Some("SpaCodec_.bool"),
+                "Float" => Some("SpaCodec_.float"),
                 _ => None,
             };
             return ModelFieldTy {

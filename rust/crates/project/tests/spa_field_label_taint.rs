@@ -31,7 +31,7 @@ fn a_field_label_named_like_a_tainted_binding_keeps_the_model_decoder() {
         .unwrap_or_else(|e| panic!("the fixture must split: {e}"));
     let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
     assert!(
-        front.contains("Spa.withModelDecoder spaModelDecoder_"),
+        front.contains("SpaLib_.withModelDecoder spaModelDecoder_"),
         "`products` in `{{ blank | products = \"\" }}` is a field label, not the tainted \
          `products` binding; the client must keep its model decoder:\n{front}"
     );

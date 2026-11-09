@@ -462,8 +462,8 @@ fn a_relay_root_that_writes_the_model_keeps_its_write() {
     let arm = &front[arm_start..rpc_at];
     assert!(
         arm.contains("status = \"sending\"")
-            && arm.contains("Spa.rpc ")
-            && !arm.contains("Spa.rpcHold"),
+            && arm.contains("SpaLib_.rpc ")
+            && !arm.contains("SpaLib_.rpcHold"),
         "the write runs in the client arm, with an async RPC:\n{arm}"
     );
     let _ = std::fs::remove_dir_all(&out);

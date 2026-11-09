@@ -232,7 +232,7 @@ fn backend_reload_handler_binds_and_settles_the_chain() {
     );
     // The response is encoded from the FINAL settled model, over `note`.
     assert!(
-        back.contains("Codec.toJson shipRespCodec { note = mFinal.note }"),
+        back.contains("SpaCodec_.toJson shipRespCodec { note = mFinal.note }"),
         "Ship's response must carry the settled `note` from the chain's final model:\n{back}"
     );
     // Reload answers with the read's result; its client `Reloaded` arm applies it.
@@ -293,7 +293,8 @@ fn frontend_has_no_wire_leak_for_the_server_internal_msg() {
         "server-internal `Shipped` must be pruned from the frontend"
     );
     assert!(
-        front.contains("Spa.rpcHold shipReqCodec") && front.contains("Spa.rpc reloadReqCodec"),
+        front.contains("SpaLib_.rpcHold shipReqCodec")
+            && front.contains("SpaLib_.rpc reloadReqCodec"),
         "Ship (a chain root) holds; Reload (a client-result root) is async:\n{front}"
     );
     // The un-chained SyncCopy's continuations MUST remain (fail-closed).
@@ -454,7 +455,7 @@ fn a_follow_up_msg_is_never_server_internal() {
     let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
     let _ = std::fs::remove_dir_all(&out);
     assert!(
-        back.contains("[ \"Tracked\", Codec.toJson spaFollowTrackedReqCodec"),
+        back.contains("[ \"Tracked\", SpaCodec_.toJson spaFollowTrackedReqCodec"),
         "the backend must encode `Tracked` as a follow-up:\n{back}"
     );
     assert!(
@@ -475,7 +476,8 @@ fn a_follow_up_msg_is_never_server_internal() {
     let write = applied.find("count = resp.count").unwrap_or(usize::MAX);
     let decode = applied.find("spaDecodeFollows_").unwrap_or(0);
     assert!(
-        write < decode && applied.contains("( spaM1_, Cmd.batch [ spaC1_, Spa.reportError e_ ] )"),
+        write < decode
+            && applied.contains("( spaM1_, SpaCmd_.batch [ spaC1_, SpaLib_.reportError e_ ] )"),
         "the write must apply before the follow-ups are decoded, and a decode error \
          must keep it:\n{applied}"
     );

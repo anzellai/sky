@@ -81,7 +81,7 @@ fn an_unreadable_command_warns_about_an_uncodable_msg_instead_of_failing() {
         back.contains("GotConfig _ ->\n            spaFollowOutsideWire_ \"GotConfig\""),
         "the backend must log and drop a `GotConfig` follow-up, never send it:\n{back}"
     );
-    assert!(back.contains("Ffi.kernel \"Spa_followUpOutsideWire\""));
+    assert!(back.contains("SpaFfi_.kernel \"Spa_followUpOutsideWire\""));
     let _ = std::fs::remove_dir_all(&out);
 }
 

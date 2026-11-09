@@ -809,7 +809,7 @@ spaGenString s =\n\
 \x20   let\n\
 \x20       s2 = spaSeedNext s\n\
 \x20   in\n\
-\x20   ( \"s\" ++ String.fromInt (modBy 1000 s2), s2 )\n\
+\x20   ( \"s\" ++ SpaString_.fromInt (modBy 1000 s2), s2 )\n\
 \n\
 spaGenUnit : Seed -> ( (), Seed )\n\
 spaGenUnit s =\n\

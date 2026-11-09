@@ -79,16 +79,16 @@ fn server_computed_scroll_and_helper_batch_return_after_response_not_send_time()
     assert!(shared.contains("spaScroll_ : String"));
     assert!(shared.contains("returned-browser-command-wire-v2"));
     assert!(back.contains("spaCollectScrolls_ cmd"));
-    assert!(back.contains("Server.withStatus 409"));
+    assert!(back.contains("SpaServer_.withStatus 409"));
     assert!(back.contains("(spaScrollWireGuard_ saveHandler)"));
     assert!(back.contains("File.readFile \"data/target.txt\""));
     assert!(
         !front.contains("File.readFile"),
         "server read escaped into frontend"
     );
-    assert!(front.contains("Spa.rpcScrollHold"));
-    assert!(front.contains("Spa.returnedScrolls resp.spaScroll_"));
-    assert!(front.contains("( spaScrollModel_, Cmd.batch"));
+    assert!(front.contains("SpaLib_.rpcScrollHold"));
+    assert!(front.contains("SpaLib_.returnedScrolls resp.spaScroll_"));
+    assert!(front.contains("( spaScrollModel_, SpaCmd_.batch"));
     assert!(!front.contains("{ model | saved = String.length target }"));
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -104,7 +104,7 @@ fn safe_init_keeps_rpc_plan_but_ssr_owned_scrolls_have_a_versioned_boot_path() {
         !front.contains("File.readFile"),
         "server-only init task escaped into frontend"
     );
-    assert!(front.contains("Spa.readInitScrolls spaInitJson_"));
+    assert!(front.contains("SpaLib_.readInitScrolls spaInitJson_"));
     assert!(back.contains("spaInitScrollResponse_ spaInitCmd_"));
     assert!(back.contains("spaSsrScrollSettle_"));
     assert!(back.contains("spaSsrPageScrolls_"));
@@ -116,8 +116,8 @@ fn importing_old_url_nav_does_not_opt_into_scroll_wire() {
     let (dir, front, back, shared) = split("old-url", &original());
     assert!(!shared.contains("spaScroll_"));
     assert!(!shared.contains("returned-scroll-wire"));
-    assert!(!front.contains("Spa.returnedScrolls"));
-    assert!(!front.contains("Spa.scrollRpcScope"));
+    assert!(!front.contains("SpaLib_.returnedScrolls"));
+    assert!(!front.contains("SpaLib_.scrollRpcScope"));
     assert!(!back.contains("spaCollectScrolls_"));
     assert!(front.contains("Nav.pushUrl"));
     std::fs::remove_dir_all(dir).unwrap();
@@ -165,7 +165,7 @@ fn existing_client_result_follow_whole_model_chain_and_push_shapes_keep_the_side
             "{name}: missing protocol version binding"
         );
         assert!(
-            front.contains("Spa.returnedScrolls resp.spaScroll_"),
+            front.contains("SpaLib_.returnedScrolls resp.spaScroll_"),
             "{name}: missing post-render apply"
         );
         assert!(
@@ -204,12 +204,12 @@ fn no_write_server_scroll_holds_later_msgs_without_fake_model_io() {
     );
     let (dir, front, back, _) = split("scroll-order", &source);
     assert!(
-        front.contains("Spa.rpcScrollHold"),
+        front.contains("SpaLib_.rpcScrollHold"),
         "scroll-only RPC must hold even with an empty write set"
     );
     assert!(front.contains("page = \"next\""));
     assert!(
-        front.contains("Spa.rpc "),
+        front.contains("SpaLib_.rpc "),
         "independent perform RPC must remain asynchronous"
     );
     assert!(back.contains("spaCollectScrolls_ cmd"));
@@ -231,7 +231,7 @@ fn mixed_server_scroll_and_url_navigation_return_with_the_answer() {
     // the scroll AND the navigation, in batch order. No source is copied into
     // the client at send time (it could use a value only the server has).
     assert!(
-        !front.contains("Spa.scrollRpcScope"),
+        !front.contains("SpaLib_.scrollRpcScope"),
         "a server navigation must not run as a send-time client residual"
     );
     assert!(!front.contains("Cmd.batch [ Nav.scrollIntoView target"));
@@ -239,7 +239,7 @@ fn mixed_server_scroll_and_url_navigation_return_with_the_answer() {
         !front.contains("target ="),
         "server-bound let escaped into frontend"
     );
-    assert!(front.contains("Spa.rpcScrollHold"));
+    assert!(front.contains("SpaLib_.rpcScrollHold"));
     assert!(!front.contains("File.readFile"));
     assert!(back.contains("spaCollectScrolls_ cmd"));
     std::fs::remove_dir_all(dir).unwrap();
@@ -324,7 +324,7 @@ fn ordinary_cold_boot_can_have_two_marked_init_and_navigation_requests() {
     );
     assert!(front.contains("/_rpc/SpaInit_"));
     assert!(
-        front.contains("Spa.rpcScrollHold"),
+        front.contains("SpaLib_.rpcScrollHold"),
         "onNavigate must really issue a second marked request"
     );
     assert!(front.contains("/_rpc/Navigated"));

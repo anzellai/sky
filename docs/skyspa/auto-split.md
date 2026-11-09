@@ -1932,3 +1932,39 @@ variable (`open_type_word`), so a future resolver gap fails the split with a
 clear message instead of `[E2012]` in generated code. The `spa_split_flow`
 test `generated_wire_types_name_every_type_they_hold` (fixture
 `spa-wire-type-names`) checks both legs of an app with all three shapes.
+
+## 28. Generated code names nothing the app chose (v0.29.7)
+
+The split writes code into the app's own modules (the backend and frontend
+`Main`, `Shared`, a sibling module that declares `update`). Before v0.29.7
+that code named framework modules by the short names an app usually writes
+(`Server.rpc`, `Codec.toJson`, `Cmd.none`, `Spa.rpc`, `Task.succeed`) and
+added `import Sky.Http.Server as Server` (and `Codec`, `System`, `Error`,
+`Ffi`, `Task`, `Maybe`, `Stream`) only when the app did not import that
+module. Two faults had this one root:
+
+- A project module or an import alias with one of those names collided. A
+  `web:app` app with its own `module Server` passed `sky check`, but its
+  backend held `import Server` next to the added `import Sky.Http.Server as
+  Server`, so the app's `Server.record` named nothing.
+- An app that imported the module under another alias (`import
+  Sky.Http.Server as Http`, `import Sky.Core.Task as T`, `import Std.Spa as
+  S`) got no added import, so the generated `Server.rpc` named nothing.
+
+Generated code now names each framework module only through an alias the
+split reserves (`RESERVED_ALIASES` in `spa_split.rs`): `SpaServer_`,
+`SpaStream_`, `SpaCodec_`, `SpaSystem_`, `SpaError_`, `SpaFfi_`, `SpaTask_`,
+`SpaList_`, `SpaDict_`, `SpaMaybe_`, `SpaResult_`, `SpaString_`,
+`SpaSecret_`, `SpaCmd_`, `SpaSub_`, `SpaLib_` (`Std.Spa`), `SpaApp_`, plus the
+earlier `SpaInitRpc_`, `SpaInitCodec_`, `SpaInitCmd_` and `SpaMsgMod_`.
+Generated type annotations qualify the framework types the same way
+(`SpaServer_.Handler`, `SpaCodec_.Codec Item`) and name builtin types
+(`Task`, `Result`, `Error`) bare, which no project can redefine. Every Sky
+file the split writes gets `import <module> as <alias>` for each reserved
+alias it uses (`ensure_reserved_imports`); a module may be imported twice, so
+the app's own imports stay exactly as written. An app whose module or import
+alias is one of the reserved names is refused with a message that names it.
+The `sky fuzz` harnesses use the same aliases. Test:
+`project/tests/spa_split_reserved_aliases.rs` (project modules `Server`,
+`Codec` and `Error`, `import Sky.Core.Task as T`, `import Sky.Http.Server as
+Http`; both generated halves type-check).

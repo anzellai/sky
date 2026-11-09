@@ -163,7 +163,7 @@ fn server_navigation_is_returned_command_data_not_copied_source() {
         "server navigation source must not be copied into the client"
     );
     assert!(
-        front.contains("Spa.rpcScrollHold"),
+        front.contains("SpaLib_.rpcScrollHold"),
         "a server navigation holds later Msgs"
     );
     assert!(

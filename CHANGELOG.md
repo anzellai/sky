@@ -39,6 +39,18 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
     `html:not([data-sky-hydrating])` reads an up-to-date page.
   - The boot loader no longer records typed text. It still holds a form
     submitted during hydration and submits it through the app.
+- **A `web:app` build no longer fails when the app has its own module named
+  like a framework module.** An app with a project module `Server` (or
+  `Codec`, `Error`, `System`) passed `sky check`, but `sky build --target
+  web:app` failed with "Server has no member record": the Sky.Spa split added
+  `import Sky.Http.Server as Server` next to the app's own `import Server`. An
+  app that imported a framework module under another alias (`import
+  Sky.Http.Server as Http`, `import Sky.Core.Task as T`) failed the same way,
+  because the split then added no import for its own code. The code the split
+  generates now names every framework module through an alias it reserves
+  (`SpaServer_`, `SpaCodec_`, `SpaTask_`, …), and the app's imports stay as
+  written. An app that uses one of those reserved names itself is refused
+  with a message that names it.
 
 ## v0.29.6 — faster large-model encoding, a record of functions in Just, a leaving gate during boot (2026-11-09)
 

@@ -125,7 +125,7 @@ fn owned_json_rpc_frontend_retains_generated_private_proofs() {
     let frontend = out.join("frontend");
     let source = std::fs::read_to_string(frontend.join("src/Main.sky")).unwrap();
     assert!(
-        source.contains("Spa.rpc") || source.contains("Spa.rpcHold"),
+        source.contains("SpaLib_.rpc") || source.contains("SpaLib_.rpcHold"),
         "fixture must exercise real split RPC path"
     );
     let emitted = project::emit_example_source(&root(), &frontend).unwrap();

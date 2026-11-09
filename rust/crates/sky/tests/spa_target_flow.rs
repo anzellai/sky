@@ -512,7 +512,7 @@ fn web_app_without_rpc_error_keeps_the_floor() {
         "item 4 control: no withRpcError means no spaRpcError_ binding:\n{front}"
     );
     assert!(
-        front.contains("AppliedPersist (Err e) ->") && front.contains("Spa.reportRpcFailure e"),
+        front.contains("AppliedPersist (Err e) ->") && front.contains("SpaLib_.reportRpcFailure e"),
         "item 4 control: without the handler the Err arm keeps the model and reports:\n{front}"
     );
     let _ = std::fs::remove_dir_all(&dir);

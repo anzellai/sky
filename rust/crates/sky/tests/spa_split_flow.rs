@@ -278,12 +278,12 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
         "backend must keep the server effect saveN"
     );
     assert!(
-        back.contains("Server.rpc \"POST /_rpc/Persist\""),
+        back.contains("SpaServer_.rpc \"POST /_rpc/Persist\""),
         "backend must expose the generated RPC endpoint"
     );
     // The frontend must reach the effect through the typed RPC boundary instead.
     assert!(
-        front.contains("Spa.rpc") && front.contains("/_rpc/Persist"),
+        front.contains("SpaLib_.rpc") && front.contains("/_rpc/Persist"),
         "frontend must call the RPC boundary for the server branch"
     );
 
@@ -482,7 +482,7 @@ fn client_only_app_generates_a_buildable_static_only_backend() {
     // serve static assets — and the generated list must be well-formed.
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
     assert!(
-        back.contains("Server.static \"/\" \"../frontend/dist\""),
+        back.contains("SpaServer_.static \"/\" \"../frontend/dist\""),
         "backend must still serve the frontend's static assets"
     );
     assert!(
@@ -491,7 +491,7 @@ fn client_only_app_generates_a_buildable_static_only_backend() {
     );
     // The exact defect: a list opening with a leading comma.
     assert!(
-        !back.contains("[\n        , Server.static") && !back.contains("[ , Server.static"),
+        !back.contains("[\n        , SpaServer_.static") && !back.contains("[ , SpaServer_.static"),
         "backend Server.listen list must not open with a leading comma"
     );
 
@@ -576,7 +576,7 @@ fn client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint() {
     );
     assert!(
         back.contains("spaModelToJson_ ({ m_ | handshake = Nothing })")
-            && back.contains("Ffi.kernel \"Spa_modelToJson\""),
+            && back.contains("SpaFfi_.kernel \"Spa_modelToJson\""),
         "the SSR first paint must write the device handshake as Nothing (through \
          `Spa_modelToJson`: `Codec.auto`'s Encodable bound refuses a key type):\n{back}"
     );
@@ -711,7 +711,7 @@ fn native_effects_stay_client_side_not_rpc() {
         "a client-native effect must NOT generate an RPC endpoint on the backend"
     );
     assert!(
-        back.contains("Server.static \"/\" \"../frontend/dist\""),
+        back.contains("SpaServer_.static \"/\" \"../frontend/dist\""),
         "backend must still serve the frontend's static assets"
     );
 
@@ -939,7 +939,8 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
         "ToggleReq must carry the typed Msg arg `id : Int`:\n{shared}"
     );
     assert!(
-        shared.contains("toggleReqCodec") && shared.contains("Codec.field \"id\" .id Codec.int"),
+        shared.contains("toggleReqCodec")
+            && shared.contains("SpaCodec_.field \"id\" .id SpaCodec_.int"),
         "toggleReqCodec must encode the Msg arg with a real codec"
     );
     // Backend RECONSTRUCTS the Msg with the wire arg, not a bare ctor.
@@ -950,7 +951,7 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
     // Frontend SENDS the Msg arg.
     assert!(
         front.contains(
-            "Spa.rpcHold toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" { id = id } AppliedToggle"
+            "SpaLib_.rpcHold toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" { id = id } AppliedToggle"
         ),
         "frontend must send the Msg arg to the RPC:\n{front}"
     );
@@ -961,7 +962,7 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
         "the response field keeps its surface type `List Todo` (not `List any`):\n{shared}"
     );
     assert!(
-        shared.contains("Codec.field \"todos\" .todos todoListCodec"),
+        shared.contains("SpaCodec_.field \"todos\" .todos todoListCodec"),
         "the todos field must wire to the user's `todoListCodec`, not a placeholder"
     );
     // The user's type + codecs are COPIED into Shared (so both projects share one).
@@ -1083,7 +1084,7 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
         "Shared must import the sibling Domain module for the codec/type:\n{shared}"
     );
     assert!(
-        shared.contains("Codec.field \"todos\" .todos todoListCodec"),
+        shared.contains("SpaCodec_.field \"todos\" .todos todoListCodec"),
         "the todos field must wire to the sibling `todoListCodec`:\n{shared}"
     );
     assert!(
@@ -1135,7 +1136,7 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
     );
     assert!(
         front.contains(
-            "Spa.rpcHold toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" { id = id } AppliedToggle"
+            "SpaLib_.rpcHold toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" { id = id } AppliedToggle"
         ),
         "frontend must send the Msg arg to the RPC:\n{front}"
     );
@@ -1496,7 +1497,7 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
         "SECURITY LEAK: Shared must NOT import the server-tainted `Data` module:\n{shared}"
     );
     assert!(
-        shared.contains("Codec.field \"items\" .items (Codec.list itemCodec)"),
+        shared.contains("SpaCodec_.field \"items\" .items (SpaCodec_.list itemCodec)"),
         "the items field must wire to `Codec.list itemCodec`:\n{shared}"
     );
 
@@ -1615,7 +1616,7 @@ fn wires_a_result_error_payload_through_the_stdlib_error_codec() {
         "the RPC field keeps its `Result Error String` surface type:\n{shared}"
     );
     assert!(
-        shared.contains("(Codec.result Codec.error Codec.string)"),
+        shared.contains("(SpaCodec_.result SpaCodec_.error SpaCodec_.string)"),
         "the `Result Error String` field must wire to `Codec.result Codec.error Codec.string`:\n{shared}"
     );
     // --- No hand-written codec was needed / copied (the stdlib provides it). ---
@@ -1703,7 +1704,7 @@ fn a_typed_ai_failure_crosses_the_wire_and_is_read_on_the_client() {
     let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
     let front_shared = std::fs::read_to_string(out.join("frontend/src/Shared.sky")).unwrap();
     assert!(
-        shared.contains("(Codec.result Codec.error Codec.string)"),
+        shared.contains("(SpaCodec_.result SpaCodec_.error SpaCodec_.string)"),
         "the answer's `Result Error String` must wire through the stdlib Error codec:\n{shared}"
     );
     assert!(
@@ -1786,7 +1787,7 @@ fn auto_derives_a_record_codec_for_a_plain_record_wire_field() {
         "Shared must synthesise a NOMINALLY-annotated blank `blankReceipt_ : Receipt` (an inline unannotated literal erases element types):\n{shared}"
     );
     assert!(
-        shared.contains("autoReceiptCodec_ =") && shared.contains("Codec.auto blankReceipt_"),
+        shared.contains("autoReceiptCodec_ =") && shared.contains("SpaCodec_.auto blankReceipt_"),
         "Shared must derive `autoReceiptCodec_ = Codec.auto blankReceipt_`:\n{shared}"
     );
     // --- The record (and its NESTED record) are copied into Shared. ---
@@ -1796,7 +1797,7 @@ fn auto_derives_a_record_codec_for_a_plain_record_wire_field() {
     );
     // --- The wire field wires through the derived codec (wrapped by Result). ---
     assert!(
-        shared.contains("(Codec.result Codec.error autoReceiptCodec_)"),
+        shared.contains("(SpaCodec_.result SpaCodec_.error autoReceiptCodec_)"),
         "the `Result Error Receipt` field must wire `Codec.result Codec.error autoReceiptCodec_`:\n{shared}"
     );
     // --- The mixed field defaults are sound (String/Int/Maybe/List/nested). ---
@@ -2226,11 +2227,11 @@ fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
 
     // --- Backend push wiring: shared broker + interpret + the SSE endpoint. ---
     assert!(
-        back.contains("Ffi.kernel \"Spa_newBroker\"") && back.contains("spaBroker ="),
+        back.contains("SpaFfi_.kernel \"Spa_newBroker\"") && back.contains("spaBroker ="),
         "backend must construct the shared broker CAF:\n{back}"
     );
     assert!(
-        back.contains("Ffi.kernel \"Spa_interpretPublish\""),
+        back.contains("SpaFfi_.kernel \"Spa_interpretPublish\""),
         "backend must wire the Cmd-publish interpreter"
     );
     assert!(
@@ -2238,25 +2239,25 @@ fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
         "the RPC handler must feed its returned Cmd to the broker (not discard it):\n{back}"
     );
     assert!(
-        back.contains("Server.api \"GET /_sky/sub\" subHandler")
-            && back.contains("Ffi.kernel \"Spa_streamTopic\""),
+        back.contains("SpaServer_.api \"GET /_sky/sub\" subHandler")
+            && back.contains("SpaFfi_.kernel \"Spa_streamTopic\""),
         "backend must mount the SSE push endpoint:\n{back}"
     );
     // --- The RPC is a cookie-session route with the origin guard, not an
     // API route (Server.api is CSRF-exempt with no other check). ---
     assert!(
-        back.contains("Server.rpc \"POST /_rpc/Increment\" incrementHandler")
-            && !back.contains("Server.api \"POST /_rpc/"),
+        back.contains("SpaServer_.rpc \"POST /_rpc/Increment\" incrementHandler")
+            && !back.contains("SpaServer_.api \"POST /_rpc/"),
         "every /_rpc/<Msg> must be a Server.rpc route:\n{back}"
     );
     // --- `/_sky/sub` authorises the topic against the app's own
     // `subscriptions` (a hand-authored entry: the top-level name). ---
     assert!(
-        back.contains("Ffi.kernel \"Spa_subAllowsTopic\"")
+        back.contains("SpaFfi_.kernel \"Spa_subAllowsTopic\"")
             && back
                 .contains("if spaSubAllowsTopic_ (subscriptions (spaSubModel_ req)) topic_ then")
             && back.contains("spaSubModel_ req_ =")
-            && back.contains("Server.withStatus 403"),
+            && back.contains("SpaServer_.withStatus 403"),
         "the SSE endpoint must stream only topics the app's subscriptions name:\n{back}"
     );
 
@@ -2273,7 +2274,7 @@ fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
     }
     // The server branch still routes through the RPC boundary.
     assert!(
-        front.contains("Spa.rpc") && front.contains("/_rpc/Increment"),
+        front.contains("SpaLib_.rpc") && front.contains("/_rpc/Increment"),
         "frontend must call the RPC boundary for the Increment server branch"
     );
 
@@ -3045,7 +3046,7 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     // no `__sky_csrf` form field, and a form submitted before hydration ended
     // on a 403 JSON page. The kernel also answers a native POST with 303.
     assert!(
-        backend.contains("spaPageRoute_ =\n    Ffi.kernel \"Spa_pageRoute\""),
+        backend.contains("spaPageRoute_ =\n    SpaFfi_.kernel \"Spa_pageRoute\""),
         "the backend must alias the page-route kernel:\n{backend}"
     );
     assert!(
@@ -3082,7 +3083,7 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     // The SSR route must be registered BEFORE the static fallthrough so asset
     // GETs (main.<hash>.wasm, wasm_exec.js) still reach the file server.
     let ssr_at = backend.find("spaPageRoute_ \"/{$}\" ssrHandler");
-    let static_at = backend.find("Server.static \"/\"");
+    let static_at = backend.find("SpaServer_.static \"/\"");
     assert!(
         ssr_at.is_some() && static_at.is_some() && ssr_at < static_at,
         "SSR-P1: the SSR route must precede the static route:\n{backend}"
@@ -3523,7 +3524,7 @@ fn spa_guard_is_enforced_server_side_on_rpc() {
         "fix 5: the guard must run against the request-seeded model mReq, not the forgeable payload m:\n{backend}"
     );
     assert!(
-        backend.contains("Task.succeed (forbidden"),
+        backend.contains("SpaTask_.succeed (forbidden"),
         "fix 5: a denied guard must answer 403 (forbidden):\n{backend}"
     );
     let reseed_at = backend
@@ -3639,7 +3640,7 @@ fn web_app_sibling_update_with_rpc_error_builds() {
         std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Logic.sky"))
             .expect("the regenerated frontend Logic module must exist");
     assert!(
-        front_logic.contains("Spa.rpc") && front_logic.contains("/_rpc/Save"),
+        front_logic.contains("SpaLib_.rpc") && front_logic.contains("/_rpc/Save"),
         "bug #4c: the sibling `update`'s Save arm must become an RPC in the frontend:\n{front_logic}"
     );
     assert!(
@@ -3724,7 +3725,7 @@ fn spa_split_request_carries_a_preserved_write_field_round_trip() {
         .map(|(body, _)| body)
         .unwrap_or("");
     assert!(
-        req_codec_body.contains("Codec.field \"note\""),
+        req_codec_body.contains("SpaCodec_.field \"note\""),
         "bug #1: the request codec must carry the preserved write field `note` (read union write):\n{shared}"
     );
 
@@ -4011,7 +4012,7 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
     // catch-all is `Server.staticNotFound … ssrHandler`, so a cold unmatched path
     // SSRs the NotFound page instead of a bare file-server 404.
     let items_at = backend.find("spaPageRoute_ \"/items\" ssrHandler");
-    let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
+    let static_at = backend.find("SpaServer_.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
         "SSR-P3: per-route SSR routes must precede the static NotFound fallback:\n{backend}"
@@ -4255,15 +4256,15 @@ fn spa_unknown_deep_path_ssrs_the_not_found_page() {
     let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
         .expect("generated backend entry must exist");
     assert!(
-        backend.contains("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler"),
+        backend.contains("SpaServer_.staticNotFound \"/\" \"../frontend/dist\" ssrHandler"),
         "the static catch-all must be the SPA NotFound fallback:\n{backend}"
     );
     assert!(
-        !backend.contains("Server.static \"/\" \"../frontend/dist\""),
+        !backend.contains("SpaServer_.static \"/\" \"../frontend/dist\""),
         "an SSR+routed app must NOT emit a bare Server.static catch-all:\n{backend}"
     );
     assert!(
-        backend.contains("Server.withStatus ssrStatus_ <| Server.html"),
+        backend.contains("SpaServer_.withStatus ssrStatus_ <| SpaServer_.html"),
         "a routed SSR page must carry its route status (404 for NotFound):\n{backend}"
     );
 
@@ -4494,7 +4495,7 @@ fn spa_ssr_union_field_pins_and_registers_variants_so_hydration_is_lossless() {
     let frontend_code = strip_line_comments(&frontend);
     assert!(
         frontend_code.contains("spaModelBlank_ :")
-            && frontend_code.contains("Codec.fromJson (Codec.auto spaModelBlank_)"),
+            && frontend_code.contains("SpaCodec_.fromJson (SpaCodec_.auto spaModelBlank_)"),
         "SSR union: the decoder must derive `Codec.auto` from the annotated blank:\n{frontend}"
     );
 
@@ -4567,7 +4568,7 @@ fn spa_ssr_sibling_db_init_is_stripped_in_the_frontend() {
         .unwrap_or_else(|_| panic!("generated frontend Boot.sky must exist:\n{log}"));
     let boot_code = strip_line_comments(&boot);
     assert!(
-        boot_code.contains("Cmd.none"),
+        boot_code.contains("SpaCmd_.none"),
         "GAP-2: the sibling `Boot.init` must be stripped to `Cmd.none`:\n{boot}"
     );
     assert!(
@@ -4590,8 +4591,8 @@ fn spa_ssr_sibling_db_init_is_stripped_in_the_frontend() {
     let fe_main_code = strip_line_comments(&fe_main);
     assert!(
         fe_main_code.contains("spaModelDecoder_ jsonStr_ =")
-            && fe_main_code.contains("Codec.fromJson (Codec.auto")
-            && fe_main_code.contains("|> Spa.withModelDecoder spaModelDecoder_")
+            && fe_main_code.contains("SpaCodec_.fromJson (SpaCodec_.auto")
+            && fe_main_code.contains("|> SpaLib_.withModelDecoder spaModelDecoder_")
             && fe_main_code.contains("import Std.Codec"),
         "GAP-2: the frontend must emit + wire a model decoder for the sibling init:\n{fe_main}"
     );
@@ -4700,7 +4701,7 @@ fn splits_mixed_page_and_api_routes() {
         .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
     assert!(
         backend.contains("spaApiRoutes_ =")
-            && backend.contains("++ List.concatMap App.apiServerRoute spaApiRoutes_"),
+            && backend.contains("++ SpaList_.concatMap SpaApp_.apiServerRoute spaApiRoutes_"),
         "GAP-1: the backend must mount the api routes via `App.apiServerRoute spaApiRoutes_`:\n{backend}"
     );
     // The api handlers survive into the backend (they run there).
@@ -4711,7 +4712,7 @@ fn splits_mixed_page_and_api_routes() {
 
     // ── GAP-1 page routes still SSR, ahead of the static NotFound fallback. ──
     let items_at = backend.find("spaPageRoute_ \"/items\" ssrHandler");
-    let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
+    let static_at = backend.find("SpaServer_.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
         "GAP-1: page routes must SSR ahead of the static NotFound fallback:\n{backend}"
@@ -4722,7 +4723,7 @@ fn splits_mixed_page_and_api_routes() {
         .unwrap_or_else(|_| panic!("generated frontend Boot.sky must exist:\n{log}"));
     let boot_code = strip_line_comments(&boot);
     assert!(
-        boot_code.contains("Cmd.none")
+        boot_code.contains("SpaCmd_.none")
             && !references_word_test(&boot_code, "db")
             && !boot_code.contains("Db.query"),
         "GAP-2: the sibling `Boot.init` must be stripped to `Cmd.none` in the frontend:\n{boot}"
@@ -4799,7 +4800,7 @@ fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
     // ── The api endpoints are mounted (the api handler is the winner). ──
     assert!(
         backend.contains("spaApiRoutes_ =")
-            && backend.contains("++ List.concatMap App.apiServerRoute spaApiRoutes_"),
+            && backend.contains("++ SpaList_.concatMap SpaApp_.apiServerRoute spaApiRoutes_"),
         "FINDING A: the api endpoints must still mount via `App.apiServerRoute`:\n{backend}"
     );
 
@@ -4977,11 +4978,11 @@ fn declared_static_dir_is_propagated_into_the_frontend_dist() {
     // the backend mentions `Server.static "/" "../frontend/dist"`, so a naive
     // whole-file find would match the comment, not the route.
     let listen = back
-        .find("Server.listen")
+        .find("SpaServer_.listen")
         .expect("backend must have Server.listen");
     let routes = &back[listen..];
     let live = routes
-        .find("Server.static \"/brand\" \"brand\"")
+        .find("SpaServer_.static \"/brand\" \"brand\"")
         .unwrap_or_else(|| {
             panic!(
                 "the backend must emit a LIVE static mount for runtime uploads \
@@ -5089,15 +5090,15 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
     }
     // The strip landed: init returns `Cmd.none`, and the pure model is preserved.
     assert!(
-        frontend_code.contains("init () =") && frontend_code.contains("Cmd.none"),
+        frontend_code.contains("init () =") && frontend_code.contains("SpaCmd_.none"),
         "SSR client-leg: the frontend `init` must be stripped to `Cmd.none`:\n{frontend}"
     );
     // The model DECODER (blocker #1/#2) is emitted + wired onto the config, so the
     // client can boot from `#sky-model` — symmetric with the backend embed.
     assert!(
         frontend_code.contains("spaModelDecoder_ jsonStr_ =")
-            && frontend_code.contains("Codec.fromJson (Codec.auto")
-            && frontend_code.contains("|> Spa.withModelDecoder spaModelDecoder_")
+            && frontend_code.contains("SpaCodec_.fromJson (SpaCodec_.auto")
+            && frontend_code.contains("|> SpaLib_.withModelDecoder spaModelDecoder_")
             && frontend_code.contains("import Std.Codec"),
         "SSR client-leg: the frontend must emit + wire a model decoder:\n{frontend}"
     );
@@ -5108,13 +5109,13 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
     // keep the session from the SSR seed on restore.
     assert!(
         frontend_code.contains("spaModelEncoder_ m_ =")
-            && frontend_code.contains("Codec.toJson (Codec.auto spaModelBlank_) m_")
+            && frontend_code.contains("SpaCodec_.toJson (SpaCodec_.auto spaModelBlank_) m_")
             && frontend_code.contains("|> spaWithPreparedModelEncoder_ spaPrepareModelEncoder_ spaFinishModelEncoder_ spaModelEncoder_")
             && frontend_code.contains("kernel \"Spa_withPreparedModelEncoder\"")
             && frontend_code.contains("spaPrepareModelEncoder_ unit_ =")
             && frontend_code.contains("spaFinishModelEncoder_ codec_ model_ =")
-            && frontend_code.contains("Codec.toJson codec_ model_")
-            && frontend_code.contains("|> Spa.withPersistProtectedFields "),
+            && frontend_code.contains("SpaCodec_.toJson codec_ model_")
+            && frontend_code.contains("|> SpaLib_.withPersistProtectedFields "),
         "P2: the frontend must emit + wire a model encoder + protected fields:\n{frontend}"
     );
 
@@ -5265,12 +5266,12 @@ fn spa_ssr_nested_record_model_blank_pins_the_nominal_type_so_hydration_is_lossl
          survive lowering:\n{frontend}"
     );
     assert!(
-        frontend_code.contains("Codec.fromJson (Codec.auto spaModelBlank_)"),
+        frontend_code.contains("SpaCodec_.fromJson (SpaCodec_.auto spaModelBlank_)"),
         "SSR hydration: the decoder must derive `Codec.auto` from the annotated \
          `spaModelBlank_` binding:\n{frontend}"
     );
     assert!(
-        !frontend_code.contains("Codec.fromJson (Codec.auto ({"),
+        !frontend_code.contains("SpaCodec_.fromJson (SpaCodec_.auto ({"),
         "SSR hydration: the decoder must NOT use the inline blank literal that \
          erases nested element types to `[]any`:\n{frontend}"
     );
@@ -5473,8 +5474,8 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     // (a) the backend signs and verifies through the Spa session kernels, which
     // reuse Std.Auth's HS256 token logic and add the sign-out check.
     assert!(
-        backend.contains("Ffi.kernel \"Spa_verifySession\"")
-            && backend.contains("Ffi.kernel \"Spa_signSession\""),
+        backend.contains("SpaFfi_.kernel \"Spa_verifySession\"")
+            && backend.contains("SpaFfi_.kernel \"Spa_signSession\""),
         "signed session must use the Spa session kernels:\n{backend}"
     );
     // (b) the admin branch runs against the COOKIE-verified model, never the wire
@@ -5495,13 +5496,13 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     // the verify helper reads the field codec from the signed claim, and falls
     // back to the init value (never the wire value) when there is no valid cookie.
     assert!(
-        backend.contains("case Codec.fromJson spaSessionCodecSession_ claims.p0 of")
+        backend.contains("case SpaCodec_.fromJson spaSessionCodecSession_ claims.p0 of")
             && backend.contains("if tok == \"\" then\n        initVal"),
         "the verify helper must decode the signed claim and fall back to initVal:\n{backend}"
     );
     // (c) the login branch signs a Set-Cookie around its response.
     assert!(
-        backend.contains("signedResponse_ req m2 (Server.json"),
+        backend.contains("signedResponse_ req m2 (SpaServer_.json"),
         "the establishing (login) branch must sign a Set-Cookie:\n{backend}"
     );
     assert!(
@@ -5515,7 +5516,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     assert!(
         backend.contains("spaSessionToken_ sessionSecret_ req")
             && backend.contains("spaWithSession_ req (")
-            && !backend.contains("Server.getCookie \"sky_sid\""),
+            && !backend.contains("SpaServer_.getCookie \"sky_sid\""),
         "the session token and cookie move go through the runtime:\n{backend}"
     );
     let main_at = backend.find("\nmain =").expect("a main");
@@ -5525,7 +5526,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     );
     // a SaveAdmin (write-set {note}, no session) must NOT sign a cookie.
     assert!(
-        backend.contains("Task.succeed (Server.json (Codec.toJson saveAdminRespCodec"),
+        backend.contains("SpaTask_.succeed (SpaServer_.json (SpaCodec_.toJson saveAdminRespCodec"),
         "a branch that does not establish the session must answer plain (no Set-Cookie):\n{backend}"
     );
     // the framework sign-out endpoint exists.
@@ -6072,7 +6073,7 @@ fn spa_sign_out_revokes_the_signed_session_cookie() {
     // Emission: verification and signing go through the revocation-aware
     // kernels, and the sign-out endpoint ends the session server-side.
     assert!(
-        backend.contains("Ffi.kernel \"Spa_verifySession\"")
+        backend.contains("SpaFfi_.kernel \"Spa_verifySession\"")
             && backend.contains("case spaVerifySession_ sessionSecret_ tok of"),
         "the verify helper must check revocation (Spa_verifySession):\n{backend}"
     );
@@ -6081,12 +6082,12 @@ fn spa_sign_out_revokes_the_signed_session_cookie() {
         "no verify path may skip the revocation check:\n{backend}"
     );
     assert!(
-        backend.contains("Ffi.kernel \"Spa_signSession\"")
-            && backend.contains("signedResponse_ req m2 (Server.json"),
+        backend.contains("SpaFfi_.kernel \"Spa_signSession\"")
+            && backend.contains("signedResponse_ req m2 (SpaServer_.json"),
         "the establishing branch must sign through Spa_signSession with the request:\n{backend}"
     );
     assert!(
-        backend.contains("Ffi.kernel \"Spa_endSession\"")
+        backend.contains("SpaFfi_.kernel \"Spa_endSession\"")
             && backend.contains("spaEndSession_ sessionSecret_"),
         "the sign-out endpoint must end the session server-side:\n{backend}"
     );
@@ -6431,7 +6432,7 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
     // The `SaveItem` server branch is rewritten to an RPC (proving the effect
     // stays server-side); the frontend never calls `Store.saveItems` directly.
     assert!(
-        fe_main.contains("Spa.rpc") && fe_main.contains("/_rpc/SaveItem"),
+        fe_main.contains("SpaLib_.rpc") && fe_main.contains("/_rpc/SaveItem"),
         "GAP-A: the server branch must be rewritten to an RPC in the frontend (effect stays server-side):\n{fe_main}"
     );
 
@@ -6459,7 +6460,7 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
         "GAP-C: the `/items` route (literal in the sibling `Routes`) must be SSR-registered:\n{backend}"
     );
     let items_at = backend.find("spaPageRoute_ \"/items\" ssrHandler");
-    let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
+    let static_at = backend.find("SpaServer_.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
         "GAP-C: per-route SSR routes must precede the static NotFound fallback:\n{backend}"
@@ -6702,7 +6703,7 @@ fn sibling_module_update_regenerates_in_its_own_frontend_copy() {
         "the pure client helper `cleanDraft` must reach the frontend Update copy:\n{front_update}"
     );
     assert!(
-        front_update.contains("Spa.rpc") && front_update.contains("/_rpc/Save"),
+        front_update.contains("SpaLib_.rpc") && front_update.contains("/_rpc/Save"),
         "the server arm `Save` must become an RPC in the frontend Update copy:\n{front_update}"
     );
 
@@ -6737,7 +6738,7 @@ fn sibling_module_update_regenerates_in_its_own_frontend_copy() {
     );
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
     assert!(
-        back.contains("Server.rpc \"POST /_rpc/Save\""),
+        back.contains("SpaServer_.rpc \"POST /_rpc/Save\""),
         "backend must expose the generated RPC endpoint for `Save`:\n{back}"
     );
 
@@ -6779,7 +6780,7 @@ fn sibling_module_update_and_msg_compose_in_one_frontend_copy() {
     // GAP-1: update regenerated with the RPC arm + the pure helper.
     assert!(
         front_update.contains("cleanDraft")
-            && front_update.contains("Spa.rpc")
+            && front_update.contains("SpaLib_.rpc")
             && front_update.contains("/_rpc/Save"),
         "the sibling `update` must be regenerated (pure arm + RPC arm):\n{front_update}"
     );
@@ -7323,13 +7324,13 @@ fn client_result_perform_wires_task_result_to_client() {
     );
     assert!(
         shared.contains("result : List (Result Error String)")
-            && shared.contains("Codec.result Codec.error Codec.string"),
+            && shared.contains("SpaCodec_.result SpaCodec_.error SpaCodec_.string"),
         "the `Upload` response wire must carry the task RESULT as `result : List (Result Error String)` via `Codec.result`:\n{shared}"
     );
     // The backend RUNS the task and returns its result (never drops the perform).
     assert!(
         backend.contains("spaRunPerform_ cmd")
-            && backend.contains("Ffi.kernel \"Spa_runServerPerform\""),
+            && backend.contains("SpaFfi_.kernel \"Spa_runServerPerform\""),
         "the `Upload` backend handler must RUN the server task via `spaRunPerform_` and return its result:\n{backend}"
     );
     assert!(
@@ -7856,7 +7857,7 @@ fn web_app_boot_setup_runs_in_backend_main_not_frontend() {
     // appears BEFORE the `Server.listen` call (so setup runs first). It is a
     // task in the boot sequence, not a `_ =` let forcing, so a failed setup
     // stops start-up (v0.29.2 sixth Judge).
-    let boot_at = back.find("Task.sequence [ spaBootSetup_,");
+    let boot_at = back.find("SpaTask_.sequence [ spaBootSetup_,");
     // v0.27.0: `main` listens through `spaListen_` after its boot tasks.
     let listen_at = back
         .find("main =")
@@ -7991,7 +7992,7 @@ main =
     );
     // The first boot task, so a failed setup stops start-up (v0.29.2 sixth
     // Judge).
-    let boot_at = back.find("Task.sequence [ spaBootSetup_,");
+    let boot_at = back.find("SpaTask_.sequence [ spaBootSetup_,");
     let listen_at = back
         .find("main =")
         .and_then(|m| back[m..].find("spaListen_").map(|i| m + i));
@@ -8240,7 +8241,7 @@ fn web_app_failed_chained_setup_stops_the_backend() {
         "the backend must not force the setup with `let _ =`, which drops its Err:\n{back}"
     );
     assert!(
-        back.contains("Task.sequence [ spaBootSetup_,"),
+        back.contains("SpaTask_.sequence [ spaBootSetup_,"),
         "the setup must run first in the boot sequence:\n{back}"
     );
     if !required(Need::Go, have_go()) {
@@ -8627,7 +8628,7 @@ fn spa_rpc_origin_guard_and_sub_topic_authorisation() {
         assert!(backend.contains(route), "missing `{route}`:\n{backend}");
     }
     assert!(
-        !backend.contains("Server.api \"POST /_rpc/"),
+        !backend.contains("SpaServer_.api \"POST /_rpc/"),
         "no /_rpc route may stay a CSRF-exempt Server.api route:\n{backend}"
     );
     // The synthesis carries `subscriptions` as `spaSubscriptions_`; the sub
@@ -9116,8 +9117,8 @@ fn rpc_order_fixture_sends_async_rpcs_whose_results_run_in_the_client() {
     // follow-up of `AddToBasket` and reached inside the `SignIn` chain: it
     // crosses under its own tag, never as an empty one.
     assert!(
-        front.contains("Spa.rpcHold addToBasketReqCodec")
-            && front.contains("Spa.rpcHold signInReqCodec")
+        front.contains("SpaLib_.rpcHold addToBasketReqCodec")
+            && front.contains("SpaLib_.rpcHold signInReqCodec")
             && front.contains("\"Tracked\" ->"),
         "the basket steps hold and `Tracked` decodes in the client:\n{front}"
     );
@@ -9238,7 +9239,7 @@ fn websocket_fixture_builds_both_trees() {
     // `App.api "GET /ws"` upgrade: the endpoint must be mounted on the backend
     // (it used to stay in the client route table, and `/ws` answered 404).
     assert!(
-        back.contains("spaApiRoutes_") && back.contains("App.apiServerRoute"),
+        back.contains("spaApiRoutes_") && back.contains("SpaApp_.apiServerRoute"),
         "the backend must mount the `App.api \"GET /ws\"` endpoint:\n{back}"
     );
 }
@@ -10028,7 +10029,7 @@ fn a_record_alias_from_a_path_dependency_crosses_the_split() {
     assert!(
         shared.contains("import Geo.Shape as SpaTy_Geo_Shape_")
             && shared.contains("at : SpaTy_Geo_Shape_.Point")
-            && shared.contains("Codec.auto blankGeo_Shape_Point_"),
+            && shared.contains("SpaCodec_.auto blankGeo_Shape_Point_"),
         "Shared names the dependency's type by its module and derives its codec:\n{shared}"
     );
     for leg in ["frontend", "backend"] {
@@ -10219,8 +10220,8 @@ fn a_server_arm_navigation_returns_with_the_answer() {
     );
     let front = split_file(&proj, "frontend/src/Main.sky");
     assert!(
-        front.contains("Spa.rpcScrollHold saveReqCodec saveRespCodec \"/_rpc/Save\"")
-            && front.contains("Spa.rpcScrollHold openReqCodec openRespCodec \"/_rpc/Open\""),
+        front.contains("SpaLib_.rpcScrollHold saveReqCodec saveRespCodec \"/_rpc/Save\"")
+            && front.contains("SpaLib_.rpcScrollHold openReqCodec openRespCodec \"/_rpc/Open\""),
         "a navigating server arm holds and returns its commands:\n{front}"
     );
     assert!(
@@ -10251,8 +10252,8 @@ fn a_whole_model_write_with_a_follow_up_builds() {
     // applies no write-set.
     let held = frontend_arm(&front, "AppliedAskServer (Ok resp)");
     assert!(
-        held.contains("( { model | draft = resp.draft, notice = resp.notice }, Cmd.none )")
-            && !front.contains("( resp, Cmd.none )"),
+        held.contains("( { model | draft = resp.draft, notice = resp.notice }, SpaCmd_.none )")
+            && !front.contains("( resp, SpaCmd_.none )"),
         "the whole-model follow-up response is folded back field by field:\n{front}"
     );
     let asked = frontend_arm(&front, "AppliedAsk (Ok resp)");
@@ -10395,7 +10396,7 @@ fn a_server_arm_navigation_through_a_helper_returns_with_the_answer() {
     let front = split_file(&proj, "frontend/src/Main.sky");
     assert!(
         !front.contains("Cmd.batch [ goAbout")
-            && front.contains("Spa.rpcScrollHold saveReqCodec saveRespCodec \"/_rpc/Save\""),
+            && front.contains("SpaLib_.rpcScrollHold saveReqCodec saveRespCodec \"/_rpc/Save\""),
         "the helper call stays on the server:\n{front}"
     );
     if required(Need::Go, have_go()) {
@@ -10504,12 +10505,12 @@ fn sub_endpoint_refuses_every_topic_when_subscriptions_cannot_be_found() {
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
     assert!(
         back.contains("subHandler _ =")
-            && back.contains("Server.withStatus 403")
+            && back.contains("SpaServer_.withStatus 403")
             && !back.contains("spaSubAllowsTopic_"),
         "with no subscriptions the handler must refuse without consulting a Sub:\n{back}"
     );
     assert!(
-        back.contains("Server.api \"GET /_sky/sub\" subHandler"),
+        back.contains("SpaServer_.api \"GET /_sky/sub\" subHandler"),
         "the endpoint stays mounted (a client that subscribes gets a 403, not a 404):\n{back}"
     );
 
@@ -10800,7 +10801,7 @@ fn a_spa_backend_names_the_config_binding_that_set_an_unused_store() {
 fn codec_chains_with_fields(shared: &str, fields: &[&str]) -> usize {
     shared
         .split("\n\n")
-        .filter(|chunk| chunk.contains("Codec.object"))
+        .filter(|chunk| chunk.contains("SpaCodec_.object"))
         .filter(|chunk| {
             fields
                 .iter()
@@ -10954,7 +10955,7 @@ fn whole_model_branches_share_one_model_wire_codec() {
     );
     assert!(
         shared.contains("type alias SpaModelWire_ =")
-            && shared.contains("|> Codec.inline .spaWholeModel_ spaModelWireFields_")
+            && shared.contains("|> SpaCodec_.inline .spaWholeModel_ spaModelWireFields_")
             && shared.contains("type alias Save2Req =\n    SpaModelWire_"),
         "whole-model requests share the one Model wire:\n{shared}"
     );
@@ -11752,7 +11753,7 @@ fn assert_init_rpc_split(
     );
     let back = std::fs::read_to_string(split.join("backend/src/Main.sky")).unwrap();
     assert!(
-        back.contains("Server.rpc \"POST /_rpc/SpaInit_\""),
+        back.contains("SpaServer_.rpc \"POST /_rpc/SpaInit_\""),
         "the backend must serve the init RPC:\n{back}"
     );
     if !required(Need::Go, have_go()) {
@@ -12186,7 +12187,7 @@ fn readset_through_derived_locals_and_none_leaf_sends_no_rpc() {
     }
     let applied = frontend_arm(&front, "AppliedGated (Ok resp)");
     assert!(
-        applied.contains("case resp.result of") && applied.contains("Cmd.none"),
+        applied.contains("case resp.result of") && applied.contains("SpaCmd_.none"),
         "AppliedGated must map an empty result to `( model, Cmd.none )`:\n{applied}"
     );
 }
@@ -12443,9 +12444,9 @@ fn frontend_arms_of(front: &str, ctor: &str) -> Vec<String> {
 
 /// The RPC function a generated client arm calls (`Spa.rpc` / `Spa.rpcHold`).
 fn arm_rpc_kind(arm: &str) -> &'static str {
-    if arm.contains("Spa.rpcHold ") {
+    if arm.contains("SpaLib_.rpcHold ") {
         "hold"
-    } else if arm.contains("Spa.rpc ") {
+    } else if arm.contains("SpaLib_.rpc ") {
         "async"
     } else {
         "none"
@@ -12975,13 +12976,13 @@ fn spa_hold_free_table_reaches_the_client() {
         std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky")).unwrap();
     assert!(
         frontend.contains(
-            "|> Spa.withHoldFree [ \"RunLookup SetNote\", \"RunSearch SetNote\", \"SaveNote SetCode\", \"SaveNote SetNote\", \"SaveNote SetQuery\" ]"
+            "|> SpaLib_.withHoldFree [ \"RunLookup SetNote\", \"RunSearch SetNote\", \"SaveNote SetCode\", \"SaveNote SetNote\", \"SaveNote SetQuery\" ]"
         ),
         "the client config must carry the hold-free table:\n{frontend}"
     );
     assert!(
-        frontend.contains("Spa.rpcHold runSearchReqCodec")
-            && frontend.contains("Spa.rpcHold saveNoteReqCodec"),
+        frontend.contains("SpaLib_.rpcHold runSearchReqCodec")
+            && frontend.contains("SpaLib_.rpcHold saveNoteReqCodec"),
         "RunSearch and SaveNote write server data: both hold:\n{frontend}"
     );
     let _ = std::fs::remove_dir_all(&proj);
