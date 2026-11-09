@@ -22728,8 +22728,8 @@
       "id": "examples/11-fyne-stopwatch",
       "modules_imported": 2,
       "path": "examples/11-fyne-stopwatch",
-      "refs_generous": 1,
-      "refs_qualified": 0,
+      "refs_generous": 2,
+      "refs_qualified": 1,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [

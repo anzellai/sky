@@ -13,6 +13,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+### Fixed
+
+- `examples/11-fyne-stopwatch` is a working stopwatch again (#51). It showed
+  only a label: its Go helper was no longer called. The helper is now a local
+  Go module, `stopwatch/`, added with `sky add ./stopwatch`, and `Main.sky`
+  puts its display and its Start / Pause and Reset buttons in the window. A
+  headless test with Fyne's test driver checks the widgets and the clock.
+
 ### Performance
 
 - `Json.Encode.encode`, `Codec.toJson` of a `Codec.auto` value, the Sky.Spa
