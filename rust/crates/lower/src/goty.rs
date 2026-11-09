@@ -846,8 +846,8 @@ fn select_record_candidate_inner<'a>(
     }
 }
 
-/// Whether the record aliases `a` and `b` declare the same record: the same
-/// number of type parameters and, after renaming `b`'s parameters to `a`'s
+/// Whether the parameterised record aliases `a` and `b` declare the same
+/// record: the same number of type parameters and, after renaming `b`'s parameters to `a`'s
 /// positionally, the same field types.
 fn same_record_alias(a: &str, b: &str, env: &TypeEnv) -> bool {
     let (Some(ta), Some(tb)) = (env.record_templates.get(a), env.record_templates.get(b)) else {
@@ -855,7 +855,11 @@ fn same_record_alias(a: &str, b: &str, env: &TypeEnv) -> bool {
     };
     let pa = env.record_params.get(a).cloned().unwrap_or_default();
     let pb = env.record_params.get(b).cloned().unwrap_or_default();
-    if pa.len() != pb.len() || ta.len() != tb.len() {
+    // Only PARAMETERISED twins. A non-parameterised record that reaches here
+    // has fields the checker left unsolved (`any` from a decoder), and its
+    // structural form is cheaper than narrowing each field into a nominal the
+    // program never names (`Std.Ai.Provider` vs `Std.Ai.Eval`, coerce-floor).
+    if pa.is_empty() || pa.len() != pb.len() || ta.len() != tb.len() {
         return false;
     }
     let rename: HashMap<&Name, &Name> = pb.iter().zip(pa.iter()).collect();
