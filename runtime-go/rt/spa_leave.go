@@ -16,8 +16,15 @@ import (
 // client does (`__skyLeavingUntil`), the page counts as leaving for
 // spaLeaveWindow after `beforeunload`, and fetchOnce starts no attempt until
 // it ends. If the page goes away, nothing was sent. If it stays (a download, a
-// 204 answer, a navigation the browser abandoned), the window ends, or
-// `pageshow` ends it at once, and the request proceeds as before.
+// 204 answer, a navigation the browser abandoned), the window ends and the
+// request proceeds as before. A back/forward cache restore (`pageshow` with
+// `persisted`) ends it at once.
+//
+// The boot loader (spa_boot.go) listens for `beforeunload` from the moment the
+// page loads and keeps the time in `__skyLeavingUntil`. A navigation can start
+// while the wasm downloads or before the client runs (the first RPC,
+// SpaInit_, goes out as the client starts): the client takes that time when
+// it starts (adoptBoot, spa_leave_wasm.go) and listens itself from then on.
 const spaLeaveWindow = 10 * time.Second
 
 type spaLeaveGate struct {
@@ -41,8 +48,35 @@ func (g *spaLeaveGate) leave(now time.Time) {
 	}
 }
 
-// stayed records that the page is still in use (pageshow, also after a
-// back/forward cache restore): waiting attempts proceed at once.
+// adoptBoot takes the leaving time the boot loader recorded before the
+// client started (spa_boot.go keeps it in `__skyLeavingUntil`, milliseconds
+// since the epoch, 0 when the page is not leaving). A navigation that started
+// while the wasm downloaded or booted then holds the client's first requests
+// too. A time in the past, or past the window from now, is not taken as is:
+// the first means the page stayed, the second is clamped to the window.
+func (g *spaLeaveGate) adoptBoot(now time.Time, untilMs float64) {
+	if !(untilMs > 0) {
+		return
+	}
+	until := time.UnixMilli(int64(untilMs))
+	if !until.After(now) {
+		return
+	}
+	if max := now.Add(spaLeaveWindow); until.After(max) {
+		until = max
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if until.After(g.until) {
+		g.until = until
+	}
+	if g.stay == nil {
+		g.stay = make(chan struct{})
+	}
+}
+
+// stayed records that the page is in use again (a pageshow from the
+// back/forward cache): waiting attempts proceed at once.
 func (g *spaLeaveGate) stayed() {
 	g.mu.Lock()
 	defer g.mu.Unlock()

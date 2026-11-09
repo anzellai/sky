@@ -1,63 +1,56 @@
 module Main exposing (main)
 
+-- 11-fyne-stopwatch: a desktop stopwatch with the Fyne toolkit.
+--
+-- Sky opens the app and the window through the generated Fyne bindings.
+-- The stopwatch itself (a time display, Start / Pause and Reset) is the
+-- local Go module in ./stopwatch, added with `sky add ./stopwatch`: its
+-- clock needs a goroutine and a mutex, which is Go's job.
+--
+-- Every Go call returns `Result Error a`, so the steps chain with
+-- Result.andThen and the first failure is reported once.
+--
+-- Requirements: Go and a C compiler (Xcode command line tools on macOS,
+-- gcc plus the OpenGL / X11 headers on Linux).
+--
+-- Usage:
+--   sky install
+--   sky build src/Main.sky
+--   ./sky-out/app
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Std.Log exposing (println)
 import Fyne.Io.Fyne.V2 as Fyne
 import Fyne.Io.Fyne.V2.App as FyneApp
-import Fyne.Io.Fyne.V2.Widget as Widget
+import Example.Local.Stopwatch as Stopwatch
 
 
-setupWindow myApp =
-    case Fyne.appNewWindow myApp "Sky Stopwatch" of
-
-        Ok window ->
-            showWindow window
-
-        Err e ->
-            let
-                _ = println ("Failed to create window: " ++ errorToString e)
-            in
-                ()
+-- Put the stopwatch in the window, size it, and run until it is closed.
+showStopwatch window =
+    Stopwatch.content () |> Result.andThen (Fyne.windowSetContent window)
+        |> Result.andThen (\_ -> Fyne.newSize 320.0 140.0)
+        |> Result.andThen (Fyne.windowResize window)
+        |> Result.andThen (\_ -> Fyne.windowShowAndRun window)
 
 
-showWindow window =
-    case Widget.newLabel "00:00.0 -- Built with Sky + Fyne" of
-
-        Ok display ->
-            let
-                _ = Fyne.windowSetContent window display
-                _ =
-                    case Fyne.newSize 400.0 200.0 of
-
-                        Ok size ->
-                            let
-                                _ = Fyne.windowResize window size
-                            in
-                                ()
-
-                        Err _ ->
-                            ()
-                _ = Fyne.windowShowAndRun window
-            in
-                ()
-
-        Err e ->
-            let
-                _ = println ("Failed to create label: " ++ errorToString e)
-            in
-                ()
+openStopwatch : () -> Result Error ()
+openStopwatch _ =
+    FyneApp.new ()
+        |> Result.andThen (\app -> Fyne.appNewWindow app "Sky Stopwatch")
+        |> Result.andThen showStopwatch
 
 
 main =
-    case FyneApp.new () of
+    case openStopwatch () of
 
-        Ok myApp ->
-            setupWindow myApp
+        Ok _ ->
+            ()
 
         Err e ->
             let
                 _ =
-                    println ("Failed to create Fyne app: " ++ errorToString e)
+                    println
+                        ("The stopwatch could not start: " ++ errorToString e)
             in
                 ()

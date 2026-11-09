@@ -23,6 +23,9 @@
 #          error (WebKit cancels it; the client re-sends nothing while the
 #          page is leaving), and after a `beforeunload` with no navigation
 #          the request still completes
+#   boot-leave  (web:app) a navigation that starts while the wasm downloads,
+#          or after it downloaded but before the client runs: no page error,
+#          and no RPC starts on the leaving page
 #   plain  a page with no Sub.onFragment opened at `/plain#x` keeps its
 #          first paint (the load-time fragment report is a no-op)
 #
