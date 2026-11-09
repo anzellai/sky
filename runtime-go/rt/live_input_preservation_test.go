@@ -142,8 +142,17 @@ func TestLiveJS_PreserveAllUncontrolledInputs(t *testing.T) {
 		`var liveNodes = container.querySelectorAll("input, textarea, select");`,
 		// Focused element is unconditionally preserved.
 		`var isFocused = (live === focused);`,
-		// Uncontrolled placeholders also get preserved.
-		`if (!isFocused && !__skyPlaceholderUncontrolled(placeholder))`,
+		// Uncontrolled placeholders also get preserved, and so does a
+		// field whose input the server has not acknowledged (v0.29.7: the
+		// SSE connect frame, rendered before that input, wrote the old
+		// value over an unfocused field).
+		`var isDirty = !isFocused && __skyIsDirty(live);`,
+		`if (!isFocused && !isDirty && !__skyPlaceholderUncontrolled(placeholder))`,
+		`if (isFocused || isDirty) {`,
+		// Input made before the client ran is given to the app once the
+		// handlers are bound (v0.29.7, scripts/spa-early-submit-verify.mjs).
+		`function __skyReplayPretyped(root)`,
+		"__skyBindEvents(document);\n  __skyReplayPretyped(document);",
 	}
 	for _, want := range required {
 		if !strings.Contains(js, want) {

@@ -604,7 +604,13 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
     var placeholder = __skyFindPlaceholder(tmp, live);
     if (!placeholder) continue; // server unmounted: honour the server
     var isFocused = (live === focused);
-    if (!isFocused && !__skyPlaceholderUncontrolled(placeholder)) {
+    // A field whose input the server has not acknowledged yet (a pending
+    // debounce, or sent and not acked) keeps its node too, focused or not
+    // (v0.29.7). A full body rendered before that input (the SSE connect
+    // frame, a reconnect resync) would otherwise write the old model value
+    // over it. The patch path already skips a dirty field (__skyIsDirty).
+    var isDirty = !isFocused && __skyIsDirty(live);
+    if (!isFocused && !isDirty && !__skyPlaceholderUncontrolled(placeholder)) {
       // Controlled field with a server-supplied value — let the
       // server win. Default innerHTML swap will recreate it from
       // placeholder.
@@ -617,8 +623,9 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
     __skyCopyAttrsExceptAuthority(placeholder, live);
     // F9: the focused input keeps its node, but when the user's
     // keystrokes are all acknowledged its value follows the model like
-    // any other patch (a clear / normalisation must show).
-    if (isFocused) {
+    // any other patch (a clear / normalisation must show). A dirty field
+    // that is not focused takes the same path: it is dirty, so it rebases.
+    if (isFocused || isDirty) {
       var pv = null;
       if (live.tagName === "TEXTAREA") {
         if (!__skyPlaceholderUncontrolled(placeholder)) pv = placeholder.value;
@@ -3019,12 +3026,68 @@ document.addEventListener("visibilitychange", function() {
   }
 });
 
+// ── Input made before the client ran (v0.29.7) ──────────────
+// The page shows its form before this script runs, and a person (or
+// autofill, a password manager) can change a field in that time. No
+// handler was bound, so update never saw it. The browser keeps what the
+// server rendered (defaultValue, defaultChecked, defaultSelected) next to
+// what the control holds now, so a difference is the person's change.
+// Once the handlers are bound, each changed control gets its events: a
+// text field or a select its input and change events, a checkbox or a
+// radio a click (Std.Ui binds a check control's Msg to click; the click
+// also fires input and change). This reads state, not events, so it does
+// not depend on when or how the change arrived. The Sky.Spa client does
+// the same at hydration (runtime-go/rt/spa_pretyped.go).
+var __skyPretypedSkip = { submit: 1, button: 1, reset: 1, image: 1, hidden: 1, file: 1 };
+function __skySelectChanged(sel) {
+  var o = sel.options, i;
+  if (sel.multiple) {
+    for (i = 0; i < o.length; i++) if (o[i].selected !== o[i].defaultSelected) return true;
+    return false;
+  }
+  var want = -1, got = -1;
+  for (i = 0; i < o.length; i++) if (o[i].defaultSelected) want = i;
+  if (want < 0) for (i = 0; i < o.length; i++) if (!o[i].disabled) { want = i; break; }
+  for (i = 0; i < o.length; i++) if (o[i].selected) { got = i; break; }
+  return got !== want;
+}
+function __skyReplayPretyped(root) {
+  var all = root.querySelectorAll("input[sky-id], textarea[sky-id], select[sky-id]");
+  var changed = [];
+  for (var i = 0; i < all.length; i++) {
+    var el = all[i];
+    if (el.tagName === "INPUT" && __skyPretypedSkip[el.type]) continue;
+    if (el.type === "checkbox" || el.type === "radio") {
+      if (el.checked === el.defaultChecked) continue;
+      if (el.type === "radio" && !el.checked) continue;
+    } else if (el.tagName === "SELECT") {
+      if (!__skySelectChanged(el)) continue;
+    } else if (el.value === el.defaultValue) {
+      continue;
+    }
+    changed.push(el);
+  }
+  for (var j = 0; j < changed.length; j++) {
+    var c = changed[j];
+    if (c.type === "checkbox" || c.type === "radio") {
+      var want = c.checked;
+      c.checked = !want;
+      c.click();
+      continue;
+    }
+    c.__skyTyped = true;
+    c.dispatchEvent(new Event("input", { bubbles: true }));
+    c.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+}
+
 // ── Init ─────────────────────────────────────────────────────
 // Bind initial DOM event listeners + inject the status banner once
 // the HTML is parsed. Banner needs document.body to exist, so it
 // goes through the same gate as event binding.
 function __skyInit() {
   __skyBindEvents(document);
+  __skyReplayPretyped(document);
   __skyInjectStatusBanner();
   if (__skyLastAppliedSeq === 0) __skyAfterDOMCommit(__skyCfg.scrolls, __skyCfg.view);
   __skyCfg.scrolls = null;

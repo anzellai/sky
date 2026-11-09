@@ -180,14 +180,29 @@ server's nodes stay in the page.
 client hydrates, `<html data-sky-hydrating>` is set and an overlay takes
 clicks. A keyboard can still submit a form: Enter in a field, a phone's "Go"
 key, or a password manager. The boot loader (`spa-boot.<hash>.js`) holds that
-submit when the form is one the app handles (`Ui.onSubmit`), with the text
-typed into each field so far. When the client is live it puts the text back,
-sends it to the app as `input` and `change` events, and submits the form
-through the app, so `update` runs once with what the person typed. Text typed
-without a submit is kept the same way. Clicks before then are not replayed:
+submit when the form is one the app handles (`Ui.onSubmit`). When the client
+is live it sends the typed text to the app, then submits the form through the
+app, so `update` runs once with what the person typed. Clicks before then are
+not replayed:
 the overlay takes them, and the element under the click is not known. A form
 without `Ui.onSubmit` (a plain form to an `App.api` route) submits natively,
 as before.
+
+**Text typed before the client is live (v0.29.7).** The browser keeps, for
+every form control, what the server rendered (`defaultValue`,
+`defaultChecked`, `defaultSelected`) and what the control holds now. Before
+its first paint the client reads each control where the two differ: the
+person changed it. It keeps that value in the control through the paint, and
+once it is live it sends the control its `input` and `change` events, so the
+app's handlers run as if the person typed then. This is a check of state, not
+a record of events: it does not depend on when or how the text arrived
+(typing, paste, autofill, a password manager, a test driver) or on how long
+the client took to start. A checkbox or a radio is clicked instead, because
+Std.Ui binds its Msg to `click`. A control the person did not change sends
+nothing. `<html data-sky-hydrating>` goes only after this step, so a page
+without the marker is live and its model holds what the person typed: a test
+waits for `html:not([data-sky-hydrating])`, not for an element to appear.
+Sky.Live does the same when its client script starts.
 
 Without JavaScript, or if the client never starts, a submit is a native POST
 to the page's own URL. The server-rendered page carries the `__sky_csrf` field

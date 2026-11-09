@@ -11,6 +11,35 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## Unreleased
+
+### Fixed
+
+- **Input made before the client is live always reaches `update`, on Sky.Spa
+  and Sky.Live.** A person (or autofill, a password manager) can type into a
+  server-rendered page before its client runs.
+  - Sky.Spa recorded that text from `input` and `change` events only while
+    `<html data-sky-hydrating>` was set. Text typed after the 12 s safety net
+    removed the marker (a slow start), or set with no event (autofill), was
+    lost: the first paint set the field back to the model's value and no
+    `update` ran. A checkbox or a radio changed by keyboard stayed ticked, but
+    its Msg never ran, because Std.Ui binds it to `click`.
+  - Sky.Live sent nothing that was typed before its script ran.
+  - Now both clients read, when they start, every form control whose state
+    differs from what the server rendered (`defaultValue`, `defaultChecked`,
+    `defaultSelected`), keep that state, and give it to the app: a text field
+    or a select gets its `input` and `change` events, a checkbox or a radio a
+    click (`runtime-go/rt/spa_pretyped.go`, `live_client_asset.go`). A control
+    the person did not change sends nothing. This reads state, not events, so
+    it does not depend on when or how the input arrived.
+  - **Sky.Spa: the page reports ready only when it is.** `data-sky-hydrating`
+    used to go before the client had given the app the early input, so a
+    person or a test that waited for it could read a field the app had not yet
+    updated. It now goes after that step. A test that waits for
+    `html:not([data-sky-hydrating])` reads an up-to-date page.
+  - The boot loader no longer records typed text. It still holds a form
+    submitted during hydration and submits it through the app.
+
 ## v0.29.6 — faster large-model encoding, a record of functions in Just, a leaving gate during boot (2026-11-09)
 
 ### Fixed

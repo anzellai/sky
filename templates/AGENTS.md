@@ -734,8 +734,9 @@ no client route (or a `Spa.serverRoute` path) is a full page load. A handled
 client `Err` is never logged as an RPC failure; call `Spa.reportRpcFailure` for a
 real unhandled one. A `Dict k v` field crosses the wire through `Codec.dict`.
 A form submitted while the client hydrates (Enter, a phone's "Go" key, a
-password manager) is held, with the text typed so far, and the client submits
-it once it is live (clicks before then are not replayed). A server-rendered
+password manager) is held, and the client submits it once it is live (clicks
+before then are not replayed). Text typed into a field before the client is
+live reaches `update` once it is live, however it arrived (v0.29.7). A server-rendered
 page's POST forms carry the `__sky_csrf` field, and a native form POST to a
 page (no JavaScript, or a lost cookie) answers 303 to the same URL, on Sky.Spa
 and Sky.Live, never a 403 JSON page.

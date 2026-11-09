@@ -295,10 +295,10 @@ func spaRun(cfg any) any {
 	// server. Apply it here, once, from the first-paint model — the same rule
 	// the SSR page and Sky.Live follow (head renders on the initial load only).
 	spaApplyShellHead(doc, fieldOrNil(cfg, "Head"))
-	// The client has now rendered/hydrated, so every handler is attached: clear
-	// the first-paint hydration affordance (`<html data-sky-hydrating>` → progress
-	// cursor + top bar, liveBaseCSS). From here a click lands on a live handler.
-	spaClearHydratingMarker()
+	// The client has now rendered/hydrated, so every handler is attached. The
+	// first-paint hydration affordance (`<html data-sky-hydrating>`) stays until
+	// spaReplayHeldInput below has given the app what the user typed before
+	// now: the marker going away means the page is live AND up to date.
 	if spaStepProfiling {
 		// Harness readiness: SSR markup alone does not prove wasm handlers exist.
 		spaProfileReady()
@@ -850,11 +850,15 @@ func renderCurrentWithScroll(continuation bool) {
 			// rebuilding — preserving node identity so there is no flash. Otherwise
 			// (no SSR, or a server DOM that spaCanHydrate refused) fall back
 			// to today's full spaMount, which is always correct.
+			// What the user typed before the client was live is read first:
+			// the paint sets every control from the model (spa_pretyped.go).
+			spaCapturePretyped(spaRoot)
 			if spaShouldHydrate(spaRoot, vn) {
 				spaHydrate(spaRoot, vn)
 			} else {
 				spaMount(spaRoot, vn)
 			}
+			spaRestorePretyped(spaRoot)
 			// Every listener is bound: widget events held until now go out.
 			spaIslandHostReady()
 		} else {
@@ -898,22 +902,38 @@ func renderCurrentWithScroll(continuation bool) {
 	}
 }
 
-// spaReplayHeldInput calls the boot loader's `__skyHydrated` (spa_boot.go)
-// once the client has hydrated and every handler is attached. The loader held
-// a form submitted during hydration and recorded the text typed into fields;
-// `__skyHydrated` puts the text back, sends it as input and change events to
-// the app's handlers, and submits the held form through the app. A page
-// without the loader (no such function) is a no-op.
+// spaReplayHeldInput runs once the client has hydrated and every handler is
+// attached. It does three things, in this order:
+//  1. It sends the controls the user changed before the client was live their
+//     events (spa_pretyped.go), so the app's update sees that input.
+//  2. It removes `<html data-sky-hydrating>`. The page is now live and its
+//     model holds what the user typed, so a person or a test that waits for
+//     the marker to go reads an up-to-date page. A failure in step 1 still
+//     removes it: the page is never left locked.
+//  3. It calls the boot loader's `__skyHydrated` (spa_boot.go), which submits
+//     a form held during hydration through the app. That comes after step 2,
+//     because the loader holds every submit while the marker is set.
+//
+// A page without the loader (no such function) skips step 3.
 func spaReplayHeldInput() {
-	fn := js.Global().Get("__skyHydrated")
-	if fn.Type() != js.TypeFunction {
-		return
-	}
 	defer func() {
 		if r := recover(); r != nil {
 			spaReportPanic("replay held input", r)
 		}
 	}()
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				spaReportPanic("replay typed input", r)
+			}
+		}()
+		spaReplayPretyped(spaRoot)
+	}()
+	spaClearHydratingMarker()
+	fn := js.Global().Get("__skyHydrated")
+	if fn.Type() != js.TypeFunction {
+		return
+	}
 	fn.Invoke()
 }
 

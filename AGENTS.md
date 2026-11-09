@@ -604,8 +604,9 @@ The cookie lives as long as the token (30 days; `App.withSessionLifetime` /
 `SKY_SPA_SESSION_LIFETIME`), and `App.withPersistExclude [ … ]` names model
 fields a reload never takes from an earlier page (server-owned values).
 A form submitted while the client hydrates (Enter, a phone's "Go" key, a
-password manager) is held, with the text typed so far, and the client submits
-it once it is live (clicks before then are not replayed). A server-rendered
+password manager) is held, and the client submits it once it is live (clicks
+before then are not replayed). Text typed into a field before the client is
+live reaches `update` once it is live, however it arrived (v0.29.7). A server-rendered
 page's POST forms carry the `__sky_csrf` field, and a native form POST to a
 page (no JavaScript, or a lost cookie) answers 303 to the same URL, on Sky.Spa
 and Sky.Live, never a 403 JSON page (v0.29.1).

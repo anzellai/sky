@@ -427,12 +427,19 @@ func TestSpaBootLoaderHoldsAnEarlySubmit(t *testing.T) {
 		`ev.preventDefault();`,
 		`ev.stopImmediatePropagation();`,
 		`root.hasAttribute("data-sky-hydrating")`,
-		`document.addEventListener("input", onEdit, true);`,
 		`globalThis.__skyHydrated = function () {`,
 		`form.requestSubmit(`,
 	} {
 		if !strings.Contains(SpaBootJS, piece) {
 			t.Fatalf("the Sky.Spa boot loader lost %q", piece)
+		}
+	}
+	// Typed text is not recorded from events (v0.29.7): an event can arrive
+	// after the hydrating marker is gone, or not at all (autofill). The client
+	// reads the changed controls from their state instead (spa_pretyped.go).
+	for _, gone := range []string{`addEventListener("input"`, `addEventListener("change"`} {
+		if strings.Contains(SpaBootJS, gone) {
+			t.Fatalf("the Sky.Spa boot loader records typed text from events again: %q", gone)
 		}
 	}
 }
