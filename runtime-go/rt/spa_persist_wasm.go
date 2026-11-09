@@ -87,6 +87,11 @@ var spaPersistBridge struct {
 }
 var spaPersistBridgeBytes int
 
+// spaReferencePersistState holds the reference path's last parse of the
+// stored JSON (spa_persist_index.go), so the next step's previous Model,
+// which encodes to the same text, is not parsed again.
+var spaReferencePersistState spaReferencePersist
+
 func spaResetPersistBridge() { spaPersistBridge.owner = ""; spaPersistBridge.value = js.Undefined() }
 
 func (spaLocalKV) Get(key string) (blob string, ok bool) {
@@ -234,6 +239,7 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 	if !spaStepReference && spaMixedPersistenceState.encoder.Prepare != nil {
 		spaFieldPersistenceState.reset()
 		spaNextModelEncoding.reset()
+		spaReferencePersistState.memo = nil
 		spaMixedPersistenceState.profiling = spaActiveStepMetrics != nil
 		var metrics spaPersistMetrics
 		cleared, metrics = spaMixedPersistenceState.step(prevModel, nextModel, spaEncodeModel, spaLocalKV{}, &spaLife, spaPersistExclude, spaPersistProt, spaPersistMaxBytes)
@@ -242,6 +248,7 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 		}
 	} else if closed {
 		spaMixedPersistenceState.reset()
+		spaReferencePersistState.memo = nil
 		spaFieldPersistenceState.profiling = spaActiveStepMetrics != nil
 		var metrics spaFieldPersistenceMetrics
 		cleared, metrics = spaFieldPersistenceState.step(prevModel, nextModel, spaEncodeModel, spaLocalKV{}, &spaLife, spaPersistExclude, spaPersistProt, spaPersistMaxBytes, true)
@@ -252,9 +259,9 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 		spaFieldPersistenceState.reset()
 		spaMixedPersistenceState.reset()
 		spaNextModelEncoding.reset()
-		cleared = spaPersistStepWithEncoding(prevModel, nextModel, spaEncodeModel, func(nextJSON string) {
-			spaPersistWrite(spaLocalKV{}, &spaLife, spaPersistStripFields(nextJSON, spaPersistExclude, spaPersistProt), spaPersistProt, spaPersistMaxBytes)
-		}, spaPersistProt, false, nil, observe)
+		ref := &spaReferencePersistState
+		ref.st, ref.life, ref.exclude, ref.protected, ref.capBytes = spaLocalKV{}, &spaLife, spaPersistExclude, spaPersistProt, spaPersistMaxBytes
+		cleared = spaPersistStepReference(prevModel, nextModel, spaEncodeModel, ref, observe)
 	}
 	if cleared {
 		spaResetViewMemo()

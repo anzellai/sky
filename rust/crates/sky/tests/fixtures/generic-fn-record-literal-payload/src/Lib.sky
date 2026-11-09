@@ -1,0 +1,23 @@
+module Lib exposing (Config, Wiring, base, withWiring)
+
+import Sky.Core.Prelude exposing (..)
+
+type alias Wiring model =
+    { restore : String -> Maybe model
+    , persist : model -> String
+    }
+
+type alias Config model =
+    { name : String
+    , wiring : Maybe (Wiring model)
+    }
+
+
+withWiring : (model -> String) -> (String -> Maybe model) -> Config model -> Config model
+withWiring persist restore cfg =
+    { cfg | wiring = Just { restore = restore, persist = persist } }
+
+
+base : Config model
+base =
+    { name = "lib", wiring = Nothing }

@@ -930,7 +930,12 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **844 since the v0.29.0 Std.Image.Canvas Family-S surface** (+2: the
 /// nominal and failure cases of `imagecanvas`).
-pub const CORPUS_EXPECTED: u64 = 844;
+///
+/// **892 since the v0.29.6 `generic_fn_record_slot` stratum** (+48, Family L:
+/// 8 `gfr_slot` x 3 `gfr_site` x 2 `gfr_annot`). A record literal of
+/// functions in `Just` / `Ok` / `Err` inside a record update failed `go
+/// build`; see `corpus/lang_shapes.rs`.
+pub const CORPUS_EXPECTED: u64 = 892;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -1028,7 +1033,10 @@ pub const CORPUS_EXPECTED: u64 = 844;
 ///
 /// **680 since the v0.29.0 Std.Image.Canvas Family-S surface** (+2, both
 /// built and run; the same +2 as `CORPUS_EXPECTED`).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 680;
+///
+/// **728 since the v0.29.6 `generic_fn_record_slot` stratum** (+48, every one
+/// built and run; the same +48 as `CORPUS_EXPECTED`).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 728;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.

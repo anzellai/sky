@@ -7,6 +7,6 @@ port = 8000
 root = "src"
 
 ["go.dependencies"]
+"example.local/stopwatch" = { path = "./stopwatch" }
 "fyne.io/fyne/v2" = "latest"
 "fyne.io/fyne/v2/app" = "latest"
-"fyne.io/fyne/v2/widget" = "latest"

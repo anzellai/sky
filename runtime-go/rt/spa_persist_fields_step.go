@@ -50,9 +50,7 @@ func (p *spaFieldPersistence) step(prev, next any, encode func(any) string, st s
 	}
 	if !generated || capBytes <= 0 || capBytes > spaPersistMaxBytes {
 		p.reset()
-		cleared = spaPersistStep(prev, next, full, func(blob string) {
-			spaPersistWrite(st, life, spaPersistStripFields(blob, exclude, protected), protected, capBytes)
-		}, protected, nil)
+		cleared = spaPersistStepReference(prev, next, full, &spaReferencePersist{st: st, life: life, exclude: exclude, protected: protected, capBytes: capBytes}, nil)
 		return
 	}
 	previous := p.snapshot
@@ -102,7 +100,7 @@ func (p *spaFieldPersistence) step(prev, next any, encode func(any) string, st s
 			}
 			if nextJSON != "" {
 				start = begin()
-				spaPersistWrite(st, life, spaPersistStripFields(nextJSON, exclude, protected), protected, capBytes)
+				spaPersistWriteJSON(st, life, nextJSON, exclude, protected, capBytes)
 				elapsed(start, &metrics.Profile.WriteNanos)
 			}
 			// Full fallback may invalidate an earlier summary after metadata changes.
@@ -112,7 +110,7 @@ func (p *spaFieldPersistence) step(prev, next any, encode func(any) string, st s
 		// Full was already called exactly once before any observable publication.
 		if nextJSON != "" {
 			start = begin()
-			spaPersistWrite(st, life, spaPersistStripFields(nextJSON, exclude, protected), protected, capBytes)
+			spaPersistWriteJSON(st, life, nextJSON, exclude, protected, capBytes)
 			elapsed(start, &metrics.Profile.WriteNanos)
 		}
 		projection = nextJSON

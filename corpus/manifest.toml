@@ -17,15 +17,15 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 844
+n_min = 892
 n_iso = 61
 n_iso_ceiling = 62
 n_iso_static = 164
 n_iso_static_ceiling = 300
-class_v = 843
+class_v = 891
 class_d = 1
 family_S = 216
-family_L = 465
+family_L = 513
 family_E = 10
 family_R = 153
 family_F = 0
@@ -8883,6 +8883,630 @@ axes       = { letrec_dep = "after", letrec_group = "three", letrec_site = "tail
 coordinate = "v0.29.0: two local functions of one `let` that call each other"
 expect     = "accept"
 stdout     = "42"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_def-just"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_def", gfr_slot = "just" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_def-just"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_def", gfr_slot = "just" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_update-just"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_update", gfr_slot = "just" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_update-just"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_update", gfr_slot = "just" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-concrete-just"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "concrete", gfr_slot = "just" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-concrete-just"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "concrete", gfr_slot = "just" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_def-ok"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_def", gfr_slot = "ok" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_def-ok"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_def", gfr_slot = "ok" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_update-ok"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_update", gfr_slot = "ok" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_update-ok"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_update", gfr_slot = "ok" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-concrete-ok"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "concrete", gfr_slot = "ok" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-concrete-ok"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "concrete", gfr_slot = "ok" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_def-err"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_def", gfr_slot = "err" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_def-err"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_def", gfr_slot = "err" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_update-err"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_update", gfr_slot = "err" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_update-err"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_update", gfr_slot = "err" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-concrete-err"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "concrete", gfr_slot = "err" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-concrete-err"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "concrete", gfr_slot = "err" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_def-adt"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_def", gfr_slot = "adt" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_def-adt"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_def", gfr_slot = "adt" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_update-adt"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_update", gfr_slot = "adt" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_update-adt"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_update", gfr_slot = "adt" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-concrete-adt"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "concrete", gfr_slot = "adt" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-concrete-adt"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "concrete", gfr_slot = "adt" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_def-tuple"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_def", gfr_slot = "tuple" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_def-tuple"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_def", gfr_slot = "tuple" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_update-tuple"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_update", gfr_slot = "tuple" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_update-tuple"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_update", gfr_slot = "tuple" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-concrete-tuple"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "concrete", gfr_slot = "tuple" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-concrete-tuple"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "concrete", gfr_slot = "tuple" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_def-field"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_def", gfr_slot = "field" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_def-field"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_def", gfr_slot = "field" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_update-field"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_update", gfr_slot = "field" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_update-field"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_update", gfr_slot = "field" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-concrete-field"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "concrete", gfr_slot = "field" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-concrete-field"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "concrete", gfr_slot = "field" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_def-list"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_def", gfr_slot = "list" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_def-list"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_def", gfr_slot = "list" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_update-list"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_update", gfr_slot = "list" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_update-list"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_update", gfr_slot = "list" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-concrete-list"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "concrete", gfr_slot = "list" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-concrete-list"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "concrete", gfr_slot = "list" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_def-cons"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_def", gfr_slot = "cons" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_def-cons"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_def", gfr_slot = "cons" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-poly_update-cons"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "poly_update", gfr_slot = "cons" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-poly_update-cons"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "poly_update", gfr_slot = "cons" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/annotated-concrete-cons"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "annotated", gfr_site = "concrete", gfr_slot = "cons" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
+
+[[case]]
+id         = "generic_fn_record_slot/unannotated-concrete-cons"
+family     = "L"
+stratum    = "generic_fn_record_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { gfr_annot = "unannotated", gfr_site = "concrete", gfr_slot = "cons" }
+coordinate = "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions"
+expect     = "accept"
+stdout     = "41/7"
 
 [[case]]
 id         = "reject_matrix/arity_over-plain-bare"

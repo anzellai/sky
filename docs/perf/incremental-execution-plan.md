@@ -519,12 +519,34 @@ The owner changes themselves still require the final integrated gates.
 
 Canonical field metadata and escaped schema keys are cached without retaining
 model values. Tuple type arguments are parsed once per list invocation, while
-each element keeps its original conversion and metadata reads. Ordered-object
-output buffers start at 32 bytes. Only exact builtin `int64`, boolean, null and
-safe ASCII strings of at most 64 bytes use direct primitive appends at their
-original marshal position. Named values, custom marshalers, floats, escaped,
-non-ASCII and longer strings retain `encoding/json.Marshal`. Differential
-byte/error/effect tests and race checks accompany these changes.
+each element keeps its original conversion and metadata reads.
+
+Phase 2 is one append-based walk of the phase-1 tree
+(`runtime-go/rt/json_tree_writer.go`). It writes ordered objects, `[]any`,
+exact builtin `int64`, `float64`, boolean, null and strings itself, with the
+rules of `encoding/json` (HTML escaping, U+2028 and U+2029, invalid UTF-8,
+float format). A string with another control character, invalid UTF-8 or
+U+2028/U+2029 goes to `encoding/json.Marshal` whole. Every other value (named
+values, custom marshalers, `json.RawMessage`, maps, NaN and infinite floats)
+goes to `encoding/json.Marshal` at its original position, so its bytes, error,
+panic and effects are unchanged. An error inside an object keeps the
+`MarshalerError` wrapping that `encoding/json` added at each object. Phase 1
+still completes before any byte is written. Differential byte/error/effect
+tests (fixtures, 25,000 seeded random trees, a Go fuzz target) and race checks
+accompany it.
+
+A capped variant stops building bytes once the output passes a limit, but
+walks the rest of the tree with the same delegated calls and errors and
+reports the exact length. The mixed persistence engine uses it for an unknown
+field whose bytes cannot be stored: an excluded field, the previous Model's
+sign-out projection, and a field after the selected snapshot passed the
+1.5 MB cap. The reference path (an encoder the runtime cannot look inside)
+parses the encoder's JSON once per step for the identity, the exclusions and
+the sign-out check (`runtime-go/rt/spa_persist_index.go`), builds the stripped
+snapshot only when it fits the cap, and reuses the previous step's parse when
+the previous Model encodes to the same text. That path still encodes the
+previous Model with the app's encoder when the app has a session field: an
+encoder the runtime cannot inspect may have effects, so the call stays.
 
 Two rejected proposals remain excluded: discovering hints in invisible slice
 capacity introduced a demonstrated race, and sharing key/value allocation would

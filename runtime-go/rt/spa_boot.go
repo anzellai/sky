@@ -37,12 +37,37 @@ const SpaBootJS = islandClientJS + sceneClientJS + scenePainterJS + terminalWidg
 const spaBootLoaderJS = `// Sky.Spa boot loader (runtime-go/rt/spa_boot.go). An external file so a strict
 // Content-Security-Policy (script-src 'self' 'wasm-unsafe-eval') runs it.
 const go = new Go();
+// A page that is leaving (spa_leave.go). A navigation can start while the
+// wasm downloads or before the client runs, and its beforeunload fires before
+// the client could listen. So the loader listens from the start and keeps the
+// time the page counts as leaving until in __skyLeavingUntil (the name the
+// Sky.Live client uses). The client reads it when it starts and starts no
+// request until it ends. Only a back/forward cache restore (pageshow with
+// persisted) ends it early: the first pageshow of a load can come after a
+// navigation has started.
+globalThis.__skyLeavingUntil = 0;
+addEventListener("beforeunload", function () {
+  globalThis.__skyLeavingUntil = Date.now() + 10000;
+});
+addEventListener("pageshow", function (e) {
+  if (e.persisted) globalThis.__skyLeavingUntil = 0;
+});
 (function () {
   var me = document.currentScript;
   var wasm = (me && me.getAttribute("data-wasm")) || "/main.wasm";
-  WebAssembly.instantiateStreaming(fetch(wasm), go.importObject).then(function (res) {
-    go.run(res.instance);
-  });
+  // A navigation cancels the wasm download in WebKit. That is no error: the
+  // page is going away. If it stays (a download, a 204), the loader starts
+  // again when the leaving time ends. Any other failure is reported as before.
+  function boot() {
+    WebAssembly.instantiateStreaming(fetch(wasm), go.importObject).then(function (res) {
+      go.run(res.instance);
+    }, function (err) {
+      var wait = globalThis.__skyLeavingUntil - Date.now();
+      if (!(wait > 0)) throw err;
+      setTimeout(boot, wait);
+    });
+  }
+  boot();
   // Safety net for the blocking hydration overlay: if the wasm never boots,
   // drop data-sky-hydrating after 12s so the page is never locked. The client
   // clears it on hydration first in the normal case.

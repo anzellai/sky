@@ -1,7 +1,6 @@
 package rt
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"time"
@@ -90,7 +89,7 @@ func (l *spaClosedLazyLeaf) resolve() (ok bool) {
 		kind = spaClosedRawJustNull
 	}
 	budget.Deferred.Marshals++
-	encoded, err := json.Marshal(raw)
+	encoded, err := jsonMarshalTree(raw)
 	budget.Deferred.EncodedBytes = spaSizeAdd(budget.Deferred.EncodedBytes, uint64(len(encoded)))
 	if err != nil {
 		l.err = fmt.Errorf("closed lazy marshal invariant: %w", err)

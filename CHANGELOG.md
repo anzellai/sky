@@ -11,6 +11,62 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.6 — faster large-model encoding, a record of functions in Just, a leaving gate during boot (2026-11-09)
+
+### Fixed
+
+- **A record of functions in `Just`, `Ok` or `Err` failed `go build`.** With
+  `type alias Wiring model = { restore : String -> Maybe model, persist :
+  model -> String }` and a field `wiring : Maybe (Wiring model)`,
+  `{ cfg | wiring = Just { restore = r, persist = p } }` passed `sky check`
+  and failed with `cannot use struct{Persist any; Restore any}{…} as
+  Main_Wiring_R[any] value in argument to rt.Just[Main_Wiring_R[any]]`. The
+  record was built as an untyped struct. It is now built as the
+  `Wiring` record, so the program builds and runs. The same holds for `Ok`
+  and `Err`, for a record built in a function with no annotation, and for two
+  modules that declare the same record alias. (`rust/crates/lower/src/lower.rs`,
+  `rust/crates/lower/src/goty.rs`; `codegen_generic_fn_record_literal_flow.rs`,
+  build and run, 25 shapes; corpus stratum `generic_fn_record_slot`, 48 cases,
+  6 of which failed before; pinned repro
+  `corpus/repro/generic-fn-record-in-maybe.sky`.)
+- A Sky.Spa page that a navigation leaves while its client is still starting
+  sends no request and raises no page error. The leaving-page rule of v0.29.5
+  started only once the wasm client ran, so a link followed during the load
+  still let the first server call (`SpaInit_`) start on the unloading page,
+  which WebKit reports as "Fetch API cannot load ... due to access control
+  checks". The boot loader now listens for `beforeunload` before the wasm
+  starts and the client takes that state when it starts. A wasm download that
+  WebKit cancels for the navigation is no longer a page error ("Load failed");
+  if the page stays, the loader starts the client again. On Sky.Spa and
+  Sky.Live only a back/forward cache restore ends the leaving time early, not
+  the first `pageshow` of a load, which can come after the navigation started.
+- `examples/11-fyne-stopwatch` is a working stopwatch again (#51). It showed
+  only a label: its Go helper was no longer called. The helper is now a local
+  Go module, `stopwatch/`, added with `sky add ./stopwatch`, and `Main.sky`
+  puts its display and its Start / Pause and Reset buttons in the window. A
+  headless test with Fyne's test driver checks the widgets and the clock.
+
+### Performance
+
+- `Json.Encode.encode`, `Codec.toJson` of a `Codec.auto` value, the Sky.Spa
+  saved model, the SSR seed and the server-call answers write their JSON in
+  one pass. Before, every nested object was encoded on its own and then
+  scanned again by each enclosing level. The bytes are the same as before for
+  every value, including HTML escaping, U+2028 and U+2029, invalid UTF-8 and
+  the float format. A value that cannot be JSON (a NaN or infinite `Float`)
+  still fails as the classified `JsonEncodeFailure`, with the same message.
+- A Sky.Spa client no longer builds bytes it cannot store. A Model field the
+  compiler cannot prove plain (such as a `Json.Value`) is walked, not written,
+  when it is excluded from the saved model, when only the previous Model's
+  sign-out check needs it, and when the saved model is already over the
+  1.5 MB limit. Every encoder effect and failure still happens, in the same
+  order.
+- A Sky.Spa client whose model encoder the runtime cannot look inside (for
+  example a `withClientCrypto` app) parses the encoded model once per message
+  instead of up to four times, and reuses the previous message's parse for the
+  sign-out check. The saved bytes, the identity rules and the sign-out
+  behaviour are unchanged.
+
 ## v0.29.5 — a page that is leaving sends no request (2026-11-08)
 
 ### Fixed

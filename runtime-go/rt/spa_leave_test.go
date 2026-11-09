@@ -1,6 +1,8 @@
 package rt
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -75,5 +77,74 @@ func TestSpaLeaveGateSecondBeforeunloadExtendsTheWindow(t *testing.T) {
 	g.leave(now.Add(8 * time.Second))
 	if d, _ := g.hold(now.Add(12 * time.Second)); d != 6*time.Second {
 		t.Fatalf("hold = %v", d)
+	}
+}
+
+// A navigation that started before the client ran (the boot loader recorded
+// it in __skyLeavingUntil) holds the client's first requests, such as SpaInit_.
+func TestSpaLeaveGateAdoptsTheBootLoadersLeavingTime(t *testing.T) {
+	var g spaLeaveGate
+	now := time.UnixMilli(1_000_000)
+	g.adoptBoot(now, float64(now.Add(4*time.Second).UnixMilli()))
+	d, stay := g.hold(now)
+	if d != 4*time.Second || stay == nil {
+		t.Fatalf("hold = %v, %v; want the boot loader's 4s", d, stay)
+	}
+	// Later events still count: a back/forward cache restore releases it.
+	g.stayed()
+	if d, _ := g.hold(now); d != 0 {
+		t.Fatalf("pageshow did not release the boot hold: %v", d)
+	}
+	// A second beforeunload after the client started extends the window.
+	g.adoptBoot(now, float64(now.Add(time.Second).UnixMilli()))
+	g.leave(now.Add(500 * time.Millisecond))
+	if d, _ := g.hold(now.Add(500 * time.Millisecond)); d != spaLeaveWindow {
+		t.Fatalf("beforeunload after boot: hold %v", d)
+	}
+}
+
+func TestSpaLeaveGateIgnoresAnEndedOrMissingBootTime(t *testing.T) {
+	now := time.UnixMilli(1_000_000)
+	for _, ms := range []float64{0, -1, float64(now.Add(-time.Second).UnixMilli()), float64(now.UnixMilli())} {
+		var g spaLeaveGate
+		g.adoptBoot(now, ms)
+		if d, stay := g.hold(now); d != 0 || stay != nil {
+			t.Fatalf("boot time %v: hold %v, %v", ms, d, stay)
+		}
+	}
+	// A time past the window (a clock that moved) is clamped to the window.
+	var g spaLeaveGate
+	g.adoptBoot(now, float64(now.Add(time.Hour).UnixMilli()))
+	if d, _ := g.hold(now); d != spaLeaveWindow {
+		t.Fatalf("clamp: hold %v", d)
+	}
+}
+
+// The boot loader and the Go gate use one window, and the loader listens
+// before the wasm starts.
+func TestSpaBootLoaderRecordsLeavingBeforeTheWasmStarts(t *testing.T) {
+	want := "__skyLeavingUntil = Date.now() + " + strconv.FormatInt(spaLeaveWindow.Milliseconds(), 10)
+	i := strings.Index(spaBootLoaderJS, want)
+	if i < 0 {
+		t.Fatalf("spaBootLoaderJS does not set %q", want)
+	}
+	listen := strings.Index(spaBootLoaderJS, `addEventListener("beforeunload"`)
+	start := strings.Index(spaBootLoaderJS, "instantiateStreaming")
+	if listen < 0 || start < 0 || listen > start {
+		t.Fatal("the beforeunload listener must be added before the wasm starts")
+	}
+	if !strings.Contains(spaBootLoaderJS, "if (e.persisted) globalThis.__skyLeavingUntil = 0") {
+		t.Fatal("only a back/forward cache restore may end the boot loader's leaving time")
+	}
+}
+
+// Sky.Live keeps the same rule: only a back/forward cache restore ends the
+// leaving time, never the first pageshow of a load.
+func TestLiveClientEndsLeavingOnlyOnABfcacheRestore(t *testing.T) {
+	if !strings.Contains(liveClientCoreJS, "if (e.persisted) __skyLeavingUntil = 0;") {
+		t.Fatal("the Sky.Live pageshow handler must end the leaving time only when persisted")
+	}
+	if strings.Contains(liveClientCoreJS, "\n  __skyLeavingUntil = 0;") {
+		t.Fatal("the Sky.Live client still ends the leaving time on every pageshow")
 	}
 }

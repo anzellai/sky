@@ -1,0 +1,76 @@
+-- PINNED REPRO — v0.29.6
+--
+-- A record literal of functions, wrapped in `Just` inside a record update,
+-- where the field's type is a PARAMETERISED record alias (`Wiring model`).
+-- `sky check` said Types OK, then `go build` failed:
+--
+--   cannot use struct{Persist any; Restore any}{…} as Main_Wiring_R[any]
+--   value in argument to rt.Just[Main_Wiring_R[any]]
+--
+-- `lower_record` built a generic record whose fields are functions as the
+-- all-`any` anonymous struct (the TEA config form a kernel reads by
+-- reflection), and `Just` lowered its argument at `any`, so nothing narrowed
+-- it into the nominal that `rt.Just[…]` was monomorphised to. Fixed in
+-- `lower.rs`: a record literal that is the argument of `Just` / `Ok` / `Err`
+-- whose element is that nominal is built AS the nominal
+-- (`builtin_container_fn_field_gotys`, doc 14 lever §5.2).
+--
+-- `run 41 cfg` calls both functions read back from the wiring (`persist 41`,
+-- `restore "7"`); `run 1 base` reads the empty wiring.
+--
+-- coordinate: gfr_slot=just gfr_site=poly_update gfr_annot=annotated
+-- expect: accept, stdout "41/restored\nno wiring"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+type alias Wiring model =
+    { restore : String -> Maybe model
+    , persist : model -> String
+    }
+
+type alias Config model =
+    { name : String
+    , wiring : Maybe (Wiring model)
+    }
+
+
+withWiring : (model -> String) -> (String -> Maybe model) -> Config model -> Config model
+withWiring persist restore cfg =
+    { cfg | wiring = Just { restore = restore, persist = persist } }
+
+
+base : Config model
+base =
+    { name = "app", wiring = Nothing }
+
+
+run : model -> Config model -> String
+run m cfg =
+    case cfg.wiring of
+
+        Just w ->
+            w.persist m ++ "/"
+                ++ (case w.restore "7" of
+
+                       Just _ ->
+                           "restored"
+
+                       Nothing ->
+                           "none")
+
+        Nothing ->
+            "no wiring"
+
+
+main =
+    let
+        cfg = base |> withWiring String.fromInt String.toInt
+        _ = println (run 41 cfg)
+        _ = println (run 1 base)
+    in
+        ()

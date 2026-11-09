@@ -458,7 +458,7 @@ func (c *spaClosedEncodeContext) atomicWithOld(value, old reflect.Value, prior *
 		out.RawKind = spaClosedRawJustNull
 	}
 	c.work.Marshals++
-	encoded, err := json.Marshal(raw)
+	encoded, err := jsonMarshalTree(raw)
 	out.MarshalErr, out.Size, out.Null = err, uint64(len(encoded)), spaIsNullRaw(encoded)
 	c.work.EncodedBytes = spaSizeAdd(c.work.EncodedBytes, uint64(len(encoded)))
 	out.Plan = &spaClosedBytePlan{raw: string(encoded)}

@@ -396,56 +396,10 @@ type jsonOrderedObject struct {
 }
 
 func (o jsonOrderedObject) MarshalJSON() ([]byte, error) {
-	// A fixed small starting buffer avoids repeated growth for tiny objects.
-	// No keys, values, lengths or spare caller capacity are read ahead.
-	out := make([]byte, 1, 32)
-	out[0] = '{'
-	for i, k := range o.keys {
-		if i > 0 {
-			out = append(out, ',')
-		}
-		// Read this current key ONLY at its original position, after all
-		// preceding value effects. Dynamic misses never populate the cache.
-		if encoded, ok := codecAutoSchemaKeys.Load(k); ok {
-			out = append(out, encoded.(string)...)
-		} else {
-			kb, err := json.Marshal(k)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, kb...)
-		}
-		out = append(out, ':')
-		// Only exact builtin dynamic types enter these infallible cases.
-		// Named/custom values and all other representations retain the
-		// original json.Marshal call at this precise value position.
-		value := o.vals[i]
-		switch v := value.(type) {
-		case int64:
-			out = strconv.AppendInt(out, v, 10)
-			continue
-		case bool:
-			out = strconv.AppendBool(out, v)
-			continue
-		case nil:
-			out = append(out, "null"...)
-			continue
-		case string:
-			if codecJSONSafeASCII(v) {
-				out = append(out, '"')
-				out = append(out, v...)
-				out = append(out, '"')
-				continue
-			}
-		}
-		vb, err := json.Marshal(value)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, vb...)
-	}
-	out = append(out, '}')
-	return out, nil
+	// One pass over the whole subtree (json_tree_writer.go). encoding/json
+	// still wraps an error from here in its MarshalerError, as before.
+	w := jsonTreeWriter{limit: -1}
+	return w.appendObject(make([]byte, 0, 32), o)
 }
 
 // codecJSONSafeASCII is deliberately narrower than JSON string escaping.
@@ -512,14 +466,9 @@ func JsonEnc_encode(indent any, v any) any {
 	} else {
 		val = v
 	}
-	n := AsInt(indent)
-	var b []byte
-	var err error
-	if n > 0 {
-		b, err = json.MarshalIndent(val, "", strings.Repeat(" ", n))
-	} else {
-		b, err = json.Marshal(val)
-	}
+	// One pass, the same bytes and errors as json.Marshal /
+	// json.MarshalIndent(val, "", n spaces) (json_tree_writer.go).
+	b, err := jsonEncodeTree(val, AsInt(indent))
 	if err != nil {
 		// A Value JSON cannot represent. Every tree the Json.Encode builders
 		// produce marshals, except a NaN or infinite Float (Encode.float of

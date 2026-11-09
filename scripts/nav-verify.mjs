@@ -277,6 +277,86 @@ async function leaveScenario(browserName, target, url) {
   }
 }
 
+// Leaving during boot (Sky.Spa). A navigation that starts before the wasm
+// client is live fires `beforeunload` before the client could listen for it.
+// The boot loader (spa-boot.<hash>.js) records it, and the client then starts
+// no request while the page is leaving. The next page answers slowly, so the
+// old page lives on while the navigation is pending.
+//   download  the navigation starts while the wasm downloads. WebKit cancels
+//             the download: the boot loader must not raise a page error.
+//   start     the wasm has downloaded, the navigation starts before the client
+//             runs (its start is held for 1.5 s). The client goes live on the
+//             leaving page; a click then asks for an RPC, and none may start
+//             after `beforeunload`.
+async function bootLeaveScenario(browserName, target, url) {
+  const tag = `${target}/${browserName}`;
+  const browser = await launch(browserName);
+  try {
+    for (const when of ["download", "start"]) {
+      const page = await browser.newPage();
+      const errors = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      let leaving = false;
+      const late = [];
+      page.on("request", (r) => {
+        if (leaving && r.url().includes("/_rpc/")) late.push(new URL(r.url()).pathname);
+      });
+      let live = false;
+      let left = false;
+      page.on("console", (m) => {
+        if (m.text() === "nav-verify: live while leaving") live = true;
+        if (m.text() === "nav-verify: beforeunload") left = true;
+      });
+      await page.addInitScript(() => {
+        window.addEventListener("beforeunload", () => { window.__navLeft = 1; console.log("nav-verify: beforeunload"); });
+        // The page reports, and clicks, itself: an evaluate from the test can
+        // wait behind the pending navigation. Once the client is live on the
+        // leaving page, a click asks for an RPC.
+        new MutationObserver((_, obs) => {
+          if (!window.__navLeft || document.documentElement.hasAttribute("data-sky-hydrating")) return;
+          obs.disconnect();
+          console.log("nav-verify: live while leaving");
+          const b = document.getElementById("open");
+          if (b) b.click();
+        }).observe(document, { attributes: true, subtree: true, attributeFilter: ["data-sky-hydrating"] });
+        const orig = WebAssembly.instantiateStreaming;
+        WebAssembly.instantiateStreaming = (src, imports) =>
+          orig.call(WebAssembly, src, imports).then((r) => new Promise((ok) => setTimeout(() => ok(r), 1500)));
+      });
+      await page.route("**/about", async (r) => { await new Promise((ok) => setTimeout(ok, 8000)); await r.continue().catch(() => {}); });
+      if (when === "download") {
+        await page.route("**/*.wasm", async (r) => { await new Promise((ok) => setTimeout(ok, 3000)); await r.continue().catch(() => {}); });
+        await page.goto(url, { waitUntil: "domcontentloaded" });
+      } else {
+        const wasm = page.waitForResponse((r) => r.url().endsWith(".wasm"), { timeout: 20000 });
+        await page.goto(url, { waitUntil: "domcontentloaded" });
+        await (await wasm).finished();
+      }
+      const hydrating = await page.evaluate(() => document.documentElement.hasAttribute("data-sky-hydrating"));
+      leaving = true;
+      // A browser-started navigation: Chromium fires beforeunload for it
+      // (it skips the event for a script navigation with no user gesture).
+      const nav = page.goto(url + "about", { waitUntil: "commit", timeout: 20000 }).catch(() => {});
+      for (let i = 0; i < 60 && !left; i++) await page.waitForTimeout(50);
+      if (when === "start") {
+        // Wait for the client to go live on the leaving page (it clicks).
+        const deadline = Date.now() + 6000;
+        while (!live && Date.now() < deadline) await page.waitForTimeout(100);
+        check(`${tag} boot-leave/${when}: the navigation started before the client was live`, hydrating && left && live, `hydrating=${hydrating} beforeunload=${left} client live while leaving=${live}`);
+      } else {
+        check(`${tag} boot-leave/${when}: the navigation started while the wasm downloaded`, hydrating && left, `hydrating=${hydrating} beforeunload=${left}`);
+      }
+      await nav;
+      await page.waitForTimeout(500);
+      check(`${tag} boot-leave/${when}: no RPC starts after beforeunload`, late.length === 0, late.join(", ") || "none");
+      check(`${tag} boot-leave/${when}: no page errors`, errors.length === 0, errors.join(" | ") || "none");
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
 async function plainScenario(browserName, target, port) {
   const browser = await launch(browserName);
   const tag = `${target}/${browserName}`;
@@ -583,6 +663,7 @@ try {
       results[`${target}/${b}`] = await scenario(b, target, `http://127.0.0.1:${port}/`, app);
       await plainScenario(b, target, port);
       await leaveScenario(b, target, `http://127.0.0.1:${port}/`);
+      if (target === "web:app") await bootLeaveScenario(b, target, `http://127.0.0.1:${port}/`);
       await scrollScenario(b, target, `http://127.0.0.1:${port}/`);
       await rootPortScenarios(b, target, `http://127.0.0.1:${port}/`);
       if(target==='live')await liveOriginScenario(b, `http://127.0.0.1:${port}/`);

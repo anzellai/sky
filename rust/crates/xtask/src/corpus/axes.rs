@@ -422,6 +422,31 @@ pub const LETREC_SITE: Axis = Axis::new(
     &["in_def", "in_case_branch", "in_lambda", "tail_loop"],
 );
 
+/// **Which slot a record literal of FUNCTIONS lands in** (v0.29.6). The
+/// literal builds a parametric record alias whose fields are functions
+/// (`Wiring model = { restore : String -> Maybe model, persist : model ->
+/// String }`). Inside a record update (`{ cfg | wiring = Just { restore = r,
+/// persist = p } }`) the literal was built as the all-`any` struct
+/// `struct{ Persist any; Restore any }` and handed to `rt.Just[Main_Wiring_R[any]]`:
+/// `sky check` passed and `go build` failed. The other slots are its
+/// neighbours: the other builtin containers, a user ADT, a tuple, a record
+/// field, a list literal and a cons.
+pub const GFR_SLOT: Axis = Axis::new(
+    "gfr_slot",
+    &["just", "ok", "err", "adt", "tuple", "field", "list", "cons"],
+);
+
+/// **Where the literal is written** (v0.29.6): `poly_def` is the body of a
+/// polymorphic def returning the slot (`model` is a type variable),
+/// `poly_update` is a record update of a polymorphic holder (the reported
+/// shape), `concrete` is a def at `Wiring Int`.
+pub const GFR_SITE: Axis = Axis::new("gfr_site", &["poly_def", "poly_update", "concrete"]);
+
+/// **Whether the def that builds the literal is annotated** (v0.29.6). The
+/// lowerer's typed table is not seeded from annotations, so both forms reach
+/// the lowering with different inferred types (doc 13 D3).
+pub const GFR_ANNOT: Axis = Axis::new("gfr_annot", &["annotated", "unannotated"]);
+
 /// **How a Task-returning function reaches a `Task.andThen` chain.** A
 /// parameter `f : Int -> Task Error ()` called in a middle link whose result
 /// the next link ignores (`\_ -> …`) was typed `SkyTask[E, any]` by inference
@@ -704,6 +729,16 @@ pub const STRATA: &[Stratum] = &[
         // One module, one `let`: nothing here depends on a neighbour.
         isolated: false,
     },
+    // ---- v0.29.6 ------------------------------------------------------------
+    Stratum {
+        name: "generic_fn_record_slot",
+        axes: &[GFR_SLOT, GFR_SITE, GFR_ANNOT],
+        coordinate: Some(
+            "v0.29.6: `{ cfg | wiring = Just { restore = r, persist = p } }` with a parametric record of functions",
+        ),
+        // One module: the alias, the slot and the literal are all local.
+        isolated: false,
+    },
 ];
 
 /// Whether a point in a stratum's cross is a real case.
@@ -870,6 +905,13 @@ pub fn pinned_coordinate(stratum: &str) -> Option<Assignment> {
                 .with(LETREC_GROUP, "two")
                 .with(LETREC_DEP, "none")
                 .with(LETREC_SITE, "in_def"),
+        ),
+        // v0.29.6: the reported reproduction, `{ cfg | wiring = Just { … } }`.
+        "generic_fn_record_slot" => Some(
+            Assignment::new()
+                .with(GFR_SLOT, "just")
+                .with(GFR_SITE, "poly_update")
+                .with(GFR_ANNOT, "annotated"),
         ),
         _ => None,
     }

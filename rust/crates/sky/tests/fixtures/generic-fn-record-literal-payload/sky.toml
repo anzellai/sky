@@ -1,0 +1,6 @@
+name = "generic-fn-record-literal-payload"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"

@@ -831,8 +831,72 @@ fn select_record_candidate_inner<'a>(
     // guessed between.
     match viable.as_slice() {
         [(c, _)] => Some(c),
+        // Several survivors that are the SAME Sky type: two modules each
+        // declaring `type alias Wiring model = { restore : String -> Maybe
+        // model, persist : model -> String }`. Sky record aliases are
+        // structural, so these are one type, and their Go structs have one
+        // shape. Refusing them left an under-determined literal (a record of
+        // functions whose param is still a variable) as an anonymous struct,
+        // while a record DECLARATION naming the alias resolved to the first
+        // candidate (`Lib_Wiring_R[T1]`): `rt.Just[struct{…}]` then went into
+        // a `rt.SkyMaybe[Lib_Wiring_R[any]]` field and `go build` failed
+        // (v0.29.6). Take the first, as the determined-tie rule above does.
+        [(c, _), rest @ ..] if rest.iter().all(|(o, _)| same_record_alias(c, o, env)) => Some(c),
         _ => None,
     }
+}
+
+/// Whether the parameterised record aliases `a` and `b` declare the same
+/// record: the same number of type parameters and, after renaming `b`'s parameters to `a`'s
+/// positionally, the same field types.
+fn same_record_alias(a: &str, b: &str, env: &TypeEnv) -> bool {
+    let (Some(ta), Some(tb)) = (env.record_templates.get(a), env.record_templates.get(b)) else {
+        return false;
+    };
+    let pa = env.record_params.get(a).cloned().unwrap_or_default();
+    let pb = env.record_params.get(b).cloned().unwrap_or_default();
+    // Only PARAMETERISED twins. A non-parameterised record that reaches here
+    // has fields the checker left unsolved (`any` from a decoder), and its
+    // structural form is cheaper than narrowing each field into a nominal the
+    // program never names (`Std.Ai.Provider` vs `Std.Ai.Eval`, coerce-floor).
+    if pa.is_empty() || pa.len() != pb.len() || ta.len() != tb.len() {
+        return false;
+    }
+    let rename: HashMap<&Name, &Name> = pb.iter().zip(pa.iter()).collect();
+    ta.iter().all(|(n, t)| {
+        tb.iter()
+            .find(|(m, _)| m == n)
+            .is_some_and(|(_, u)| *t == rename_vars(u, &rename))
+    })
+}
+
+/// `t` with each type variable in `rename` replaced by its target.
+fn rename_vars(t: &Ty, rename: &HashMap<&Name, &Name>) -> Ty {
+    base::ensure_stack(|| match t {
+        Ty::Var(n) => Ty::Var(
+            rename
+                .get(n)
+                .map(|m| (*m).clone())
+                .unwrap_or_else(|| n.clone()),
+        ),
+        Ty::Fun(a, b) => Ty::Fun(
+            Box::new(rename_vars(a, rename)),
+            Box::new(rename_vars(b, rename)),
+        ),
+        Ty::App(n, xs) => Ty::App(
+            n.clone(),
+            xs.iter().map(|x| rename_vars(x, rename)).collect(),
+        ),
+        Ty::Record(fs, ext) => Ty::Record(
+            fs.iter()
+                .map(|(n, x)| (n.clone(), rename_vars(x, rename)))
+                .collect(),
+            ext.clone(),
+        ),
+        Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| rename_vars(x, rename)).collect()),
+        Ty::Unit => Ty::Unit,
+        Ty::Error => Ty::Error,
+    })
 }
 
 fn instantiate_structural(
@@ -857,10 +921,37 @@ fn instantiate_structural(
     }
     let mut args = Vec::with_capacity(param_vars.len());
     for pv in param_vars {
-        let bt = bound.get(pv)?; // unbound → give up (None)
-        args.push(go_ty(bt, env, cur_mod, params));
+        match bound.get(pv) {
+            Some(bt) => args.push(go_ty(bt, env, cur_mod, params)),
+            // A param the templates USE but no concrete field bound: the field
+            // that mentions it is itself under-determined (an unsolved var where
+            // the template has `String -> Maybe model`), because the lowerer's
+            // typed table is not annotation-seeded. The candidate already
+            // survived `select_record_candidate`, so nothing CONTRADICTS the
+            // alias; the param is simply unknown, which is exactly what a
+            // `Ty::Var` erases to everywhere else (`any`). Giving up here built a
+            // record of functions as an anonymous `struct{ F any; … }` while
+            // every slot expecting it is `Alias_R[any]`: `sky check` passed and
+            // `go build` failed inside `rt.Just[Alias_R[any]](…)` (v0.29.6), and
+            // every other slot paid a reflective `rt.Coerce` back into the alias.
+            None if templates.iter().any(|(_, t)| ty_mentions_var(t, pv)) => args.push(GoTy::Any),
+            // A phantom param (no field mentions it): nothing fixes it, so keep
+            // the structural form rather than invent an instantiation.
+            None => return None,
+        }
     }
     Some(GoTy::Named(go_name.to_string(), args))
+}
+
+/// Does the alias field template `t` mention the type variable `v`?
+fn ty_mentions_var(t: &Ty, v: &Name) -> bool {
+    base::ensure_stack(|| match t {
+        Ty::Var(n) => n == v,
+        Ty::App(_, xs) | Ty::Tuple(xs) => xs.iter().any(|x| ty_mentions_var(x, v)),
+        Ty::Fun(a, b) => ty_mentions_var(a, v) || ty_mentions_var(b, v),
+        Ty::Record(fs, _) => fs.iter().any(|(_, x)| ty_mentions_var(x, v)),
+        Ty::Unit | Ty::Error => false,
+    })
 }
 
 /// Structural unification of an alias field TEMPLATE against the concrete
