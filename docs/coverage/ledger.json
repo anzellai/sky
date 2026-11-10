@@ -22497,8 +22497,8 @@
       "id": "e2e:scripts/spa-rpc-order-e2e.sh",
       "modules_imported": 20,
       "path": "scripts/spa-rpc-order-e2e.sh",
-      "refs_generous": 65,
-      "refs_qualified": 64,
+      "refs_generous": 66,
+      "refs_qualified": 65,
       "role": "FlowTest",
       "sky_files": 6,
       "sky_toml_sections": []

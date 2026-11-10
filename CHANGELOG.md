@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## Unreleased
+## v0.29.7 — input made before the page is live reaches update; split code owns its import names (2026-11-10)
 
 ### Fixed
 
