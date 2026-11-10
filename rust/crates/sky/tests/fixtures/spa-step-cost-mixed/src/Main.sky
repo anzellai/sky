@@ -138,8 +138,8 @@ update msg model =
 
         AddPressure ->
             ( { model
-                  | pressureA = [ String.repeat 1000000 "a" ]
-                  , pressureB = [ String.repeat 480000 "b" ]
+                  | pressureA = [ String.repeat 2000000 "a" ]
+                  , pressureB = [ String.repeat 960000 "b" ]
               }
             , Cmd.none
             )

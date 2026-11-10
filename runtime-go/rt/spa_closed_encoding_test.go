@@ -156,7 +156,7 @@ func TestSpaClosedRecursiveMissingSmallRawUsesPinnedReconstruction(t *testing.T)
 		First  string `sky:"first,string"`
 		Second string `sky:"second,string"`
 	}
-	m := record{First: strings.Repeat("a", 1000000), Second: strings.Repeat("b", 1000000)}
+	m := record{First: strings.Repeat("a", spaPersistMaxBytes*2/3), Second: strings.Repeat("b", spaPersistMaxBytes*2/3)}
 	epoch := codecEnumRegistry()
 	options := spaClosedEncodingOptions{NeedRaw: true, AllowOversizeWithoutRaw: true}
 	warm := spaClosedTestEncode(m, nil, nil, nil, options, spaNewClosedEncodingBudget(spaPersistMaxBytes))

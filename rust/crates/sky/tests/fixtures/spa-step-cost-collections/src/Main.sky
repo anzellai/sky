@@ -158,7 +158,7 @@ oversizedEditor brand =
             (Dict.fromList
                 (List.map
                     (\n ->
-                        ( "key-" ++ String.fromInt n, String.repeat 32768 "x" ))
+                        ( "key-" ++ String.fromInt n, String.repeat 65536 "x" ))
                     (List.range 2 64)))
     , pairs = []
     , productForm = { brand = brand }
@@ -240,8 +240,8 @@ update msg model =
 
         AddPressure ->
             ( { model
-                  | pressureA = [ String.repeat 1000000 "a" ]
-                  , pressureB = [ String.repeat 480000 "b" ]
+                  | pressureA = [ String.repeat 2000000 "a" ]
+                  , pressureB = [ String.repeat 960000 "b" ]
               }
             , Cmd.none
             )
@@ -344,7 +344,7 @@ view model =
               LoadOversizedDict
         , button "pressure" "Add unrelated data" AddPressure
         , button "unpressure" "Remove unrelated data" DropPressure
-        , button "huge" "100K entries" (Load 100000)
+        , button "huge" "200K entries" (Load 200000)
         , button "rows" "200 visible rows" (ShowRows 200)
         , button "dispatch" "Start async work" Dispatch
         , button "advance" "Advance choice" Advance

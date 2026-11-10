@@ -10,7 +10,7 @@ import (
 // (session) field, an oversized or corrupt stored blob falls back to the seed,
 // and an empty seed restores the stored model as-is.
 func TestSpaMergeStoredOverSeed(t *testing.T) {
-	const cap = 1_500_000
+	const cap = spaPersistMaxBytes
 
 	t.Run("stored over seed, session kept from seed", func(t *testing.T) {
 		// Stored carries a stale session ("old") plus scratch state (cart, page).

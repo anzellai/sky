@@ -356,7 +356,7 @@ func TestSpaClosedLazyProtectedIdentityAndPayloadResolveOnce(t *testing.T) {
 	log := []string{}
 	e := spaMixedTestEncoder(&log)
 	options := spaMixedEncodeOptions{CapBytes: spaPersistMaxBytes, Protected: []string{"b"}}
-	m := model{A: strings.Repeat("a", 1000000), B: strings.Repeat("b", 1000000)}
+	m := model{A: strings.Repeat("a", spaPersistMaxBytes*2/3), B: strings.Repeat("b", spaPersistMaxBytes*2/3)}
 	warm := spaEncodeMixed(e, nil, m, options)
 	if !warm.Valid || warm.NextCache.closed[1].raw != "" {
 		t.Fatal("protected raw-miss fixture failed")
@@ -383,7 +383,7 @@ func TestSpaClosedLazyDeferredFailureReportsAttemptedWorkBeforeRecovery(t *testi
 	log := []string{}
 	e := spaMixedTestEncoder(&log)
 	options := spaMixedEncodeOptions{CapBytes: spaPersistMaxBytes}
-	m := model{A: strings.Repeat("a", 1000000), B: strings.Repeat("b", 1000000), FX: spaMixedTestFX{log: &log, V0: "synthetic"}}
+	m := model{A: strings.Repeat("a", spaPersistMaxBytes*2/3), B: strings.Repeat("b", spaPersistMaxBytes*2/3), FX: spaMixedTestFX{log: &log, V0: "synthetic"}}
 	warm := spaEncodeMixed(e, nil, m, options)
 	if !warm.Valid || warm.NextCache.closed[1].raw != "" {
 		t.Fatal("corrupt-certificate fixture failed")

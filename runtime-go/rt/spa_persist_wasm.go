@@ -12,6 +12,8 @@ package rt
 // localStorage falls back to the SSR seed and never breaks the app.
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"syscall/js"
 	"unsafe"
@@ -74,8 +76,9 @@ func spaLocalStorage() (ls js.Value) {
 }
 
 // spaLocalKV is window.localStorage as a spaKV. Every call is guarded: an
-// unavailable or throwing storage (private mode, a quota error) reads as absent
-// and writes as a no-op, so persistence degrades and the app keeps working.
+// unavailable or throwing storage (private mode, a quota error) reads as absent,
+// and a refused write returns its error (see Set), so persistence degrades and
+// the app keeps working.
 type spaLocalKV struct{}
 
 // One bounded browser string, with its actual immutable Go owner. Reusing this
@@ -111,22 +114,66 @@ func (spaLocalKV) Get(key string) (blob string, ok bool) {
 	return v.String(), true
 }
 
-func (spaLocalKV) Set(key, value string) {
-	defer func() { _ = recover() }()
-	if ls := spaLocalStorage(); ls.Truthy() {
-		useCache := (spaGeneratedModelEncoder || spaMixedPersistenceState.encoder.Prepare != nil) && !spaStepReference && key == spaPersistKey && len(value) <= spaPersistMaxBytes
-		var argument js.Value
-		if useCache && spaPersistBridge.owner != "" && len(value) == len(spaPersistBridge.owner) && unsafe.StringData(value) == unsafe.StringData(spaPersistBridge.owner) {
-			argument = spaPersistBridge.value
-		} else {
+// Set writes one value. A refused setItem (a full quota, a storage the browser
+// disabled) is returned as an error, a spaKVQuotaError for a quota failure,
+// and resets the bridge, whose cached JS string no longer matches what the
+// storage holds. It never panics.
+func (spaLocalKV) Set(key, value string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
 			spaResetPersistBridge()
-			argument = js.ValueOf(value)
-			spaPersistBridgeBytes += len(value)
-			if useCache {
-				spaPersistBridge.owner, spaPersistBridge.value = value, argument
-			}
+			err = spaClassifyStorageError(r)
 		}
-		ls.Call("setItem", key, argument)
+	}()
+	ls := spaLocalStorage()
+	if !ls.Truthy() {
+		return errors.New("localStorage unavailable")
+	}
+	useCache := (spaGeneratedModelEncoder || spaMixedPersistenceState.encoder.Prepare != nil) && !spaStepReference && key == spaPersistKey && len(value) <= spaPersistMaxBytes
+	var argument js.Value
+	if useCache && spaPersistBridge.owner != "" && len(value) == len(spaPersistBridge.owner) && unsafe.StringData(value) == unsafe.StringData(spaPersistBridge.owner) {
+		argument = spaPersistBridge.value
+	} else {
+		spaResetPersistBridge()
+		argument = js.ValueOf(value)
+		spaPersistBridgeBytes += len(value)
+		if useCache {
+			spaPersistBridge.owner, spaPersistBridge.value = value, argument
+		}
+	}
+	ls.Call("setItem", key, argument)
+	return nil
+}
+
+// spaClassifyStorageError turns a recovered setItem exception into an error.
+// A QuotaExceededError (name, or legacy code 22 / Firefox code 1014) is a
+// spaKVQuotaError, anything else a plain error carrying its name.
+func spaClassifyStorageError(r any) error {
+	if jsErr, ok := r.(js.Error); ok {
+		v := jsErr.Value
+		name := ""
+		if n := v.Get("name"); n.Type() == js.TypeString {
+			name = n.String()
+		}
+		code := 0
+		if c := v.Get("code"); c.Type() == js.TypeNumber {
+			code = c.Int()
+		}
+		if name == "QuotaExceededError" || name == "NS_ERROR_DOM_QUOTA_REACHED" || code == 22 || code == 1014 {
+			return spaKVQuotaError{Name: name}
+		}
+		if name != "" {
+			return errors.New(name)
+		}
+	}
+	return fmt.Errorf("localStorage.setItem failed: %v", r)
+}
+
+// spaPersistWarnDefault (wasm) is one console.warn.
+func spaPersistWarnDefault(msg string) {
+	defer func() { _ = recover() }()
+	if c := js.Global().Get("console"); c.Truthy() {
+		c.Call("warn", msg)
 	}
 }
 

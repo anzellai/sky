@@ -17,11 +17,11 @@ import (
 type memKV map[string]string
 
 func (m memKV) Get(k string) (string, bool) { v, ok := m[k]; return v, ok }
-func (m memKV) Set(k, v string)             { m[k] = v }
+func (m memKV) Set(k, v string) error       { m[k] = v; return nil }
 func (m memKV) Remove(k string)             { delete(m, k) }
 
 const (
-	idCap          = 1_500_000
+	idCap          = spaPersistMaxBytes
 	legacyModelKey = "sky:spa:model"
 	practitioner   = `{"session":{"kind":"practitioner","userId":"u1"},"page":"diary","note":"u1 private","basket":["x"]}`
 	practitionerB  = `{"session":{"userId":"u1","kind":"practitioner"},"page":"home","note":"","basket":[]}`

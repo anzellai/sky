@@ -218,13 +218,13 @@ func TestSpaModelFieldsShrinkingSnapshotRetainsReconstructedFields(t *testing.T)
 		Second []string `sky:"second,[]string"`
 		Text   string   `sky:"text,string"`
 	}
-	old := model{First: spaFieldsFixture(22000).Data, Second: spaFieldsFixture(8000).Data}
+	old := model{First: spaFieldsFixture(spaPersistMaxBytes / 68).Data, Second: spaFieldsFixture(spaPersistMaxBytes / 188).Data}
 	snapshot := spaFieldsFromOriginal(t, old, spaPersistMaxBytes)
 	if _, oversized, _, ok := snapshot.storedJSON(nil, nil, spaPersistMaxBytes); !ok || !oversized {
 		t.Fatal("initial fixture must exceed the storage cap")
 	}
 	small := old
-	small.First = old.First[:14000]
+	small.First = old.First[:spaPersistMaxBytes / 107]
 	derived, _, ok := snapshot.derive(small)
 	if !ok {
 		t.Fatal("shrinking the first field lost the certificate")

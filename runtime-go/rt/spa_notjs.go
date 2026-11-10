@@ -14,3 +14,9 @@ func spaRun(cfg any) any {
 			"emitted Go and serve it with wasm_exec.js.", nil)
 	return nil
 }
+
+// spaPersistWarnDefault (host build) logs a refused persistence write. Only
+// the wasm client writes localStorage; host tests reach it through a fake KV.
+func spaPersistWarnDefault(msg string) {
+	logEmit(logLevelWarn, "warn", msg, nil)
+}

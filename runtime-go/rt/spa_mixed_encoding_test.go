@@ -324,7 +324,7 @@ func TestSpaMixedMissingRawReconstructsWhenSnapshotBecomesSmall(t *testing.T) {
 	log := []string{}
 	e := spaMixedTestEncoder(&log)
 	options := spaMixedEncodeOptions{CapBytes: spaPersistMaxBytes}
-	m := record{First: strings.Repeat("a", 1000000), Second: strings.Repeat("b", 1000000)}
+	m := record{First: strings.Repeat("a", spaPersistMaxBytes*2/3), Second: strings.Repeat("b", spaPersistMaxBytes*2/3)}
 	warm := spaEncodeMixed(e, nil, m, options)
 	if !warm.Valid || warm.Payload != "" || warm.NextCache.fields[1].raw != "" {
 		t.Fatal("fixture did not establish an unretained selected field")

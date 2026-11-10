@@ -116,11 +116,12 @@ type spaMetadataMutationKV struct {
 	change func()
 }
 
-func (s *spaMetadataMutationKV) Set(key, value string) {
+func (s *spaMetadataMutationKV) Set(key, value string) error {
 	s.spaPublicationKV.Set(key, value)
 	if s.change != nil {
 		s.change()
 	}
+	return nil
 }
 
 func TestSpaFieldPersistenceRechecksPreviousValidityAfterPublication(t *testing.T) {

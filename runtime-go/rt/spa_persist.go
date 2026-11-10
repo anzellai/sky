@@ -22,6 +22,11 @@ package rt
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"sync/atomic"
+
+	"sky-app/rt/telemetry"
 )
 
 // spaPersistKey is the localStorage key holding the serialised model. It holds
@@ -37,11 +42,17 @@ const (
 )
 
 // spaPersistMaxBytes caps both the stored blob we will accept on boot and the
-// blob we write per step. A model larger than this is not persisted (localStorage
-// quotas are small and vary by browser); the app still works, it just does not
-// restore scratch state. Chosen well under the ~5 MB per-origin quota so a large
-// model degrades gracefully rather than throwing a QuotaExceededError mid-write.
-const spaPersistMaxBytes = 1_500_000
+// blob we write per step. A model larger than this is not persisted; the app
+// still works, it just does not restore scratch state.
+//
+// 3,000,000 bytes (v0.29.9, was 1,500,000). The smallest per-origin
+// localStorage limit measured in headless WebKit, Firefox and Chromium
+// (Playwright 1.59, 2026-11-10) is 5,241,856 UTF-16 code units for keys plus
+// values. The cap counts UTF-8 bytes, which are never fewer than the UTF-16
+// units of the same text, so a capped blob leaves at least 42% of that quota
+// for the origin's other keys. A write the browser still refuses is handled
+// by spaPersistWriteKnownIdentity (the old value stays).
+const spaPersistMaxBytes = 3_000_000
 
 // spaMergeStoredOverSeed decides the model JSON the client boots from. It starts
 // from the localStorage-stored model and overrides each protected (session)
@@ -232,10 +243,11 @@ func spaIsNullRaw(r json.RawMessage) bool {
 
 // spaKV is the storage the persistence rule reads and writes: window.localStorage
 // in the wasm client (spa_persist_wasm.go), a map in host tests. Get reports
-// whether the key is present; every method swallows a storage failure.
+// whether the key is present. Set reports a refused write as an error (a
+// spaKVQuotaError for a full quota). Get and Remove swallow a storage failure.
 type spaKV interface {
 	Get(key string) (string, bool)
-	Set(key, value string)
+	Set(key, value string) error
 	Remove(key string)
 }
 
@@ -250,6 +262,12 @@ type spaPersistLife struct {
 	known        bool
 	id           string
 	heldSignedIn bool
+	// quotaFenceBytes is the size of the last write the storage refused for
+	// its quota, or 0. A write of this size or larger is not tried again
+	// until a smaller one succeeds. warned is true once this page has warned
+	// about a refused write (one warning per page).
+	quotaFenceBytes uint64
+	warned          bool
 }
 
 func spaLifeFor(id string) spaPersistLife {
@@ -383,7 +401,54 @@ func spaPersistWriteKnownIdentity(st spaKV, life *spaPersistLife, modelJSON, id 
 	if maxBytes > 0 && encodedBytes > uint64(maxBytes) {
 		return
 	}
-	st.Set(spaPersistKey, modelJSON)
+	if life.quotaFenceBytes > 0 && encodedBytes >= life.quotaFenceBytes {
+		return
+	}
+	if err := st.Set(spaPersistKey, modelJSON); err != nil {
+		spaPersistSetFailed(life, err, encodedBytes)
+		return
+	}
+	life.quotaFenceBytes = 0
+}
+
+// spaKVQuotaError is a storage write refused because the origin's quota is
+// full (the browser's QuotaExceededError).
+type spaKVQuotaError struct{ Name string }
+
+func (e spaKVQuotaError) Error() string { return "storage quota exceeded (" + e.Name + ")" }
+
+// spaPersistWarn reports a refused write to the developer: console.warn in
+// the wasm client, a log line natively. Tests replace it.
+var spaPersistWarn = func(msg string) { spaPersistWarnDefault(msg) }
+
+var spaPersistQuotaFailureCount atomic.Int64
+
+// spaPersistQuotaFailures is the number of refused persistence writes in this
+// process, also counted as sky_spa_persist_write_failures_total.
+func spaPersistQuotaFailures() int64 { return spaPersistQuotaFailureCount.Load() }
+
+// spaPersistSetFailed handles a refused write. Nothing is removed, so the
+// stored value is the last one written. A quota failure fences writes of this
+// size or larger. The page warns once, and every failure is counted. It never
+// panics and never blocks the update.
+func spaPersistSetFailed(life *spaPersistLife, err error, encodedBytes uint64) {
+	var quota spaKVQuotaError
+	reason := "other"
+	if errors.As(err, &quota) {
+		reason = "quota"
+		life.quotaFenceBytes = encodedBytes
+	}
+	spaPersistQuotaFailureCount.Add(1)
+	telemetry.Default().Inc("sky_spa_persist_write_failures_total", map[string]string{"reason": reason})
+	if life.warned {
+		return
+	}
+	life.warned = true
+	if reason == "quota" {
+		spaPersistWarn(fmt.Sprintf("[sky.spa] the saved model (%d bytes) does not fit the browser storage quota. The previous saved copy is kept, and a reload restores it.", encodedBytes))
+		return
+	}
+	spaPersistWarn("[sky.spa] the browser refused to save the model (" + err.Error() + "). The previous saved copy is kept.")
 }
 
 // spaPersistStripFields removes the excluded fields (App.withPersistExclude /

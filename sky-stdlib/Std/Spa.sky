@@ -262,7 +262,9 @@ withModelDecoder =
 -- this alongside the decoder. SECURITY: the session field(s) are NEVER trusted
 -- from localStorage — on boot the runtime overrides them with the server-verified
 -- SSR seed (see `withPersistProtectedFields`); a stale stored session cannot
--- override the signed cookie.
+-- override the signed cookie. A model over 3,000,000 bytes of JSON is not
+-- stored. A write the browser refuses keeps the copy stored before it, warns
+-- once on the console and never stops the update.
 withModelEncoder : (model -> String) -> AppConfig model msg -> AppConfig model msg
 withModelEncoder =
     Ffi.kernel "Spa_withModelEncoder"

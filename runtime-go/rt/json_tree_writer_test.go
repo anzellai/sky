@@ -387,7 +387,7 @@ func TestJsonTreeWriterCappedDoesNotGrowPastLimit(t *testing.T) {
 	blob := strings.Repeat("b", 8<<20)
 	tree := jsonOrderedObject{keys: []string{"a", "blob", "z"}, vals: []any{"small", blob, int64(1)}}
 	allocs := testing.AllocsPerRun(5, func() {
-		out, size, err := jsonMarshalTreeCapped(tree, 1_500_000)
+		out, size, err := jsonMarshalTreeCapped(tree, spaPersistMaxBytes)
 		if out != nil || size != len(blob)+len(`{"a":"small","blob":"","z":1}`) || err != nil {
 			panic("expected over cap with the exact size")
 		}
@@ -472,7 +472,7 @@ func BenchmarkJsonTreeEncode(b *testing.B) {
 					b.SetBytes(int64(len(out)))
 				}
 			})
-			b.Run(name+"/capped1.5MB", func(b *testing.B) {
+			b.Run(name+"/cappedAtPersistCap", func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					if _, _, err := jsonMarshalTreeCapped(tree, spaPersistMaxBytes); err != nil {
 						b.Fatal(err)
