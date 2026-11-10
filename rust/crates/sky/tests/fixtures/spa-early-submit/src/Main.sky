@@ -9,6 +9,8 @@ module Main exposing (main)
 --          Sky.Spa: a submit made while the wasm client hydrates is held and
 --          replayed once the client is live, with the typed text. With no
 --          JavaScript, the native POST answers 303 to the same URL.
+--          Text typed and a box ticked before the client runs reach `update`
+--          once it runs (v0.29.7).
 --   /unsub an App.api route that takes a form body. It is still reached.
 
 import Sky.Core.Prelude exposing (..)
@@ -18,6 +20,7 @@ import Sky.Core.Time as Time
 import Sky.Http.Server as Server
 import Std.App as App
 import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
 
 type Page
     = Home
@@ -33,17 +36,25 @@ type alias Model =
     , saved : String
     , saves : Int
     , stamp : String
+    , agree : Bool
     }
 
 type Msg
     = Draft String
     | Save Entry
     | Stamp
+    | SetAgree Bool
 
 
 init : () -> ( Model, Cmd Msg )
 init () =
-    ( { page = Home, draft = "", saved = "", saves = 0, stamp = "-" }
+    ( { page = Home
+      , draft = ""
+      , saved = ""
+      , saves = 0
+      , stamp = "-"
+      , agree = False
+      }
     , Cmd.none
     )
 
@@ -72,6 +83,9 @@ update msg model =
 
         Stamp ->
             ( { model | stamp = serverStamp "stamp" }, Cmd.none )
+
+        SetAgree on ->
+            ( { model | agree = on }, Cmd.none )
 
 
 testId : String -> Ui.Attribute msg
@@ -102,6 +116,29 @@ formPage model =
               (Ui.text ("saves:" ++ String.fromInt model.saves))
         , Ui.el [ testId "saved" ] (Ui.text ("saved:" ++ model.saved))
         , Ui.el [ testId "draft" ] (Ui.text ("draft:" ++ model.draft))
+        , Input.checkbox
+              []
+              { onChange = SetAgree
+              , icon =
+                  \on ->
+                      Ui.text
+                          (if on then
+                              "[x]"
+
+                          else
+                              "[ ]")
+              , checked = model.agree
+              , label = Input.labelHidden "Agree"
+              }
+        , Ui.el
+              [ testId "agree" ]
+              (Ui.text
+                  ("agree:"
+                      ++ (if model.agree then
+                             "yes"
+
+                         else
+                             "no")))
         ]
 
 

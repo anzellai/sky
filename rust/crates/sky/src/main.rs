@@ -3270,26 +3270,20 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
     // be imported twice. If `App` already names a DIFFERENT module, fail rather
     // than let generated code resolve to it.
     if fields.import.qualifier.as_deref() != Some("App") {
-        let other_app = out.lines().any(|l| {
-            let w: Vec<&str> = l.split_whitespace().collect();
-            w.first() == Some(&"import")
-                && w.get(1) != Some(&"Std.App")
-                && w.iter().position(|x| *x == "as").and_then(|i| w.get(i + 1)) == Some(&"App")
-        });
-        if other_app {
-            return Err(
-                "the entry imports another module `as App`, and the client build needs \
-                 `App` to name `Std.App`; rename that alias"
-                    .to_string(),
-            );
-        }
+        synth_qualifier_free(&out, "App", "Std.App")?;
         out = ensure_import(&out, "import Std.App as App");
     }
-    // Ensure the imports the synthesised main needs.
-    if !out.contains("import Std.Spa") {
+    // Ensure the imports the synthesised main needs. Each is added under the
+    // exact name the synthesised code uses, even when the entry already
+    // imports the module under another alias (`import Std.Spa as S`): a module
+    // may be imported twice. A project module or alias that already takes the
+    // name is refused rather than left to capture the generated reference.
+    synth_qualifier_free(&out, "Spa", "Std.Spa")?;
+    if !has_import_as(&out, "Std.Spa", "Spa") {
         out = ensure_import(&out, "import Std.Spa as Spa");
     }
-    if !out.contains("import Sky.Core.List") {
+    synth_qualifier_free(&out, "List", "Sky.Core.List")?;
+    if !has_import_as(&out, "Sky.Core.List", "List") {
         out = ensure_import(&out, "import Sky.Core.List as List");
     }
     // Capture the app `main`'s boot-setup `let`-prefix (schema creation,
@@ -3357,7 +3351,8 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 // Ensure `Task.succeed` resolves (the terminal of the wrapped
                 // block). A second `as Task` alias is harmless if the app already
                 // aliases the module differently.
-                if !out.contains("import Sky.Core.Task as Task") {
+                synth_qualifier_free(&out, "Task", "Sky.Core.Task")?;
+                if !has_import_as(&out, "Sky.Core.Task", "Task") {
                     out = ensure_import(&out, "import Sky.Core.Task as Task");
                 }
                 format!(
@@ -3397,7 +3392,8 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
             }
         }
         None if chain_setup.is_some() => {
-            if !out.contains("import Sky.Core.Task as Task") {
+            synth_qualifier_free(&out, "Task", "Sky.Core.Task")?;
+            if !has_import_as(&out, "Sky.Core.Task", "Task") {
                 out = ensure_import(&out, "import Sky.Core.Task as Task");
             }
             format!(
@@ -3679,6 +3675,50 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
 }
 
 /// Insert `import_line` after the last existing `import …` line.
+/// The `(module, qualifier)` of each `import` line in `src`: the alias, else
+/// the module path itself.
+fn import_qualifiers(src: &str) -> Vec<(String, String)> {
+    src.lines()
+        .filter_map(|l| {
+            let w: Vec<&str> = l.split_whitespace().collect();
+            if w.first() != Some(&"import") {
+                return None;
+            }
+            let module = w.get(1)?.to_string();
+            let q = w
+                .iter()
+                .position(|x| *x == "as")
+                .and_then(|i| w.get(i + 1))
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| module.clone());
+            Some((module, q))
+        })
+        .collect()
+}
+
+/// Does `src` import `module` under the qualifier `q`?
+fn has_import_as(src: &str, module: &str, q: &str) -> bool {
+    import_qualifiers(src)
+        .iter()
+        .any(|(m, a)| m == module && a == q)
+}
+
+/// The synthesised client entry names `module` as `q`. Refuse an entry where
+/// `q` already names another module (a project module `Spa`, an `import Foo
+/// as Task`): the generated reference would resolve to it.
+fn synth_qualifier_free(src: &str, q: &str, module: &str) -> Result<(), String> {
+    match import_qualifiers(src)
+        .into_iter()
+        .find(|(m, a)| a == q && m != module)
+    {
+        Some((other, _)) => Err(format!(
+            "the entry imports `{other}` as `{q}`, and the client build needs `{q}` to \
+             name `{module}`; rename that module or alias"
+        )),
+        None => Ok(()),
+    }
+}
+
 fn ensure_import(src: &str, import_line: &str) -> String {
     let mut out = String::new();
     let mut last_import = 0usize;
@@ -19371,6 +19411,47 @@ mod tests {
         );
         let e = synthesize_spa_source(&opaque, true).expect_err("opaque step must fail");
         assert!(e.contains("Security.harden"), "error must name it: {e}");
+    }
+
+    // v0.29.7: the synthesised client entry names `Std.Spa` as `Spa` and
+    // `Sky.Core.List` as `List`. An entry that imports either under another
+    // alias gets the name added (a module may be imported twice); a project
+    // module that takes the name is refused, never left to capture the
+    // generated reference.
+    #[test]
+    fn std_app_synthesis_owns_the_names_its_code_uses() {
+        let body = "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n\n\n\
+             main =\n    App.run appDef\n";
+        let aliased = sa_src(body).replace(
+            "import Std.App as App\n",
+            "import Std.App as App\nimport Std.Spa as S\nimport Sky.Core.List as L\n",
+        );
+        let out = synth_ok(&aliased);
+        assert!(
+            out.contains("import Std.Spa as Spa\n")
+                && out.contains("import Sky.Core.List as List\n"),
+            "the names the synthesised code uses are imported:\n{out}"
+        );
+        for (line, q) in [
+            ("import Spa\n", "Spa"),
+            ("import Helpers as List\n", "List"),
+            ("import App\n", "App"),
+        ] {
+            let src = sa_src(body)
+                .replace(
+                    "import Std.App as App\n",
+                    &format!("import Std.App as A\n{line}"),
+                )
+                .replace("App.app", "A.app")
+                .replace("App.withNotFound", "A.withNotFound")
+                .replace("App.run", "A.run");
+            let e = synthesize_spa_source(&src, true)
+                .expect_err("a project name the synthesis needs must be refused");
+            assert!(
+                e.contains(&format!("as `{q}`")) && e.contains("rename"),
+                "the refusal names `{q}`: {e}"
+            );
+        }
     }
 
     // The header session transport is Sky.Live only: a client (Sky.Spa) build

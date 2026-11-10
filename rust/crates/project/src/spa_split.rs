@@ -605,7 +605,7 @@ impl<'a> CodecResolver<'a> {
         // carries it. No payload: encode as `0`, decode any number back to `()`.
         if matches!(t, ty::Ty::Unit) {
             return Ok(ResolvedCodec {
-                codec: "(Codec.map (\\_ -> ()) (\\_ -> 0) Codec.int)".to_string(),
+                codec: "(SpaCodec_.map (\\_ -> ()) (\\_ -> 0) SpaCodec_.int)".to_string(),
                 surface: "()".to_string(),
             });
         }
@@ -615,14 +615,14 @@ impl<'a> CodecResolver<'a> {
             if tail == "List" && args.len() == 1 {
                 let inner = self.resolve(&args[0])?;
                 return Ok(ResolvedCodec {
-                    codec: format!("(Codec.list {})", inner.codec),
+                    codec: format!("(SpaCodec_.list {})", inner.codec),
                     surface: format!("List {}", wrap_arg(&inner.surface)),
                 });
             }
             if tail == "Maybe" && args.len() == 1 {
                 let inner = self.resolve(&args[0])?;
                 return Ok(ResolvedCodec {
-                    codec: format!("(Codec.maybe {})", inner.codec),
+                    codec: format!("(SpaCodec_.maybe {})", inner.codec),
                     surface: format!("Maybe {}", wrap_arg(&inner.surface)),
                 });
             }
@@ -634,7 +634,7 @@ impl<'a> CodecResolver<'a> {
                 let key = self.resolve(&args[0])?;
                 let val = self.resolve(&args[1])?;
                 return Ok(ResolvedCodec {
-                    codec: format!("(Codec.dict {} {})", key.codec, val.codec),
+                    codec: format!("(SpaCodec_.dict {} {})", key.codec, val.codec),
                     surface: format!("Dict {} {}", wrap_arg(&key.surface), wrap_arg(&val.surface)),
                 });
             }
@@ -646,7 +646,7 @@ impl<'a> CodecResolver<'a> {
                 let err = self.resolve(&args[0])?;
                 let val = self.resolve(&args[1])?;
                 return Ok(ResolvedCodec {
-                    codec: format!("(Codec.result {} {})", err.codec, val.codec),
+                    codec: format!("(SpaCodec_.result {} {})", err.codec, val.codec),
                     surface: format!(
                         "Result {} {}",
                         wrap_arg(&err.surface),
@@ -660,17 +660,17 @@ impl<'a> CodecResolver<'a> {
             // `import Std.Codec as Codec` the primitive codecs assume.
             if tail == "Error" && args.is_empty() {
                 return Ok(ResolvedCodec {
-                    codec: "Codec.error".to_string(),
+                    codec: "SpaCodec_.error".to_string(),
                     surface: "Error".to_string(),
                 });
             }
             // (c) JSON primitives.
             if args.is_empty() {
                 let codec = match tail {
-                    "Int" => Some("Codec.int"),
-                    "String" => Some("Codec.string"),
-                    "Bool" => Some("Codec.bool"),
-                    "Float" => Some("Codec.float"),
+                    "Int" => Some("SpaCodec_.int"),
+                    "String" => Some("SpaCodec_.string"),
+                    "Bool" => Some("SpaCodec_.bool"),
+                    "Float" => Some("SpaCodec_.float"),
                     _ => None,
                 };
                 if let Some(c) = codec {
@@ -693,7 +693,7 @@ impl<'a> CodecResolver<'a> {
                 && self.shapes.key_of(name.as_str()).is_none()
             {
                 return Ok(ResolvedCodec {
-                    codec: "(Codec.auto { status = 0, body = \"\", headers = Dict.empty })"
+                    codec: "(SpaCodec_.auto { status = 0, body = \"\", headers = SpaDict_.empty })"
                         .to_string(),
                     surface: "{ status : Int, body : String, headers : Dict String String }"
                         .to_string(),
@@ -739,19 +739,19 @@ impl<'a> CodecResolver<'a> {
                 let n = elems.len();
                 let names: Vec<String> = (0..n).map(|i| format!("spaT{i}_")).collect();
                 let ctor = format!("(\\{} -> ( {} ))", names.join(" "), names.join(", "));
-                let mut codec = format!("(Codec.object {ctor}");
+                let mut codec = format!("(SpaCodec_.object {ctor}");
                 for (i, e) in elems.iter().enumerate() {
                     let pat: Vec<&str> = (0..n)
                         .map(|j| if j == i { names[i].as_str() } else { "_" })
                         .collect();
                     codec.push_str(&format!(
-                        " |> Codec.field \"{i}\" (\\( {} ) -> {}) {}",
+                        " |> SpaCodec_.field \"{i}\" (\\( {} ) -> {}) {}",
                         pat.join(", "),
                         names[i],
                         e.codec
                     ));
                 }
-                codec.push_str(" |> Codec.buildObject)");
+                codec.push_str(" |> SpaCodec_.buildObject)");
                 let surface: Vec<String> = elems.iter().map(|e| e.surface.clone()).collect();
                 return Ok(ResolvedCodec {
                     codec,
@@ -1651,7 +1651,7 @@ const DEVICE_MODEL_TO_JSON: &str =
     "-- The model as JSON with its device-held keys already written `Nothing`.\n\
      spaModelToJson_ : m -> String\n\
      spaModelToJson_ =\n    \
-     Ffi.kernel \"Spa_modelToJson\"\n\n\n";
+     SpaFfi_.kernel \"Spa_modelToJson\"\n\n\n";
 
 /// The decoder twin of [`DEVICE_MODEL_TO_JSON`]: `Codec.fromJson (Codec.auto
 /// blank) s` (`rt.Spa_modelFromJson`). The caller clears the device-only
@@ -1660,7 +1660,7 @@ const DEVICE_MODEL_FROM_JSON: &str =
     "-- The model from JSON; the caller clears its device-held keys.\n\
      spaModelFromJson_ : m -> String -> Result Error m\n\
      spaModelFromJson_ =\n    \
-     Ffi.kernel \"Spa_modelFromJson\"\n\n\n";
+     SpaFfi_.kernel \"Spa_modelFromJson\"\n\n\n";
 
 /// `{ <base> | f1 = Nothing, f2 = Nothing }` — the model with its device-only
 /// fields cleared, or `base` unchanged when there are none.
@@ -2020,7 +2020,7 @@ fn build_follow_ctx(
             w.resp_fields.push(ModelFieldTy {
                 name: "spaFollow_".to_string(),
                 ty_name: "String".to_string(),
-                codec: Some("Codec.string".to_string()),
+                codec: Some("SpaCodec_.string".to_string()),
                 ty: None,
             });
         }
@@ -2094,7 +2094,7 @@ fn render_follow_backend(fc: &FollowCtx, q: &str) -> String {
             )
         };
         arms.push_str(&format!(
-            "        {pat} ->\n            [ \"{c}\", Codec.toJson spaFollow{c}ReqCodec {rec} ]\n\n"
+            "        {pat} ->\n            [ \"{c}\", SpaCodec_.toJson spaFollow{c}ReqCodec {rec} ]\n\n"
         ));
     }
     // R1: a constructor that MAY be a follow-up (its branch's command could not
@@ -2135,7 +2135,7 @@ fn render_follow_backend(fc: &FollowCtx, q: &str) -> String {
         (
             "spaFollowOutsideWire_ : String -> List String\n\
              spaFollowOutsideWire_ =\n\
-             \x20   Ffi.kernel \"Spa_followUpOutsideWire\"\n\n\n"
+             \x20   SpaFfi_.kernel \"Spa_followUpOutsideWire\"\n\n\n"
                 .to_string(),
             "\x20           case spaEncodeFollow_ m_ of\n\
              \x20               [] ->\n\
@@ -2151,11 +2151,11 @@ fn render_follow_backend(fc: &FollowCtx, q: &str) -> String {
          -- spa_followups_notjs.go); the client dispatches them through `update`.\n\
          spaFollowUps_ : any -> List {q}{ty}\n\
          spaFollowUps_ =\n\
-         \x20   Ffi.kernel \"Spa_collectFollowUps\"\n\n\n\
+         \x20   SpaFfi_.kernel \"Spa_collectFollowUps\"\n\n\n\
          {outside_kernel}\
          spaEncodeFollows_ : List {q}{ty} -> String\n\
          spaEncodeFollows_ msgs_ =\n\
-         \x20   Codec.toJson (Codec.list (Codec.list Codec.string)) (spaEncodeFollowList_ msgs_)\n\n\n\
+         \x20   SpaCodec_.toJson (SpaCodec_.list (SpaCodec_.list SpaCodec_.string)) (spaEncodeFollowList_ msgs_)\n\n\n\
          spaEncodeFollowList_ : List {q}{ty} -> List (List String)\n\
          spaEncodeFollowList_ msgs_ =\n\
          \x20   case msgs_ of\n\
@@ -2198,7 +2198,7 @@ fn render_follow_frontend(fc: &FollowCtx, q: &str) -> String {
         };
         chain.push_str(&format!(
             "\x20               \"{c}\" ->\n\
-             \x20                   case Codec.fromJson spaFollow{c}ReqCodec body_ of\n\
+             \x20                   case SpaCodec_.fromJson spaFollow{c}ReqCodec body_ of\n\
              \x20                       Ok r_ ->\n\
              \x20                           Ok ({build})\n\n\
              \x20                       Err e_ ->\n\
@@ -2210,7 +2210,7 @@ fn render_follow_frontend(fc: &FollowCtx, q: &str) -> String {
          -- the backend (`spaFollow_`), for `Spa.followUps` to dispatch in order.\n\
          spaDecodeFollows_ : String -> Result Error (List {q}{ty})\n\
          spaDecodeFollows_ json_ =\n\
-         \x20   case Codec.fromJson (Codec.list (Codec.list Codec.string)) json_ of\n\
+         \x20   case SpaCodec_.fromJson (SpaCodec_.list (SpaCodec_.list SpaCodec_.string)) json_ of\n\
          \x20       Ok items_ ->\n\
          \x20           spaDecodeFollowList_ items_\n\n\
          \x20       Err e_ ->\n\
@@ -2237,9 +2237,9 @@ fn render_follow_frontend(fc: &FollowCtx, q: &str) -> String {
          \x20           case tag_ of\n\
          {chain}\
          \x20               _ ->\n\
-         \x20                   Err (Error.unexpected (\"sky.spa: unknown follow-up Msg \" ++ tag_))\n\n\
+         \x20                   Err (SpaError_.unexpected (\"sky.spa: unknown follow-up Msg \" ++ tag_))\n\n\
          \x20       _ ->\n\
-         \x20           Err (Error.unexpected \"sky.spa: malformed follow-up\")\n\n\n",
+         \x20           Err (SpaError_.unexpected \"sky.spa: malformed follow-up\")\n\n\n",
         ty = fc.msg_ty,
     )
 }
@@ -2506,7 +2506,7 @@ fn client_residual(
         }
     }
     Ok(format!(
-        "Cmd.batch [ {} ]",
+        "SpaCmd_.batch [ {} ]",
         picked
             .iter()
             .map(|t| flatten_expr_text(t))
@@ -2656,17 +2656,20 @@ fn returned_scroll_response(io: &BranchIo, fields: &[String], model: &str) -> St
 }
 fn returned_scroll_model_apply(model: &str, fields: &[String]) -> String {
     if fields.is_empty() {
-        return format!("( {model}, Cmd.none )");
+        return format!("( {model}, SpaCmd_.none )");
     }
     if fields == [spa_partition::BOXED_MODEL_FIELD] {
-        return format!("( resp.{}, Cmd.none )", spa_partition::BOXED_MODEL_FIELD);
+        return format!(
+            "( resp.{}, SpaCmd_.none )",
+            spa_partition::BOXED_MODEL_FIELD
+        );
     }
     let sets = fields
         .iter()
         .map(|f| format!("{f} = resp.{f}"))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("( {{ {model} | {sets} }}, Cmd.none )")
+    format!("( {{ {model} | {sets} }}, SpaCmd_.none )")
 }
 
 /// SHARED WIRE EMIT — client leg: build the RPC `Req` value from the client
@@ -2788,14 +2791,14 @@ pub(crate) fn emit_write_set_encode(
 /// handled by the caller, not here.
 pub(crate) fn emit_apply_delta(io: &BranchIo, model_param: &str) -> String {
     if io.writes_whole_model {
-        format!("            ( resp, Cmd.none )")
+        format!("            ( resp, SpaCmd_.none )")
     } else if io.write_fields == [spa_partition::BOXED_MODEL_FIELD] {
         format!(
-            "            ( resp.{}, Cmd.none )",
+            "            ( resp.{}, SpaCmd_.none )",
             spa_partition::BOXED_MODEL_FIELD
         )
     } else if io.write_fields.is_empty() {
-        format!("            ( {model_param}, Cmd.none )")
+        format!("            ( {model_param}, SpaCmd_.none )")
     } else {
         let sets = io
             .write_fields
@@ -2803,7 +2806,7 @@ pub(crate) fn emit_apply_delta(io: &BranchIo, model_param: &str) -> String {
             .map(|f| format!("{f} = resp.{f}"))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("            ( {{ {model_param} | {sets} }}, Cmd.none )")
+        format!("            ( {{ {model_param} | {sets} }}, SpaCmd_.none )")
     }
 }
 
@@ -3110,17 +3113,19 @@ fn render_wire_type(
         out.push_str(&decl);
         ctor = c;
     }
-    out.push_str(&format!("{codec_name} : Codec {name}\n{codec_name} =\n"));
-    out.push_str(&format!("    Codec.object {ctor}\n"));
+    out.push_str(&format!(
+        "{codec_name} : SpaCodec_.Codec {name}\n{codec_name} =\n"
+    ));
+    out.push_str(&format!("    SpaCodec_.object {ctor}\n"));
     for f in fields {
         // Every field is resolved by construction; the fallback is defensive.
-        let codec = f.codec.clone().unwrap_or_else(|| "Codec.string".into());
+        let codec = f.codec.clone().unwrap_or_else(|| "SpaCodec_.string".into());
         out.push_str(&format!(
-            "        |> Codec.field \"{0}\" .{0} {1}\n",
+            "        |> SpaCodec_.field \"{0}\" .{0} {1}\n",
             f.name, codec
         ));
     }
-    out.push_str("        |> Codec.buildObject\n");
+    out.push_str("        |> SpaCodec_.buildObject\n");
     out
 }
 
@@ -3152,7 +3157,7 @@ impl WireShapes {
                 (
                     f.name.clone(),
                     f.ty_name.clone(),
-                    f.codec.clone().unwrap_or_else(|| "Codec.string".into()),
+                    f.codec.clone().unwrap_or_else(|| "SpaCodec_.string".into()),
                 )
             })
             .collect()
@@ -3185,11 +3190,11 @@ impl WireShapes {
         );
         out.push_str(&decl);
         out.push_str(&format!(
-            "{builder} : Codec.ObjectCodec {ty} {ty}\n{builder} =\n    Codec.object {ctor}\n"
+            "{builder} : SpaCodec_.ObjectCodec {ty} {ty}\n{builder} =\n    SpaCodec_.object {ctor}\n"
         ));
         for (name, _, codec) in &key {
             out.push_str(&format!(
-                "        |> Codec.field \"{name}\" .{name} {codec}\n"
+                "        |> SpaCodec_.field \"{name}\" .{name} {codec}\n"
             ));
         }
         out.push_str("\n\n");
@@ -3221,7 +3226,7 @@ impl WireShapes {
         if let Some((owner_ty, owner_codec)) = self.owners.get(&key) {
             return format!(
                 "type alias {name} =\n    {owner_ty}\n\n\n\
-                 {codec_name} : Codec {name}\n{codec_name} =\n    {owner_codec}\n"
+                 {codec_name} : SpaCodec_.Codec {name}\n{codec_name} =\n    {owner_codec}\n"
             );
         }
         // A plain record that IS the embedded Model shape (a whole-model request
@@ -3237,7 +3242,7 @@ impl WireShapes {
         if let Some((ty, builder)) = model_shape {
             return format!(
                 "type alias {name} =\n    {ty}\n\n\n\
-                 {codec_name} : Codec {name}\n{codec_name} =\n    Codec.buildObject {builder}\n"
+                 {codec_name} : SpaCodec_.Codec {name}\n{codec_name} =\n    SpaCodec_.buildObject {builder}\n"
             );
         }
         match embed {
@@ -3263,19 +3268,21 @@ fn render_embedded_wire_type(
         out.push_str(&format!("    , {} : {}\n", f.name, f.ty_name));
     }
     out.push_str("    }\n\n\n");
-    out.push_str(&format!("{codec_name} : Codec {name}\n{codec_name} =\n"));
-    out.push_str(&format!("    Codec.object {name}\n"));
     out.push_str(&format!(
-        "        |> Codec.inline .{WHOLE_MODEL_FIELD} {model_builder}\n"
+        "{codec_name} : SpaCodec_.Codec {name}\n{codec_name} =\n"
+    ));
+    out.push_str(&format!("    SpaCodec_.object {name}\n"));
+    out.push_str(&format!(
+        "        |> SpaCodec_.inline .{WHOLE_MODEL_FIELD} {model_builder}\n"
     ));
     for f in args {
-        let codec = f.codec.clone().unwrap_or_else(|| "Codec.string".into());
+        let codec = f.codec.clone().unwrap_or_else(|| "SpaCodec_.string".into());
         out.push_str(&format!(
-            "        |> Codec.field \"{0}\" .{0} {1}\n",
+            "        |> SpaCodec_.field \"{0}\" .{0} {1}\n",
             f.name, codec
         ));
     }
-    out.push_str("        |> Codec.buildObject\n");
+    out.push_str("        |> SpaCodec_.buildObject\n");
     out
 }
 
@@ -3310,9 +3317,9 @@ fn render_auto_codec_defs(auto_records: &BTreeMap<String, AutoRecord>) -> String
              blank{name}_ : {ty}\n\
              blank{name}_ =\n    \
              {blank}\n\n\n\
-             auto{name}Codec_ : Codec {coded}\n\
+             auto{name}Codec_ : SpaCodec_.Codec {coded}\n\
              auto{name}Codec_ =\n    \
-             Codec.auto blank{name}_\n\n\n"
+             SpaCodec_.auto blank{name}_\n\n\n"
         ));
     }
     out
@@ -3341,7 +3348,7 @@ fn gen_shared(
             "-- Stateless signed-session codec for identity field `{0}` — the backend\n\
              -- signs the value into `sky_sid` and verifies it back through this codec\n\
              -- (never trusting the wire model).\n\
-             {1} : Codec {2}\n\
+             {1} : SpaCodec_.Codec {2}\n\
              {1} =\n    {3}\n\n\n",
             p.name,
             cname,
@@ -3475,8 +3482,209 @@ fn collect_imports(file: &SourceFile, src: &str) -> Vec<ImportInfo> {
         .collect()
 }
 
-fn has_module(imports: &[ImportInfo], path: &str) -> bool {
-    imports.iter().any(|i| i.module_path == path)
+/// The import aliases the split reserves for the code it writes, with the
+/// module each one names.
+///
+/// Generated code names a framework module ONLY through one of these aliases
+/// (`SpaServer_.rpc`, `SpaCodec_.toJson`, `SpaCmd_.none`, …), never through the
+/// short name an app usually writes (`Server`, `Codec`, `Cmd`). The app's own
+/// imports are copied as written, so the two never meet: a project module
+/// named `Server`, an `import Foo as Codec`, or an `import Sky.Http.Server as
+/// Http` cannot capture or hide a generated reference. Before v0.29.7 the
+/// split added `import Sky.Http.Server as Server` beside a user `import Server`
+/// (the app's `Server.record` then named nothing), and skipped the import when
+/// the app imported the module under another alias (the generated `Server.rpc`
+/// then named nothing).
+///
+/// [`ensure_reserved_imports`] adds the `import <module> as <alias>` line for
+/// every alias a written file uses (a module may be imported twice under two
+/// aliases), and [`refuse_reserved_alias_use`] refuses an app that uses one of
+/// these names itself. Generated code names builtin types (`Task`, `Result`,
+/// `Error`, `Maybe`, `List`, `String`) bare: a project cannot redefine them.
+pub(crate) const RESERVED_ALIASES: &[(&str, &str)] = &[
+    ("SpaServer_", "Sky.Http.Server"),
+    ("SpaStream_", "Sky.Http.Server.Stream"),
+    ("SpaCodec_", "Std.Codec"),
+    ("SpaSystem_", "Sky.Core.System"),
+    ("SpaError_", "Sky.Core.Error"),
+    ("SpaFfi_", "Sky.Ffi"),
+    ("SpaTask_", "Sky.Core.Task"),
+    ("SpaList_", "Sky.Core.List"),
+    ("SpaDict_", "Sky.Core.Dict"),
+    ("SpaMaybe_", "Sky.Core.Maybe"),
+    ("SpaResult_", "Sky.Core.Result"),
+    ("SpaString_", "Sky.Core.String"),
+    ("SpaSecret_", "Sky.Core.Secret"),
+    ("SpaCmd_", "Std.Cmd"),
+    ("SpaSub_", "Std.Sub"),
+    ("SpaLib_", "Std.Spa"),
+    ("SpaApp_", "Std.App"),
+    ("SpaInitRpc_", "Std.Spa"),
+    ("SpaInitCodec_", "Std.Codec"),
+    ("SpaInitCmd_", "Std.Cmd"),
+];
+
+/// Every other qualifier the split writes into generated code: the Msg
+/// module's fixed alias (its module varies, so it is imported where it is
+/// used). An app may not use these names either.
+const RESERVED_QUALIFIERS: &[&str] = &["SpaMsgMod_"];
+
+/// The qualifier an `import` line binds: its alias, else its module path.
+fn import_qualifier(text: &str) -> String {
+    let w: Vec<&str> = text.split_whitespace().collect();
+    w.iter()
+        .position(|x| *x == "as")
+        .and_then(|i| w.get(i + 1))
+        .or_else(|| w.get(1))
+        .map(|s| s.to_string())
+        .unwrap_or_default()
+}
+
+/// The names an import's explicit `exposing (…)` list spells (`Codec`, `Item`
+/// for `Item(..)`); none for `exposing (..)` or no list.
+fn explicit_exposed_names(text: &str) -> Vec<String> {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let Some(at) = flat.find("exposing (") else {
+        return Vec::new();
+    };
+    let inner = flat[at + "exposing (".len()..]
+        .rsplit_once(')')
+        .map(|(a, _)| a)
+        .unwrap_or("");
+    if inner.trim() == ".." {
+        return Vec::new();
+    }
+    inner
+        .split(',')
+        .map(|n| n.trim().trim_end_matches("(..)").trim().to_string())
+        .filter(|n| !n.is_empty() && n != "..")
+        .collect()
+}
+
+/// Every qualifier `code` writes (`Codec` in `Codec.field`, `Geo.Shape` in
+/// `Geo.Shape.origin`, `Codec` in `Codec.Codec`). String literals are skipped.
+fn written_qualifiers(code: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let chars: Vec<char> = code.chars().collect();
+    let mut i = 0;
+    let mut in_str = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_str {
+            if c == '\\' {
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '"' {
+            in_str = true;
+            i += 1;
+            continue;
+        }
+        let prev_ident =
+            i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_' || chars[i - 1] == '.');
+        if c.is_uppercase() && !prev_ident {
+            let start = i;
+            while i < chars.len()
+                && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '.')
+            {
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            let segs: Vec<&str> = token.trim_end_matches('.').split('.').collect();
+            if segs.len() > 1 {
+                for k in 1..segs.len() {
+                    out.insert(segs[..k].join("."));
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Does `code` (comments already removed) name `alias` as a qualifier
+/// (`alias.member`)? A longer name that ends in `alias` is not a use.
+fn uses_qualifier(code: &str, alias: &str) -> bool {
+    let pat = format!("{alias}.");
+    code.match_indices(&pat).any(|(at, _)| {
+        !code[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.')
+    })
+}
+
+/// Add `import <module> as <alias>` for every [`RESERVED_ALIASES`] alias that
+/// `src` uses and does not import yet. Run on every Sky file the split writes,
+/// so an import is present exactly when generated code uses its alias: no
+/// generator site has to remember which framework module it calls.
+pub(crate) fn ensure_reserved_imports(src: &str) -> String {
+    let parse = syntax::parse(src, base::FileId(0));
+    let tree = parse.tree();
+    let mut imported: HashSet<String> = HashSet::new();
+    let mut code = String::with_capacity(src.len());
+    let mut at = 0usize;
+    for imp in tree.imports() {
+        if let Some(a) = imp.alias() {
+            imported.insert(a.text().to_string());
+        }
+        let r = imp.syntax().text_range();
+        let (s, e) = (usize::from(r.start()), usize::from(r.end()));
+        if s >= at {
+            code.push_str(&src[at..s]);
+        }
+        at = at.max(e);
+    }
+    code.push_str(&src[at.min(src.len())..]);
+    let code = strip_sky_comments(&code);
+    let mut out = src.to_string();
+    for (alias, module) in RESERVED_ALIASES {
+        if !imported.contains(*alias) && uses_qualifier(&code, alias) {
+            out = ensure_import_line(&out, &format!("import {module} as {alias}"));
+            imported.insert(alias.to_string());
+        }
+    }
+    out
+}
+
+/// Refuse an app whose own code names a module or an import alias with one of
+/// the split's reserved qualifiers ([`RESERVED_ALIASES`],
+/// [`RESERVED_QUALIFIERS`]): the generated code could not then be told apart
+/// from the app's. No real app is expected to hit this.
+fn refuse_reserved_alias_use(db: &SkyDatabase, modules: &[ModuleId]) -> Result<(), String> {
+    let reserved = |name: &str| {
+        RESERVED_ALIASES.iter().any(|(a, _)| *a == name) || RESERVED_QUALIFIERS.contains(&name)
+    };
+    for m in modules {
+        let mname = db.module_name(*m).to_string();
+        if mname.split('.').any(reserved) {
+            return Err(format!(
+                "cannot auto-split: the module `{mname}` uses the name `{}`, which the Sky.Spa \
+                 split reserves for the code it generates. Rename the module.",
+                mname.split('.').find(|s| reserved(s)).unwrap_or_default()
+            ));
+        }
+        let parse = db.module_parse(*m);
+        for imp in parse.tree().imports() {
+            if let Some(a) = imp.alias() {
+                let a = a.text().to_string();
+                if reserved(&a) {
+                    return Err(format!(
+                        "cannot auto-split: module `{mname}` imports a module `as {a}`, and the \
+                         Sky.Spa split reserves `{a}` for the code it generates. Use another alias."
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Remove `names` from an import line's `exposing (...)` list. Those names are
@@ -3816,6 +4024,9 @@ fn generate_inner(
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "app".to_string());
+    // The generated code owns the `Spa…_` qualifiers; an app that uses one
+    // itself is refused before anything is written.
+    refuse_reserved_alias_use(&db, &check_ids)?;
     let (report, chain_notes) =
         analyze_for_split(&db, entry, &check_ids, proj_name.clone(), checked)?;
 
@@ -4421,7 +4632,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             wire.resp_fields.push(ModelFieldTy {
                 name: "spaScroll_".into(),
                 ty_name: "String".into(),
-                codec: Some("Codec.string".into()),
+                codec: Some("SpaCodec_.string".into()),
                 ty: None,
             });
         }
@@ -4723,6 +4934,72 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                     {
                         foreign_stdlib_imports.push(i.text.clone());
                     }
+                }
+            }
+        }
+    }
+    // A VALUE copied into `Shared` from a sibling (a user codec, `itemCodec =
+    // Codec.object Item |> …`) names stdlib modules through ITS module's
+    // imports. Carry each such import, under the qualifier the value wrote.
+    // Before v0.29.7 `Shared` always imported `Std.Codec as Codec`, which hid
+    // this for `Codec.` alone and collided with a project module `Codec`.
+    for m in copy_mods.iter().copied().filter(|m| *m != entry) {
+        let Some(names) = copied_values_by_mod.get(&m) else {
+            continue;
+        };
+        let mparse = db.module_parse(m);
+        let msrc = mparse.syntax().text().to_string();
+        let mimports = collect_imports(&mparse.tree(), &msrc);
+        let project_names: HashSet<String> = project_mods
+            .iter()
+            .map(|p| db.module_name(*p).to_string())
+            .collect();
+        for d in mparse.tree().decls() {
+            if !decl_name(&d).is_some_and(|n| names.contains(&n)) {
+                continue;
+            }
+            let text = strip_sky_comments(slice(&msrc, d.syntax()));
+            // A name the sibling exposes from a stdlib import (`Codec` in
+            // `itemCodec : Codec Item`, from `exposing (Codec)`).
+            for i in &mimports {
+                if project_names.contains(&i.module_path) {
+                    continue;
+                }
+                for n in explicit_exposed_names(&i.text) {
+                    if references_word(&text, &n) {
+                        let line = format!("import {} exposing ({n})", i.module_path);
+                        if !foreign_stdlib_imports.contains(&line) {
+                            foreign_stdlib_imports.push(line);
+                        }
+                    }
+                }
+            }
+            for q in written_qualifiers(&text) {
+                let Some(i) = mimports.iter().find(|i| import_qualifier(&i.text) == q) else {
+                    continue;
+                };
+                if project_names.contains(&i.module_path) {
+                    continue;
+                }
+                let line = format!("import {} as {q}", i.module_path);
+                if let Some(e) = imports
+                    .iter()
+                    .find(|e| import_qualifier(&e.text) == q && e.module_path != i.module_path)
+                {
+                    return Err(format!(
+                        "sky.spa: `{}` is copied into `Shared` and names `{q}` as `{}`, but \
+                         the entry imports `{}` as `{q}`. Use one name for `{q}` in both \
+                         modules.\n{}",
+                        decl_name(&d).unwrap_or_default(),
+                        i.module_path,
+                        e.module_path,
+                        crate::migration_see(SPLIT_REFUSALS)
+                    ));
+                }
+                if !imports.iter().any(|e| import_qualifier(&e.text) == q)
+                    && !foreign_stdlib_imports.contains(&line)
+                {
+                    foreign_stdlib_imports.push(line);
                 }
             }
         }
@@ -5372,9 +5649,16 @@ The command runs server-side during SSR and the client hydrates from it; a read 
 
     let mut files: Vec<String> = Vec::new();
     let write = |rel: &str, content: &str, files: &mut Vec<String>| -> Result<(), String> {
-        if rel.ends_with(".sky") {
-            generated_source_parses(rel, content)?;
-        }
+        // Every Sky file the split writes imports exactly the reserved aliases
+        // its code uses ([`RESERVED_ALIASES`]); a verbatim copy uses none.
+        let reserved;
+        let content = if rel.ends_with(".sky") {
+            reserved = ensure_reserved_imports(content);
+            generated_source_parses(rel, &reserved)?;
+            reserved.as_str()
+        } else {
+            content
+        };
         let full = out_dir.join(rel);
         if let Some(p) = full.parent() {
             std::fs::create_dir_all(p).map_err(|e| format!("mkdir {}: {e}", p.display()))?;
@@ -6026,9 +6310,9 @@ pub fn generate_diff_fuzz(
         let with_ffi = inject_harness_imports(
             &tagged,
             &collect_imports(&tparse.tree(), &tagged),
-            &["import Sky.Ffi as Ffi".to_string()],
+            &["import Sky.Ffi as SpaFfi_".to_string()],
         );
-        std::fs::write(&ufile_path, with_ffi)
+        std::fs::write(&ufile_path, ensure_reserved_imports(&with_ffi))
             .map_err(|e| format!("write update module {}: {e}", ufile_path.display()))?;
         orig
     };
@@ -6043,7 +6327,7 @@ pub fn generate_diff_fuzz(
     let existing = collect_imports(&ofile, &orig);
     let with_imports = inject_harness_imports(&stripped, &existing, &out.required_imports);
     let final_src = format!("{with_imports}\n\n{}{helper_copies}", out.snippet);
-    std::fs::write(&entry_file, &final_src)
+    std::fs::write(&entry_file, ensure_reserved_imports(&final_src))
         .map_err(|e| format!("write harness entry {}: {e}", entry_file.display()))?;
 
     // sky.toml — a plain CLI project (the harness `main : Task Error ()`). The
@@ -6149,7 +6433,7 @@ pub fn generate_model_fuzz(
     let existing = collect_imports(&ofile, &orig);
     let with_imports = inject_harness_imports(&stripped, &existing, &out.required_imports);
     let final_src = format!("{with_imports}\n\n{}", out.snippet);
-    std::fs::write(&entry_file, &final_src)
+    std::fs::write(&entry_file, ensure_reserved_imports(&final_src))
         .map_err(|e| format!("write model-fuzz entry {}: {e}", entry_file.display()))?;
 
     let toml = format!(
@@ -6235,7 +6519,9 @@ fn inject_harness_imports(src: &str, existing: &[ImportInfo], required: &[String
         // Parse `import <Mod> as <Alias>`.
         let rest = line.trim_start_matches("import ").trim();
         let module_path = rest.split_whitespace().next().unwrap_or("").to_string();
-        let is_unique_alias = line.contains(" as SpaDiff");
+        // Every harness alias is one the split reserves (`SpaDiffLog`,
+        // `SpaFfi_`, …): always added, a second alias never collides.
+        let is_unique_alias = line.contains(" as Spa");
         if is_unique_alias {
             to_add.push(line.clone());
         } else if !existing.iter().any(|i| i.module_path == module_path) {
@@ -7505,9 +7791,6 @@ fn shared_import_lines(
     if !imports.iter().any(|i| i.module_path == "Sky.Core.Prelude") {
         out.insert(0, "import Sky.Core.Prelude exposing (..)".to_string());
     }
-    if !imports.iter().any(|i| i.module_path == "Std.Codec") {
-        out.push("import Std.Codec as Codec exposing (Codec)".to_string());
-    }
     out
 }
 
@@ -8116,7 +8399,7 @@ fn plan_init_rpc(
                         names(&refs)
                     ));
                 }
-                repl.push((br, "Cmd.none".to_string()));
+                repl.push((br, "SpaCmd_.none".to_string()));
                 covered.push(br);
             }
             cur = l.body();
@@ -8314,7 +8597,7 @@ fn frontend_init_value_without_cmd(src: &str, init_val: &syntax::ast::Decl) -> O
     let a = u32::from(cmd_node.text_range().start()) as usize - decl_start;
     let b = u32::from(cmd_node.text_range().end()) as usize - decl_start;
     let mut out = slice(src, decl_node).to_string();
-    out.replace_range(a..b, "Cmd.none");
+    out.replace_range(a..b, "SpaCmd_.none");
     Some(out)
 }
 
@@ -8574,12 +8857,12 @@ fn inject_model_decoder_into_main(
     // runs is the page's `data-sky-settled` marker (spa_ssr.go spaPlanBoot),
     // not this build-time choice. Without an SSR page (a static deploy) the
     // decoder only restores localStorage.
-    let decoder_line = "Spa.withModelDecoder spaModelDecoder_";
+    let decoder_line = "SpaLib_.withModelDecoder spaModelDecoder_";
     let block = format!(
         "            |> {decoder_line}\n\
          \x20           |> {generated_encoder_setter} spaModelEncoder_\n\
-         \x20           |> Spa.withPersistProtectedFields {fields_lit}\n\
-         \x20           |> Spa.withPersistSeedFields {seed_lit}\n"
+         \x20           |> SpaLib_.withPersistProtectedFields {fields_lit}\n\
+         \x20           |> SpaLib_.withPersistSeedFields {seed_lit}\n"
     );
     let mut out = main_text.to_string();
     insert_before_closing_paren(&mut out, line_start, close, &block);
@@ -9130,35 +9413,13 @@ fn gen_backend(
         // exposing (Item, itemCodec, …)`) so the backend does not double-import it.
         .map(|i| strip_names_from_import_exposing(&i.text, &copied.from_module(&i.module_path)))
         .collect();
-    let add = |imports: &[ImportInfo], lines: &mut Vec<String>, path: &str, text: &str| {
-        if !has_module(imports, path) {
-            lines.push(text.to_string());
-        }
-    };
-    add(
-        imports,
-        &mut import_lines,
-        "Sky.Http.Server",
-        "import Sky.Http.Server as Server exposing (Request, Response, Handler)",
-    );
-    add(
-        imports,
-        &mut import_lines,
-        "Std.Codec",
-        "import Std.Codec as Codec",
-    );
-    add(
-        imports,
-        &mut import_lines,
-        "Sky.Core.System",
-        "import Sky.Core.System as System",
-    );
-    add(
-        imports,
-        &mut import_lines,
-        "Sky.Core.Error",
-        "import Sky.Core.Error as Error exposing (Error)",
-    );
+    // The framework modules the generated code calls are NOT added here: the
+    // generated code names them only through the split's reserved aliases
+    // (`SpaServer_`, `SpaCodec_`, … — [`RESERVED_ALIASES`]), and
+    // [`ensure_reserved_imports`] adds `import <module> as <alias>` for each
+    // alias a written file uses. The app's own imports stay as written, so a
+    // project module named `Server` or an `import Sky.Http.Server as Http` can
+    // never capture or hide a generated reference.
     // Server-internal effect chaining: a chaining branch's handler calls the
     // `Spa_settleServerChain` kernel alias, which needs `Sky.Ffi`.
     let any_chaining = !push_mode && server.iter().any(|(n, _)| chaining.contains(n));
@@ -9168,14 +9429,6 @@ fn gen_backend(
     let any_follow = follow
         .map(|(fc, _)| server.iter().any(|(n, _)| fc.branches.contains_key(n)))
         .unwrap_or(false);
-    if any_chaining || any_client_result || any_follow || returned_scrolls {
-        add(
-            imports,
-            &mut import_lines,
-            "Sky.Ffi",
-            "import Sky.Ffi as Ffi",
-        );
-    }
     if let Some((fc, q)) = follow {
         if any_follow && !q.is_empty() {
             import_lines.push(format!("import {} as SpaMsgMod_", fc.msg_module_name));
@@ -9325,18 +9578,6 @@ fn gen_backend(
         && has_synth_view
         && has_synth_head;
     if emit_ssr {
-        add(
-            imports,
-            &mut import_lines,
-            "Sky.Ffi",
-            "import Sky.Ffi as Ffi",
-        );
-        add(
-            imports,
-            &mut import_lines,
-            "Sky.Core.Task",
-            "import Sky.Core.Task as Task",
-        );
         // Fix 7: the SSR first paint embeds the WHOLE model via
         // `Codec.toJson (Codec.auto resolved)` and the client decodes it with the
         // symmetric `Codec.fromJson (Codec.auto blank)`. `Codec.auto` compiles for
@@ -9357,58 +9598,6 @@ fn gen_backend(
                     "model field `{}` has type `{}`, which `Codec.auto` cannot round-trip through the Sky.Spa SSR model embed. {}",
                     f.name, ty_label, why
                 ));
-            }
-        }
-    }
-    if push_mode {
-        // Server→client PUSH machinery (docs/skyspa/auto-split.md §16).
-        add(
-            imports,
-            &mut import_lines,
-            "Sky.Core.Task",
-            "import Sky.Core.Task as Task",
-        );
-        add(
-            imports,
-            &mut import_lines,
-            "Sky.Ffi",
-            "import Sky.Ffi as Ffi",
-        );
-        add(
-            imports,
-            &mut import_lines,
-            "Sky.Core.Maybe",
-            "import Sky.Core.Maybe as Maybe",
-        );
-        add(
-            imports,
-            &mut import_lines,
-            "Sky.Http.Server.Stream",
-            "import Sky.Http.Server.Stream as Stream exposing (StreamWriter)",
-        );
-    }
-    // STATELESS SIGNED SESSION: the sign / verify / sign-out path needs the
-    // `Secret` type, `Sky.Ffi` (the `Spa_*Session` kernel façades, which reuse
-    // Std.Auth's HS256 token logic in Go — runtime-go/rt/spa_session_revocation.go),
-    // and `Sky.Core.Task` (the sign-out handler answers a Task). None of them
-    // pulls the Live runtime into the backend. The `add` helper only checks the ORIGINAL app imports, so a
-    // module another block already pushed (Ffi / Task under SSR or push) is
-    // filtered against `import_lines` here to avoid a duplicate import line.
-    if !session_proj.is_empty() {
-        for (path, text) in [
-            (
-                "Sky.Core.Secret",
-                "import Sky.Core.Secret exposing (Secret)",
-            ),
-            ("Sky.Ffi", "import Sky.Ffi as Ffi"),
-            ("Sky.Core.Task", "import Sky.Core.Task as Task"),
-        ] {
-            if !has_module(imports, path)
-                && !import_lines
-                    .iter()
-                    .any(|l| l.split_whitespace().nth(1) == Some(path))
-            {
-                import_lines.push(text.to_string());
             }
         }
     }
@@ -9469,22 +9658,22 @@ fn gen_backend(
     // The generated handlers + serverPort + main.
     let mut handlers = String::new();
     let mut routes: Vec<String> = Vec::new();
-    handlers.push_str("badRequest : String -> Response\nbadRequest msg =\n    Server.withStatus 400 (Server.text msg)\n\n\n");
+    handlers.push_str("badRequest : String -> SpaServer_.Response\nbadRequest msg =\n    SpaServer_.withStatus 400 (SpaServer_.text msg)\n\n\n");
     // Fix 5: the 403 the server-side guard returns when it DENIES a message. A
     // denied `/_rpc/<Msg>` never runs `update` (no effect fires); a denied SSR
     // navigation renders the NotFound shell with no protected data settled.
     if has_synth_guard {
-        handlers.push_str("forbidden : String -> Response\nforbidden msg =\n    Server.withStatus 403 (Server.text msg)\n\n\n");
+        handlers.push_str("forbidden : String -> SpaServer_.Response\nforbidden msg =\n    SpaServer_.withStatus 403 (SpaServer_.text msg)\n\n\n");
     }
 
     if returned_scrolls {
-        handlers.push_str("spaCollectScrolls_ : any -> String\nspaCollectScrolls_ =\n    Ffi.kernel \"Spa_collectScrolls\"\n\n\nspaInitScrollResponse_ : any -> String -> String\nspaInitScrollResponse_ =\n    Ffi.kernel \"Spa_initScrollResponse\"\n\n\n");
+        handlers.push_str("spaCollectScrolls_ : any -> String\nspaCollectScrolls_ =\n    SpaFfi_.kernel \"Spa_collectScrolls\"\n\n\nspaInitScrollResponse_ : any -> String -> String\nspaInitScrollResponse_ =\n    SpaFfi_.kernel \"Spa_initScrollResponse\"\n\n\n");
     }
     if returned_scrolls {
-        handlers.push_str("spaSsrScrollSettle_ : model -> any -> any -> ( model, Bool, String )\nspaSsrScrollSettle_ =\n    Ffi.kernel \"Spa_ssrSettleFullScrolls\"\n\n\nspaJoinScrolls_ : List String -> String\nspaJoinScrolls_ =\n    Ffi.kernel \"Spa_joinScrolls\"\n\n\nspaSsrPageScrolls_ : String -> String -> String -> String -> Bool -> Bool -> List String -> String -> String\nspaSsrPageScrolls_ =\n    Ffi.kernel \"Spa_ssrPageSeededScrolls\"\n\n\n");
+        handlers.push_str("spaSsrScrollSettle_ : model -> any -> any -> ( model, Bool, String )\nspaSsrScrollSettle_ =\n    SpaFfi_.kernel \"Spa_ssrSettleFullScrolls\"\n\n\nspaJoinScrolls_ : List String -> String\nspaJoinScrolls_ =\n    SpaFfi_.kernel \"Spa_joinScrolls\"\n\n\nspaSsrPageScrolls_ : String -> String -> String -> String -> Bool -> Bool -> List String -> String -> String\nspaSsrPageScrolls_ =\n    SpaFfi_.kernel \"Spa_ssrPageSeededScrolls\"\n\n\n");
     }
     if returned_scrolls {
-        handlers.push_str("spaScrollLegacy_ : Request -> Bool\nspaScrollLegacy_ =\n    Ffi.kernel \"Spa_isLegacyRpc\"\n\n\nspaScrollWireGuard_ : Handler -> Handler\nspaScrollWireGuard_ handler_ req_ =\n    if spaScrollLegacy_ req_ then\n        Task.succeed (Server.withHeader \"X-Sky-Status\" \"reload\" (Server.withStatus 409 (Server.text \"This page must reload before using the returned-scroll protocol\")))\n\n    else\n        handler_ req_\n\n\n");
+        handlers.push_str("spaScrollLegacy_ : SpaServer_.Request -> Bool\nspaScrollLegacy_ =\n    SpaFfi_.kernel \"Spa_isLegacyRpc\"\n\n\nspaScrollWireGuard_ : SpaServer_.Handler -> SpaServer_.Handler\nspaScrollWireGuard_ handler_ req_ =\n    if spaScrollLegacy_ req_ then\n        SpaTask_.succeed (SpaServer_.withHeader \"X-Sky-Status\" \"reload\" (SpaServer_.withStatus 409 (SpaServer_.text \"This page must reload before using the returned-scroll protocol\")))\n\n    else\n        handler_ req_\n\n\n");
     }
     // Server-internal effect chaining (docs/skyspa/auto-split.md). A server
     // branch that returns `Cmd.perform serverTask ToMsg` (where `ToMsg` is
@@ -9504,16 +9693,16 @@ fn gen_backend(
              -- (runtime-go/rt/spa_chain_notjs.go).\n\
              spaChainSettle_ : model -> any -> any -> ( model, any )\n\
              spaChainSettle_ =\n\
-             \x20   Ffi.kernel \"Spa_settleServerChain\"\n\n\n",
+             \x20   SpaFfi_.kernel \"Spa_settleServerChain\"\n\n\n",
         );
     }
     if any_follow {
         handlers.push_str(
             "-- E-4: a request with no `X-Sky-Wire` header came from a page built\n\
              -- before v0.27.0, which cannot run follow-ups itself.\n\
-             spaIsLegacyRpc_ : Request -> Bool\n\
+             spaIsLegacyRpc_ : SpaServer_.Request -> Bool\n\
              spaIsLegacyRpc_ =\n\
-             \x20   Ffi.kernel \"Spa_isLegacyRpc\"\n\n\n\
+             \x20   SpaFfi_.kernel \"Spa_isLegacyRpc\"\n\n\n\
              spaLegacySettle_ req m cmd =\n\
              \x20   if spaIsLegacyRpc_ req then\n\
              \x20       spaChainSettle_ m cmd update\n\n\
@@ -9539,7 +9728,7 @@ fn gen_backend(
              -- the command ran no server task (a `Cmd.none` leaf).\n\
              spaRunPerform_ : any -> result\n\
              spaRunPerform_ =\n\
-             \x20   Ffi.kernel \"Spa_runServerPerform\"\n\n\n",
+             \x20   SpaFfi_.kernel \"Spa_runServerPerform\"\n\n\n",
         );
     }
 
@@ -9558,16 +9747,16 @@ fn gen_backend(
              -- broker URL below is baked by `--broker`; SKY_LIVE_BROKER_URL overrides it.\n\
              spaNewBroker : String -> any\n\
              spaNewBroker =\n\
-             \x20   Ffi.kernel \"Spa_newBroker\"\n\n\n\
+             \x20   SpaFfi_.kernel \"Spa_newBroker\"\n\n\n\
              spaBroker : any\n\
              spaBroker =\n\
              \x20   spaNewBroker {baked_url}\n\n\n\
              spaInterpretPublish : any -> Cmd Msg -> Task Error ()\n\
              spaInterpretPublish =\n\
-             \x20   Ffi.kernel \"Spa_interpretPublish\"\n\n\n\
-             spaStreamTopic : any -> String -> (StreamWriter -> Task Error ())\n\
+             \x20   SpaFfi_.kernel \"Spa_interpretPublish\"\n\n\n\
+             spaStreamTopic : any -> String -> (SpaStream_.StreamWriter -> Task Error ())\n\
              spaStreamTopic =\n\
-             \x20   Ffi.kernel \"Spa_streamTopic\"\n\n\n"
+             \x20   SpaFfi_.kernel \"Spa_streamTopic\"\n\n\n"
         ));
         // `GET /_sky/sub` AUTHORISATION (security). The topic comes from the
         // query string, so without a check anyone could stream any topic —
@@ -9581,7 +9770,7 @@ fn gen_backend(
         // depends on a NON-identity model field (a room the user navigated to)
         // is computed from `init`'s value here, so such a topic is refused —
         // the documented fail-closed trade-off (docs/skyspa/auto-split.md §16).
-        let refuse = "Task.succeed (Server.withStatus 403 (Server.text \"this topic is not in the app's subscriptions for this session\"))";
+        let refuse = "SpaTask_.succeed (SpaServer_.withStatus 403 (SpaServer_.text \"this topic is not in the app's subscriptions for this session\"))";
         match subs_fn {
             Some(subs) => {
                 handlers.push_str(&verified_model_decl(
@@ -9593,15 +9782,15 @@ fn gen_backend(
                 handlers.push_str(&format!(
                     "spaSubAllowsTopic_ : any -> String -> Bool\n\
                      spaSubAllowsTopic_ =\n\
-                     \x20   Ffi.kernel \"Spa_subAllowsTopic\"\n\n\n\
-                     subHandler : Request -> Task Error Response\n\
+                     \x20   SpaFfi_.kernel \"Spa_subAllowsTopic\"\n\n\n\
+                     subHandler : SpaServer_.Request -> Task Error SpaServer_.Response\n\
                      subHandler req =\n\
                      \x20   let\n\
                      \x20       topic_ =\n\
-                     \x20           Maybe.withDefault \"\" (Server.queryParam \"topic\" req)\n\
+                     \x20           SpaMaybe_.withDefault \"\" (SpaServer_.queryParam \"topic\" req)\n\
                      \x20   in\n\
                      \x20   if spaSubAllowsTopic_ ({subs} (spaSubModel_ req)) topic_ then\n\
-                     \x20       Stream.stream \"text/event-stream\" (spaStreamTopic spaBroker topic_)\n\n\
+                     \x20       SpaStream_.stream \"text/event-stream\" (spaStreamTopic spaBroker topic_)\n\n\
                      \x20   else\n\
                      \x20       {refuse}\n\n\n"
                 ));
@@ -9611,7 +9800,7 @@ fn gen_backend(
                     "the backend cannot find the app's `subscriptions` function (a top-level `subscriptions` in the entry module), so `GET /_sky/sub` refuses every topic (fail closed). Name the function `subscriptions` in the entry module, or use `Std.App`, to stream topics.".to_string(),
                 );
                 handlers.push_str(&format!(
-                    "subHandler : Request -> Task Error Response\n\
+                    "subHandler : SpaServer_.Request -> Task Error SpaServer_.Response\n\
                      subHandler _ =\n\
                      \x20   {refuse}\n\n\n"
                 ));
@@ -9637,45 +9826,45 @@ fn gen_backend(
              -- configured session store, and verification refuses an ended id, so a\n\
              -- copy of the cookie taken before sign-out stops working at once\n\
              -- (runtime-go/rt/spa_session_revocation.go).\n\
-             spaSessionSecret_ : () -> Secret\n\
+             spaSessionSecret_ : () -> SpaSecret_.Secret\n\
              spaSessionSecret_ =\n\
-             \x20   Ffi.kernel \"Spa_sessionSecret\"\n\n\n\
-             sessionSecret_ : Secret\n\
+             \x20   SpaFfi_.kernel \"Spa_sessionSecret\"\n\n\n\
+             sessionSecret_ : SpaSecret_.Secret\n\
              sessionSecret_ =\n\
              \x20   spaSessionSecret_ ()\n\n\n\
-             spaVerifySession_ : Secret -> String -> Result Error a\n\
+             spaVerifySession_ : SpaSecret_.Secret -> String -> Result Error a\n\
              spaVerifySession_ =\n\
-             \x20   Ffi.kernel \"Spa_verifySession\"\n\n\n\
-             spaSignSession_ : Secret -> String -> a -> Result Error String\n\
+             \x20   SpaFfi_.kernel \"Spa_verifySession\"\n\n\n\
+             spaSignSession_ : SpaSecret_.Secret -> String -> a -> Result Error String\n\
              spaSignSession_ =\n\
-             \x20   Ffi.kernel \"Spa_signSession\"\n\n\n\
-             spaEndSession_ : Secret -> String -> Task Error ()\n\
+             \x20   SpaFfi_.kernel \"Spa_signSession\"\n\n\n\
+             spaEndSession_ : SpaSecret_.Secret -> String -> Task Error ()\n\
              spaEndSession_ =\n\
-             \x20   Ffi.kernel \"Spa_endSession\"\n\n\n\
+             \x20   SpaFfi_.kernel \"Spa_endSession\"\n\n\n\
              -- v0.27.0: the Spa session cookie is `sky_spa` (A-2b). The runtime reads\n\
              -- it, else a legacy `sky_sid` that verifies as a Spa token, converting a\n\
              -- pre-v0.27 token once (E-3); `spaSessionCookies_` moves the cookie on\n\
              -- the response (runtime-go/rt/spa_session_legacy.go).\n\
-             spaSessionToken_ : Secret -> Request -> String\n\
+             spaSessionToken_ : SpaSecret_.Secret -> SpaServer_.Request -> String\n\
              spaSessionToken_ =\n\
-             \x20   Ffi.kernel \"Spa_sessionToken\"\n\n\n\
-             spaSessionCookies_ : Secret -> Request -> Response -> Response\n\
+             \x20   SpaFfi_.kernel \"Spa_sessionToken\"\n\n\n\
+             spaSessionCookies_ : SpaSecret_.Secret -> SpaServer_.Request -> SpaServer_.Response -> SpaServer_.Response\n\
              spaSessionCookies_ =\n\
-             \x20   Ffi.kernel \"Spa_sessionCookies\"\n\n\n\
+             \x20   SpaFfi_.kernel \"Spa_sessionCookies\"\n\n\n\
              -- v0.29.0: `sky_spa` carries a Max-Age, the session's lifetime\n\
              -- (App.withSessionLifetime / SKY_SPA_SESSION_LIFETIME, default 30 days),\n\
              -- so a browser does not drop it on quit while the token is valid.\n\
              spaSessionCookieAttrs_ : () -> String\n\
              spaSessionCookieAttrs_ =\n\
-             \x20   Ffi.kernel \"Spa_sessionCookieAttrs\"\n\n\n\
-             spaSessionCookie_ : Request -> String\n\
+             \x20   SpaFfi_.kernel \"Spa_sessionCookieAttrs\"\n\n\n\
+             spaSessionCookie_ : SpaServer_.Request -> String\n\
              spaSessionCookie_ req =\n\
              \x20   spaSessionToken_ sessionSecret_ req\n\n\n\
              -- Every RPC, SSR and sign-out answer passes through here, so a\n\
              -- request that came in on the legacy cookie leaves on `sky_spa`.\n\
-             spaWithSession_ : Request -> Task Error Response -> Task Error Response\n\
+             spaWithSession_ : SpaServer_.Request -> Task Error SpaServer_.Response -> Task Error SpaServer_.Response\n\
              spaWithSession_ req answer_ =\n\
-             \x20   Task.map (spaSessionCookies_ sessionSecret_ req) answer_\n\n\n",
+             \x20   SpaTask_.map (spaSessionCookies_ sessionSecret_ req) answer_\n\n\n",
         );
         // One verify helper per identity field: return the TRUSTED value from the
         // signed cookie, or the init value when there is no valid cookie — NEVER
@@ -9700,7 +9889,7 @@ fn gen_backend(
                  \x20   else\n\
                  \x20       case spaVerifySession_ sessionSecret_ tok of\n\
                  \x20           Ok claims ->\n\
-                 \x20               case Codec.fromJson {cname} claims.p{idx} of\n\
+                 \x20               case SpaCodec_.fromJson {cname} claims.p{idx} of\n\
                  \x20                   Ok v ->\n\
                  \x20                       v\n\n\
                  \x20                   Err _ ->\n\
@@ -9724,7 +9913,7 @@ fn gen_backend(
             .map(|(i, p)| {
                 let sep = if i == 0 { "" } else { ", " };
                 format!(
-                    "{sep}p{i} = Codec.toJson {0} m.{1}",
+                    "{sep}p{i} = SpaCodec_.toJson {0} m.{1}",
                     session_codec_name(&p.name),
                     p.name
                 )
@@ -9734,7 +9923,7 @@ fn gen_backend(
             "signedResponse_ req m resp =\n\
              \x20   case spaSignSession_ sessionSecret_ (spaSessionCookie_ req) {{ {claims} }} of\n\
              \x20       Ok tok ->\n\
-             \x20           Server.withCookie \"sky_spa\" tok (spaSessionCookieAttrs_ ()) resp\n\n\
+             \x20           SpaServer_.withCookie \"sky_spa\" tok (spaSessionCookieAttrs_ ()) resp\n\n\
              \x20       Err _ ->\n\
              \x20           resp\n\n\n"
         ));
@@ -9745,20 +9934,20 @@ fn gen_backend(
         // (Max-Age=0). When the store cannot record the sign-out it still clears
         // the cookie but answers 503, so the failure is not silent.
         handlers.push_str(
-            "spaSignOutHandler : Handler\n\
+            "spaSignOutHandler : SpaServer_.Handler\n\
              spaSignOutHandler req =\n\
              \x20   spaWithSession_ req (spaSignOutInner_ req)\n\n\n\
              -- Clears `sky_spa` only: `sky_sid` may be a Sky.Live app's cookie on the\n\
              -- same host (A-2b).\n\
-             spaSignOutInner_ : Handler\n\
+             spaSignOutInner_ : SpaServer_.Handler\n\
              spaSignOutInner_ req =\n\
              \x20   let\n\
              \x20       cleared_ =\n\
-             \x20           Server.withCookie \"sky_spa\" \"\" \"Path=/; HttpOnly; SameSite=Lax; Max-Age=0\" (Server.json \"{}\")\n\
+             \x20           SpaServer_.withCookie \"sky_spa\" \"\" \"Path=/; HttpOnly; SameSite=Lax; Max-Age=0\" (SpaServer_.json \"{}\")\n\
              \x20   in\n\
              \x20   spaEndSession_ sessionSecret_ (spaSessionCookie_ req)\n\
-             \x20       |> Task.map (\\_ -> cleared_)\n\
-             \x20       |> Task.onError (\\_ -> Task.succeed (Server.withStatus 503 cleared_))\n\n\n",
+             \x20       |> SpaTask_.map (\\_ -> cleared_)\n\
+             \x20       |> SpaTask_.onError (\\_ -> SpaTask_.succeed (SpaServer_.withStatus 503 cleared_))\n\n\n",
         );
     }
     for (name, io) in server {
@@ -9773,7 +9962,7 @@ fn gen_backend(
                 handler.clone()
             } else {
                 handlers.push_str(&format!(
-                    "{handler} : Handler\n{handler} req =\n    spaWithSession_ req ({handler}Inner_ req)\n\n\n"
+                    "{handler} : SpaServer_.Handler\n{handler} req =\n    spaWithSession_ req ({handler}Inner_ req)\n\n\n"
                 ));
                 format!("{handler}Inner_")
             };
@@ -9784,11 +9973,11 @@ fn gen_backend(
                 init_json.to_string()
             };
             let answer =
-                format!("Task.succeed (Server.json (Codec.toJson Codec.string ({init_json})))");
+                format!("SpaTask_.succeed (SpaServer_.json (SpaCodec_.toJson SpaCodec_.string ({init_json})))");
             let answer = if push_mode {
                 format!(
                     "spaInterpretPublish spaBroker spaInitCmd_\n\
-                     \x20       |> Task.andThen (\\_ -> {answer})"
+                     \x20       |> SpaTask_.andThen (\\_ -> {answer})"
                 )
             } else {
                 answer.to_string()
@@ -9797,7 +9986,7 @@ fn gen_backend(
                 "-- Generated endpoint for `init`'s command: the client `init` cannot run\n\
                  -- it (it reaches server-only bindings), so the backend runs it here and\n\
                  -- answers the follow-up Msgs for the client to dispatch through `update`.\n\
-                 {handler_body_name} : Handler\n\
+                 {handler_body_name} : SpaServer_.Handler\n\
                  {handler_body_name} _ =\n\
                  \x20   let\n\
                  \x20       ( _, spaInitCmd_ ) =\n\
@@ -9806,7 +9995,7 @@ fn gen_backend(
                  \x20   {answer}\n\n\n"
             ));
             routes.push(format!(
-                "        , Server.rpc \"POST /_rpc/{name}\" {route_handler}"
+                "        , SpaServer_.rpc \"POST /_rpc/{name}\" {route_handler}"
             ));
             continue;
         }
@@ -9944,10 +10133,10 @@ fn gen_backend(
                     .any(|f| session_proj.iter().any(|p| &p.name == f)));
         let json_resp = if establishes_session {
             format!(
-                "signedResponse_ req {result_model} (Server.json (Codec.toJson {resp_codec} {resp_val}))"
+                "signedResponse_ req {result_model} (SpaServer_.json (SpaCodec_.toJson {resp_codec} {resp_val}))"
             )
         } else {
-            format!("Server.json (Codec.toJson {resp_codec} {resp_val})")
+            format!("SpaServer_.json (SpaCodec_.toJson {resp_codec} {resp_val})")
         };
         // In push mode the returned Cmd is fed to the broker (a Cmd.publish fans
         // out to SSE subscribers) BEFORE the RPC answers; a chaining branch OR a
@@ -9958,13 +10147,13 @@ fn gen_backend(
                 "cmd",
                 format!(
                     "spaInterpretPublish spaBroker cmd\n\
-                     \x20                       |> Task.andThen (\\_ -> Task.succeed ({json_resp}))"
+                     \x20                       |> SpaTask_.andThen (\\_ -> SpaTask_.succeed ({json_resp}))"
                 ),
             )
         } else if is_chaining || is_client_result || is_follow || returned_scrolls {
-            ("cmd", format!("Task.succeed ({json_resp})"))
+            ("cmd", format!("SpaTask_.succeed ({json_resp})"))
         } else {
-            ("_", format!("Task.succeed ({json_resp})"))
+            ("_", format!("SpaTask_.succeed ({json_resp})"))
         };
         // The extra binding threaded between the `update` call and the answer, at
         // the guard / no-guard variant's own indentation: `( mFinal, _ ) =
@@ -10016,7 +10205,7 @@ fn gen_backend(
             format!(
                 "\x20           case spaGuard_ {ctor_app} {guard_model} of\n\
                  \x20               Err ge ->\n\
-                 \x20                   Task.succeed (forbidden (Error.toString ge))\n\n\
+                 \x20                   SpaTask_.succeed (forbidden (SpaError_.toString ge))\n\n\
                  \x20               Ok _ ->\n\
                  \x20                   let\n\
                  \x20                       ( m2, {cmd_binder} ) =\n\
@@ -10041,7 +10230,7 @@ fn gen_backend(
             handler.clone()
         } else {
             handlers.push_str(&format!(
-                "{handler} : Handler\n{handler} req =\n    spaWithSession_ req ({handler}Inner_ req)\n\n\n"
+                "{handler} : SpaServer_.Handler\n{handler} req =\n    spaWithSession_ req ({handler}Inner_ req)\n\n\n"
             ));
             format!("{handler}Inner_")
         };
@@ -10049,23 +10238,23 @@ fn gen_backend(
         // read through `req.body` before it reaches `spaWithSession_`, and the
         // lowering would type it from that one field (v0.27.1: a user alias
         // `{ body : String }` captured it and the request lost its cookies).
-        let handler_sig = format!("{handler_body_name} : Handler\n");
+        let handler_sig = format!("{handler_body_name} : SpaServer_.Handler\n");
         handlers.push_str(&format!(
             "-- Generated endpoint for the SERVER branch `{name}`: decode the read-set,\n\
              -- reuse the app's own init + update to run the REAL effect, encode the write-set.\n\
              {handler_sig}\
              {handler_body_name} req =\n\
-             \x20   case Codec.fromJson {req_codec} req.body of\n\
+             \x20   case SpaCodec_.fromJson {req_codec} req.body of\n\
              \x20       Ok p ->\n\
              \x20           let\n\
              {run_setup}\n\
              \x20           in\n\
              {run_and_answer}\n\
              \x20       Err e ->\n\
-             \x20           Task.succeed (badRequest (Error.toString e))\n\n\n"
+             \x20           SpaTask_.succeed (badRequest (SpaError_.toString e))\n\n\n"
         ));
         routes.push(format!(
-            "        , Server.rpc \"POST /_rpc/{name}\" {route_handler}"
+            "        , SpaServer_.rpc \"POST /_rpc/{name}\" {route_handler}"
         ));
     }
     // STATELESS SIGNED SESSION: the framework sign-out endpoint clears `sky_sid`.
@@ -10073,13 +10262,14 @@ fn gen_backend(
     // under the same guard above), so an app with no server-trusted session gains
     // no extra route.
     if !session_proj.is_empty() {
-        routes
-            .push("        , Server.rpc \"POST /_rpc/__spaSignOut\" spaSignOutHandler".to_string());
+        routes.push(
+            "        , SpaServer_.rpc \"POST /_rpc/__spaSignOut\" spaSignOutHandler".to_string(),
+        );
     }
     if push_mode {
         // The SSE push endpoint (topic from the query string, authorised against
         // the app's own `subscriptions` for the verified session — subHandler).
-        routes.push("        , Server.api \"GET /_sky/sub\" subHandler".to_string());
+        routes.push("        , SpaServer_.api \"GET /_sky/sub\" subHandler".to_string());
     }
 
     // SSR first paint (design §4.1/§4.4). Emitted only for a backend that carries
@@ -10095,17 +10285,17 @@ fn gen_backend(
              -- binary (link-time DCE drops them until an SSR route calls them).\n\
              spaSsrRenderHead : any -> model -> String\n\
              spaSsrRenderHead =\n\
-             \x20   Ffi.kernel \"Spa_ssrRenderHead\"\n\n\n\
+             \x20   SpaFfi_.kernel \"Spa_ssrRenderHead\"\n\n\n\
              spaSsrRenderBody : any -> String\n\
              spaSsrRenderBody =\n\
-             \x20   Ffi.kernel \"Spa_ssrRenderBody\"\n\n\n\
+             \x20   SpaFfi_.kernel \"Spa_ssrRenderBody\"\n\n\n\
              -- A page route (runtime-go/rt/spa_ssr_notjs.go, Spa_pageRoute): a GET\n\
              -- that takes the CSRF middleware, so the page's POST forms carry the\n\
              -- `__sky_csrf` field, and a native form POST to the page answers 303\n\
              -- to the same URL instead of a 403.\n\
-             spaPageRoute_ : String -> (Server.Request -> Task Error Server.Response) -> Server.Route\n\
+             spaPageRoute_ : String -> (SpaServer_.Request -> Task Error SpaServer_.Response) -> SpaServer_.Route\n\
              spaPageRoute_ =\n\
-             \x20   Ffi.kernel \"Spa_pageRoute\"\n\n\n\
+             \x20   SpaFfi_.kernel \"Spa_pageRoute\"\n\n\n\
              -- The page kernel also stamps `data-sky-settled` on #app: the two\n\
              -- Bools say whether init's command and the route's onNavigate command\n\
              -- ran to the end here, so the client skips exactly those (SPA-10).\n\
@@ -10114,13 +10304,13 @@ fn gen_backend(
              -- session / request fields) from the seed and restores the rest (R2).\n\
              spaSsrPageSeeded : String -> String -> String -> String -> Bool -> Bool -> List String -> String\n\
              spaSsrPageSeeded =\n\
-             \x20   Ffi.kernel \"Spa_ssrPageSeeded\"\n\n\n\
+             \x20   SpaFfi_.kernel \"Spa_ssrPageSeeded\"\n\n\n\
              spaSsrCmdIsNone : any -> Bool\n\
              spaSsrCmdIsNone =\n\
-             \x20   Ffi.kernel \"Spa_ssrCmdIsNone\"\n\n\n\
+             \x20   SpaFfi_.kernel \"Spa_ssrCmdIsNone\"\n\n\n\
              spaSsrWasmNameBuilt : String -> String -> String\n\
              spaSsrWasmNameBuilt =\n\
-             \x20   Ffi.kernel \"Spa_ssrWasmNameBuilt\"\n\n\n\
+             \x20   SpaFfi_.kernel \"Spa_ssrWasmNameBuilt\"\n\n\n\
              -- The frontend's content-hashed wasm filename. `sky build` writes it\n\
              -- into spaBuiltWasmName_ after the frontend leg, before the backend\n\
              -- leg, so the page does not depend on reaching the dist at run time.\n\
@@ -10163,12 +10353,12 @@ fn gen_backend(
                  -- exactly as the client does at boot (Spa_ssrResolveModel).\n\
                  spaSsrResolveModel : any -> any -> model -> String -> model\n\
                  spaSsrResolveModel =\n\
-                 \x20   Ffi.kernel \"Spa_ssrResolveModel\"\n\n\n\
+                 \x20   SpaFfi_.kernel \"Spa_ssrResolveModel\"\n\n\n\
                  -- The page's HTTP status: 404 when the path matches no route and the\n\
                  -- NotFound page renders, else 200 (Spa_ssrStatus).\n\
                  spaSsrStatus : any -> any -> String -> Int\n\
                  spaSsrStatus =\n\
-                 \x20   Ffi.kernel \"Spa_ssrStatus\"\n\n\n",
+                 \x20   SpaFfi_.kernel \"Spa_ssrStatus\"\n\n\n",
             );
         }
         // Settle decisions (fix 2). `settle_init` settles init's GET-safe read
@@ -10193,7 +10383,7 @@ fn gen_backend(
                  -- folded command self-suppresses — a GET never mutates.\n\
                  spaSsrSettle : model -> any -> any -> model\n\
                  spaSsrSettle =\n\
-                 \x20   Ffi.kernel \"Spa_ssrSettle\"\n\n\n",
+                 \x20   SpaFfi_.kernel \"Spa_ssrSettle\"\n\n\n",
             );
         }
         if settle_init || settle_nav {
@@ -10204,7 +10394,7 @@ fn gen_backend(
                  -- from the seed, does not run it a second time (SPA-10).\n\
                  spaSsrSettleFull : model -> any -> any -> ( model, Bool )\n\
                  spaSsrSettleFull =\n\
-                 \x20   Ffi.kernel \"Spa_ssrSettleFull\"\n\n\n",
+                 \x20   SpaFfi_.kernel \"Spa_ssrSettleFull\"\n\n\n",
             );
         }
         // The request param is needed for route resolution (`req.path`), the
@@ -10388,7 +10578,7 @@ fn gen_backend(
             Some(anno) => {
                 let cleared = clear_device_only("m_", device_only);
                 let body = if device_only.is_empty() {
-                    format!("Codec.toJson (Codec.auto m_) {cleared}")
+                    format!("SpaCodec_.toJson (SpaCodec_.auto m_) {cleared}")
                 } else {
                     handlers.push_str(DEVICE_MODEL_TO_JSON);
                     format!("spaModelToJson_ ({cleared})")
@@ -10404,7 +10594,7 @@ fn gen_backend(
             None => {
                 let embedded = clear_device_only("resolved", device_only);
                 let body = if device_only.is_empty() {
-                    format!("Codec.toJson (Codec.auto resolved) {embedded}")
+                    format!("SpaCodec_.toJson (SpaCodec_.auto resolved) {embedded}")
                 } else {
                     handlers.push_str(DEVICE_MODEL_TO_JSON);
                     format!("spaModelToJson_ ({embedded})")
@@ -10415,18 +10605,21 @@ fn gen_backend(
         // A-2b/E-3: with a session projection the page answer passes through
         // `spaWithSession_` too (the legacy cookie moves to `sky_spa`).
         let (ssr_head_decl, ssr_name) = if session_proj.is_empty() {
-            ("ssrHandler : Handler\n".to_string(), "ssrHandler")
+            (
+                "ssrHandler : SpaServer_.Handler\n".to_string(),
+                "ssrHandler",
+            )
         } else {
-            ("ssrInner_ : Handler\n".to_string(), "ssrInner_")
+            ("ssrInner_ : SpaServer_.Handler\n".to_string(), "ssrInner_")
         };
         if !session_proj.is_empty() {
             handlers.push_str(
-                "ssrHandler : Handler\nssrHandler req =\n    spaWithSession_ req (ssrInner_ req)\n\n\n",
+                "ssrHandler : SpaServer_.Handler\nssrHandler req =\n    spaWithSession_ req (ssrInner_ req)\n\n\n",
             );
         }
         // A routed app sends its NotFound page with 404 (`ssrStatus_` above).
         let with_status = if has_synth_routes {
-            "Server.withStatus ssrStatus_ <| "
+            "SpaServer_.withStatus ssrStatus_ <| "
         } else {
             ""
         };
@@ -10446,8 +10639,8 @@ fn gen_backend(
              \x20   let\n\
              {lets}\
              \x20   in\n\
-             \x20   Task.succeed\n\
-             \x20       ({with_status}Server.html\n\
+             \x20   SpaTask_.succeed\n\
+             \x20       ({with_status}SpaServer_.html\n\
              \x20           ({ssr_page}\n\
              \x20               (\"<meta name=\\\"sky-wire\\\" content=\\\"{wire_hash}\\\">\" ++ spaAiEngineMeta_ ++ spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\
@@ -10519,15 +10712,17 @@ fn gen_backend(
     // dist catch-all already serves the root there.
     if let Some((dir, prefix)) = static_mount {
         if !prefix.is_empty() {
-            routes.push(format!("        , Server.static \"/{prefix}\" \"{dir}\""));
+            routes.push(format!(
+                "        , SpaServer_.static \"/{prefix}\" \"{dir}\""
+            ));
         }
     }
     if emit_ssr && has_synth_routes {
         routes.push(
-            "        , Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler".to_string(),
+            "        , SpaServer_.staticNotFound \"/\" \"../frontend/dist\" ssrHandler".to_string(),
         );
     } else {
-        routes.push("        , Server.static \"/\" \"../frontend/dist\"".to_string());
+        routes.push("        , SpaServer_.static \"/\" \"../frontend/dist\"".to_string());
     }
 
     // serverPort + main.
@@ -10544,7 +10739,7 @@ fn gen_backend(
     // user who starts the backend bare (`./app`, no PORT) and launches the shell
     // must land on the same port. An explicit PORT still overrides both.
     handlers.push_str(
-        "serverPort : Int\nserverPort =\n    case String.toInt (System.getenvOr \"PORT\" \"8951\") of\n        Just p ->\n            p\n\n        Nothing ->\n            8951\n\n\n",
+        "serverPort : Int\nserverPort =\n    case SpaString_.toInt (SpaSystem_.getenvOr \"PORT\" \"8951\") of\n        Just p ->\n            p\n\n        Nothing ->\n            8951\n\n\n",
     );
     // GAP-1: mount the app's `App.api` server endpoints. `spaApiRoutes_` (the
     // synthesis' api route source) is lowered to `List Server.Route` by
@@ -10557,7 +10752,7 @@ fn gen_backend(
     let listen_arg = if has_synth_api_routes {
         // Inside the grouping parens, layout is free, so the list literal keeps its
         // own indentation and the `++` appends the api mounts.
-        format!("        (\n{route_block}\n        ]\n            ++ List.concatMap App.apiServerRoute spaApiRoutes_\n        )")
+        format!("        (\n{route_block}\n        ]\n            ++ SpaList_.concatMap SpaApp_.apiServerRoute spaApiRoutes_\n        )")
     } else {
         format!("{route_block}\n        ]")
     };
@@ -10592,7 +10787,7 @@ fn gen_backend(
     }
     let mut startup: Vec<&str> = Vec::new();
     if has_synth_console_auth {
-        startup.push("Server.setConsoleAuth spaConsoleGate_");
+        startup.push("SpaServer_.setConsoleAuth spaConsoleGate_");
     }
     // Boot tasks that run, in order, before the server listens; an Err stops
     // start-up. E-4: record the wire hash.
@@ -10636,7 +10831,7 @@ fn gen_backend(
          -- session (runtime-go/rt/spa_session_revocation.go).\n\
          spaSessionBoot_ : Bool -> Task Error ()\n\
          spaSessionBoot_ =\n\
-         \x20   Ffi.kernel \"Spa_sessionBoot\"\n\n\n",
+         \x20   SpaFfi_.kernel \"Spa_sessionBoot\"\n\n\n",
     );
     handlers.push_str(
         "-- E-4: the wire-schema hash this backend answers for; a request from a\n\
@@ -10644,13 +10839,13 @@ fn gen_backend(
          -- (runtime-go/rt/spa_wire.go).\n\
          spaSetWireHash_ : String -> Task Error ()\n\
          spaSetWireHash_ =\n\
-         \x20   Ffi.kernel \"Spa_setWireHash\"\n\n\n",
+         \x20   SpaFfi_.kernel \"Spa_setWireHash\"\n\n\n",
     );
     handlers.push_str(&format!(
-        "spaListen_ : Task Error ()\nspaListen_ =\n    Server.listen\n        serverPort\n{listen_arg}\n\n\n"
+        "spaListen_ : Task Error ()\nspaListen_ =\n    SpaServer_.listen\n        serverPort\n{listen_arg}\n\n\n"
     ));
     let boot_expr = format!(
-        "Task.sequence [ {} ]\n        |> Task.andThen (\\_ -> spaListen_)",
+        "SpaTask_.sequence [ {} ]\n        |> SpaTask_.andThen (\\_ -> spaListen_)",
         boot.join(", ")
     );
     let main_decl = if startup.is_empty() {
@@ -10754,9 +10949,6 @@ fn gen_frontend(
         // drop it from any kept import to avoid an ambiguous double-import.
         .map(|i| strip_names_from_import_exposing(&i.text, &copied.from_module(&i.module_path)))
         .collect();
-    if !has_module(imports, "Sky.Core.Error") {
-        import_lines.push("import Sky.Core.Error as Error exposing (Error)".to_string());
-    }
     import_lines.push(shared_expose.to_string());
 
     let server_ctors: Vec<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
@@ -10798,9 +10990,6 @@ fn gen_frontend(
             .as_ref()
             .map(|f| server.iter().any(|(n, _)| f.ctx.branches.contains_key(n)))
             .unwrap_or(false);
-    if (decoder_blank.is_some() || follow_here) && !has_module(imports, "Std.Codec") {
-        import_lines.push("import Std.Codec as Codec".to_string());
-    }
     // Hygiene is independent of the HIR proof: never collide with a user's
     // otherwise valid binding/import alias. Generated trust is not eligibility.
     let fresh = |base: &str| {
@@ -10821,21 +11010,6 @@ fn gen_frontend(
     } else {
         generated_encoder_setter.clone()
     };
-    let ffi_qualifier = file
-        .imports()
-        .find(|i| i.name().is_some_and(|n| n.text() == "Sky.Ffi"))
-        .map(|i| {
-            i.alias()
-                .map(|a| a.text().to_string())
-                .unwrap_or_else(|| "Sky.Ffi".into())
-        })
-        .unwrap_or_else(|| {
-            let alias = fresh("SkyModelCodecFfi_");
-            if decoder_blank.is_some() {
-                import_lines.push(format!("import Sky.Ffi as {alias}"));
-            }
-            alias
-        });
     if follow_here {
         if let Some(f) = &follow {
             if !f.q.is_empty() {
@@ -10900,7 +11074,7 @@ fn gen_frontend(
                     inject_config_builder_into_main(
                         &main_text,
                         "Spa.withGuard",
-                        "            |> Spa.withGuard spaGuard_\n",
+                        "            |> SpaLib_.withGuard spaGuard_\n",
                     )
                 } else {
                     main_text
@@ -10928,7 +11102,10 @@ fn gen_frontend(
                     inject_config_builder_into_main(
                         &main_text,
                         "Spa.withHoldFree",
-                        &format!("            |> Spa.withHoldFree [ {} ]\n", items.join(", ")),
+                        &format!(
+                            "            |> SpaLib_.withHoldFree [ {} ]\n",
+                            items.join(", ")
+                        ),
                     )
                 };
                 body.push_str(main_text.trim_end());
@@ -10994,41 +11171,37 @@ fn gen_frontend(
     // the encoder's byte-for-byte and hydration is lossless.
     if let Some(model) = &decoder_blank {
         body.push_str(&format!(
-            "{generated_encoder_setter} : (model -> String) -> Spa.AppConfig model msg -> Spa.AppConfig model msg\n\
+            "{generated_encoder_setter} : (model -> String) -> SpaLib_.AppConfig model msg -> SpaLib_.AppConfig model msg\n\
              {generated_encoder_setter} =\n    \
-             {ffi_qualifier}.kernel \"Spa_withGeneratedModelEncoder\"\n\n\n",
+             SpaFfi_.kernel \"Spa_withGeneratedModelEncoder\"\n\n\n",
         ));
         if device_only.is_empty() {
             body.push_str(&format!(
-                "{prepared_setter} : (() -> Codec.Codec model) -> (Codec.Codec model -> model -> String) -> (model -> String) -> Spa.AppConfig model msg -> Spa.AppConfig model msg\n\
+                "{prepared_setter} : (() -> SpaCodec_.Codec model) -> (SpaCodec_.Codec model -> model -> String) -> (model -> String) -> SpaLib_.AppConfig model msg -> SpaLib_.AppConfig model msg\n\
                  {prepared_setter} =\n    \
-                 {ffi_qualifier}.kernel \"Spa_withPreparedModelEncoder\"\n\n\n\
-                 {prepared_prepare} : () -> Codec.Codec {model_ty}\n\
+                 SpaFfi_.kernel \"Spa_withPreparedModelEncoder\"\n\n\n\
+                 {prepared_prepare} : () -> SpaCodec_.Codec {model_ty}\n\
                  {prepared_prepare} unit_ =\n    \
-                 Codec.auto spaModelBlank_\n\n\n\
-                 {prepared_finish} : Codec.Codec {model_ty} -> {model_ty} -> String\n\
+                 SpaCodec_.auto spaModelBlank_\n\n\n\
+                 {prepared_finish} : SpaCodec_.Codec {model_ty} -> {model_ty} -> String\n\
                  {prepared_finish} codec_ model_ =\n    \
-                 Codec.toJson codec_ model_\n\n\n"
+                 SpaCodec_.toJson codec_ model_\n\n\n"
             ));
         }
         // `withClientCrypto`: a device-only key field is `Nothing` whatever the
         // page or localStorage holds, so no key can be planted from outside.
         let (decode, decoded) = if device_only.is_empty() {
             (
-                "Codec.fromJson (Codec.auto spaModelBlank_) jsonStr_",
+                "SpaCodec_.fromJson (SpaCodec_.auto spaModelBlank_) jsonStr_",
                 String::new(),
             )
         } else {
-            body.push_str(
-                &DEVICE_MODEL_TO_JSON.replace("Ffi.kernel", &format!("{ffi_qualifier}.kernel")),
-            );
-            body.push_str(
-                &DEVICE_MODEL_FROM_JSON.replace("Ffi.kernel", &format!("{ffi_qualifier}.kernel")),
-            );
+            body.push_str(DEVICE_MODEL_TO_JSON);
+            body.push_str(DEVICE_MODEL_FROM_JSON);
             (
                 "spaModelFromJson_ spaModelBlank_ jsonStr_",
                 format!(
-                    "\n        |> Result.map (\\m_ -> {})",
+                    "\n        |> SpaResult_.map (\\m_ -> {})",
                     clear_device_only("m_", device_only)
                 ),
             )
@@ -11049,7 +11222,7 @@ fn gen_frontend(
         // `withClientCrypto`: the device-only key fields are saved as `Nothing`.
         let saved = clear_device_only("m_", device_only);
         let encode = if device_only.is_empty() {
-            format!("Codec.toJson (Codec.auto spaModelBlank_) {saved}")
+            format!("SpaCodec_.toJson (SpaCodec_.auto spaModelBlank_) {saved}")
         } else {
             format!("spaModelToJson_ ({saved})")
         };
@@ -12190,11 +12363,11 @@ fn gen_frontend_update(
             let payload = emit_build_req(io, model_param, model_field_names);
             let hold = !arm_routes.async_heads.contains(&m);
             let rpc_fn = if arm_routes.scroll_heads.contains(&m) {
-                "Spa.rpcScrollHold"
+                "SpaLib_.rpcScrollHold"
             } else if hold {
-                "Spa.rpcHold"
+                "SpaLib_.rpcHold"
             } else {
-                "Spa.rpc"
+                "SpaLib_.rpc"
             };
             // SPA-3: a follow-up branch whose command holds a `Std.Native`
             // client effect sends it with `Spa.rpcWith`: the client runs that
@@ -12232,12 +12405,12 @@ fn gen_frontend_update(
                 format!("{rpc_fn} {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m}")
             } else {
                 format!(
-                    "Cmd.batch [ {}, {rpc_fn} {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m} ]",
+                    "SpaCmd_.batch [ {}, {rpc_fn} {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m} ]",
                     residual.join(", ")
                 )
             };
             let call = if !residual.is_empty() && arm_routes.scroll_heads.contains(&m) {
-                format!("Spa.scrollRpcScope ({call})")
+                format!("SpaLib_.scrollRpcScope ({call})")
             } else {
                 call
             };
@@ -12267,14 +12440,14 @@ fn gen_frontend_update(
                 )
             } else {
                 (
-                    format!("( {model_param}, Spa.reportError e_ )"),
-                    format!("( {model_param}, Spa.reportRpcFailure e )"),
+                    format!("( {model_param}, SpaLib_.reportError e_ )"),
+                    format!("( {model_param}, SpaLib_.reportRpcFailure e )"),
                 )
             };
             let init_apply = if arm_routes.returned_scrolls {
-                format!("            case Spa.readInitScrolls spaInitJson_ of\n                Ok ( spaFollowJson_, spaScrollJson_ ) ->\n                    case spaDecodeFollows_ spaFollowJson_ of\n                        Ok spaFollows_ ->\n                            ( {model_param}, Cmd.batch [ Spa.returnedScrolls spaScrollJson_, Spa.followUps spaFollows_ ] )\n\n                        Err e_ ->\n                            {decode_err}\n\n                Err e_ ->\n                    {decode_err}\n")
+                format!("            case SpaLib_.readInitScrolls spaInitJson_ of\n                Ok ( spaFollowJson_, spaScrollJson_ ) ->\n                    case spaDecodeFollows_ spaFollowJson_ of\n                        Ok spaFollows_ ->\n                            ( {model_param}, SpaCmd_.batch [ SpaLib_.returnedScrolls spaScrollJson_, SpaLib_.followUps spaFollows_ ] )\n\n                        Err e_ ->\n                            {decode_err}\n\n                Err e_ ->\n                    {decode_err}\n")
             } else {
-                format!("            case spaDecodeFollows_ spaInitJson_ of\n                Ok spaFollows_ ->\n                    ( {model_param}, Spa.followUps spaFollows_ )\n\n                Err e_ ->\n                    {decode_err}\n")
+                format!("            case spaDecodeFollows_ spaInitJson_ of\n                Ok spaFollows_ ->\n                    ( {model_param}, SpaLib_.followUps spaFollows_ )\n\n                Err e_ ->\n                    {decode_err}\n")
             };
             arms_out.push_str(&format!(
                 "        Applied{m} (Ok spaInitJson_) ->\n{init_apply}\n\
@@ -12291,7 +12464,7 @@ fn gen_frontend_update(
             if arm_routes.returned_scrolls && io.writes_whole_model && !client_made_write {
                 returned_scroll_model_apply(model_param, model_field_names)
             } else if client_made_write {
-                format!("            ( {model_param}, Cmd.none )")
+                format!("            ( {model_param}, SpaCmd_.none )")
             } else {
                 emit_apply_delta(io, model_param)
             };
@@ -12308,7 +12481,7 @@ fn gen_frontend_update(
                  \x20               [ spaResult_ ] ->\n\
                  \x20                   update ({} spaResult_) {model_param}\n\n\
                  \x20               _ ->\n\
-                 \x20                   ( {model_param}, Cmd.none )",
+                 \x20                   ( {model_param}, SpaCmd_.none )",
                 cr.result_msg
             )
         } else if follow
@@ -12329,14 +12502,17 @@ fn gen_frontend_update(
             // plain whole-model answer IS the model, see `emit_apply_delta`).
             let inner = if io.writes_whole_model && !client_made_write {
                 if model_field_names == [spa_partition::BOXED_MODEL_FIELD] {
-                    format!("( resp.{}, Cmd.none )", spa_partition::BOXED_MODEL_FIELD)
+                    format!(
+                        "( resp.{}, SpaCmd_.none )",
+                        spa_partition::BOXED_MODEL_FIELD
+                    )
                 } else {
                     let sets = model_field_names
                         .iter()
                         .map(|f| format!("{f} = resp.{f}"))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!("( {{ {model_param} | {sets} }}, Cmd.none )")
+                    format!("( {{ {model_param} | {sets} }}, SpaCmd_.none )")
                 }
             } else {
                 apply_delta.trim().to_string()
@@ -12346,10 +12522,10 @@ fn gen_frontend_update(
                  \x20                       ( spaM2_, spaC2_ ) =\n\
                  \x20                           update (spaRpcError_ e_) spaM1_\n\
                  \x20                   in\n\
-                 \x20                   ( spaM2_, Cmd.batch [ spaC1_, spaC2_ ] )"
+                 \x20                   ( spaM2_, SpaCmd_.batch [ spaC1_, spaC2_ ] )"
                     .to_string()
             } else {
-                "( spaM1_, Cmd.batch [ spaC1_, Spa.reportError e_ ] )".to_string()
+                "( spaM1_, SpaCmd_.batch [ spaC1_, SpaLib_.reportError e_ ] )".to_string()
             };
             format!(
                 "            let\n\
@@ -12358,7 +12534,7 @@ fn gen_frontend_update(
                  \x20           in\n\
                  \x20           case spaDecodeFollows_ resp.spaFollow_ of\n\
                  \x20               Ok spaFollows_ ->\n\
-                 \x20                   ( spaM1_, Cmd.batch [ spaC1_, Spa.followUps spaFollows_ ] )\n\n\
+                 \x20                   ( spaM1_, SpaCmd_.batch [ spaC1_, SpaLib_.followUps spaFollows_ ] )\n\n\
                  \x20               Err e_ ->\n\
                  \x20                   {err_body}"
             )
@@ -12367,7 +12543,7 @@ fn gen_frontend_update(
             apply_delta
         };
         let apply = if arm_routes.returned_scrolls {
-            format!("            let\n                ( spaScrollModel_, spaScrollCmd_ ) =\n{}\n            in\n                ( spaScrollModel_, Cmd.batch [ Spa.returnedScrolls resp.spaScroll_, spaScrollCmd_ ] )", indent_scroll_apply(&apply, 20))
+            format!("            let\n                ( spaScrollModel_, spaScrollCmd_ ) =\n{}\n            in\n                ( spaScrollModel_, SpaCmd_.batch [ SpaLib_.returnedScrolls resp.spaScroll_, spaScrollCmd_ ] )", indent_scroll_apply(&apply, 20))
         } else {
             apply
         };
@@ -12386,7 +12562,7 @@ fn gen_frontend_update(
             )
         } else {
             format!(
-                "        Applied{m} (Err e) ->\n            -- no App.withRpcError: keep the model (the write-set did not\n            -- apply) and report the failure loudly on the console.\n            ( {model_param}, Spa.reportRpcFailure e )\n\n"
+                "        Applied{m} (Err e) ->\n            -- no App.withRpcError: keep the model (the write-set did not\n            -- apply) and report the failure loudly on the console.\n            ( {model_param}, SpaLib_.reportRpcFailure e )\n\n"
             )
         };
         arms_out.push_str(&format!(
@@ -12610,24 +12786,13 @@ fn render_module_client_subset(
     out.push_str(&body);
 
     let out = drop_dangling_sibling_imports(&out, no_frontend, None);
-    let out = if regen_update {
-        ensure_import_present(&out, "Std.Spa", "import Std.Spa as Spa")
-    } else {
-        out
-    };
     // SPA-3: the follow-up decoder next to a regenerated sibling `update` needs
     // the codec + error modules, and the Msg module under its fixed alias.
     let out = match &follow {
         Some(f) if regen_update && server.iter().any(|(n, _)| f.ctx.branches.contains_key(n)) => {
-            let o = ensure_import_present(&out, "Std.Codec", "import Std.Codec as Codec");
-            let o = ensure_import_present(
-                &o,
-                "Sky.Core.Error",
-                "import Sky.Core.Error as Error exposing (Error)",
-            );
             match f.ctx.import_for_q(f.q) {
-                Some(line) => ensure_import_line(&o, &line),
-                None => o,
+                Some(line) => ensure_import_line(&out, &line),
+                None => out,
             }
         }
         _ => out,
@@ -13563,7 +13728,7 @@ mod fix7_tests {
         let without = gen_update_for(false);
         assert!(
             without.contains("AppliedSave (Err e) ->")
-                && without.contains("( model, Spa.reportRpcFailure e )"),
+                && without.contains("( model, SpaLib_.reportRpcFailure e )"),
             "item 4: without withRpcError the Err arm keeps the model and reports loudly:\n{without}"
         );
         // v0.27.0: the loud report lives only in the no-handler arm. With the
@@ -14289,15 +14454,18 @@ mod returned_scroll_tests {
         }
         assert_eq!(
             returned_scroll_model_apply("model", &[]),
-            "( model, Cmd.none )"
+            "( model, SpaCmd_.none )"
         );
         assert_eq!(
             returned_scroll_model_apply("model", &["b".into(), "a".into()]),
-            "( { model | b = resp.b, a = resp.a }, Cmd.none )"
+            "( { model | b = resp.b, a = resp.a }, SpaCmd_.none )"
         );
         assert_eq!(
             returned_scroll_model_apply("model", &[spa_partition::BOXED_MODEL_FIELD.into()]),
-            format!("( resp.{}, Cmd.none )", spa_partition::BOXED_MODEL_FIELD)
+            format!(
+                "( resp.{}, SpaCmd_.none )",
+                spa_partition::BOXED_MODEL_FIELD
+            )
         );
     }
     #[test]

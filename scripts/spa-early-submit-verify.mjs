@@ -22,6 +22,10 @@
 //   (e) an App.api "POST /unsub" route still receives its form body
 //   (f) a form POST to /_rpc/<Msg> is still refused with 403, not redirected
 //   (g) no "SSR hydrate skipped" warning
+//   (h) text typed before the client is live reaches update with no submit,
+//       also after the hydrating marker is gone and with no input event
+//       (v0.29.7: read from the controls' state, not from events)
+//   (i) a field the user did not touch sends no input Msg
 //
 // Sky.Live (web):
 //   (b) with the client script held, Enter ends on the page (303, then 200),
@@ -202,6 +206,62 @@ async function spaScenario(browserName, base) {
       await ctx.close();
     }
 
+    // (h) text typed before the client is live reaches update, with no
+    // submit, however it arrived (v0.29.7). The client reads what the user
+    // changed from the controls' state, not from events. Two ways the
+    // event record of v0.29.1 lost it:
+    //   marker-gone  the 12 s safety net had removed data-sky-hydrating (a
+    //                slow start), then the user typed
+    //   no-events    the value changed with no input event (autofill)
+    for (const how of ["marker-gone", "no-events"]) {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      let release;
+      const held = new Promise((r) => (release = r));
+      await page.route(/\.wasm(\?|$)/, async (route) => {
+        await held;
+        await route.continue();
+      });
+      await page.goto(base + "/form", { waitUntil: "load" });
+      if (how === "marker-gone") {
+        await page.evaluate(() => document.documentElement.removeAttribute("data-sky-hydrating"));
+        await byId(page, "name").fill("late");
+        await page.locator('input[type="checkbox"]').press(" ");
+      } else {
+        await page.evaluate(() => {
+          document.querySelector('[data-testid="name"]').value = "late";
+          document.querySelector('input[type="checkbox"]').checked = true;
+        });
+      }
+      release();
+      const draft = await waitText(page, "draft", "draft:late", 15000);
+      check(`${tag} (h) ${how}: the typed text reached update`, draft === "draft:late", draft);
+      const value = await byId(page, "name").inputValue({ timeout: 2000 }).catch(() => "<no field>");
+      check(`${tag} (h) ${how}: the field keeps the typed text`, value === "late", value);
+      const saves = ((await byId(page, "saves").innerText({ timeout: 2000 }).catch(() => "")) || "").trim();
+      check(`${tag} (h) ${how}: nothing was submitted`, saves === "saves:0", saves);
+      const agree = await waitText(page, "agree", "agree:yes", 5000);
+      check(`${tag} (h) ${how}: the ticked box reached update`, agree === "agree:yes", agree);
+      const ticked = await page.locator('input[type="checkbox"]').isChecked().catch(() => null);
+      check(`${tag} (h) ${how}: the box stays ticked`, ticked === true, String(ticked));
+      await ctx.close();
+    }
+
+    // (i) a field the user did not touch is not sent: the model keeps its own
+    // value and no input Msg runs for it.
+    {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      await page.goto(base + "/form", { waitUntil: "load" });
+      await page.waitForFunction(() => !document.documentElement.hasAttribute("data-sky-hydrating"), null, { timeout: 15000 });
+      await page.waitForTimeout(300);
+      const draft = ((await byId(page, "draft").innerText({ timeout: 2000 }).catch(() => "")) || "").trim();
+      check(`${tag} (i) an untouched field sends nothing`, draft === "draft:", draft);
+      const agree = ((await byId(page, "agree").innerText({ timeout: 2000 }).catch(() => "")) || "").trim();
+      check(`${tag} (i) an untouched box sends nothing`, agree === "agree:no", agree);
+      await ctx.close();
+    }
+
     await nativeSubmit(browser, base, tag, false);
     await nativeSubmit(browser, base, tag, true);
     await requests(browser, base, tag, true);
@@ -243,6 +303,30 @@ async function liveScenario(browserName, base) {
       const last = docs[docs.length - 1] || { status: 0, type: "" };
       check(`${tag} (b) the browser ends on the page`, last.status === 200 && last.type.startsWith("text/html"), describe(docs));
       check(`${tag} (b) no JSON page`, !docs.some((d) => d.type.startsWith("application/json")), describe(docs));
+      await ctx.close();
+    }
+    // (h) text typed while the client script loads reaches update once the
+    // client runs, with no submit (v0.29.7).
+    {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      let release;
+      const held = new Promise((r) => (release = r));
+      await page.route(/\/_sky\/live[^/]*\.js(\?|$)/, async (route) => {
+        await held;
+        await route.continue();
+      });
+      await page.goto(base + "/form", { waitUntil: "commit" });
+      await byId(page, "name").waitFor({ timeout: 10000 });
+      await byId(page, "name").fill("late");
+      await page.locator('input[type="checkbox"]').press(" ");
+      release();
+      const draft = await waitText(page, "draft", "draft:late", 15000);
+      check(`${tag} (h) text typed before the client ran reached update`, draft === "draft:late", draft);
+      const agree = await waitText(page, "agree", "agree:yes", 5000);
+      check(`${tag} (h) a box ticked before the client ran reached update`, agree === "agree:yes", agree);
+      const value = await byId(page, "name").inputValue({ timeout: 2000 }).catch(() => "<no field>");
+      check(`${tag} (h) the field keeps the typed text`, value === "late", value);
       await ctx.close();
     }
     await nativeSubmit(browser, base, tag, false);

@@ -5617,7 +5617,7 @@ mod ffi_trust_tests {
     #[test]
     fn every_generator_kernel_carries_the_spa_prefix() {
         let src = include_str!("spa_split.rs");
-        let needle = "Ffi.kernel \\\"";
+        let needle = "SpaFfi_.kernel \\\"";
         let mut n = 0;
         for (at, _) in src.match_indices(needle) {
             let sym = &src[at + needle.len()..];

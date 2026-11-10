@@ -315,16 +315,16 @@ pub fn emit_harness(
 
     out.snippet = s;
     out.checked = checked.iter().map(|b| b.ctor.clone()).collect();
-    // Imports the snippet needs. The caller injects these, deduped: the two
-    // shared-alias imports (`Cmd` for apply-delta's `Cmd.none`, `String` for the
-    // prelude's `String.fromInt`) are skipped when the app already imports that
-    // module; the two UNIQUE-alias imports (`SpaDiffLog`, `SpaDiffError`, used by
-    // `main`) are always added — a second alias of a module the app may already
-    // import under its own name, so they never collide with app bindings.
+    // Imports the snippet needs. Every one is a UNIQUE alias the split
+    // reserves (`SpaCmd_`, `SpaString_`, `SpaFfi_`, `SpaTask_`, `SpaDiffLog`,
+    // `SpaDiffError`), always added: a second alias of a module the app may
+    // already import under its own name, so it never collides with an app
+    // binding (a project module named `String` or `Cmd` included).
     out.required_imports = vec![
-        "import Std.Cmd as Cmd".to_string(),
-        "import Sky.Core.String as String".to_string(),
-        "import Sky.Ffi as Ffi".to_string(),
+        "import Std.Cmd as SpaCmd_".to_string(),
+        "import Sky.Core.String as SpaString_".to_string(),
+        "import Sky.Ffi as SpaFfi_".to_string(),
+        "import Sky.Core.Task as SpaTask_".to_string(),
         "import Std.Log as SpaDiffLog".to_string(),
         "import Sky.Core.Error as SpaDiffError".to_string(),
     ];
@@ -338,18 +338,18 @@ pub fn emit_harness(
 const KERNEL_DECLS: &str = "\
 spaDiffCmdShape_ : cmd -> String\n\
 spaDiffCmdShape_ =\n\
-\x20   Ffi.kernel \"Spa_diffCmdShape\"\n\
+\x20   SpaFfi_.kernel \"Spa_diffCmdShape\"\n\
 \n\
 \n\
 spaDiffRpcCmd_ : () -> cmd\n\
 spaDiffRpcCmd_ =\n\
-\x20   Ffi.kernel \"Spa_diffRpcCmd\"\n\
+\x20   SpaFfi_.kernel \"Spa_diffRpcCmd\"\n\
 \n\
 \n\
 -- A command shape that is `Cmd.none` (bare, or a tagged leaf).\n\
 spaDiffIsNone_ : String -> Bool\n\
 spaDiffIsNone_ s =\n\
-\x20   s == \"none\" || (String.startsWith \"leaf\" s && String.endsWith \"(none)\" s)\n\
+\x20   s == \"none\" || (SpaString_.startsWith \"leaf\" s && SpaString_.endsWith \"(none)\" s)\n\
 \n\
 \n";
 
@@ -360,7 +360,7 @@ pub const LEAF_TAG_DECL: &str = "\
 \n\
 spaDiffLeaf_ : Int -> cmd -> cmd\n\
 spaDiffLeaf_ =\n\
-\x20   Ffi.kernel \"Spa_diffTagCmd\"\n";
+\x20   SpaFfi_.kernel \"Spa_diffTagCmd\"\n";
 
 /// The client legs: one function per client arm, `case <msg> of <pat> -> <the
 /// client's copy of the arm>`, laid out as the generated frontend lays it out
@@ -370,7 +370,7 @@ fn emit_client_arms(checked: &[CheckableBranch]) -> String {
     for b in checked {
         for (idx, a) in &b.client_arms {
             s.push_str(&format!(
-                "{name} {msg} {model} =\n    case {msg} of\n        {pat} ->\n{body}\n\n        _ ->\n            ( {model}, Cmd.none )\n\n\n",
+                "{name} {msg} {model} =\n    case {msg} of\n        {pat} ->\n{body}\n\n        _ ->\n            ( {model}, SpaCmd_.none )\n\n\n",
                 name = client_fn_name(&b.ctor, *idx),
                 msg = a.msg_param,
                 model = a.model_param,
@@ -633,10 +633,10 @@ fn emit_driver(
          main =\n\
          \x20   case spaDiffRun () of\n\
          \x20       Ok c ->\n\
-         \x20           SpaDiffLog.println (\"spa-diff-fuzz ok: \" ++ String.fromInt c ++ \" checks passed\")\n\n\
+         \x20           SpaDiffLog.println (\"spa-diff-fuzz ok: \" ++ SpaString_.fromInt c ++ \" checks passed\")\n\n\
          \x20       Err e ->\n\
          \x20           SpaDiffLog.println (\"spa-diff-fuzz FAIL: \" ++ e)\n\
-         \x20               |> Task.andThen (\\_ -> Task.fail (SpaDiffError.unexpected (\"spa-diff-fuzz divergence: \" ++ e)))\n"
+         \x20               |> SpaTask_.andThen (\\_ -> SpaTask_.fail (SpaDiffError.unexpected (\"spa-diff-fuzz divergence: \" ++ e)))\n"
     )
 }
 
@@ -744,12 +744,12 @@ pub fn emit_model_fuzz(
          \x20       count =\n\
          \x20           spaFuzzLoop spaFuzzIters spaFuzzSeed0 m0 0\n\
          \x20   in\n\
-         \x20   SpaDiffLog.println (\"model-fuzz ok: \" ++ String.fromInt count ++ \" steps, no unclassified panic\")\n"
+         \x20   SpaDiffLog.println (\"model-fuzz ok: \" ++ SpaString_.fromInt count ++ \" steps, no unclassified panic\")\n"
     ));
 
     out.snippet = s;
     out.required_imports = vec![
-        "import Sky.Core.String as String".to_string(),
+        "import Sky.Core.String as SpaString_".to_string(),
         "import Std.Log as SpaDiffLog".to_string(),
     ];
     out

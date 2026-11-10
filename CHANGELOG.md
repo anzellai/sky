@@ -11,6 +11,53 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.7 — input made before the page is live reaches update; split code owns its import names (2026-11-10)
+
+### Fixed
+
+- **Input made before the client is live always reaches `update`, on Sky.Spa
+  and Sky.Live.** A person (or autofill, a password manager) can type into a
+  server-rendered page before its client runs.
+  - Sky.Spa recorded that text from `input` and `change` events only while
+    `<html data-sky-hydrating>` was set. Text typed after the 12 s safety net
+    removed the marker (a slow start), or set with no event (autofill), was
+    lost: the first paint set the field back to the model's value and no
+    `update` ran. A checkbox or a radio changed by keyboard stayed ticked, but
+    its Msg never ran, because Std.Ui binds it to `click`.
+  - Sky.Live sent nothing that was typed before its script ran.
+  - Now both clients read, when they start, every form control whose state
+    differs from what the server rendered (`defaultValue`, `defaultChecked`,
+    `defaultSelected`), keep that state, and give it to the app: a text field
+    or a select gets its `input` and `change` events, a checkbox or a radio a
+    click (`runtime-go/rt/spa_pretyped.go`, `live_client_asset.go`). A control
+    the person did not change sends nothing. This reads state, not events, so
+    it does not depend on when or how the input arrived.
+  - **Sky.Spa: the page reports ready only when it is.** `data-sky-hydrating`
+    used to go before the client had given the app the early input, so a
+    person or a test that waited for it could read a field the app had not yet
+    updated. It now goes after that step. A test that waits for
+    `html:not([data-sky-hydrating])` reads an up-to-date page.
+  - The boot loader no longer records typed text. It still holds a form
+    submitted during hydration and submits it through the app.
+- **A `web:app` build no longer fails when the app has its own module named
+  like a framework module.** An app with a project module `Server` (or
+  `Codec`, `Error`, `System`) passed `sky check`, but `sky build --target
+  web:app` failed with "Server has no member record": the Sky.Spa split added
+  `import Sky.Http.Server as Server` next to the app's own `import Server`. An
+  app that imported a framework module under another alias (`import
+  Sky.Http.Server as Http`, `import Sky.Core.Task as T`) failed the same way,
+  because the split then added no import for its own code. The code the split
+  generates now names every framework module through an alias it reserves
+  (`SpaServer_`, `SpaCodec_`, `SpaTask_`, …), and the app's imports stay as
+  written. An app that uses one of those reserved names itself is refused
+  with a message that names it. A codec the split copies into `Shared` from a
+  module with a server effect now keeps that module's own import names (an
+  `import Std.Codec as C` codec failed with "Undefined name: C.object"). The
+  `Std.App` client synthesis imports `Std.Spa as Spa`, `Sky.Core.List as List`
+  and `Sky.Core.Task as Task` even when the entry uses other aliases, and
+  refuses an entry whose own module or alias already takes one of those
+  names.
+
 ## v0.29.6 — faster large-model encoding, a record of functions in Just, a leaving gate during boot (2026-11-09)
 
 ### Fixed
