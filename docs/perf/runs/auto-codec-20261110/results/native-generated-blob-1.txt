@@ -1,0 +1,11 @@
+goos: darwin
+goarch: arm64
+pkg: sky-app
+cpu: Apple M1
+BenchmarkAutoCodec/encode/blob/1MB-8         	    2494	    953778 ns/op	1099.52 MB/s	 2113986 B/op	       7 allocs/op
+BenchmarkAutoCodec/encode/blob/1MB-8         	    2514	    948277 ns/op	1105.90 MB/s	 2113984 B/op	       7 allocs/op
+BenchmarkAutoCodec/encode/blob/1MB-8         	    2546	    946874 ns/op	1107.54 MB/s	 2113984 B/op	       7 allocs/op
+BenchmarkAutoCodec/decode/blob/1MB-8         	     507	   4772528 ns/op	 219.74 MB/s	 7356580 B/op	      52 allocs/op
+BenchmarkAutoCodec/decode/blob/1MB-8         	     500	   4807180 ns/op	 218.15 MB/s	 7356577 B/op	      52 allocs/op
+BenchmarkAutoCodec/decode/blob/1MB-8         	     498	   4798554 ns/op	 218.54 MB/s	 7356578 B/op	      52 allocs/op
+PASS

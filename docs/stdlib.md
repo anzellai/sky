@@ -1398,6 +1398,11 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   or give the field its codec (`Codec.autoWith [ ( "items", Codec.list Codec.value ) ] blank`).
   A `Json.Value` slot the blank gives no JSON value (`items = []`, `Dict.empty`, `more = Nothing`,
   at any depth) is a builder problem: a value written there could not be read back.
+  Since v0.29.9 the compiler generates a typed encoder and decoder for a blank
+  whose type is a record of `Bool`, `Int`, `Float`, `String`, enums, records,
+  `Maybe`, `List`, `Dict String` and `Dict Int` (any depth): no reflection, and
+  `Codec.toJson` writes the text in one pass. The text, the value and every
+  error are the same as the reflective path's, which every other record keeps.
   A `Just` written as null (`Just Nothing`, `Just Json.Encode.null`) is refused by a
   `Std.Db.Store` write, wherever the `Maybe` is (a List, a record, a Dict value, a
   variant's payload): it would read back as `Nothing`.

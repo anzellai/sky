@@ -72,6 +72,10 @@ func AutoShape[T any](keys, declared []string) AutoCodecShape {
 	return AutoCodecShape{t: reflect.TypeOf((*T)(nil)).Elem(), keys: keys, declared: declared}
 }
 
+type autoEnumNamer interface{ SkyEnumName() string }
+
+var autoEnumNamerType = reflect.TypeOf((*autoEnumNamer)(nil)).Elem()
+
 type autoCodecKey struct {
 	t     reflect.Type
 	snake bool
@@ -154,10 +158,11 @@ func autoCodecVerify(root reflect.Type, snake bool, shapes []AutoCodecShape) ([]
 			return ""
 		case t.Kind() == reflect.Int:
 			// int, or a named enum (its tag is checked with the record).
-			if t.NumMethod() > 0 && t != reflect.TypeOf(0) {
-				if _, ok := t.MethodByName("SkyEnumName"); !ok || t.NumMethod() != 1 {
-					return "int type with methods: " + t.String()
-				}
+			// Implements, not MethodByName: a MethodByName call keeps every
+			// exported method of every type in the binary (the linker's
+			// reflect-method rule), which costs a Wasm client tens of KB.
+			if t.NumMethod() > 0 && !t.Implements(autoEnumNamerType) {
+				return "int type with methods: " + t.String()
 			}
 			return ""
 		case t.Kind() == reflect.Slice:

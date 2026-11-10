@@ -22,8 +22,7 @@ package rt
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-	"fmt"
+	"strconv"
 	"sync/atomic"
 
 	"sky-app/rt/telemetry"
@@ -432,9 +431,10 @@ func spaPersistQuotaFailures() int64 { return spaPersistQuotaFailureCount.Load()
 // size or larger. The page warns once, and every failure is counted. It never
 // panics and never blocks the update.
 func spaPersistSetFailed(life *spaPersistLife, err error, encodedBytes uint64) {
-	var quota spaKVQuotaError
+	// A type assertion and strconv, not errors.As and fmt: they cost a Wasm
+	// client about 10 KB gzip for one warning (measured on 60-spa-todos).
 	reason := "other"
-	if errors.As(err, &quota) {
+	if _, ok := err.(spaKVQuotaError); ok {
 		reason = "quota"
 		life.quotaFenceBytes = encodedBytes
 	}
@@ -445,7 +445,7 @@ func spaPersistSetFailed(life *spaPersistLife, err error, encodedBytes uint64) {
 	}
 	life.warned = true
 	if reason == "quota" {
-		spaPersistWarn(fmt.Sprintf("[sky.spa] the saved model (%d bytes) does not fit the browser storage quota. The previous saved copy is kept, and a reload restores it.", encodedBytes))
+		spaPersistWarn("[sky.spa] the saved model (" + strconv.FormatUint(encodedBytes, 10) + " bytes) does not fit the browser storage quota. The previous saved copy is kept, and a reload restores it.")
 		return
 	}
 	spaPersistWarn("[sky.spa] the browser refused to save the model (" + err.Error() + "). The previous saved copy is kept.")
