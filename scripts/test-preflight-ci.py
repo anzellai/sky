@@ -264,5 +264,56 @@ class Admission(unittest.TestCase):
         self.assertEqual(ci.repository("git@github.com:example/sky.git"), "example/sky")
 
 
+
+class ApiRequests(unittest.TestCase):
+    """The GitHub request retries a timeout or a 5xx, refuses anything else at
+    once, and its refusal names the request and the cause."""
+
+    def fake(self, outcomes):
+        calls = []
+
+        def run(argv, cwd, timeout):
+            calls.append(timeout)
+            o = outcomes[len(calls) - 1]
+            if isinstance(o, Exception):
+                raise o
+            return o
+        return run, calls
+
+    def test_timeout_then_answer(self):
+        run, calls = self.fake([ci.CommandFailed("gh api x", "timeout", True), '{"ok": 1}'])
+        self.assertEqual(ci.GitHub(Path("."), run)("repos/a/b/actions/runs/1/attempts/2/jobs"), {"ok": 1})
+        self.assertEqual(calls, [45, 90])
+
+    def test_server_error_then_answer(self):
+        run, calls = self.fake([ci.CommandFailed("gh api x", "exit-1", True), '{"ok": 1}'])
+        self.assertEqual(ci.GitHub(Path("."), run)("repos/a/b"), {"ok": 1})
+        self.assertEqual(len(calls), 2)
+
+    def test_client_error_refuses_without_retry(self):
+        run, calls = self.fake([ci.CommandFailed("gh api repos/a/b", "exit-1", False)])
+        with self.assertRaises(ci.Refused) as e:
+            ci.GitHub(Path("."), run)("repos/a/b")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("command-failed: gh api repos/a/b (exit-1)", str(e.exception))
+
+    def test_retries_end(self):
+        run, calls = self.fake([ci.CommandFailed("gh api x", "timeout", True)] * 3)
+        with self.assertRaises(ci.Refused):
+            ci.GitHub(Path("."), run)("repos/a/b")
+        self.assertEqual(calls, [45, 90, 120])
+
+    def test_real_timeout_and_exit_are_named(self):
+        with self.assertRaises(ci.CommandFailed) as e:
+            ci.command(["sleep", "5"], Path("."), timeout=0.2)
+        self.assertEqual((e.exception.kind, e.exception.transient), ("timeout", True))
+        with self.assertRaises(ci.CommandFailed) as e:
+            ci.command(["sh", "-c", "echo 'gh: Server Error (HTTP 502)' >&2; exit 1"], Path("."))
+        self.assertEqual((e.exception.kind, e.exception.transient), ("exit-1", True))
+        with self.assertRaises(ci.CommandFailed) as e:
+            ci.command(["sh", "-c", "echo 'gh: Not Found (HTTP 404)' >&2; exit 1"], Path("."))
+        self.assertEqual((e.exception.kind, e.exception.transient), ("exit-1", False))
+        self.assertNotIn("Not Found", str(e.exception))
+
 if __name__ == "__main__":
     unittest.main()
