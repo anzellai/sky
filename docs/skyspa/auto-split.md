@@ -1964,7 +1964,16 @@ file the split writes gets `import <module> as <alias>` for each reserved
 alias it uses (`ensure_reserved_imports`); a module may be imported twice, so
 the app's own imports stay exactly as written. An app whose module or import
 alias is one of the reserved names is refused with a message that names it.
-The `sky fuzz` harnesses use the same aliases. Test:
+A value `Shared` copies from a sibling module (a codec of a module with a
+server effect) is app text: `Shared` imports each stdlib module that value
+names under the qualifier the sibling wrote (`import Std.Codec as C`), and
+each name it uses from an explicit `exposing` list.
+The `sky fuzz` harnesses use the same aliases. The `Std.App` to `Spa.app`
+synthesis that runs before the split (`synthesize_spa_source` in
+`sky/src/main.rs`) writes `Spa.`, `List.`, `Task.` and `App.` into the app's
+entry: it imports each under that exact name even when the entry already
+imports the module under another alias, and refuses an entry where a project
+module or another alias already takes the name. Test:
 `project/tests/spa_split_reserved_aliases.rs` (project modules `Server`,
 `Codec` and `Error`, `import Sky.Core.Task as T`, `import Sky.Http.Server as
-Http`; both generated halves type-check).
+Http`, a sibling codec written with `C.`; both generated halves type-check).

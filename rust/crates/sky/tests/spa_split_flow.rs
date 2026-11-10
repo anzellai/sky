@@ -630,7 +630,7 @@ fn a_device_key_field_with_a_server_branch_builds_and_paints_nothing() {
     );
     assert!(
         front.contains("spaModelFromJson_ spaModelBlank_ jsonStr_")
-            && front.contains("|> Result.map (\\m_ -> { m_ | hs = Nothing })")
+            && front.contains("|> SpaResult_.map (\\m_ -> { m_ | hs = Nothing })")
             && front.contains("spaModelToJson_ ({ m_ | hs = Nothing })"),
         "the client clears the key after a decode and in the saved model:\n{front}"
     );
@@ -1897,8 +1897,8 @@ fn generated_wire_types_name_every_type_they_hold() {
     let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
     for want in [
         "blankPaged_Item_ : Paged Item",
-        "autoPaged_ItemCodec_ : Codec (Paged Item)",
-        "autoPaged_StringCodec_ : Codec (Paged String)",
+        "autoPaged_ItemCodec_ : SpaCodec_.Codec (Paged Item)",
+        "autoPaged_StringCodec_ : SpaCodec_.Codec (Paged String)",
         "items : Paged Item",
         "names : Paged String",
         "type alias Item =",
@@ -5127,7 +5127,7 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
         "spaSsrSettleFull routed cmd0 update",
         // The first-paint encoder is typed with the app's model (so a field
         // `init` leaves unconstrained still has a codec element).
-        "Codec.toJson (Codec.auto m_) m_",
+        "SpaCodec_.toJson (SpaCodec_.auto m_) m_",
         "spaSsrModelJson_ resolved",
     ] {
         assert!(
@@ -5506,8 +5506,8 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
         "the establishing (login) branch must sign a Set-Cookie:\n{backend}"
     );
     assert!(
-        backend.contains(r#"Server.withCookie "sky_spa" tok (spaSessionCookieAttrs_ ())"#)
-            && backend.contains(r#"Ffi.kernel "Spa_sessionCookieAttrs""#),
+        backend.contains(r#"SpaServer_.withCookie "sky_spa" tok (spaSessionCookieAttrs_ ())"#)
+            && backend.contains(r#"SpaFfi_.kernel "Spa_sessionCookieAttrs""#),
         "signedResponse_ must set sky_spa with the runtime's attributes (httpOnly + Max-Age):\n{backend}"
     );
     // A-2b / E-3 / A-6 (generator half; the runtime is S2's): the token is read
@@ -5531,14 +5531,14 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     );
     // the framework sign-out endpoint exists.
     assert!(
-        backend.contains(r#"Server.rpc "POST /_rpc/__spaSignOut" spaSignOutHandler"#),
+        backend.contains(r#"SpaServer_.rpc "POST /_rpc/__spaSignOut" spaSignOutHandler"#),
         "the sign-out endpoint must be registered:\n{backend}"
     );
     // the session codec is DERIVED (reused from the wire resolver), not hand-rolled.
     let shared = std::fs::read_to_string(proj.join(".split/shared/Shared.sky"))
         .expect("generated shared module must exist");
     assert!(
-        shared.contains("spaSessionCodecSession_ : Codec (Maybe Session)"),
+        shared.contains("spaSessionCodecSession_ : SpaCodec_.Codec (Maybe Session)"),
         "the session field codec must be derived + exported from Shared:\n{shared}"
     );
 
@@ -5660,9 +5660,9 @@ fn spa_rpc_keeps_its_cookie_when_an_alias_is_exactly_body() {
     let backend = std::fs::read_to_string(proj.join(".split/backend/src/Main.sky"))
         .expect("generated backend entry must exist");
     assert!(
-        backend.contains("saveAdminHandlerInner_ : Handler\n")
-            && backend.contains("logInHandlerInner_ : Handler\n")
-            && backend.contains("spaSignOutInner_ : Handler\n"),
+        backend.contains("saveAdminHandlerInner_ : SpaServer_.Handler\n")
+            && backend.contains("logInHandlerInner_ : SpaServer_.Handler\n")
+            && backend.contains("spaSignOutInner_ : SpaServer_.Handler\n"),
         "every generated inner handler must be annotated `Handler`:\n{backend}"
     );
 
@@ -8621,9 +8621,9 @@ fn spa_rpc_origin_guard_and_sub_topic_authorisation() {
             .expect("generated frontend entry must exist");
 
     for route in [
-        "Server.rpc \"POST /_rpc/LogIn\" logInHandler",
-        "Server.rpc \"POST /_rpc/Post\" postHandler",
-        "Server.rpc \"POST /_rpc/__spaSignOut\" spaSignOutHandler",
+        "SpaServer_.rpc \"POST /_rpc/LogIn\" logInHandler",
+        "SpaServer_.rpc \"POST /_rpc/Post\" postHandler",
+        "SpaServer_.rpc \"POST /_rpc/__spaSignOut\" spaSignOutHandler",
     ] {
         assert!(backend.contains(route), "missing `{route}`:\n{backend}");
     }
@@ -9103,13 +9103,13 @@ fn rpc_order_fixture_sends_async_rpcs_whose_results_run_in_the_client() {
     let (front, back) = split_named("spa-rpc-order");
     for ctor in ["slow", "call", "slowA", "slowB"] {
         assert!(
-            front.contains(&format!("Spa.rpc {ctor}ReqCodec")),
+            front.contains(&format!("SpaLib_.rpc {ctor}ReqCodec")),
             "`{ctor}` must be an async RPC (Spa.rpc):\n{front}"
         );
     }
     for ctor in ["slow", "call", "slowA", "slowB"] {
         assert!(
-            !front.contains(&format!("Spa.rpcHold {ctor}ReqCodec")),
+            !front.contains(&format!("SpaLib_.rpcHold {ctor}ReqCodec")),
             "`{ctor}` needs no server data for its own write — it may not hold:\n{front}"
         );
     }
@@ -9167,7 +9167,7 @@ fn rpc_consistency_fixture_holds_arms_whose_write_needs_server_data() {
     let (front, _) = split_named("spa-rpc-consistency");
     for ctor in ["inc", "save", "setName", "hit", "touch"] {
         assert!(
-            front.contains(&format!("Spa.rpcHold {ctor}ReqCodec")),
+            front.contains(&format!("SpaLib_.rpcHold {ctor}ReqCodec")),
             "`{ctor}` writes a server value into the model: it must hold (Spa.rpcHold):\n{front}"
         );
     }
@@ -10805,7 +10805,7 @@ fn codec_chains_with_fields(shared: &str, fields: &[&str]) -> usize {
         .filter(|chunk| {
             fields
                 .iter()
-                .all(|f| chunk.contains(&format!("Codec.field \"{f}\" .{f} ")))
+                .all(|f| chunk.contains(&format!("SpaCodec_.field \"{f}\" .{f} ")))
         })
         .count()
 }

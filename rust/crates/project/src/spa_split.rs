@@ -3529,6 +3529,86 @@ pub(crate) const RESERVED_ALIASES: &[(&str, &str)] = &[
 /// used). An app may not use these names either.
 const RESERVED_QUALIFIERS: &[&str] = &["SpaMsgMod_"];
 
+/// The qualifier an `import` line binds: its alias, else its module path.
+fn import_qualifier(text: &str) -> String {
+    let w: Vec<&str> = text.split_whitespace().collect();
+    w.iter()
+        .position(|x| *x == "as")
+        .and_then(|i| w.get(i + 1))
+        .or_else(|| w.get(1))
+        .map(|s| s.to_string())
+        .unwrap_or_default()
+}
+
+/// The names an import's explicit `exposing (…)` list spells (`Codec`, `Item`
+/// for `Item(..)`); none for `exposing (..)` or no list.
+fn explicit_exposed_names(text: &str) -> Vec<String> {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let Some(at) = flat.find("exposing (") else {
+        return Vec::new();
+    };
+    let inner = flat[at + "exposing (".len()..]
+        .rsplit_once(')')
+        .map(|(a, _)| a)
+        .unwrap_or("");
+    if inner.trim() == ".." {
+        return Vec::new();
+    }
+    inner
+        .split(',')
+        .map(|n| n.trim().trim_end_matches("(..)").trim().to_string())
+        .filter(|n| !n.is_empty() && n != "..")
+        .collect()
+}
+
+/// Every qualifier `code` writes (`Codec` in `Codec.field`, `Geo.Shape` in
+/// `Geo.Shape.origin`, `Codec` in `Codec.Codec`). String literals are skipped.
+fn written_qualifiers(code: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let chars: Vec<char> = code.chars().collect();
+    let mut i = 0;
+    let mut in_str = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_str {
+            if c == '\\' {
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '"' {
+            in_str = true;
+            i += 1;
+            continue;
+        }
+        let prev_ident =
+            i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_' || chars[i - 1] == '.');
+        if c.is_uppercase() && !prev_ident {
+            let start = i;
+            while i < chars.len()
+                && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '.')
+            {
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            let segs: Vec<&str> = token.trim_end_matches('.').split('.').collect();
+            if segs.len() > 1 {
+                for k in 1..segs.len() {
+                    out.insert(segs[..k].join("."));
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Does `code` (comments already removed) name `alias` as a qualifier
 /// (`alias.member`)? A longer name that ends in `alias` is not a use.
 fn uses_qualifier(code: &str, alias: &str) -> bool {
@@ -4854,6 +4934,72 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                     {
                         foreign_stdlib_imports.push(i.text.clone());
                     }
+                }
+            }
+        }
+    }
+    // A VALUE copied into `Shared` from a sibling (a user codec, `itemCodec =
+    // Codec.object Item |> …`) names stdlib modules through ITS module's
+    // imports. Carry each such import, under the qualifier the value wrote.
+    // Before v0.29.7 `Shared` always imported `Std.Codec as Codec`, which hid
+    // this for `Codec.` alone and collided with a project module `Codec`.
+    for m in copy_mods.iter().copied().filter(|m| *m != entry) {
+        let Some(names) = copied_values_by_mod.get(&m) else {
+            continue;
+        };
+        let mparse = db.module_parse(m);
+        let msrc = mparse.syntax().text().to_string();
+        let mimports = collect_imports(&mparse.tree(), &msrc);
+        let project_names: HashSet<String> = project_mods
+            .iter()
+            .map(|p| db.module_name(*p).to_string())
+            .collect();
+        for d in mparse.tree().decls() {
+            if !decl_name(&d).is_some_and(|n| names.contains(&n)) {
+                continue;
+            }
+            let text = strip_sky_comments(slice(&msrc, d.syntax()));
+            // A name the sibling exposes from a stdlib import (`Codec` in
+            // `itemCodec : Codec Item`, from `exposing (Codec)`).
+            for i in &mimports {
+                if project_names.contains(&i.module_path) {
+                    continue;
+                }
+                for n in explicit_exposed_names(&i.text) {
+                    if references_word(&text, &n) {
+                        let line = format!("import {} exposing ({n})", i.module_path);
+                        if !foreign_stdlib_imports.contains(&line) {
+                            foreign_stdlib_imports.push(line);
+                        }
+                    }
+                }
+            }
+            for q in written_qualifiers(&text) {
+                let Some(i) = mimports.iter().find(|i| import_qualifier(&i.text) == q) else {
+                    continue;
+                };
+                if project_names.contains(&i.module_path) {
+                    continue;
+                }
+                let line = format!("import {} as {q}", i.module_path);
+                if let Some(e) = imports
+                    .iter()
+                    .find(|e| import_qualifier(&e.text) == q && e.module_path != i.module_path)
+                {
+                    return Err(format!(
+                        "sky.spa: `{}` is copied into `Shared` and names `{q}` as `{}`, but \
+                         the entry imports `{}` as `{q}`. Use one name for `{q}` in both \
+                         modules.\n{}",
+                        decl_name(&d).unwrap_or_default(),
+                        i.module_path,
+                        e.module_path,
+                        crate::migration_see(SPLIT_REFUSALS)
+                    ));
+                }
+                if !imports.iter().any(|e| import_qualifier(&e.text) == q)
+                    && !foreign_stdlib_imports.contains(&line)
+                {
+                    foreign_stdlib_imports.push(line);
                 }
             }
         }
@@ -10494,7 +10640,7 @@ fn gen_backend(
              {lets}\
              \x20   in\n\
              \x20   SpaTask_.succeed\n\
-             \x20       ({with_status}Server.html\n\
+             \x20       ({with_status}SpaServer_.html\n\
              \x20           ({ssr_page}\n\
              \x20               (\"<meta name=\\\"sky-wire\\\" content=\\\"{wire_hash}\\\">\" ++ spaAiEngineMeta_ ++ spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\

@@ -50,7 +50,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   generates now names every framework module through an alias it reserves
   (`SpaServer_`, `SpaCodec_`, `SpaTask_`, …), and the app's imports stay as
   written. An app that uses one of those reserved names itself is refused
-  with a message that names it.
+  with a message that names it. A codec the split copies into `Shared` from a
+  module with a server effect now keeps that module's own import names (an
+  `import Std.Codec as C` codec failed with "Undefined name: C.object"). The
+  `Std.App` client synthesis imports `Std.Spa as Spa`, `Sky.Core.List as List`
+  and `Sky.Core.Task as Task` even when the entry uses other aliases, and
+  refuses an entry whose own module or alias already takes one of those
+  names.
 
 ## v0.29.6 — faster large-model encoding, a record of functions in Just, a leaving gate during boot (2026-11-09)
 

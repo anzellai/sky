@@ -195,3 +195,51 @@ fn an_app_that_uses_a_reserved_alias_is_refused() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A codec copied into `Shared` from a sibling module (one with a server
+/// effect, so `Shared` copies its codec rather than importing the module)
+/// keeps the names that
+/// module wrote. `Shared` used to import `Std.Codec as Codec` whatever the
+/// app wrote, so a sibling's `C.object` (from `import Std.Codec as C`) named
+/// nothing there, and `Codec.` collided with a project module `Codec`.
+#[test]
+fn a_sibling_codec_copied_into_shared_keeps_its_own_aliases() {
+    let dir = fixture("sibling-codec", "import Data exposing (Item, itemCodec)\n");
+    write(
+        &dir,
+        "src/Data.sky",
+        "module Data exposing (Item, itemCodec, note)\n\nimport Sky.Core.Prelude exposing (..)\nimport Std.Codec as C exposing (Codec)\nimport Std.Log as Log\n\n\nnote : String -> Task Error ()\nnote s =\n    Log.println s\n\n\ntype alias Item =\n    { id : Int, label : String }\n\n\nitemCodec : Codec Item\nitemCodec =\n    C.object Item\n        |> C.field \"id\" .id C.int\n        |> C.field \"label\" .label C.string\n        |> C.buildObject\n",
+    );
+    let main = std::fs::read_to_string(dir.join("src/Main.sky"))
+        .unwrap()
+        .replace("    {{ status : String }}", "    {{ status : String }}")
+        .replace(
+            "type alias Model =\n    { status : String }",
+            "type alias Model =\n    { status : String, items : List Item }",
+        )
+        .replace("{ status = Codec.label \"ready\" }", "{ status = Codec.label \"ready\", items = [] }")
+        .replace(
+            "( { model | status = Server.record model.status }",
+            "( { model | status = Server.record model.status, items = { id = 1, label = \"a\" } :: model.items }",
+        );
+    write(&dir, "src/Main.sky", &main);
+    let errors = front_half_errors(&root(), &dir, None);
+    assert!(errors.is_empty(), "the app itself must check: {errors:?}");
+    let out = dir.join("generated");
+    spa_split::generate(&root(), &dir, None, &out, None, None)
+        .unwrap_or_else(|e| panic!("the app must split: {e}"));
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    assert!(
+        shared.contains("itemCodec"),
+        "the codec is copied:\n{shared}"
+    );
+    for half in ["backend", "frontend"] {
+        let errors = front_half_errors(&root(), &out.join(half), None);
+        assert!(
+            errors.is_empty(),
+            "the generated {half} must type-check: {errors:?}\n{}",
+            tree_text(&out.join(half).join("src"))
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
