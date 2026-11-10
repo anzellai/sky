@@ -536,7 +536,7 @@ jobs:
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          curl -LsSf --retry 5 --retry-all-errors --retry-delay 10 https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
       - name: sky crate tests, slice 1/6 (nextest)
         working-directory: rust
         env:
@@ -559,7 +559,7 @@ jobs:
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          curl -LsSf --retry 5 --retry-all-errors --retry-delay 10 https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
       - name: sky crate tests, slice 2/6 (nextest)
         working-directory: rust
         env:
@@ -582,7 +582,7 @@ jobs:
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          curl -LsSf --retry 5 --retry-all-errors --retry-delay 10 https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
       - name: sky crate tests, slice 3/6 (nextest)
         working-directory: rust
         env:
@@ -605,7 +605,7 @@ jobs:
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          curl -LsSf --retry 5 --retry-all-errors --retry-delay 10 https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
       - name: sky crate tests, slice 4/6 (nextest)
         working-directory: rust
         env:
@@ -628,7 +628,7 @@ jobs:
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          curl -LsSf --retry 5 --retry-all-errors --retry-delay 10 https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
       - name: sky crate tests, slice 5/6 (nextest)
         working-directory: rust
         env:
@@ -651,7 +651,7 @@ jobs:
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          curl -LsSf --retry 5 --retry-all-errors --retry-delay 10 https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
       - name: sky crate tests, slice 6/6 (nextest)
         working-directory: rust
         env:
@@ -691,8 +691,8 @@ jobs:
           # 05-mux-server, 08-notes-app, 11-fyne-stopwatch, 13-skyshop. This gate
           # job does not build that surface, so the rows are unmeasurable here
           # and the default gate fails on them. SKY_LIVE_TESTS=skip downgrades
-          # the shortfall to a loud UNMEASURED block (gate-sweep measures all 61
-          # with the FFI installed).
+          # the shortfall to a loud UNMEASURED block (gate-coerce-floor measures every
+          # row with the FFI installed).
           echo "── xtask coerce-floor (SKY_LIVE_TESTS=skip: FFI-gitignored rows) ──"
           SKY_LIVE_TESTS=skip cargo run --release --locked -q -p xtask -- coerce-floor
 
@@ -1425,12 +1425,12 @@ jobs:
         run: |
           set -euo pipefail
           type -P ninja >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build; }
-          curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
           echo "77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
           mkdir -p "$RUNNER_TEMP/src" && tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"
           git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
           "$RUNNER_TEMP/emsdk/emsdk" install 6.0.12 && "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.12
-          curl -fsSL -o "$RUNNER_TEMP/dawn.zip" https://github.com/google/dawn/releases/download/v20260423.175430/emdawnwebgpu_pkg-v20260423.175430.zip
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -o "$RUNNER_TEMP/dawn.zip" https://github.com/google/dawn/releases/download/v20260423.175430/emdawnwebgpu_pkg-v20260423.175430.zip
           echo "3ad7ebe95a4a20764df46c5a63b0ad489782aee26804fff8511d9797c10e732f  $RUNNER_TEMP/dawn.zip" | shasum -a 256 -c -
           mkdir -p "$RUNNER_TEMP/dawn" && unzip -q "$RUNNER_TEMP/dawn.zip" -d "$RUNNER_TEMP/dawn"
           ./scripts/ai/device/build-device-bundles.sh web --llama-src "$RUNNER_TEMP/src/llama.cpp-b11200" \
@@ -1506,7 +1506,7 @@ jobs:
           brew install ninja
           command -v brotli >/dev/null || brew install brotli
           ./scripts/build.sh
-          curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
           echo "77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
           mkdir -p "$RUNNER_TEMP/src" && tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"
           ./scripts/ai/device/build-device-bundles.sh ios --llama-src "$RUNNER_TEMP/src/llama.cpp-b11200" --out "$RUNNER_TEMP/engines"
@@ -1584,7 +1584,7 @@ jobs:
           type -P ninja >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build; }
           ./scripts/build.sh
           { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" > /dev/null
-          curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
           echo "77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
           mkdir -p "$RUNNER_TEMP/src" && tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"
           ./scripts/ai/device/build-device-bundles.sh android --llama-src "$RUNNER_TEMP/src/llama.cpp-b11200" \
@@ -2201,6 +2201,198 @@ jobs:
       - name: Build both Nix entry points and check sky --version + sky-ffi-inspect
         run: bash scripts/ci/nix-build-check.sh
 
+  # gate-build-perf, gate-postgres-licence, gate-ai-unsloth: the nightly-only
+  # checks of nightly-sweep.yml, run here too so the release is the FULL suite
+  # (CLAUDE.md section 0.2.1). The bodies are copies of the nightly jobs of the
+  # same purpose. `nightly_commands_are_gated_by_the_release` in
+  # tests/workflows_parse.rs fails the build if they drift apart.
+  gate-postgres-licence:
+    runs-on: ubuntu-latest
+    # The publication matrix budgets 45 for the same build on the same runner
+    # class, with the same reasoning (10-20 min native + two extensions, ~2x).
+    timeout-minutes: 45
+    env:
+      PLATFORM: linux-amd64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # `runner` is NOT one of the contexts a job-level `env:` may use, and the
+      # penalty is not a warning: GitHub refuses to parse the whole FILE. Both
+      # jobs above stop existing, the run has no jobs and no log, and it is
+      # attributed to whatever push happened to arrive — which is how this
+      # workflow was red on every push while reading like a nightly problem.
+      # `RUNNER_TEMP` is the same directory and the shell has always had it.
+      - name: Paths under the runner's temp directory
+        run: |
+          set -euo pipefail
+          echo "OUT=$RUNNER_TEMP/bundles" >> "$GITHUB_ENV"
+          echo "SKYDB_BUILD_DIR=$RUNNER_TEMP/sky-postgres-build" >> "$GITHUB_ENV"
+
+      # libreadline-dev is deliberately NOT installed, exactly as in
+      # postgres-bundle.yml: --without-readline already excludes it, and not
+      # having the headers means an edit that drops the flag fails to find
+      # readline rather than silently linking it.
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bison flex pkg-config patchelf \
+            libssl-dev zlib1g-dev liblz4-dev libzstd-dev libicu-dev libxml2-dev
+
+      - name: Build a real bundle
+        run: bash scripts/skydb/build-postgres-bundle.sh --out "$OUT"
+
+      - name: Resolve the bundle
+        id: resolve
+        run: |
+          set -euo pipefail
+          # By search, not by glob-in-assignment: a glob that matched nothing
+          # would expand to a literal path and the gate would scan a directory
+          # that does not exist. Same shape as postgres-bundle.yml.
+          found=$(find "$OUT" -maxdepth 1 -type d -name "postgres-*-${PLATFORM}")
+          count=$(printf '%s\n' "$found" | command grep -c . || true)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::expected exactly 1 bundle for ${PLATFORM}, found ${count}" >&2
+            exit 1
+          fi
+          echo "bundle=$found" >> "$GITHUB_OUTPUT"
+
+      # Two separate claims, and the second is the one that was missing.
+      #
+      #   1. the gate ACCEPTS the artifact we would publish;
+      #   2. the gate still REJECTS a violation planted in that same artifact.
+      #
+      # (1) alone is satisfied by a gate that accepts everything, which is
+      # precisely the failure this repo keeps finding. `--bundle` runs C8 and
+      # C9: the real bundle unmodified, and the real bundle with one GPL-linked
+      # extension planted in lib/ — identical in every other respect, so the
+      # planted object is the only thing between green and red.
+      - name: 'SBOM + licence gate — the real bundle'
+        env:
+          BUNDLE: ${{ steps.resolve.outputs.bundle }}
+        run: bash scripts/skydb/scan-bundle-licences.sh "$BUNDLE" --sbom-out "$BUNDLE/sbom.json"
+
+      - name: 'Prove the gate discriminates ON the real bundle (C8 + C9)'
+        env:
+          BUNDLE: ${{ steps.resolve.outputs.bundle }}
+        run: bash scripts/skydb/test-licence-gate.sh --bundle "$BUNDLE"
+
+      - name: Upload the SBOM
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: nightly-sbom-linux-amd64
+          path: ${{ runner.temp }}/bundles/*/sbom.json
+          if-no-files-found: warn
+
+  gate-ai-unsloth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # `runner` may not appear in a job-level `env:` (GitHub then refuses the
+      # whole file); the shell has RUNNER_TEMP.
+      - name: The Std.Ai home under the runner's temp directory
+        run: echo "SKY_AI_HOME=$RUNNER_TEMP/sky-ai" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Free disk for the CUDA wheels
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Build the compiler
+        run: bash scripts/build.sh
+      - name: Install the Unsloth toolchain from its hash lock
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/provision" && cd "$RUNNER_TEMP/provision"
+          "$GITHUB_WORKSPACE/sky-out/sky" ai provision --train unsloth --format json | tee provision.json
+          grep -q '"toolchain":"unsloth"' provision.json
+
+  gate-build-perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        id: setup-go
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache the Sky Go build cache
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.sky/go-build
+            ~/go/pkg/mod
+            ~/.cache/sky/precompress
+          key: build-perf-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: build-perf-linux-
+      - name: Install brotli, jq and time
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" brotli jq time
+      - name: Build and install the compiler (sky-out/sky)
+        run: bash scripts/build.sh
+      - name: 'Gate — build speed within budget (medians of 3, as a ratio to the reference workload)'
+        run: bash scripts/bench-build.sh --reps 3 --cases "app skyshop" --out build-perf.json --write-budget build-budget.proposed.json --budget docs/perf/build-budget.json
+      - name: Keep the measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-perf-nightly
+          path: |
+            build-perf.json
+            build-budget.proposed.json
+          if-no-files-found: ignore
+      - name: Bound the Go caches before save
+        if: always()
+        run: GOCACHE="$HOME/.sky/go-build" GOMODCACHE="$HOME/go/pkg/mod" bash scripts/ci/bound-go-cache.sh
+
+  # gate-coerce-floor: the runtime-narrowing census over ALL golden rows. Five
+  # rows belong to examples whose generated FFI surface (sky-ffi/, .skydeps/) is
+  # .gitignored, so gate-corpus runs coerce-floor with SKY_LIVE_TESTS=skip and
+  # leaves those rows UNMEASURED. The sweep shards do not close the hole either:
+  # each shard installs only the FFI examples it owns. This job installs all
+  # five, then runs the gate WITHOUT SKY_LIVE_TESTS=skip, as the nightly does
+  # (nightly-sweep.yml `example-sweep`). A shortfall here fails the job.
+  gate-coerce-floor:
+    runs-on: ubuntu-latest
+    # 13-skyshop `sky install` is 15+ min on its own (20 min ceiling in the
+    # sweep script), plus setup and the release-built xtask.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/gate-setup
+        with:
+          go-cache-family: go-sweep
+      - name: Generate the FFI surface of the five FFI examples (sky install)
+        run: |
+          set -euo pipefail
+          for ex in 03-tea-external 05-mux-server 08-notes-app 11-fyne-stopwatch 13-skyshop; do
+            echo "── sky install: $ex ──"
+            (cd "examples/$ex" && "$GITHUB_WORKSPACE/sky-out/sky" install)
+          done
+      - name: Gate - coerce-floor over the whole corpus (every golden row measured)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- coerce-floor
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
   release:
     # Only a tag publishes; a dispatched full-suite run stops before this job.
     if: startsWith(github.ref, 'refs/tags/v')
@@ -2260,6 +2452,10 @@ jobs:
       - gate-native
       - gate-native-android
       - gate-nix
+      - gate-coerce-floor
+      - gate-build-perf
+      - gate-postgres-licence
+      - gate-ai-unsloth
     runs-on: ubuntu-latest
     # `id-token` + `attestations` let the job sign a build-provenance
     # attestation for every published asset (F-9): `gh attestation verify
