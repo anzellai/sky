@@ -42,12 +42,48 @@ def positive(value):
     return value
 
 
-def command(argv, cwd):
+class CommandFailed(Refused):
+    """A command that did not succeed. `kind` is "timeout", "exit-<code>",
+    "os-error" or "decode-error"; `transient` marks a GitHub API answer worth
+    asking again (an HTTP 5xx or a timeout). The label names the command and
+    the kind, never its output: API errors and bodies are not printed."""
+
+    def __init__(self, what, kind, transient):
+        super().__init__(f"command-failed: {what} ({kind})")
+        self.kind = kind
+        self.transient = transient
+
+
+def describe(argv):
+    # `gh api --hostname github.com <endpoint>` -> "gh api <path>"; else the
+    # program and its first argument. A path names no secret.
+    if argv[:2] == ["gh", "api"]:
+        return "gh api " + argv[-1].split("?", 1)[0]
+    return " ".join(argv[:2])
+
+
+def command(argv, cwd, timeout=45):
     try:
-        r = subprocess.run(argv, cwd=cwd, capture_output=True, timeout=45, check=True)
+        r = subprocess.run(argv, cwd=cwd, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise CommandFailed(describe(argv), "timeout", True) from None
+    except (OSError, subprocess.SubprocessError):
+        raise CommandFailed(describe(argv), "os-error", False) from None
+    if r.returncode != 0:
+        # gh reports an HTTP failure as "(HTTP 502)" on stderr. Read it only to
+        # classify; it is never printed.
+        server = re.search(rb"\(HTTP 5\d\d\)", r.stderr or b"") is not None
+        raise CommandFailed(describe(argv), f"exit-{r.returncode}", server)
+    try:
         return r.stdout.decode("utf-8").strip()
-    except (OSError, subprocess.SubprocessError, UnicodeError):
-        raise Refused("command-failed") from None
+    except UnicodeError:
+        raise CommandFailed(describe(argv), "decode-error", False) from None
+
+
+# A read-only GitHub API request is asked again when GitHub times out or
+# answers 5xx: the first jobs listing after a re-run can take GitHub well over
+# the old single 45 s budget. Any other failure refuses at once.
+API_TIMEOUTS = (45, 90, 120)
 
 
 def git(root, *args):
@@ -73,13 +109,24 @@ def local_state(root, intended):
 
 
 class GitHub:
-    def __init__(self, root):
+    def __init__(self, root, run=command, timeouts=API_TIMEOUTS):
         self.root = root
+        self.run = run
+        self.timeouts = timeouts
+
+    def request(self, endpoint):
+        argv = ["gh", "api", "--hostname", "github.com", endpoint]
+        for i, limit in enumerate(self.timeouts):
+            try:
+                return self.run(argv, self.root, timeout=limit)
+            except CommandFailed as e:
+                if not e.transient or i == len(self.timeouts) - 1:
+                    raise
 
     def __call__(self, endpoint):
         # gh owns authentication. Capture both streams: never print API errors,
         # credential context, response bodies or environment data.
-        raw = command(["gh", "api", "--hostname", "github.com", endpoint], self.root)
+        raw = self.request(endpoint)
         try:
             result = json.loads(raw)
         except (ValueError, TypeError):
