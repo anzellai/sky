@@ -1148,6 +1148,22 @@ fn the_release_workflow_is_the_full_suite() {
         ("build-run --all", "the codegen build of every example"),
         ("coerce-floor", "the runtime-narrowing floor"),
         (
+            "scripts/bench-build.sh --reps 3 --cases \"app skyshop\"",
+            "the full build-speed budget (gate-build-perf, as the nightly)",
+        ),
+        (
+            "scripts/skydb/scan-bundle-licences.sh",
+            "the SBOM and licence gate on a real PostgreSQL bundle",
+        ),
+        (
+            "scripts/skydb/test-licence-gate.sh --bundle",
+            "the licence gate discriminates on the real bundle",
+        ),
+        (
+            "ai provision --train unsloth",
+            "the Unsloth toolchain installs from its hash lock",
+        ),
+        (
             "-- perf-gate",
             "the collection performance gate (tests/perf: growth ratio, mallocs per element)",
         ),
@@ -1180,6 +1196,14 @@ fn the_release_workflow_is_the_full_suite() {
         missing.is_empty(),
         "release.yml's enabled gate-* jobs do not run:\n  {}",
         missing.join("\n  ")
+    );
+    // The FFI-gitignored coerce-floor rows are measured only when the FFI
+    // surface is installed. A release must run the census once with no
+    // `SKY_LIVE_TESTS=skip`, or five golden rows go unmeasured.
+    assert!(
+        hay.lines()
+            .any(|l| l.contains("xtask -- coerce-floor") && !l.contains("SKY_LIVE_TESTS=skip")),
+        "no release gate runs coerce-floor without SKY_LIVE_TESTS=skip, so the FFI rows are never measured"
     );
     assert!(
         !hay.lines()
@@ -3999,4 +4023,184 @@ fn the_training_jobs_get_their_trainer_from_the_bundle() {
         }
     }
     assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+/// One command per logical line of a `run:` body: comments and blank lines
+/// dropped, backslash continuations joined, whitespace collapsed, and the
+/// cargo flags that only change HOW a command is built (`--release`,
+/// `--locked`, `-q`) removed, so the nightly's `cargo run -q -p xtask -- x`
+/// and the release's `cargo run --release --locked -q -p xtask -- x` are one
+/// command.
+fn normalised_commands(run: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for raw in run.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(head) = line.strip_suffix('\\') {
+            cur.push_str(head.trim_end());
+            cur.push(' ');
+            continue;
+        }
+        cur.push_str(line);
+        let words: Vec<&str> = cur
+            .split_whitespace()
+            .filter(|w| !matches!(*w, "--release" | "--locked" | "-q"))
+            .collect();
+        // `--manifest-path rust/Cargo.toml` is `cd rust` spelled differently.
+        let joined = words
+            .join(" ")
+            .replace(" --manifest-path rust/Cargo.toml", "")
+            // The release adds `--require-proofs`: a stricter form of the same gate.
+            .replace(" --require-proofs", "");
+        out.push(joined);
+        cur.clear();
+    }
+    out
+}
+
+/// A nightly command that is not a check, so the release need not repeat it.
+/// Every entry says why. A command that IS a check never belongs here: it
+/// belongs in a release `gate-*` job (CLAUDE.md section 0.2.1).
+const NIGHTLY_ONLY_COMMANDS: &[(&str, &str)] = &[
+    // The prefix match is on the normalised command line.
+    ("echo ", "prints a message"),
+    ("set -", "shell options"),
+    ("source ", "shell library load"),
+    ("mkdir ", "directory setup"),
+    ("cd ", "directory change"),
+    ("df ", "disk report"),
+    ("sudo apt-get", "OS package install"),
+    ("sudo rm -rf", "runner disk reclaim"),
+    ("sudo ", "runner setup"),
+    ("npx playwright install", "browser download"),
+    (
+        "bash \"$GITHUB_WORKSPACE/scripts/ci/",
+        "CI tool or dependency setup",
+    ),
+    ("bash scripts/ci/", "CI tool, cache or dependency setup"),
+    (
+        "bash \"$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh\"",
+        "browser dependency setup",
+    ),
+    (
+        "command -v ",
+        "tool presence probe with an install fallback",
+    ),
+    ("type -P ", "tool presence probe with an install fallback"),
+    (
+        "cargo run -p xtask -- harness --verify-falsifiers --all",
+        "the release proves falsifiers in ten jobs split by --only; \
+         `the_release_workflow_is_the_full_suite` requires `--all` and that the \
+         union of the lists is every registered gate",
+    ),
+    ("go version", "toolchain version print"),
+    (
+        "node scripts/ci/playwright-cache-platform.mjs",
+        "browser cache key setup",
+    ),
+    ("npm ci", "dependency install"),
+    (
+        "CGO_ENABLED=0 go build ./...",
+        "an informational build whose failure is ignored (`|| true`), not a gate",
+    ),
+    ("gh issue", "files or updates the nightly failure issue"),
+    ("gh run", "reads the nightly run for the failure issue"),
+    ("gh api", "reads the nightly run for the failure issue"),
+    ("exit ", "shell control flow"),
+    ("fi", "shell control flow"),
+    ("done", "shell control flow"),
+    ("else", "shell control flow"),
+    ("then", "shell control flow"),
+    ("}", "shell control flow"),
+    ("tee ", "log capture"),
+    ("install_binary ", "compiler install helper"),
+    (
+        "cargo build -p sky",
+        "compiler build, a prerequisite not a check",
+    ),
+    (
+        "cargo build -p sky ",
+        "compiler build, a prerequisite not a check",
+    ),
+    (
+        "sky-out/sky --version",
+        "version print after the compiler install",
+    ),
+    (
+        "bash scripts/build.sh",
+        "compiler build, a prerequisite not a check",
+    ),
+    (
+        "./scripts/build.sh",
+        "compiler build, a prerequisite not a check",
+    ),
+];
+
+/// CLAUDE.md section 0.2.1: a check that runs only nightly still gates the
+/// release. Every command of every nightly job must also run in an enabled
+/// release `gate-*` job, or be listed in `NIGHTLY_ONLY_COMMANDS` with a reason.
+#[test]
+fn nightly_commands_are_gated_by_the_release() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let load = |f: &str| -> serde_yaml::Value {
+        let t = std::fs::read_to_string(root.join(".github/workflows").join(f))
+            .unwrap_or_else(|e| panic!("read {f}: {e}"));
+        serde_yaml::from_str(&t).unwrap_or_else(|e| panic!("{f} parses: {e}"))
+    };
+    let release = load("release.yml");
+    let nightly = load("nightly-sweep.yml");
+
+    let mut release_cmds: std::collections::BTreeSet<String> = Default::default();
+    for run in expanded_runs(&release, |n, j| {
+        n.starts_with("gate-") && !job_is_disabled(j)
+    }) {
+        release_cmds.extend(normalised_commands(&run));
+    }
+    // Emulator-runner steps carry their command in `with.script`.
+    for (k, job) in release.get("jobs").and_then(|j| j.as_mapping()).unwrap() {
+        if !k.as_str().is_some_and(|n| n.starts_with("gate-")) {
+            continue;
+        }
+        for step in job
+            .get("steps")
+            .and_then(|s| s.as_sequence())
+            .into_iter()
+            .flatten()
+        {
+            if let Some(s) = step
+                .get("with")
+                .and_then(|w| w.get("script"))
+                .and_then(|s| s.as_str())
+            {
+                release_cmds.extend(normalised_commands(s));
+            }
+        }
+    }
+
+    let mut missing = Vec::new();
+    for run in expanded_runs(&nightly, |_, _| true) {
+        for cmd in normalised_commands(&run) {
+            if NIGHTLY_ONLY_COMMANDS
+                .iter()
+                .any(|(p, _)| cmd.starts_with(p))
+            {
+                continue;
+            }
+            if !release_cmds.contains(&cmd) {
+                missing.push(cmd);
+            }
+        }
+    }
+    missing.sort();
+    missing.dedup();
+    assert!(
+        missing.is_empty(),
+        "nightly-sweep.yml runs commands that no enabled release gate-* job runs \
+         (CLAUDE.md 0.2.1: a nightly-only check still gates the release). Add the \
+         command to a release gate job, or to NIGHTLY_ONLY_COMMANDS with a reason:\n  {}",
+        missing.join("\n  ")
+    );
 }
