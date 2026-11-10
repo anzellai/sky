@@ -421,11 +421,13 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   verify-ci-green:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Offline CI-backed release preflight contracts
-        run: python3 -I -B scripts/test-preflight-ci.py -v
+        run: |
+          python3 -I -B scripts/test-preflight-ci.py -v
+          python3 -I -B scripts/test-ci-green-wait.py -v
       - name: Require the tagged commit's per-commit ci-green to be SUCCESS
         env:
           GH_TOKEN: ${{ github.token }}
@@ -433,29 +435,13 @@ jobs:
           set -euo pipefail
           sha="${{ github.sha }}"
           echo "Requiring a green per-commit ci-green for $sha before releasing."
-          # Poll up to ~10 min: the per-commit Rust CI for this commit may still
-          # be finishing when the tag is pushed moments later.
-          for i in $(seq 1 20); do
-            # Filter by name IN the query: the endpoint pages at 30 runs, and a
-            # commit with more check runs than that (a release branch carries
-            # dozens) hid `ci-green` on page 2, so this read "pending" for ten
-            # minutes on a commit whose ci-green had already passed.
-            concl=$(gh api "repos/${{ github.repository }}/commits/$sha/check-runs?check_name=ci-green&per_page=100" \
-              --jq '[.check_runs[] | select(.name=="ci-green")] | sort_by(.started_at) | last | .conclusion // "pending"')
-            echo "attempt $i: ci-green = $concl"
-            case "$concl" in
-              success)
-                echo "ci-green is SUCCESS for $sha — safe to release."
-                exit 0 ;;
-              failure|cancelled|timed_out|action_required|stale)
-                echo "::error::ci-green is '$concl' for $sha. Refusing to release an unverified commit — fix ci-green on main first." >&2
-                exit 1 ;;
-              *)
-                sleep 30 ;;
-            esac
-          done
-          echo "::error::ci-green did not reach a conclusion for $sha within the wait window. Refusing to release." >&2
-          exit 1
+          # Wait up to 45 min (90 x 30 s). ci-green takes 16-23 min and the tag
+          # is often pushed while it still runs; the old 10 min window failed
+          # on attempt 1 of every release. A failed, cancelled, timed out,
+          # action_required or stale ci-green fails at once. With no check run,
+          # a queued or running rust-ci.yml run keeps the wait going, and none
+          # after 5 min fails with "ci-green absent".
+          python3 -I -B scripts/ci/wait-ci-green.py "${{ github.repository }}" "$sha" 90 30 300
 
   gate-core:
     runs-on: ubuntu-latest
