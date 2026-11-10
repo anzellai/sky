@@ -42,6 +42,8 @@ pub mod go_cache;
 pub mod go_cmd;
 /// Reuse of the `go get` result for exactly pinned Go FFI modules.
 pub mod go_get_memo;
+/// The Go module graph `sky install` prepares and every build uses.
+pub mod go_graph;
 /// `go build -p`: how many packages compile at once, from available memory.
 pub mod go_jobs;
 mod go_tool_metadata;

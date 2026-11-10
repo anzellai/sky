@@ -1512,8 +1512,8 @@ sky add github.com/google/uuid           # pin-by-default: records the resolved
                                           # version, e.g. "v1.6.0"
 sky add github.com/google/uuid@v1.5.0    # pin an exact version / branch / commit
 sky add github.com/google/uuid@latest    # explicit float — pulls latest on every
-                                          # install/rebuild (a broken latest API
-                                          # fails the build, forcing a fix)
+                                          # `sky install` / `sky update` (a broken
+                                          # latest API fails the build, forcing a fix)
 sky add github.com/stripe/stripe-go/v84
 ```
 
@@ -1683,6 +1683,25 @@ surface written by a sky with another format (or none) is refreshed and named
 as such, and `sky build` warns about it until `sky install` runs. Unchanged
 surfaces are left untouched (`verified`). For each `[dependencies]` entry it clones any Sky package that is
 absent or whose pinned ref drifted. Idempotent.
+
+**After `sky install`, `sky build` needs no network.** The last step of `sky
+install` (and of `sky update`) composes the Go module graph a build uses: the
+runtime's own requirements plus every Go dependency at its spec, resolved
+together, so a dependency that raises a module the runtime also imports (a
+newer `google.golang.org/api` raising `go.opentelemetry.io/proto/otlp`) is
+resolved here. It then loads every package a build compiles, for the host and
+for `js/wasm` (the Sky.Spa client), which downloads each module at the version
+the build selects. The graph is kept in `sky-out/.sky-gograph/` with a
+fingerprint of its inputs. Every build of the project (Sky.Live, a Std.App
+target under `.skyapp/`, a Sky.Spa backend or wasm client under `.split/`)
+starts from it, and a `latest` or branch spec takes the version the install
+resolved, so two builds between installs use the same versions and an offline
+module cache (`GOPROXY=off`, a `file://` proxy, an air-gapped host) is enough.
+`latest` moves on the next `sky install` / `sky update`. After `sky add`,
+`sky remove`, an edit to `["go.dependencies"]` or a Sky upgrade the fingerprint
+no longer matches: the build then resolves the specs itself (with the network)
+until `sky install` runs again. A failure to download the graph fails `sky
+install`.
 
 The path-dependency wiring is rebuilt from `sky.toml` each time. A Go path
 dependency that `sky.toml` no longer lists (removed by hand, or by a branch

@@ -1525,6 +1525,10 @@ fn build_inner(
     // `write_out` just rewrote from the runtime's copy. Re-applied on EVERY
     // build from sky.toml, so the wiring can never be lost. A failure here is
     // a failed build: `go build` would only fail later with a worse message.
+    // The module graph `sky install` prepared for this project (go_graph.rs):
+    // the build starts from it, so it needs no module the install did not
+    // fetch, and every leg of the project uses the same versions.
+    let recorded_graph = crate::go_graph::apply(&opts.example_dir, &opts.repo_root, &out_dir);
     if let Err(e) = crate::path_deps::apply_go_path_deps(&opts.example_dir, &out_dir) {
         report.note = e;
         return report;
@@ -1534,6 +1538,7 @@ fn build_inner(
         &ffi_used,
         &out_dir,
         &opts.example_dir,
+        recorded_graph.as_deref(),
         &mut report.warnings,
     ) {
         report.warnings.push(format!("ffi go.mod injection: {e}"));
@@ -3215,6 +3220,7 @@ fn inject_ffi_deps(
     used: &std::collections::BTreeSet<String>,
     out_dir: &Path,
     example_dir: &Path,
+    recorded_graph: Option<&str>,
     warnings: &mut Vec<String>,
 ) -> std::io::Result<()> {
     // A package under a Go PATH dependency is already wired by
@@ -3279,6 +3285,13 @@ fn inject_ffi_deps(
         match matched {
             Some((module, spec)) => {
                 let spec = crate::ffi_ops::spec_or_latest(spec);
+                // A floating spec (`latest`, a branch) takes the version
+                // `sky install` resolved: the build re-resolves nothing, and
+                // `latest` moves on `sky install` / `sky update`.
+                let installed = recorded_graph
+                    .filter(|_| !crate::go_get_memo::exact_version(spec))
+                    .and_then(|g| crate::go_graph::recorded_version(g, module));
+                let spec = installed.as_deref().unwrap_or(spec);
                 let target = format!("{module}@{spec}");
                 // Two used paths under one module fetch it once.
                 if fetches.contains(&target) {
@@ -3601,6 +3614,12 @@ fn bundle_stamp(archive: &Path, meta: &std::fs::Metadata) -> String {
 /// skipped so the console stack stays out of the build (leanness — mirrors the
 /// oracle, whose linker tree-shakes it away when unimported). `testdata` is
 /// always skipped.
+/// The runtime as [`crate::go_graph::prepare`] loads it: every package a
+/// build can compile, `console_app` included.
+pub(crate) fn materialise_rt_for_graph(src: &Path, dst: &Path) -> std::io::Result<()> {
+    materialise_rt(src, dst, true)
+}
+
 fn materialise_rt(src: &Path, dst: &Path, console_needed: bool) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     // Everything this call materialises at this level. Anything ELSE already in
