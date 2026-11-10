@@ -209,8 +209,11 @@ measure() {
         rss="$(awk '$1 == "maxrss_kb" { print $2 * 1024 }' "$tf" 2>/dev/null || true)"
     fi
     if [ "$code" != 0 ] || [ -z "$wall" ]; then
-        echo "FAIL: $case_id $scenario (rep $rep) exited $code. Last lines of $log:" >&2
-        tail -25 "$log" >&2
+        # The log ends with SKY_TIMINGS tables (a child build prints its own
+        # before the parent fails), so a plain tail showed only timings and
+        # hid the error. Drop the tables and show what is left.
+        echo "FAIL: $case_id $scenario (rep $rep) exited $code. $log without its timing tables:" >&2
+        awk '/^sky timings \(/ { skip = 1; next } skip && /^$/ { skip = 0; next } !skip' "$log" | tail -150 >&2
         exit 1
     fi
     local timings

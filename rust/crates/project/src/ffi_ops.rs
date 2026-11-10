@@ -828,7 +828,28 @@ pub fn install(project_dir: &Path, repo_root: &Path) -> FfiReport {
     if !sky_deps.is_empty() {
         install_sky_deps(project_dir, &sky_deps, &mut r);
     }
+    prepare_go_graph(project_dir, repo_root, "sky install", &mut r);
     r
+}
+
+/// The last step of `sky install` / `sky update`: compose the module graph a
+/// build of the project uses and download every module in it
+/// ([`crate::go_graph::prepare`]), so the next `sky build` needs no network.
+/// A failure fails the verb: the build would otherwise fetch at build time
+/// what the install could not.
+fn prepare_go_graph(project_dir: &Path, repo_root: &Path, verb: &str, r: &mut FfiReport) {
+    if !r.ok || !crate::go_graph::has_go_dependencies(project_dir) {
+        return;
+    }
+    match crate::go_graph::prepare(project_dir, repo_root) {
+        Ok(line) => r.say(format!("{verb}: {line}")),
+        Err(e) => {
+            r.ok = false;
+            r.say(format!(
+                "{verb}: could not prepare the build's Go module graph: {e}"
+            ));
+        }
+    }
 }
 
 /// The Go-FFI half of `sky install` — ensure `go.mod` deps, then regenerate any
@@ -1035,6 +1056,7 @@ pub fn update(project_dir: &Path, repo_root: &Path) -> FfiReport {
     if !sky_deps.is_empty() {
         update_sky_deps(project_dir, &sky_deps, &mut r);
     }
+    prepare_go_graph(project_dir, repo_root, "sky update", &mut r);
     r
 }
 

@@ -11,6 +11,25 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.8 — sky install prepares the whole Go module graph, so a build after it needs no network (2026-11-10)
+
+### Fixed
+
+- **After `sky install`, `sky build` needs no network.** `sky install`
+  resolved a project's Go dependencies without the runtime's packages present,
+  so it did not download a module the runtime imports when a dependency raised
+  its version (a newer `google.golang.org/api` raises
+  `go.opentelemetry.io/proto/otlp`), and a `"latest"` spec re-resolved on every
+  build. An offline build after an install (a `file://` or `off` `GOPROXY`, an
+  air-gapped host) then failed with `reading …/otlp/@v/v1.11.0.zip: no such
+  file or directory`. `sky install` and `sky update` now compose the build's
+  module graph (runtime requirements plus every Go dependency), download every
+  module a build compiles for the host and for `js/wasm`, and keep it in
+  `sky-out/.sky-gograph/`. Every build leg (Sky.Live, Std.App targets, the
+  Sky.Spa backend and wasm client) starts from that graph, and a `"latest"` or
+  branch spec takes the version the install resolved until the next `sky
+  install` / `sky update` (`docs/tooling/cli.md`, `sky install`).
+
 ## v0.29.7 — input made before the page is live reaches update; split code owns its import names (2026-11-10)
 
 ### Fixed
