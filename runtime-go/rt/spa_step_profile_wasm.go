@@ -15,6 +15,9 @@ func spaProfileInit() {
 	spaStepProfiling = v.Type() == js.TypeBoolean && v.Bool()
 	reference := js.Global().Get("__skyStepReference")
 	spaStepReference = spaStepProfiling && reference.Type() == js.TypeBoolean && reference.Bool()
+	// The reference run also measures the reflective Codec.auto walker, not
+	// the generated codecs (codec_auto_gen.go).
+	autoCodecReference.Store(spaStepReference)
 	spaProfileSteps, spaProfileTotals = 0, spaStepMetrics{}
 	spaProfileDetailStart(spaStepProfiling)
 }

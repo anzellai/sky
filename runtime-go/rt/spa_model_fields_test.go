@@ -224,7 +224,7 @@ func TestSpaModelFieldsShrinkingSnapshotRetainsReconstructedFields(t *testing.T)
 		t.Fatal("initial fixture must exceed the storage cap")
 	}
 	small := old
-	small.First = old.First[:spaPersistMaxBytes / 107]
+	small.First = old.First[:spaPersistMaxBytes/107]
 	derived, _, ok := snapshot.derive(small)
 	if !ok {
 		t.Fatal("shrinking the first field lost the certificate")
