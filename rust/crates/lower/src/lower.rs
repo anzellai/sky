@@ -137,6 +137,8 @@ impl FfiTable {
     }
 }
 
+mod auto_codec;
+pub use auto_codec::sample_generated_text as auto_codec_sample_text;
 mod closure;
 mod numeric;
 mod record_catalog;
@@ -219,6 +221,11 @@ pub struct LowerConfig {
     /// driver only while the canonical stdlib source namespace is intact.
     /// No sky.toml key can grant this. Missing means reference-only encoders.
     pub trusted_auto_codec: Option<(DefId, DefId)>,
+    /// Resolved canonical `Std.Codec.auto` and `Std.Codec.autoCamel`, granted by
+    /// the build driver on every target while the canonical stdlib source
+    /// namespace is intact. Their call sites are the roots of the generated
+    /// typed codecs (`lower/auto_codec.rs`). No sky.toml key can grant this.
+    pub auto_codec_roots: Option<(DefId, DefId)>,
     /// Actual canonical modules granted by the project source-identity check.
     /// Namespace spelling alone never grants private reuse capabilities.
     pub trusted_private_modules: BTreeSet<ModuleId>,
@@ -860,6 +867,7 @@ fn lower_program_impl(
     let mut funcs: Vec<GoItem> = Vec::new();
     let mut used_go_types: HashSet<String> = HashSet::new();
     let mut ffi_used: BTreeSet<String> = BTreeSet::new();
+    let mut auto_codec_sites: BTreeMap<(String, bool), GoTy> = BTreeMap::new();
 
     while let Some(d) = work.pop() {
         if !seen.insert(d) {
@@ -889,6 +897,8 @@ fn lower_program_impl(
                 },
                 view_memo_regions: 0,
                 trusted_auto_codec,
+                auto_codec_roots: cfg.auto_codec_roots,
+                auto_codec_sites: Vec::new(),
                 db: db.as_sky_db(),
                 defs: &defs,
                 kernel_alias: &kernel_alias,
@@ -954,6 +964,13 @@ fn lower_program_impl(
             for m in cx.ffi_used {
                 ffi_used.insert(m);
             }
+            if !view_memo_copy {
+                for (t, snake) in cx.auto_codec_sites {
+                    auto_codec_sites
+                        .entry((render_goty(&t), snake))
+                        .or_insert(t);
+                }
+            }
             if view_memo_copy {
                 view_memo_regions += cx.view_memo_regions;
                 for item in def_items {
@@ -1012,6 +1029,28 @@ fn lower_program_impl(
             view_memo_regions,
         );
     }
+    // ---- generated typed Codec.auto codecs (lower/auto_codec.rs) ----
+    let auto_codec_item = if auto_codec_sites.is_empty() {
+        None
+    } else {
+        let mut records = auto_codec::Records::new();
+        let mut enums = BTreeSet::new();
+        for (_, group) in &type_items {
+            for item in group {
+                match item {
+                    GoItem::Type(name, GoTypeDef::Struct(fields)) => {
+                        records.insert(name.clone(), fields.clone());
+                    }
+                    GoItem::Type(name, GoTypeDef::IotaEnum(_)) => {
+                        enums.insert(name.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let roots: BTreeSet<(String, bool)> = auto_codec_sites.keys().cloned().collect();
+        auto_codec::generate(&roots, &auto_codec_sites, &records, &enums).map(GoItem::Raw)
+    };
     // ---- assemble the module ----
     let mut items = Vec::new();
     items.push(prologue_init(cfg));
@@ -1019,6 +1058,7 @@ fn lower_program_impl(
         items.extend(group);
     }
     items.extend(funcs);
+    items.extend(auto_codec_item);
     // Last: a shape-only rewrite, after every pass that reads the IIFE
     // boundaries (tail-return coercion, TCO). See `shape.rs`.
     crate::shape::flatten_tail_blocks(&mut items);
@@ -2409,6 +2449,10 @@ struct Ctx<'a> {
     view_memo_sites: Option<&'a Vec<view_memo::Site>>,
     view_memo_regions: usize,
     trusted_auto_codec: Option<(DefId, DefId)>,
+    /// `(auto, autoCamel)` roots of the generated codecs (see LowerConfig).
+    auto_codec_roots: Option<(DefId, DefId)>,
+    /// Witness Go types seen at root call sites: `(type, snake)`.
+    auto_codec_sites: Vec<(GoTy, bool)>,
     db: &'a dyn SkyDb,
     defs: &'a BTreeMap<DefId, DefEntry>,
     kernel_alias: &'a HashMap<DefId, String>,
@@ -5806,6 +5850,20 @@ impl<'a> Ctx<'a> {
     }
 
     fn lower_call(&mut self, callee: ExprId, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        // A canonical `Codec.auto` / `Codec.autoCamel` call: its witness type is
+        // a root of the generated typed codecs (lower/auto_codec.rs). Recording
+        // it changes nothing this call emits.
+        if let (Some((auto, camel)), Expr::Var(Res::Def(d)), Some(&witness)) = (
+            self.auto_codec_roots,
+            &self.body.exprs[callee],
+            args.first(),
+        ) {
+            if *d == auto || *d == camel {
+                let snake = *d == auto;
+                let t = self.expr_ty(witness);
+                self.auto_codec_sites.push((t, snake));
+            }
+        }
         if let Some(value) = self.lower_numeric_call(callee, args, actual) {
             return value;
         }
@@ -11153,6 +11211,13 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
     };
     match (go, nargs) {
         ("rt.Error_isRetryable", 1) => twin("rt.Error_isRetryableT", vec![None], bool_()),
+        // v0.29.9: the generated typed codec's JSON text (runtime-go/rt/
+        // codec_auto_gen.go), used by `Codec.toJson` on an `auto` codec.
+        ("rt.Codec_autoJson", 2) => twin(
+            "rt.Codec_autoJsonT",
+            vec![Some(bool_()), None],
+            maybe(str_()),
+        ),
         ("rt.Error_domain", 1) => twin("rt.Error_domainT", vec![None], maybe(str_())),
         ("rt.Error_retryAfter", 1) => twin("rt.Error_retryAfterT", vec![None], maybe(int())),
         // v0.28.0: the length, trim, replace and match twins

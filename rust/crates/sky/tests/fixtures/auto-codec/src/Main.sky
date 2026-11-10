@@ -1,0 +1,129 @@
+module Main exposing (main)
+
+{-| Generated typed Codec.auto codecs (v0.29.9). Every shape of the closed
+set: Bool, Int, Float, String, an enum, records (nested), Maybe (nested),
+List (nested), Dict String and Dict Int. `Mixed` holds a tuple, so it keeps
+the reflective path. gotest/auto_codec_test.go compares the generated codecs
+with the reflective walker on this program's own Go types.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict exposing (Dict)
+import Std.Codec as Codec
+import Std.Log exposing (println)
+
+type Color
+    = Red
+    | Green
+    | Blue
+
+type alias Item =
+    { title : String
+    , done : Bool
+    , count : Int
+    , score : Float
+    , color : Color
+    , note : Maybe String
+    , tags : List String
+    , priceMinor : Int
+    }
+
+type alias Model =
+    { items : List Item
+    , byId : Dict String Item
+    , byNum : Dict Int String
+    , userName : String
+    , nested : Maybe (Maybe Int)
+    , colors : List Color
+    , scores : Dict String Float
+    , grid : List (List Int)
+    , pinned : Maybe Item
+    }
+
+type alias Mixed =
+    { pair : ( Int, String )
+    , count : Int
+    }
+
+
+blankItem : Item
+blankItem =
+    { title = ""
+    , done = False
+    , count = 0
+    , score = 0.0
+    , color = Red
+    , note = Nothing
+    , tags = []
+    , priceMinor = 0
+    }
+
+
+blankMixed : Mixed
+blankMixed =
+    { pair = ( 0, "" ), count = 0 }
+
+
+oneMixed : Mixed
+oneMixed =
+    { pair = ( 1, "one" ), count = 2 }
+
+
+blank : Model
+blank =
+    { items = []
+    , byId = Dict.empty
+    , byNum = Dict.empty
+    , userName = ""
+    , nested = Nothing
+    , colors = []
+    , scores = Dict.empty
+    , grid = []
+    , pinned = Nothing
+    }
+
+
+sample : Model
+sample =
+    { blank
+        | items =
+            [ { blankItem | title = "a <b>", note = Just "n", tags = [ "x" ] } ]
+        , byId =
+            Dict.fromList [ ( "k", { blankItem | color = Blue, score = 1.5 } ) ]
+        , byNum = Dict.fromList [ ( 2, "two" ), ( 10, "ten" ) ]
+        , userName = "Ada"
+        , nested = Just (Just 3)
+        , colors = [ Green, Red ]
+        , scores = Dict.fromList [ ( "z", 2.5 ), ( "a", -0.5 ) ]
+        , grid = [ [ 1, 2 ], [] ]
+        , pinned = Just blankItem
+    }
+
+
+main =
+    let
+        snake = Codec.auto blank
+        camel = Codec.autoCamel blank
+        mixed = Codec.auto blankMixed
+        text = Codec.toJson snake sample
+        back =
+            case Codec.fromJson snake text of
+
+                Ok m ->
+                    if m == sample then
+                        "round trip ok"
+
+                    else
+                        "round trip DIFFERS"
+
+                Err _ ->
+                    "round trip FAILED"
+    in
+        println
+            (String.join
+                "\n"
+                [ text
+                , Codec.toJson camel sample
+                , Codec.toJson mixed oneMixed
+                , back
+                ])

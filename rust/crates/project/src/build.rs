@@ -1100,6 +1100,24 @@ fn assemble_and_emit_loaded(
             ));
         }
     }
+    // Generated typed codecs (lower/auto_codec.rs) on every target: the roots
+    // are the canonical Std.Codec.auto / autoCamel, granted only while the
+    // canonical stdlib source namespace is intact (the same source-identity
+    // test as the Sky.Spa capsules above). The runtime re-verifies every
+    // registered shape against its own field plan.
+    if canonical_stdlib_sources.iter().all(|(name, source)| {
+        hir::SkyDb::module_by_name(&db, name).is_some_and(|m| db.source_file(m) == *source)
+    }) && hir::SkyDb::module_ids(&db).iter().all(|m| {
+        let name = hir::SkyDb::module_name(&db, *m);
+        !(name.starts_with("Sky.") || name.starts_with("Std.")) || stdlib_names.contains(name)
+    }) {
+        if let Some(module) = hir::SkyDb::module_by_name(&db, "Std.Codec") {
+            let def = |n: &str| {
+                hir::SkyDb::intern_def(&db, module, &base::Name::new(n), hir::DefKind::Value)
+            };
+            cfg.auto_codec_roots = Some((def("auto"), def("autoCamel")));
+        }
+    }
     for (name, source) in &canonical_stdlib_sources {
         if matches!(name.as_str(), "Std.Decimal" | "Std.Money") {
             if let Some(module) = hir::SkyDb::module_by_name(&db, name) {

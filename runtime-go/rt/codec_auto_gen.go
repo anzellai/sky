@@ -433,3 +433,45 @@ func AutoDecDict(raw any) ([]string, []any, error) {
 func AutoDictBuild[V any](keys []string, vals []V) SkyDict[V] {
 	return dictBuild(keys, vals, true)
 }
+
+// AutoDecIntT reads an Int as the Go int a record field holds.
+func AutoDecIntT(raw any) (int, error) {
+	n, err := AutoDecInt(raw)
+	return int(n), err
+}
+
+// AutoDecEnumT reads a declared enum as its Go type.
+func AutoDecEnumT[E ~int](declared string, raw any) (E, error) {
+	n, err := AutoDecEnum(declared, raw)
+	return E(n), err
+}
+
+// Codec_autoJson : Bool -> a -> Maybe String. The JSON text a generated codec
+// writes for record, in one pass with no intermediate tree, or Nothing when
+// the record's type has no generated codec or a value needs the walker (a NaN
+// or infinite Float). `Codec.toJson` tries it first and otherwise encodes the
+// walker's tree, so the text, or the error, is always the walker's.
+func Codec_autoJson(snakeArg, record any) any { return Codec_autoJsonT(AsBool(snakeArg), record) }
+
+// Codec_autoJsonT is Codec_autoJson with a proven Bool (the typed twin).
+func Codec_autoJsonT(snake bool, record any) SkyMaybe[string] {
+	gen, ctx := autoCodecFor(reflect.TypeOf(record), snake)
+	if gen == nil {
+		return Nothing[string]()
+	}
+	b, err := gen.app(make([]byte, 0, 256), record, ctx)
+	if err != nil {
+		return Nothing[string]()
+	}
+	return Just(string(b))
+}
+
+// AutoCodecUseReference turns the reflective reference path on or off for
+// every Codec.auto call (A/B tests and benchmarks of a compiled program).
+func AutoCodecUseReference(on bool) { autoCodecReference.Store(on) }
+
+// AutoCodecRegistered reports whether value's type has a generated codec for
+// this key style (tests of a compiled program).
+func AutoCodecRegistered(value any, snake bool) bool {
+	return autoCodecRegistry[autoCodecKey{reflect.TypeOf(value), snake}] != nil
+}

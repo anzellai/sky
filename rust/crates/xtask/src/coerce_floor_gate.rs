@@ -1658,6 +1658,21 @@ fn first_line(s: &str) -> String {
 mod tests {
     use super::*;
 
+    // The generated typed Codec.auto codecs (lower/auto_codec.rs) read every
+    // value at its static Go type: their text carries no tracked token, so a
+    // program that gains them keeps its coerce-floor count.
+    #[test]
+    fn generated_auto_codecs_carry_no_tracked_token() {
+        let text = lower::auto_codec_sample_text();
+        assert!(text.contains("rt.RegisterAutoCodec["));
+        let c = count_tokens(&text);
+        assert!(
+            c.per_family.is_empty(),
+            "tracked tokens in generated codecs: {:?}",
+            c.per_family
+        );
+    }
+
     // Word-boundary correctness: `rt.Coerce` and `rt.CoerceString` are distinct
     // families; an untracked `rt.CoerceZ` counts as neither; a `rt` embedded in a
     // longer identifier (`art.Coerce`) is not counted.
