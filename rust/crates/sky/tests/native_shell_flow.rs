@@ -2295,6 +2295,16 @@ fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
         ("permission_allow_foreground_only_button", "scan=cancelled"),
         ("permission_deny_button", "scan=err:PermissionDenied"),
     ] {
+        // A permission controller left hung (ANR) by the previous case answered
+        // the next Allow late, past any fixed sleep. Start each case with a
+        // fresh one and an empty log, so the grant line below is this case's.
+        let _ = emu.adb(&[
+            "shell",
+            "am",
+            "force-stop",
+            "com.google.android.permissioncontroller",
+        ]);
+        let _ = emu.adb(&["logcat", "-c"]);
         let _ = emu.adb(&["uninstall", "com.example.probe"]);
         let inst = emu.adb(&["install", "-r", apk.to_str().unwrap()]);
         assert!(
@@ -2328,16 +2338,52 @@ fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
         if let Some((x, y)) = tap {
             let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
         }
+        let mut grant_missing = false;
         if want == "scan=cancelled" {
-            // The scanner opens after Allow: Back closes it without a code.
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            emu.key("KEYCODE_BACK");
+            // The scanner opens after Allow. Wait (up to 30 s) for the broker
+            // to log the grant, tapping Allow again while the prompt still has
+            // the focus, then send Back: it closes the scanner without a code.
+            let granted_now = || {
+                emu.shell_text(&["logcat", "-d", "-s", "SkyPermissions:I"])
+                    .lines()
+                    .any(|l| l.contains(": 1 granted"))
+            };
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let mut granted = granted_now();
+            while !granted && std::time::Instant::now() < until {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                granted = granted_now();
+                let prompt_up = emu.shell_text(&["dumpsys", "window"]).lines().any(|l| {
+                    l.contains("mCurrentFocus=") && l.contains("GrantPermissionsActivity")
+                });
+                if !granted && prompt_up {
+                    if let Some((x, y)) = ui_node_centre(&emu, &[button]) {
+                        let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+                    }
+                }
+            }
+            if granted {
+                // Let the scanner open before Back.
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                emu.key("KEYCODE_BACK");
+            } else {
+                grant_missing = true;
+            }
         }
-        let scan = backend.probe_line("scan", 60);
+        let scan = backend.probe_line("scan", if grant_missing { 1 } else { 60 });
+        let evidence = if grant_missing || tap.is_none() {
+            emu.capture_evidence(&format!("scan-{button}"), &backend.output())
+        } else {
+            String::new()
+        };
         let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
         let output = backend.output();
         drop(backend);
-        if secure.as_deref() != Some("secure=ok:probe-value") {
+        if grant_missing {
+            failures.push(format!(
+                "{button}: the camera grant was not logged within 30 s of Allow\n{evidence}\n{output}"
+            ));
+        } else if secure.as_deref() != Some("secure=ok:probe-value") {
             failures.push(format!(
                 "{button}: the app did not start: {secure:?}\n{output}"
             ));
@@ -2347,7 +2393,7 @@ fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
             ));
         } else if tap.is_none() {
             failures.push(format!(
-                "{button}: the camera prompt was not on screen\n{output}"
+                "{button}: the camera prompt was not on screen\n{evidence}\n{output}"
             ));
         } else if !scan.as_deref().is_some_and(|s| s.starts_with(want)) {
             failures.push(format!(
