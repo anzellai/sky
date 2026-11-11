@@ -7,7 +7,6 @@ package rt
 // the environment, and a stop / check / kill for the verified kill.
 
 import (
-	"bytes"
 	"os"
 	"syscall"
 
@@ -58,19 +57,18 @@ func procSnapshot() ([]procInfo, error) {
 // for $0) leaves extra NULs between the arguments and the environment, so
 // every NUL-separated string after the header is checked for `name=`. The
 // cookie is a random value only a descendant carries, so a match elsewhere
-// cannot be forged. Any failure is "not found" (fail closed).
-func procEnvValue(pid int, name string) (string, bool) {
+// cannot be forged. A process that cannot be read is procEnvAbsent. While a
+// process is in execve its argument area can be briefly empty or cut off,
+// which is procEnvUnsure (see procEnvScan).
+func procEnvValue(pid int, name string) (string, procEnvState) {
 	b, err := unix.SysctlRaw("kern.procargs2", pid)
-	if err != nil || len(b) < 4 {
-		return "", false
+	if err != nil {
+		return "", procEnvAbsent
 	}
-	prefix := []byte(name + "=")
-	for _, s := range bytes.Split(b[4:], []byte{0}) {
-		if bytes.HasPrefix(s, prefix) {
-			return string(s[len(prefix):]), true
-		}
+	if len(b) < 4 {
+		return "", procEnvUnsure
 	}
-	return "", false
+	return procEnvScan(b[4:], name)
 }
 
 // procStartTime is a process's start time (for the root of a sweep).

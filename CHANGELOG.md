@@ -58,6 +58,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   argument and a private binding of a sibling module that declares `init`
   named nothing (`examples/19-skyforum`: `seedComments`). The codec now reads
   the model `init ()` returns.
+- **Closing a child process ends a descendant that is starting a program.**
+  `Process.close` (and a session or exit that ends a child) finds the child's
+  descendants partly by a value in their environment. A descendant read while
+  it was in `execve` could show an empty or cut-off environment, and the
+  sweep then stopped with it still running. Such a read now counts as
+  unknown, and the sweep reads that process again in its next round.
 - **A `Codec.auto` decode of a `Dict` with several bad entries reports the
   same error every time.** The entries are now read in key order. Before,
   which bad entry was named depended on Go's map order.
