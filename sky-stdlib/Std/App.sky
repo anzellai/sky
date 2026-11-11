@@ -1055,7 +1055,8 @@ withSessionLifetime _ appVal =
 -- On a client target (`web:app` and the other Sky.Spa targets) the fields are
 -- left out of the model the browser keeps in localStorage and are taken from
 -- the server-rendered seed on a reload (a session field is never left out:
--- the sign-out check reads it). On Sky.Live (`web`, `tablet`) the session
+-- the sign-out check reads it). The saved model is at most 3,000,000 bytes
+-- of JSON, so leaving out a large field also keeps the rest saved. On Sky.Live (`web`, `tablet`) the session
 -- keeps the model on the server, and a full page load of an existing session
 -- refreshes the fields from `init`. Every other field keeps its value.
 -- Names are the model's field names; a name the model does not have does

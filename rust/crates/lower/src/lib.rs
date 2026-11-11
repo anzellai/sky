@@ -16,7 +16,8 @@ mod store_lint;
 
 pub use ir::{GoTy, Prim};
 pub use lower::{
-    lower_program, lower_program_cfg, FfiModInfo, FfiTable, LowerConfig, LowerDiag, LowerOutput,
+    auto_codec_sample_text, lower_program, lower_program_cfg, FfiModInfo, FfiTable, LowerConfig,
+    LowerDiag, LowerOutput,
 };
 
 /// Top-level def bodies whose types lowering has inferred, process-wide. It

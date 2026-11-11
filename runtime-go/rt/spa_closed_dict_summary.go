@@ -97,7 +97,7 @@ func (c *spaClosedEncodeContext) primitiveDict(value reflect.Value, declared str
 	default:
 		return nil
 	}
-	if declared != "rt.SkyDict["+name+"]" || codecAutoEnumRegisteredAt(name, c.epoch) {
+	if _, val, ok := codecDeclaredDict(declared); !ok || val != name || codecAutoEnumRegisteredAt(name, c.epoch) {
 		return nil
 	}
 	// Only these three wrappers instantiate the generic walker; do not add a
@@ -222,7 +222,9 @@ func (b spaDictSummaryBuilder[V]) slot(current dslot[V], old *dslot[V], prior *s
 	if sameKey {
 		s.keyBytes = prior.keyBytes
 	} else {
-		raw, err := json.Marshal(current.key)
+		// The key as Codec.auto writes it (dictJSONKey), so the size
+		// matches the encoding.
+		raw, err := json.Marshal(dictJSONKey(current.key))
 		if err != nil {
 			return nil
 		}

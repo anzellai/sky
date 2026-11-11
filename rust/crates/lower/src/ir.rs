@@ -438,3 +438,57 @@ pub enum GoTypeDef {
     /// `type Name = Underlying` transparent alias.
     Alias(GoTy),
 }
+
+/// The Go type text a `sky:"<field>,<declared>"` tag (and a generated codec's
+/// shape) carries for `t`: `codegen::render_ty`'s text, except that a `Dict`
+/// whose key is not a `String` names its key kind, `rt.SkyDict[@i:V]` (`i`
+/// Int, `f` Float, `c` Char, `b` Bool).
+///
+/// The Go type `rt.SkyDict[V]` erases the key, and `Codec.auto` writes a
+/// non-String key as its plain text (`"10"`, v0.29.9). The reflective walker
+/// reads the kind here to turn a plain key back into the stored key, so a
+/// decoded `Dict Int v` holds Int keys at every depth (a key-generic helper
+/// hands back an `Int`, never a `String`). The Go field type is unchanged.
+pub fn declared_ty(t: &GoTy) -> String {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
+        GoTy::Bare(p) => p.go_name().to_string(),
+        GoTy::Unit => "struct{}".to_string(),
+        GoTy::Any => "any".to_string(),
+        GoTy::Named(n, args) if args.is_empty() => n.clone(),
+        GoTy::Named(n, args) => {
+            let a: Vec<String> = args.iter().map(declared_ty).collect();
+            format!("{n}[{}]", a.join(", "))
+        }
+        GoTy::Slice(t) => format!("[]{}", declared_ty(t)),
+        GoTy::Map(k, v) => {
+            let marker = match k.as_ref() {
+                GoTy::Bare(Prim::Int) => "@i:",
+                GoTy::Bare(Prim::Float) => "@f:",
+                GoTy::Bare(Prim::Rune) => "@c:",
+                GoTy::Bare(Prim::Bool) => "@b:",
+                _ => "",
+            };
+            format!("rt.SkyDict[{marker}{}]", declared_ty(v))
+        }
+        GoTy::Func(ps, r) => {
+            let a: Vec<String> = ps.iter().map(declared_ty).collect();
+            format!("func({}) {}", a.join(", "), declared_ty(r))
+        }
+        GoTy::Tuple(xs) => match xs.len() {
+            2..=9 => {
+                let a: Vec<String> = xs.iter().map(declared_ty).collect();
+                format!("rt.T{}[{}]", xs.len(), a.join(", "))
+            }
+            _ => "rt.SkyTupleN".to_string(),
+        },
+        GoTy::TyVar(n) => n.clone(),
+        GoTy::Struct(fs) => {
+            let parts: Vec<String> = fs
+                .iter()
+                .map(|(n, t)| format!("{} {}", n.as_str(), declared_ty(t)))
+                .collect();
+            format!("struct{{ {} }}", parts.join("; "))
+        }
+    })
+}

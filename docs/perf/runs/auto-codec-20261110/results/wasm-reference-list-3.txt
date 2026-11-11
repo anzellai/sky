@@ -1,0 +1,10 @@
+goos: js
+goarch: wasm
+pkg: sky-app
+BenchmarkAutoCodec/encode/list/3MB         	      15	 138168542 ns/op	  22.76 MB/s	29571338 B/op	  283426 allocs/op
+BenchmarkAutoCodec/encode/list/3MB         	      16	 135797904 ns/op	  23.15 MB/s	29571340 B/op	  283426 allocs/op
+BenchmarkAutoCodec/encode/list/3MB         	      13	 163571633 ns/op	  19.22 MB/s	29571337 B/op	  283426 allocs/op
+BenchmarkAutoCodec/decode/list/3MB         	       4	 691639168 ns/op	   4.55 MB/s	35842340 B/op	 1004720 allocs/op
+BenchmarkAutoCodec/decode/list/3MB         	       6	 368915968 ns/op	   8.52 MB/s	35842425 B/op	 1004721 allocs/op
+BenchmarkAutoCodec/decode/list/3MB         	       6	 359345963 ns/op	   8.75 MB/s	35842425 B/op	 1004721 allocs/op
+PASS

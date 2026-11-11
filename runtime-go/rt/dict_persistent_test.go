@@ -358,7 +358,7 @@ func TestDictJSONMatchesTheMapItReplaced(t *testing.T) {
 type dictCodecRec struct {
 	Name  string          `sky:"name,string"`
 	Score SkyDict[int]    `sky:"score,rt.SkyDict[int]"`
-	Tags  SkyDict[string] `sky:"tags,rt.SkyDict[string]"`
+	Tags  SkyDict[string] `sky:"tags,rt.SkyDict[@i:string]"`
 }
 
 // Codec.auto encodes a record's Dict field as a JSON object and decodes it

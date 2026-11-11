@@ -12,9 +12,9 @@ type spaPublicationKV struct {
 }
 
 func (s *spaPublicationKV) Get(key string) (string, bool) { return s.values.Get(key) }
-func (s *spaPublicationKV) Set(key, value string) {
+func (s *spaPublicationKV) Set(key, value string) error {
 	s.calls = append(s.calls, "set")
-	s.values.Set(key, value)
+	return s.values.Set(key, value)
 }
 func (s *spaPublicationKV) Remove(key string) {
 	s.calls = append(s.calls, "remove")

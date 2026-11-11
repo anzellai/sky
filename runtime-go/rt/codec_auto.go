@@ -495,9 +495,9 @@ func codecAutoEncodeTypedMemoAt(rv reflect.Value, declaredType string, snake boo
 		return codecAutoCurrencyCodeExpected(rv)
 	}
 	if declaredType != "" {
-		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyDict["); ok && rv.IsValid() && rv.CanInterface() {
+		if _, val, ok := codecDeclaredDict(declaredType); ok && rv.IsValid() && rv.CanInterface() {
 			if d, ok := rv.Interface().(skyDictAny); ok {
-				return codecAutoEncodeDictAt(d, strings.TrimSuffix(inner, "]"), snake, snapshot)
+				return codecAutoEncodeDictAt(d, val, snake, snapshot)
 			}
 		}
 		if inner, ok := strings.CutPrefix(declaredType, "map["); ok && rv.IsValid() && rv.Kind() == reflect.Map {
@@ -626,7 +626,15 @@ var currencyTags = func() map[string]int {
 
 // Codec_autoEnc : a -> Value. Reflects the record into a JSON object Value.
 func Codec_autoEnc(snakeArg, record any) any {
-	raw, err := codecAutoEncodeVal(reflect.ValueOf(record), AsBool(snakeArg))
+	snake := AsBool(snakeArg)
+	// A compiler-generated codec for this record type gives the same tree
+	// without reflection (codec_auto_gen.go).
+	if gen, ctx := autoCodecFor(reflect.TypeOf(record), snake); gen != nil {
+		if raw, err := gen.tree(record, ctx); err == nil {
+			return JsonValue{raw: raw}
+		}
+	}
+	raw, err := codecAutoEncodeVal(reflect.ValueOf(record), snake)
 	if err != nil {
 		// FAIL LOUD, never silently null. Encoding can't return a `Result` (the
 		// Sky signature is `a -> Value`), and returning `null` here silently threw
@@ -724,39 +732,39 @@ func codecAutoDecodeValW(rt reflect.Type, raw any, snake bool, w reflect.Value) 
 		}
 		return reflect.Value{}, fmt.Errorf("Codec.auto: cannot decode kind %s", rt.Kind())
 	case reflect.String:
-		s, ok := raw.(string)
-		if !ok {
-			return reflect.Value{}, fmt.Errorf("Codec.auto: expected String, got %s", jsonValueKind(raw))
+		s, err := AutoDecString(raw)
+		if err != nil {
+			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(s).Convert(rt), nil
 	case reflect.Bool:
-		b, ok := raw.(bool)
-		if !ok {
-			return reflect.Value{}, fmt.Errorf("Codec.auto: expected Bool, got %s", jsonValueKind(raw))
+		b, err := AutoDecBool(raw)
+		if err != nil {
+			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(b).Convert(rt), nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n, err := codecStrictInt(raw)
+		n, err := AutoDecInt(raw)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(n).Convert(rt), nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		n, err := codecStrictInt(raw)
+		n, err := AutoDecInt(raw)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(uint64(n)).Convert(rt), nil
 	case reflect.Float32, reflect.Float64:
-		f, ok := jsonDecodeFloat(raw)
-		if !ok {
-			return reflect.Value{}, fmt.Errorf("Codec.auto: expected Float, got %s", jsonValueKind(raw))
+		f, err := AutoDecFloat(raw)
+		if err != nil {
+			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(f).Convert(rt), nil
 	case reflect.Slice:
-		items, ok := raw.([]any)
-		if !ok {
-			return reflect.Value{}, fmt.Errorf("Codec.auto: expected Array, got %s", jsonValueKind(raw))
+		items, err := AutoDecList(raw)
+		if err != nil {
+			return reflect.Value{}, err
 		}
 		out := reflect.MakeSlice(rt, len(items), len(items))
 		for i, it := range items {
@@ -794,12 +802,13 @@ func codecAutoDecodeValW(rt reflect.Type, raw any, snake bool, w reflect.Value) 
 		}
 		if isSkyMaybeType(rt) {
 			out := reflect.New(rt).Elem()
-			if raw == nil {
+			just, err := AutoDecMaybe(raw)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			if !just {
 				out.FieldByName("Tag").SetInt(1) // Nothing
 				return out, nil
-			}
-			if _, ok := raw.(codecJustNull); ok {
-				return reflect.Value{}, fmt.Errorf("Codec.auto: %s", codecJustNullMsg)
 			}
 			out.FieldByName("Tag").SetInt(0) // Just
 			inner, err := codecAutoDecodeValW(out.FieldByName("JustValue").Type(), raw, snake, codecWitnessJust(w))
@@ -833,9 +842,9 @@ func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool, w reflect.Value
 	if codecOpaqueStruct(rt) {
 		return reflect.Value{}, codecUndecodableError(codecOpaqueTypeName(rt))
 	}
-	m, ok := raw.(map[string]any)
-	if !ok {
-		return reflect.Value{}, fmt.Errorf("Codec.auto: expected object for %s", rt.Name())
+	m, err := AutoDecObject(raw, rt.Name())
+	if err != nil {
+		return reflect.Value{}, err
 	}
 	out := reflect.New(rt).Elem()
 	for i := 0; i < rt.NumField(); i++ {
@@ -843,13 +852,12 @@ func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool, w reflect.Value
 		if f.PkgPath != "" {
 			continue
 		}
-		key := skyColKey(f, snake)
-		val, present := m[key]
 		// A required (non-Maybe) field absent from the object is a decode
-		// error — no more silent zero-value fill (C2). A Maybe field may be
+		// error, no silent zero-value fill (C2). A Maybe field may be
 		// omitted: val is nil, which codecAutoDecodeTyped decodes to Nothing.
-		if !present && !codecFieldOptional(f) {
-			return reflect.Value{}, fmt.Errorf("Codec.auto: missing required field %q", key)
+		val, err := AutoDecField(m, skyColKey(f, snake), codecFieldOptional(f))
+		if err != nil {
+			return reflect.Value{}, err
 		}
 		fv, err := codecAutoDecodeTypedW(f.Type, skyTagType(f), val, snake, codecWitnessField(w, rt, i))
 		if err != nil {
@@ -879,23 +887,22 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 		if isRegisteredEnum(declaredType) {
 			switch gt.Kind() {
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				name := codecRawStr(raw)
-				if ord, ok := enumOrdinalForName(declaredType, name); ok {
-					return reflect.ValueOf(int64(ord)).Convert(gt), nil
+				ord, err := AutoDecEnumName(declaredType, raw)
+				if err != nil {
+					return reflect.Value{}, err
 				}
-				// Unknown enum value: error rather than silently defaulting to
-				// ordinal 0 (the first variant) — that was silent corruption (C2).
-				return reflect.Value{}, fmt.Errorf("Codec.auto: unknown %s value %q", declaredType, name)
+				return reflect.ValueOf(ord).Convert(gt), nil
 			}
 		}
 		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyMaybe["); ok && isSkyMaybeType(gt) {
 			out := reflect.New(gt).Elem()
-			if raw == nil {
+			just, err := AutoDecMaybe(raw)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			if !just {
 				out.FieldByName("Tag").SetInt(1)
 				return out, nil
-			}
-			if _, ok := raw.(codecJustNull); ok {
-				return reflect.Value{}, fmt.Errorf("Codec.auto: %s", codecJustNullMsg)
 			}
 			out.FieldByName("Tag").SetInt(0)
 			iv, err := codecAutoDecodeTypedW(out.FieldByName("JustValue").Type(), strings.TrimSuffix(inner, "]"), raw, snake, codecWitnessJust(w))
@@ -906,9 +913,9 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 			return out, nil
 		}
 		if elem, ok := strings.CutPrefix(declaredType, "[]"); ok && gt.Kind() == reflect.Slice {
-			items, isList := raw.([]any)
-			if !isList {
-				return reflect.Value{}, fmt.Errorf("Codec.auto: expected Array, got %s", jsonValueKind(raw))
+			items, err := AutoDecList(raw)
+			if err != nil {
+				return reflect.Value{}, err
 			}
 			out := reflect.MakeSlice(gt, len(items), len(items))
 			for i, it := range items {
@@ -929,8 +936,8 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 		// `rt.SkyADT` alias and cannot tell Money from Decimal from a user ADT,
 		// so it errored "cannot derive data-carrying ADT". List/Maybe already
 		// threaded their element type; Dict was the gap.
-		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyDict["); ok && isSkyDictType(gt) {
-			return codecAutoDecodeDict(gt, strings.TrimSuffix(inner, "]"), raw, snake, w)
+		if kind, val, ok := codecDeclaredDict(declaredType); ok && isSkyDictType(gt) {
+			return codecAutoDecodeDictKeyed(gt, kind, val, raw, snake, w)
 		}
 		if inner, ok := strings.CutPrefix(declaredType, "map["); ok && gt.Kind() == reflect.Map {
 			close := strings.IndexByte(inner, ']')
@@ -1193,7 +1200,9 @@ func codecAutoDecodeVariant(gt reflect.Type, raw any, snake bool) (reflect.Value
 			if err != nil {
 				return reflect.Value{}, fmt.Errorf("%v (in the variant %s)", err, tag)
 			}
-			out.Field(i).Set(fv)
+			// The payload was read by its Go type, which erases a Dict's key
+			// kind: convert its keys by the field's declared type.
+			out.Field(i).Set(codecRetagDicts(fv, skyTagType(f)))
 		}
 	}
 	res := reflect.New(gt).Elem()
@@ -1228,6 +1237,26 @@ func Codec_autoDecoder(snakeArg, witness any) any {
 	}
 	wt := reflect.TypeOf(witness)
 	wv := reflect.ValueOf(witness)
+	snake := AsBool(snakeArg)
+	// A compiler-generated codec reads the same value and the same errors
+	// without reflection (codec_auto_gen.go). The blank only matters for a
+	// Json.Value slot, which a generated codec never has.
+	if gen, _ := autoCodecFor(wt, snake); gen != nil {
+		return JsonDecoder{run: func(raw any) any {
+			if gen, ctx := autoCodecFor(wt, snake); gen != nil {
+				v, err := gen.dec(raw, ctx)
+				if err != nil {
+					return Err[any, any](ErrDecode(err.Error()))
+				}
+				return Ok[any, any](v)
+			}
+			v, err := codecAutoDecodeValW(wt, raw, snake, wv)
+			if err != nil {
+				return Err[any, any](ErrDecode(err.Error()))
+			}
+			return Ok[any, any](v.Interface())
+		}}
+	}
 	return JsonDecoder{run: func(raw any) any {
 		v, err := codecAutoDecodeValW(wt, raw, AsBool(snakeArg), wv)
 		if err != nil {
@@ -1556,9 +1585,12 @@ func codecAutoEncodeDictAt(d skyDictAny, valType string, snake bool, snapshot *c
 		k string
 		v any
 	}
+	// Each key is written in its JSON form (dictJSONKey: `"10"` for an Int
+	// key, never the stored `"\u0001i10"`), and the entries are sorted
+	// byte-wise by it. The generated codecs (AutoDictSorted) write the same.
 	pairs := make([]kv, 0, d.dictLen())
 	d.dictRangeAny(func(k string, v any) bool {
-		pairs = append(pairs, kv{k, v})
+		pairs = append(pairs, kv{dictJSONKey(k), v})
 		return true
 	})
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].k < pairs[j].k })
@@ -1583,19 +1615,27 @@ func codecAutoEncodeDictAt(d skyDictAny, valType string, snake bool, snapshot *c
 // the declared value type when the caller has one ("" decodes by the Go
 // value type alone).
 func codecAutoDecodeDict(gt reflect.Type, valType string, raw any, snake bool, w reflect.Value) (reflect.Value, error) {
+	return codecAutoDecodeDictKeyed(gt, 0, valType, raw, snake, w)
+}
+
+// codecAutoDecodeDictKeyed is codecAutoDecodeDict for a Dict whose key kind
+// the declared type names (codecDeclaredDict): each object key becomes the
+// stored key of that kind (dictKeysFromJSON).
+func codecAutoDecodeDictKeyed(gt reflect.Type, kind byte, valType string, raw any, snake bool, w reflect.Value) (reflect.Value, error) {
 	// A value of the blank Dict is each value's blank: a `Dict String
 	// Json.Value` with a JSON blank value reads its values as JSON (v0.29.2
 	// sixth Judge).
 	wElem := codecWitnessDictValue(w)
-	m, ok := raw.(map[string]any)
-	if !ok {
-		return reflect.Value{}, fmt.Errorf("Codec.auto: expected object for Dict, got %s", jsonValueKind(raw))
+	// Entries are read in sorted key order (AutoDecDict), so the first
+	// failing entry does not depend on Go's map order.
+	keys, raws, err := AutoDecDict(raw)
+	if err != nil {
+		return reflect.Value{}, err
 	}
 	proto := reflect.Zero(gt).Interface().(skyDictAny)
 	vt := proto.dictValueType()
-	keys := make([]string, 0, len(m))
-	vals := make([]any, 0, len(m))
-	for k, v := range m {
+	vals := make([]any, 0, len(keys))
+	for _, v := range raws {
 		var vv reflect.Value
 		var err error
 		if valType != "" {
@@ -1606,14 +1646,13 @@ func codecAutoDecodeDict(gt reflect.Type, valType string, raw any, snake bool, w
 		if err != nil {
 			return reflect.Value{}, err
 		}
-		keys = append(keys, k)
 		if vv.IsValid() {
 			vals = append(vals, vv.Interface())
 		} else {
 			vals = append(vals, nil)
 		}
 	}
-	out, err := proto.dictFromEntries(keys, vals, true)
+	out, err := proto.dictFromEntries(dictKeysFromJSON(kind, keys), vals, true)
 	if err != nil {
 		return reflect.Value{}, err
 	}

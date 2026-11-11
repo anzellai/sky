@@ -45,6 +45,7 @@ package rt
 // end and the exit drain start concurrently share one snapshot.
 
 import (
+	"bytes"
 	cryptorand "crypto/rand"
 	"encoding/hex"
 	"os"
@@ -72,6 +73,71 @@ type procTreeRoot struct {
 	pid    int
 	start  uint64 // the child's start time, recorded at spawn
 	cookie string // "" for a withClearEnv child
+}
+
+// procEnvState is the outcome of reading one variable from a process.
+type procEnvState int
+
+const (
+	procEnvAbsent procEnvState = iota // read, and the variable is not there (or unreadable)
+	procEnvFound                      // read, and the value is complete
+	procEnvUnsure                     // the read may be torn (the process is in execve): read again
+)
+
+// procEnvScan finds `name=` among NUL-separated strings. An area with no
+// `key=value` string at all, or a match in a last string that has no closing
+// NUL, may be a read taken during execve and is procEnvUnsure. (A process
+// whose environment is really empty is then read once per sweep round, which
+// is bounded by procTreeRounds.)
+func procEnvScan(b []byte, name string) (string, procEnvState) {
+	prefix := []byte(name + "=")
+	parts := bytes.Split(b, []byte{0})
+	any := false
+	for i, s := range parts {
+		if bytes.IndexByte(s, '=') > 0 {
+			any = true
+		}
+		if bytes.HasPrefix(s, prefix) {
+			if i == len(parts)-1 {
+				return "", procEnvUnsure // no closing NUL: possibly cut off
+			}
+			return string(s[len(prefix):]), procEnvFound
+		}
+	}
+	if !any {
+		return "", procEnvUnsure
+	}
+	return "", procEnvAbsent
+}
+
+// procEnvLookup is the platform reader; a test replaces it.
+var procEnvLookup = procEnvValue
+
+// procCookieOf reads a process's tree cookie. A value that does not have the
+// form newProcTreeCookie makes (32 lowercase hex digits) is a torn read, not
+// another cookie, so it is procEnvUnsure.
+func procCookieOf(pid int) (string, procEnvState) {
+	v, st := procEnvLookup(pid, procTreeCookieEnv)
+	if st != procEnvFound {
+		return "", st
+	}
+	if !procCookieForm(v) {
+		return "", procEnvUnsure
+	}
+	return v, procEnvFound
+}
+
+func procCookieForm(v string) bool {
+	if len(v) != 32 {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func newProcTreeCookie() string {
@@ -133,7 +199,7 @@ func procTreeSweepNow(roots []procTreeRoot) {
 		if _, done := targets[p.pid]; done || p.pid <= 1 || p.pid == self {
 			continue
 		}
-		if procTreeMember(p, rootPid, snap, cookies) {
+		if member, _ := procTreeMember(p, rootPid, snap, cookies); member {
 			add(p)
 		}
 	}
@@ -146,17 +212,22 @@ func procTreeSweepNow(roots []procTreeRoot) {
 		if err != nil {
 			return
 		}
-		found := 0
+		found, unsure := 0, 0
 		for _, p := range snap {
 			if p.pid <= 1 || p.pid == self {
 				continue
 			}
-			if procTreeMember(p, rootPid, snap, cookies) {
+			member, maybe := procTreeMember(p, rootPid, snap, cookies)
+			if member {
 				procKillVerified(p)
 				found++
+			} else if maybe {
+				unsure++
 			}
 		}
-		if found == 0 {
+		// Stop only when a round finds nothing AND reads no process in
+		// execve: such a process is read again in the next round.
+		if found == 0 && unsure == 0 {
 			return
 		}
 	}
@@ -165,8 +236,9 @@ func procTreeSweepNow(roots []procTreeRoot) {
 // procTreeMember reports whether p belongs to a root's tree by session,
 // group or cookie. A session / group match is used only while no OTHER
 // process holds the root's pid (if one does, the pid was reused and the
-// session with that id is not the child's).
-func procTreeMember(p procInfo, roots map[int]procTreeRoot, snap []procInfo, cookies map[string]bool) bool {
+// session with that id is not the child's). unsure is true when p is not
+// known to be a member because its environment read may be torn.
+func procTreeMember(p procInfo, roots map[int]procTreeRoot, snap []procInfo, cookies map[string]bool) (member, unsure bool) {
 	for _, id := range [2]int{p.sid, p.pgid} {
 		r, ok := roots[id]
 		if !ok {
@@ -175,18 +247,21 @@ func procTreeMember(p procInfo, roots map[int]procTreeRoot, snap []procInfo, coo
 		if procPidReused(r, snap) {
 			continue
 		}
-		return true
+		return true, false
 	}
 	if len(cookies) == 0 {
-		return false
+		return false, false
 	}
 	// A process that started before every root cannot descend from one:
 	// skip reading its environment (the common case, and the costly one).
 	if p.start != 0 && procRootsMinStart(roots) != 0 && p.start < procRootsMinStart(roots) {
-		return false
+		return false, false
 	}
-	c, ok := procEnvValue(p.pid, procTreeCookieEnv)
-	return ok && cookies[c]
+	c, st := procCookieOf(p.pid)
+	if st == procEnvUnsure {
+		return false, true
+	}
+	return st == procEnvFound && cookies[c], false
 }
 
 // procRootsMinStart is the earliest known start time among the roots (0 when

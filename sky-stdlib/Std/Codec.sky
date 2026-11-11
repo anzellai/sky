@@ -145,6 +145,7 @@ type alias CodecPayload a =
     , vck : List (Value -> Maybe String)
     , vcs : List ( String, Value -> Maybe String )
     , prb : List String
+    , jsn : a -> Maybe String
     }
 
 -- | The JSON Schema of the JSON a codec reads and writes. `exact` is `True`
@@ -668,7 +669,16 @@ toValue (Codec c) =
 -- | Encode to a compact JSON string.
 toJson : Codec a -> a -> String
 toJson (Codec c) x =
-    E.encode 0 (c.enc x)
+    -- An `auto` codec whose record type has a generated typed codec writes
+    -- the text in one pass (`jsn`); every other codec, and a value the
+    -- generated codec hands back (a NaN Float), encodes its tree.
+    case c.jsn x of
+
+        Just s ->
+            s
+
+        Nothing ->
+            E.encode 0 (c.enc x)
 
 
 -- | Decode from a JSON string.
@@ -720,6 +730,7 @@ string =
         , fck = \_ -> []
         , vck = []
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = []
         }
 
@@ -737,6 +748,7 @@ int =
         , fck = \_ -> []
         , vck = []
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = []
         }
 
@@ -754,6 +766,7 @@ float =
         , fck = \_ -> []
         , vck = []
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = []
         }
 
@@ -772,6 +785,7 @@ bool =
         , fck = \_ -> []
         , vck = []
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = []
         }
 
@@ -801,6 +815,7 @@ decimal =
         , fck = \_ -> []
         , vck = [ valueCheck decimalDecoder ]
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = []
         }
 
@@ -880,6 +895,7 @@ moneyIn cur =
             , fck = \_ -> []
             , vck = [ valueCheck dec ]
             , vcs = []
+            , jsn = \_ -> Nothing
             , prb =
                 case canonical of
 
@@ -958,6 +974,7 @@ moneyObject =
         , fck = \_ -> []
         , vck = [ valueCheck moneyObjectDecoder ]
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = []
         }
 
@@ -977,6 +994,7 @@ isoCurrency =
         , fck = \_ -> []
         , vck = [ valueCheck isoCurrencyDecoder ]
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = []
         }
 
@@ -1036,6 +1054,7 @@ value =
         , fck = \_ -> []
         , vck = []
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = []
         }
 
@@ -1125,6 +1144,7 @@ maybeWith lenient (Codec c) =
             , fck = \_ -> []
             , vck = checkIf (nul || hasCheck c.vck) (D.nullable inner)
             , vcs = []
+            , jsn = \_ -> Nothing
             , prb = c.prb
             }
 
@@ -1143,6 +1163,7 @@ list (Codec c) =
         , fck = \_ -> []
         , vck = checkIf (hasCheck c.vck) (D.list c.dec)
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = c.prb
         }
 
@@ -1183,6 +1204,7 @@ result (Codec ce) (Codec ca) =
             , fck = \_ -> []
             , vck = checkIf (hasCheck ce.vck || hasCheck ca.vck) dec
             , vcs = []
+            , jsn = \_ -> Nothing
             , prb = ce.prb ++ ca.prb
             }
 
@@ -1219,6 +1241,7 @@ dict (Codec ck) (Codec cv) =
                 (D.list
                     (D.map2 (\_ _ -> ()) (D.index 0 ck.dec) (D.index 1 cv.dec)))
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = ck.prb ++ cv.prb
         }
 
@@ -1386,6 +1409,7 @@ domainFailureCodec =
         , fck = \_ -> []
         , vck = []
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb = []
         }
 
@@ -1420,6 +1444,7 @@ map to from (Codec c) =
         , fck = c.fck
         , vck = c.vck
         , vcs = c.vcs
+        , jsn = \_ -> Nothing
         , prb = c.prb
         }
 
@@ -1550,6 +1575,7 @@ buildObject (ObjectCodec o) =
                 _ ->
                     [ valueCheck (objectDecoder o.cols o.decValue) ]
         , vcs = o.vcks
+        , jsn = \_ -> Nothing
         , prb =
             o.oprb
                 ++ (case repeatedKey o.cols o.cols of
@@ -1761,6 +1787,7 @@ autoBase snake witness =
                     _ ->
                         [ valueCheck dec ]
             , vcs = checks
+            , jsn = \r -> autoJsonK snake r
             , prb = colProblems cols
             }
 
@@ -1876,6 +1903,7 @@ autoWith overrides witness =
                     _ ->
                         [ valueCheck dec ]
             , vcs = checks
+            , jsn = \_ -> Nothing
             , prb = problems
             }
 
@@ -2085,6 +2113,13 @@ autoDecoderOverridesK =
     Ffi.kernel "Codec_autoDecoderOverrides"
 
 
+-- The JSON text of a record whose type has a generated typed codec (v0.29.9,
+-- runtime-go/rt/codec_auto_gen.go), else Nothing.
+autoJsonK : Bool -> a -> Maybe String
+autoJsonK =
+    Ffi.kernel "Codec_autoJson"
+
+
 autoDecoderK : Bool -> a -> Decoder a
 autoDecoderK =
     Ffi.kernel "Codec_autoDecoder"
@@ -2262,6 +2297,7 @@ taggedUnion toTagged variants =
             -- (v0.29.2 fifth Judge). Its own reader is the check.
             , vck = [ valueCheck dec ]
             , vcs = []
+            , jsn = \_ -> Nothing
             , prb =
                 armsProblems arms
                     ++ (case repeatedName (armTags arms) (armTags arms) of
@@ -2375,6 +2411,7 @@ enum pairs =
         , fck = \_ -> []
         , vck = [ valueCheck (enumDecoder pairs) ]
         , vcs = []
+        , jsn = \_ -> Nothing
         , prb =
             case repeatedName (enumNames pairs) (enumNames pairs) of
 

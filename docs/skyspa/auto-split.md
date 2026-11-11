@@ -1220,7 +1220,12 @@ A guard that reaches a server effect cannot run in the client; the build warns.
 
 **Persistence.** Every `web:app` build with a derivable `init` model persists
 the client model to `localStorage` and restores it on reload
-(`Spa.withModelDecoder` + `Spa.withModelEncoder`). On a full page load
+(`Spa.withModelDecoder` + `Spa.withModelEncoder`). The codec is
+`Codec.auto` of the model `init ()` returns (`spaModelBlank_`), so the model
+may use `let` bindings, `init`'s argument and private bindings of a sibling
+module that declares `init` (v0.29.9; before, a copy of the model's text
+named them in the client entry and the build failed with `Undefined name`).
+On a full page load
 the client restores the stored model and takes from the SSR seed ONLY the fields
 the server settled for THIS page (R2): the session fields, the fields the
 `withRequest` hook writes (it runs on every request, so they are a constant list,

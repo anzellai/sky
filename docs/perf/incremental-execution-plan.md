@@ -133,7 +133,7 @@ semantics, and asynchronous storage cannot silently add a reload loss window.
 ## Cycle 3 restricted encoding witness
 
 The compiler-proven canonical encoder may retain one successful next-model JSON
-result up to the existing 1.5 MB persistence cap, together with its actual model.
+result up to the existing 1.5 MB persistence cap (3 MB since v0.29.9), together with its actual model.
 A bounded sufficient identity check covers closed tagged records, Maybe,
 primitive bits, immutable strings and the existing immutable List slice
 representation. A list requires the same data pointer, visible length and nil
@@ -258,7 +258,7 @@ hosted workflow result.
 ## Cycle 4 bounded synchronous field path
 
 The first storage implementation preserves the synchronous v2 localStorage
-format and 1.5 MB post-exclusion limit. A successful original full encode plus
+format and 1.5 MB post-exclusion limit (3 MB since v0.29.9). A successful original full encode plus
 closed-type proof establishes per-field encoding validity, exact byte lengths
 and bounded retained field bytes. Later steps compare bounded sufficient field
 witnesses and encode changed fields, including excluded fields whose failures
@@ -540,7 +540,7 @@ walks the rest of the tree with the same delegated calls and errors and
 reports the exact length. The mixed persistence engine uses it for an unknown
 field whose bytes cannot be stored: an excluded field, the previous Model's
 sign-out projection, and a field after the selected snapshot passed the
-1.5 MB cap. The reference path (an encoder the runtime cannot look inside)
+1.5 MB cap (3 MB since v0.29.9). The reference path (an encoder the runtime cannot look inside)
 parses the encoder's JSON once per step for the identity, the exclusions and
 the sign-out check (`runtime-go/rt/spa_persist_index.go`), builds the stripped
 snapshot only when it fits the cap, and reuses the previous step's parse when
@@ -1389,3 +1389,15 @@ keeps these limits separate from the passing compiler/runtime/browser checks.
 This bounded implementation is ready for code review; a fresh private app
 artifact and its typing measurement remain required before claiming the whole
 production interaction is faster. No universal model-size guarantee is made.
+
+## Note: cap and quota (v0.29.9)
+
+`spaPersistMaxBytes` is 3,000,000 bytes from v0.29.9 (it was 1,500,000). The
+smallest per-origin `localStorage` limit measured in headless WebKit, Firefox
+and Chromium (Playwright 1.59, 2026-11-10) is 5,241,856 UTF-16 code units for
+keys plus values, so a capped blob leaves at least 42% of it free. Measurements
+above that name 1.5 MB keep the cap they were taken under. `spaKV.Set` now
+returns an error: a refused write keeps the stored value, warns once per page,
+counts `sky_spa_persist_write_failures_total`, and fences writes of the failed
+size or larger until a smaller write succeeds (`spa_persist.go`
+`spaPersistSetFailed`).

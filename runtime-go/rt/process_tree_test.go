@@ -147,16 +147,89 @@ func TestProcessTreeCookie_IsInTheChildEnvironment(t *testing.T) {
 	if len(c.data) != 32 || c.data != h.treeCookie {
 		t.Fatalf("child cookie %q, handle cookie %q", c.data, h.treeCookie)
 	}
-	// Polled: while the shell execs sleep the argument area is briefly
-	// empty on macOS.
+	// Polled: while the shell execs sleep the read can be empty or cut off,
+	// which procCookieOf reports as procEnvUnsure, never as a value.
 	var v string
-	var ok bool
+	st := procEnvUnsure
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-		if v, ok = procEnvValue(h.pid, procTreeCookieEnv); ok {
+		if v, st = procCookieOf(h.pid); st == procEnvFound {
 			break
 		}
 	}
-	if !ok || v != h.treeCookie {
-		t.Fatalf("the platform reader found %q (%v) in the child, want %q", v, ok, h.treeCookie)
+	if st != procEnvFound || v != h.treeCookie {
+		t.Fatalf("the platform reader found %q (state %d) in the child, want %q", v, st, h.treeCookie)
+	}
+}
+
+// TestProcEnvScan_TornReadIsUnsure: a read taken while a process is in
+// execve (empty, or a cut-off last string) is never taken as a value. A CI
+// run read "d4" for a 32-digit cookie this way.
+func TestProcEnvScan_TornReadIsUnsure(t *testing.T) {
+	const name = procTreeCookieEnv
+	full := "0123456789abcdef0123456789abcdef"
+	cases := []struct {
+		in   string
+		want procEnvState
+		val  string
+	}{
+		{"", procEnvUnsure, ""},
+		{"\x00\x00\x00", procEnvUnsure, ""},
+		{"A=1\x00" + name + "=d4", procEnvUnsure, ""},
+		{"A=1\x00" + name + "=" + full + "\x00", procEnvFound, full},
+		{"A=1\x00B=2\x00", procEnvAbsent, ""},
+		{"/bin/sleep\x00\x00sleep\x0030\x00", procEnvUnsure, ""},
+	}
+	for _, c := range cases {
+		v, st := procEnvScan([]byte(c.in), name)
+		if st != c.want || v != c.val {
+			t.Errorf("procEnvScan(%q) = %q, %d; want %q, %d", c.in, v, st, c.val, c.want)
+		}
+	}
+}
+
+// TestProcCookieOf_MalformedValueIsUnsure: a value without the cookie's form
+// (32 lowercase hex digits) is a torn read, so the sweep reads it again.
+func TestProcCookieOf_MalformedValueIsUnsure(t *testing.T) {
+	saved := procEnvLookup
+	defer func() { procEnvLookup = saved }()
+	procEnvLookup = func(int, string) (string, procEnvState) { return "d4", procEnvFound }
+	if _, st := procCookieOf(1); st != procEnvUnsure {
+		t.Fatalf("a short value gave state %d, want procEnvUnsure", st)
+	}
+}
+
+// TestProcTreeSweep_RereadsAProcessInExec: a descendant whose first read is
+// torn is read again in a later round and killed, instead of ending the
+// sweep with it alive.
+func TestProcTreeSweep_RereadsAProcessInExec(t *testing.T) {
+	cookie := newProcTreeCookie()
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
+	pid := cmd.Process.Pid
+	saved := procEnvLookup
+	defer func() { procEnvLookup = saved }()
+	reads := 0
+	procEnvLookup = func(p int, name string) (string, procEnvState) {
+		if p != pid {
+			return "", procEnvAbsent
+		}
+		reads++
+		if reads <= 2 {
+			return "", procEnvUnsure // in execve for the first two reads
+		}
+		return cookie, procEnvFound
+	}
+	// The root is another process (this one's parent stands in: never
+	// killed, since it is not a member by session, group or cookie).
+	procTreeSweepNow([]procTreeRoot{{pid: 0x7ffffffe, cookie: cookie}})
+	done := make(chan struct{})
+	go func() { _, _ = cmd.Process.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("the descendant survived the sweep after %d reads", reads)
 	}
 }

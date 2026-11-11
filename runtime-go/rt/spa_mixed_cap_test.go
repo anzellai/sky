@@ -9,7 +9,7 @@ import (
 // A Model field the compiler cannot prove closed (here a Json.Value) is an
 // "unknown" field of the mixed persistence engine. Its bytes used to be built
 // in full even when nobody could store them: an excluded field, the previous
-// Model's sign-out check, and a snapshot already past the 1.5 MB cap. They are
+// Model's sign-out check, and a snapshot already past the persistence cap. They are
 // now walked and measured only. These tests prove the outcome is unchanged
 // (the differential against the full reference encoder) and that the large
 // buffer is no longer built.

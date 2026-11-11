@@ -68,20 +68,17 @@ func procStatInfo(pid int) (procInfo, bool) {
 	return procInfo{pid: pid, ppid: ppid, pgid: pgid, sid: sid, start: start}, true
 }
 
-// procEnvValue reads one variable from /proc/<pid>/environ. Any failure is
-// "not found" (fail closed).
-func procEnvValue(pid int, name string) (string, bool) {
+// procEnvValue reads one variable from /proc/<pid>/environ. A process that
+// cannot be read (gone, not ours) is procEnvAbsent. A read taken while the
+// process is in execve can be empty or cut off: an empty environment, or a
+// match in a last string with no closing NUL, is procEnvUnsure, so the
+// sweep reads the process again instead of taking it as not a member.
+func procEnvValue(pid int, name string) (string, procEnvState) {
 	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ")
 	if err != nil {
-		return "", false
+		return "", procEnvAbsent
 	}
-	prefix := []byte(name + "=")
-	for _, kv := range bytes.Split(b, []byte{0}) {
-		if bytes.HasPrefix(kv, prefix) {
-			return string(kv[len(prefix):]), true
-		}
-	}
-	return "", false
+	return procEnvScan(b, name)
 }
 
 // procKillVerified kills p only if it is still the process the snapshot saw:

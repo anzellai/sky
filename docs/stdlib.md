@@ -122,6 +122,8 @@ theme = Dict.get "theme" prefs   -- Just "dark"
 >
 > The encoded key carries its own type tag, so the decode works with no type information from the call site — a helper written over `Dict k v`, where the compiler has erased the key, hands back Ints from a `Dict Int v` just as a `Dict Int v`-typed call site does. A `Dict String v` is encoded verbatim, so the shape that crosses into JSON objects, `Std.Db` rows and HTTP headers keeps exactly the keys you gave it.
 >
+> `Codec.auto` writes a non-String key as its plain text, `{"10":"ten"}` for a `Dict Int v` (v0.29.9; before, the internal tagged key reached the JSON). It reads that form and the tagged form older versions wrote, and the decoded Dict holds keys of its own type at every depth.
+>
 > Composite keys (tuple, list, record, custom type) do **not** decode — their stringification is not reversible; see [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
 
 > **Costs.** `get` and `member` are O(1) on a typed dict. `insert`, `remove` and `update` copy the map: O(n) per write, so a fold of n inserts is O(n²). `toList`, `keys`, `values`, `foldl` and `map` sort the keys: O(n log n). For many writes, build the entries as a list and call `Dict.fromList` once: O(n).
@@ -1398,6 +1400,11 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   or give the field its codec (`Codec.autoWith [ ( "items", Codec.list Codec.value ) ] blank`).
   A `Json.Value` slot the blank gives no JSON value (`items = []`, `Dict.empty`, `more = Nothing`,
   at any depth) is a builder problem: a value written there could not be read back.
+  Since v0.29.9 the compiler generates a typed encoder and decoder for a blank
+  whose type is a record of `Bool`, `Int`, `Float`, `String`, enums, records,
+  `Maybe`, `List`, `Dict String` and `Dict Int` (any depth): no reflection, and
+  `Codec.toJson` writes the text in one pass. The text, the value and every
+  error are the same as the reflective path's, which every other record keeps.
   A `Just` written as null (`Just Nothing`, `Just Json.Encode.null`) is refused by a
   `Std.Db.Store` write, wherever the `Maybe` is (a List, a record, a Dict value, a
   variant's payload): it would read back as `Nothing`.

@@ -341,7 +341,7 @@ try {
       return { present: true, bytes: bytes.length, digest: Array.from(new Uint8Array(digest), n => n.toString(16).padStart(2, "0")).join("") };
     });
     const stored = await storedProof();
-    assert(stored.present && stored.bytes < 1500000, "Missing under-cap baseline snapshot");
+    assert(stored.present && stored.bytes < 3000000, "Missing under-cap baseline snapshot");
     const loaded = await measure("oversized-dict-load", 64, () => page.locator("#oversized-dict").click());
     assert.equal(await page.locator("#items").textContent(), "64");
     assert.equal(await page.locator("#sample").textContent(), "x".repeat(128));
@@ -351,7 +351,7 @@ try {
     oversizedCheckpoints.push({ name: "loaded", ...stored });
 
     // The completed load warms the certificate; only this one-entry change is
-    // measured below. Sixty-three 32KiB values remain above the unchanged cap.
+    // measured below. Sixty-three 64KiB values remain above the unchanged cap.
     const changed = await measure("oversized-dict-change", 64, () => page.locator("#change-collection").click());
     assert.equal(await page.locator("#sample").textContent(), "changed");
     assert.equal(await page.locator("#items").textContent(), "64");
@@ -367,7 +367,7 @@ try {
       assert(changed.encodedBytes + changed.fieldEncodedBytes + changed.deferredFieldEncodedBytes < 1024, "Changed primitive Dict encoded unchanged large values");
     } else {
       assert.equal(changed.modelEncodes, 2);
-      assert(changed.encodedBytes > 1500000, "Reference did not encode the oversized model");
+      assert(changed.encodedBytes > 3000000, "Reference did not encode the oversized model");
     }
     assert.deepEqual(await storedProof(), stored, "Changed oversized Dict changed persisted state");
     oversizedCheckpoints.push({ name: "changed", ...stored });
@@ -378,19 +378,19 @@ try {
     assert.deepEqual(await storedProof(), stored, "NoWrite reload changed persisted state");
     oversizedCheckpoints.push({ name: "reloaded", ...stored });
   }
-  mark("huge-load-start", 100000);
+  mark("huge-load-start", 200000);
   const beforeHuge = (await snapshot()).steps;
   await page.locator("#huge").click();
   await completedSteps(beforeHuge + 1);
-  await page.waitForFunction(() => document.querySelector("#items")?.textContent === "100000");
-  mark("huge-load-end", 100000);
+  await page.waitForFunction(() => document.querySelector("#items")?.textContent === "200000");
+  mark("huge-load-end", 200000);
   const hugeInput = page.locator("#typing");
   if (await hugeInput.inputValue() !== "") {
     const beforeHugeClear = (await snapshot()).steps;
     await hugeInput.fill("");
     await completedSteps(beforeHugeClear + 1);
   }
-  const oversized = await measure("oversized-typing", 100000, async () => {
+  const oversized = await measure("oversized-typing", 200000, async () => {
     // Keep the same messages, but bound each automation action separately.
     // The known slow reference path can exceed the default 30-second action
     // timeout for ten characters together. Browser/guard deadlines stay intact.
@@ -415,7 +415,7 @@ try {
   await page.getByText("visible row 200", { exact: true }).waitFor();
   await hugeInput.focus();
   await hugeInput.evaluate(el => el.setSelectionRange(el.value.length, el.value.length));
-  const visible = await measure("visible-rows-typing", 100000, () => hugeInput.pressSequentially("k"));
+  const visible = await measure("visible-rows-typing", 200000, () => hugeInput.pressSequentially("k"));
   assert.equal(visible.steps, 2, "Large view dropped typing messages");
   assert.equal(visible.viewCalls, 2, "This persistence stage must preserve full view execution");
   assert.equal(await hugeInput.inputValue(), "abcdefghijk", "Large view lost typed input");

@@ -391,6 +391,10 @@ func asSpaRoutes(v any) []spaRoute {
 // checked with the same `Encodable` rule by the split at build time
 // (project/src/spa_split.rs, `codec_auto_unencodable`).
 func Spa_modelToJson(model any) any {
+	// A generated codec writes the same text in one pass (codec_auto_gen.go).
+	if s := Codec_autoJsonT(true, model); s.Tag == 0 {
+		return s.JustValue
+	}
 	return JsonEnc_encode(0, Codec_autoEnc(true, model))
 }
 

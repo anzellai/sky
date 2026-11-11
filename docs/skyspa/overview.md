@@ -535,6 +535,18 @@ A `web:app` client writes its whole model to `localStorage` after each
 state (a form draft, a counter, a dismissed banner). `localStorage` is shared by
 every tab of the origin, and it holds ONE model: the last one any tab wrote.
 
+**Size and quota (v0.29.9).** A saved model is at most 3,000,000 bytes of
+JSON (it was 1,500,000). A larger model is not saved, and a reload starts from
+the seed. The smallest per-origin `localStorage` limit measured in WebKit,
+Firefox and Chromium is 5,241,856 characters, so the cap leaves at least 42% of
+it for the origin's other keys. If the browser still refuses a write (another
+key fills the quota, a browser with a smaller quota, private mode), the client
+keeps the copy it saved before, writes one `console.warn` for the page, counts
+the failure as `sky_spa_persist_write_failures_total` (`reason` = `quota` or
+`other`), and does not try a model of that size or larger again until a
+smaller one is saved. The update itself always runs. Keep large or
+fast-changing data on the server, or name it in `App.withPersistExclude`.
+
 **A stored model restores only for the identity it was stored under.** The
 identity is the value of the session field(s): the model fields of type
 `Session` / `Maybe Session` that a server branch writes, which the backend signs

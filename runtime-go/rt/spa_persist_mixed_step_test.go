@@ -12,9 +12,9 @@ type spaMixedTraceKV struct {
 	trace *[]string
 }
 
-func (s *spaMixedTraceKV) Set(key, value string) {
+func (s *spaMixedTraceKV) Set(key, value string) error {
 	*s.trace = append(*s.trace, "write")
-	s.spaPublicationKV.Set(key, value)
+	return s.spaPublicationKV.Set(key, value)
 }
 func (s *spaMixedTraceKV) Remove(key string) {
 	*s.trace = append(*s.trace, "remove")

@@ -602,7 +602,10 @@ clearing its `Session` field, or a server branch that changes it) ends that id
 in the session store, so a copy of the cookie from before sign-out is refused.
 The cookie lives as long as the token (30 days; `App.withSessionLifetime` /
 `SKY_SPA_SESSION_LIFETIME`), and `App.withPersistExclude [ … ]` names model
-fields a reload never takes from an earlier page (server-owned values).
+fields a reload never takes from an earlier page (server-owned values). The
+client keeps a saved model of up to 3,000,000 bytes of JSON (v0.29.9). A write
+the browser refuses keeps the copy saved before, warns once on the console and
+never stops `update`.
 A form submitted while the client hydrates (Enter, a phone's "Go" key, a
 password manager) is held, and the client submits it once it is live (clicks
 before then are not replayed). Text typed into a field before the client is

@@ -5362,9 +5362,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // `gen_frontend`.
     // (`strip_init_cmd` is decided above, beside the `init` RPC plan.)
     let init_tainted = sorted_scope(init_mod);
-    // `init`'s PURE model expr — the client SSR model decoder is derived from it
-    // (`Codec.fromJson (Codec.auto <model>)`). Read from whichever module
-    // declares `init`, so the decoder is emitted for a sibling init too.
+    // `init`'s PURE model — the client SSR model decoder is derived from it
+    // (`Codec.fromJson (Codec.auto <model>)`). The blank is the model `init ()`
+    // returns ([`init_pure_model_expr`]), so every name the model uses is read
+    // in `init`'s own scope, for an entry or a sibling init alike.
     //
     // SPA-8: the SAME pure model expr also derives the client PERSISTENCE codec
     // (`Codec.auto <model>`), so it is computed for EVERY app — not only one
@@ -9115,11 +9116,6 @@ fn inject_config_builder_into_main(main_text: &str, marker: &str, line: &str) ->
     out
 }
 
-/// The pure MODEL expression of `init` (the first element of its returned
-/// `( model, cmd )` tuple), as source text. Used to derive the SSR model DECODER
-/// blank client-side: `Codec.fromJson (Codec.auto <model>) json` (design §4.5).
-/// The model expression is pure (no `db` reference in the standard shape), so the
-/// derived decoder is NOT server-tainted and survives into the frontend tree.
 /// The names the pure model expression of `init` REFERENCES (plain and the last
 /// segment of qualified references), read from the syntax tree. Record field
 /// labels and string contents are not references.
@@ -9143,9 +9139,24 @@ fn init_model_refs(init_val: &syntax::ast::Decl) -> Vec<String> {
     out
 }
 
-fn init_pure_model_expr(src: &str, init_val: &syntax::ast::Decl) -> Option<String> {
-    let (model, _cmd) = init_return_tuple(init_val)?;
-    Some(slice(src, model.syntax()).to_string())
+/// The client's first-paint model BLANK: the model `init ()` returns, read in
+/// the generated client entry (`Codec.auto <blank>` derives the model codec).
+///
+/// It is a CALL, never a copy of the model expression's text. The text kept
+/// its references and lost their scope: a name bound by a `let` around the
+/// returned tuple, a parameter of `init`, and a private top-level binding (or
+/// import alias) of a sibling module that declares `init` all named nothing in
+/// the client entry, so `sky build --target web:app` failed with `Undefined
+/// name` on a program that checks (`examples/19-skyforum`: `seedComments`).
+/// `init` itself is in the client tree and resolves every name in its own
+/// scope; the generated backend calls `init ()` on the same contract (its SSR
+/// seed, the request model). `None` when `init` does not return a
+/// `( model, cmd )` tuple the split can read (the caller then omits the codec).
+fn init_pure_model_expr(_src: &str, init_val: &syntax::ast::Decl) -> Option<String> {
+    init_return_tuple(init_val)?;
+    Some(
+        "case init () of\n        ( spaBlankModel_, _ ) ->\n            spaBlankModel_".to_string(),
+    )
 }
 
 /// Drill `init`'s value body (through any `let … in`) to its returning

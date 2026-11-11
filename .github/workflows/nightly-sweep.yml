@@ -282,12 +282,17 @@ jobs:
       # and Std.Ui.Terminal on a PTY: canvas drawing, echo, copy, a redraw
       # loop within its frame budget, resize, a dropped SSE connection and a
       # reload repainted from the server's screen. Strict CSP.
+      # The browser download is its own step: inside the gate's 10 min budget it
+      # timed out on a slow mirror, and the gate then read as a canvas failure.
+      - name: Install the WebKit and Firefox browsers for the canvas gate
+        timeout-minutes: 15
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" webkit firefox
+          npx playwright install webkit firefox
       - name: Gate — Std.Ui canvas, text wrapping + terminal e2e (strict CSP)
         timeout-minutes: 10
         # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" webkit firefox
-          npx playwright install webkit firefox
           command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
           scripts/ui-canvas-terminal-e2e.sh
       - name: Gate — Sky.Spa large-model step cost and reference semantics

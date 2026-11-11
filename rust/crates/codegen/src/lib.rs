@@ -5,7 +5,8 @@
 //! arrives already ordered (L4).
 
 use lower::ir::{
-    GoBin, GoExpr, GoExprKind, GoFuncDecl, GoItem, GoParam, GoStmt, GoTy, GoTypeDef, Prim,
+    declared_ty, GoBin, GoExpr, GoExprKind, GoFuncDecl, GoItem, GoParam, GoStmt, GoTy, GoTypeDef,
+    Prim,
 };
 
 /// A thin append-only buffer (doc 08 §1). One growing `String`; O(n) total.
@@ -219,10 +220,21 @@ fn emit_type(w: &mut Writer, name: &str, def: &GoTypeDef) {
                 if fields.is_empty() {
                     w.line(&format!("type {vstruct} struct {{}}"));
                 } else {
+                    // A payload field that holds a Dict with a non-String key
+                    // carries a `sky:"v<i>,<declared>"` tag naming the key kind
+                    // (`lower::ir::declared_ty`), so `Codec.auto` reads the keys
+                    // back as that kind. Other payload fields stay untagged.
                     let fs: Vec<String> = fields
                         .iter()
                         .enumerate()
-                        .map(|(i, t)| format!("V{i} {}", render_ty(t)))
+                        .map(|(i, t)| {
+                            let declared = declared_ty(t);
+                            if declared.contains("rt.SkyDict[@") {
+                                format!("V{i} {} `sky:\"v{i},{declared}\"`", render_ty(t))
+                            } else {
+                                format!("V{i} {}", render_ty(t))
+                            }
+                        })
                         .collect();
                     w.line(&format!("type {vstruct} struct {{ {} }}", fs.join("; ")));
                 }
@@ -275,7 +287,10 @@ fn emit_type(w: &mut Writer, name: &str, def: &GoTypeDef) {
                 .map(|(n, t)| {
                     let ty = render_ty(t);
                     let sky_name = sky_field_name(n);
-                    format!("{n} {ty} `sky:\"{sky_name},{ty}\"`")
+                    // The declared type names a Dict's key kind, which the Go
+                    // type erases (`lower::ir::declared_ty`).
+                    let declared = declared_ty(t);
+                    format!("{n} {ty} `sky:\"{sky_name},{declared}\"`")
                 })
                 .collect();
             w.line(&format!("type {name} struct {{ {} }}", fs.join("; ")));

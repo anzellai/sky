@@ -1,0 +1,53 @@
+module Main exposing (main)
+
+{-| The large-model encoding research fixture (a list of records, a Dict of
+records, one large String) as a Sky program, so the compiler emits its
+generated typed codecs. bench_test.go measures them against the reflective
+walker in the emitted Go package.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict exposing (Dict)
+import Std.Codec as Codec
+import Std.Log exposing (println)
+
+type alias Item =
+    { id : Int
+    , name : String
+    , email : String
+    , score : Float
+    , active : Bool
+    , note : String
+    , tags : List String
+    , parent : Maybe Int
+    }
+
+type alias Model =
+    { title : String
+    , user : String
+    , count : Int
+    , ratio : Float
+    , online : Bool
+    , filter : Maybe String
+    , items : List Item
+    , index : Dict String Item
+    , blob : String
+    }
+
+
+blank : Model
+blank =
+    { title = ""
+    , user = ""
+    , count = 0
+    , ratio = 0.0
+    , online = False
+    , filter = Nothing
+    , items = []
+    , index = Dict.empty
+    , blob = ""
+    }
+
+
+main =
+    println (Codec.toJson (Codec.auto blank) blank)

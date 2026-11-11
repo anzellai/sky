@@ -17,12 +17,13 @@ type spaClosedIntegrationKV struct {
 }
 
 func (k *spaClosedIntegrationKV) Get(key string) (string, bool) { v, ok := k.values[key]; return v, ok }
-func (k *spaClosedIntegrationKV) Set(key, value string) {
+func (k *spaClosedIntegrationKV) Set(key, value string) error {
 	*k.trace = append(*k.trace, "write")
 	k.values[key] = value
 	if k.afterSet != nil {
 		k.afterSet()
 	}
+	return nil
 }
 func (k *spaClosedIntegrationKV) Remove(key string) {
 	*k.trace = append(*k.trace, "remove")

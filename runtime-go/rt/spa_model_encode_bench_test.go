@@ -79,13 +79,33 @@ func benchLMFixture(shape string, jsonBytes int) benchLMModel {
 
 func BenchmarkSpaModelEncode(b *testing.B) {
 	for _, shape := range []string{"list", "dict", "blob"} {
-		for _, mb := range []int{1, 10} {
+		for _, mb := range []int{1, 3, 10} {
 			m := benchLMFixture(shape, mb<<20)
 			b.Run(fmt.Sprintf("%s/%dMB", shape, mb), func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					out := Spa_modelToJson(m).(string)
 					b.SetBytes(int64(len(out)))
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkSpaModelDecode is the boot decode, Spa_modelFromJson, on the
+// reflective walker (these test types have no generated codec; the compiled
+// comparison is docs/perf/runs/auto-codec-20261110).
+func BenchmarkSpaModelDecode(b *testing.B) {
+	for _, shape := range []string{"list", "dict", "blob"} {
+		for _, mb := range []int{1, 3} {
+			text := Spa_modelToJson(benchLMFixture(shape, mb<<20)).(string)
+			b.Run(fmt.Sprintf("%s/%dMB", shape, mb), func(b *testing.B) {
+				b.ReportAllocs()
+				b.SetBytes(int64(len(text)))
+				for i := 0; i < b.N; i++ {
+					if r := Spa_modelFromJson(benchLMModel{}, text).(SkyResult[any, any]); r.Tag != 0 {
+						b.Fatal(r.ErrValue)
+					}
 				}
 			})
 		}
