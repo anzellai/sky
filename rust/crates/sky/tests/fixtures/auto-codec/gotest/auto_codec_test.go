@@ -47,9 +47,12 @@ func decodeWith(snake bool, doc string) (string, any) {
 	return "", r.OkValue
 }
 
-// same is reflect.DeepEqual with a NaN equal to itself.
+// same is reflect.DeepEqual with a NaN equal to itself, or Sky equality: a
+// `Dict Int v` the generated decoder read holds each plain key (`"10"`) as the
+// Int key the program would build, where the walker, which does not know the
+// key type, keeps the key as read. Both are the same Sky value.
 func same(a, b any) bool {
-	return reflect.DeepEqual(a, b) || fmt.Sprintf("%#v", a) == fmt.Sprintf("%#v", b)
+	return reflect.DeepEqual(a, b) || fmt.Sprintf("%#v", a) == fmt.Sprintf("%#v", b) || rt.Eq(a, b) == true
 }
 
 var strs = []string{"", "a", "<b>&\"x\"", "  ", "é", "\x01\x1f", string([]byte{0xff, 'a'}), "naïve 🌍", `\`, "</script>"}
@@ -86,7 +89,7 @@ func randModel(r *rand.Rand) Main_Model_R {
 	for i := r.Intn(4); i > 0; i-- {
 		nk, nv = append(nk, fmt.Sprint(r.Intn(200)-100)), append(nv, randStr(r))
 	}
-	m.ByNum = rt.AutoDictBuild(nk, nv)
+	m.ByNum = rt.AutoDictBuildIntKeys(nk, nv)
 	switch r.Intn(3) {
 	case 0:
 		m.Nested = rt.Nothing[rt.SkyMaybe[int]]()
@@ -148,6 +151,7 @@ func mutations(doc string) []string {
 		rep(`"userName":`, `"x":`),
 		rep(`"by_id":{`, `"by_id":{"zz":1,"aa":2,`),
 		rep(`"by_num":{`, `"by_num":{"9":"n","1":6,`),
+		rep(`"by_num":{`, `"by_num":{"\u0001i7":"old","7":"new","07":"x","k":"y",`),
 		rep(`"nested":`, `"nested":"x","y":`),
 		rep(`"colors":[`, `"colors":["Green",-0,`),
 		rep(`"scores":{`, `"scores":{"q":"1",`),
@@ -215,6 +219,29 @@ func TestGeneratedCodecsMatchTheWalker(t *testing.T) {
 			for _, doc := range mutations(text) {
 				checkDecode(t, snake, doc)
 			}
+		}
+	}
+}
+
+// A model saved by v0.29.8 (a Sky.Spa client's saved model) wrote a Dict Int
+// key in the runtime's stored form. Both paths still read it, to the model the
+// program built, and write it back in the plain form.
+func TestGeneratedCodecsReadAV0298SavedModel(t *testing.T) {
+	m := Main_Model_R{UserName: "a", ByNum: rt.AutoDictBuildIntKeys([]string{"2", "10"}, []string{"two", "ten"}),
+		Nested: rt.Nothing[rt.SkyMaybe[int]](), Pinned: rt.Nothing[Main_Item_R]()}
+	text := reference(func() encoded { return encodeWith(true, m) }).text
+	if !strings.Contains(text, `"by_num":{"10":"ten","2":"two"}`) {
+		t.Fatalf("plain keys expected: %s", text)
+	}
+	old := strings.Replace(text, `"by_num":{"10":"ten","2":"two"}`, `"by_num":{"\u0001i10":"ten","\u0001i2":"two"}`, 1)
+	for _, doc := range []string{text, old} {
+		checkDecode(t, true, doc)
+		errText, got := decodeWith(true, doc)
+		if errText != "" || rt.Eq(got, m) != true {
+			t.Fatalf("decode of %s: %q %#v", doc, errText, got)
+		}
+		if again := encodeWith(true, got).text; again != text {
+			t.Fatalf("re-encode of %s = %s, want %s", doc, again, text)
 		}
 	}
 }

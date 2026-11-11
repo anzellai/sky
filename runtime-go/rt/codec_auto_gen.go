@@ -259,8 +259,8 @@ func (c *AutoCodecCtx) Enum(declared string, ord int64) any {
 	return ord
 }
 
-// AutoDictSorted is a Dict's entries in the walker's order: stored keys sorted
-// byte-wise.
+// AutoDictSorted is a Dict's entries in the walker's order, keyed as the
+// walker writes them: each key's JSON form (dictJSONKey), sorted byte-wise.
 func AutoDictSorted[V any](d SkyDict[V]) ([]string, []V) {
 	type kv struct {
 		k string
@@ -269,7 +269,7 @@ func AutoDictSorted[V any](d SkyDict[V]) ([]string, []V) {
 	pairs := make([]kv, 0, d.dictLen())
 	d.dictRangeAny(func(k string, v any) bool {
 		tv, _ := v.(V)
-		pairs = append(pairs, kv{k, tv})
+		pairs = append(pairs, kv{dictJSONKey(k), tv})
 		return true
 	})
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].k < pairs[j].k })
@@ -437,6 +437,32 @@ func AutoDecDict(raw any) ([]string, []any, error) {
 // AutoDictBuild builds the Dict a decode read (dictFromEntries, foreign).
 func AutoDictBuild[V any](keys []string, vals []V) SkyDict[V] {
 	return dictBuild(keys, vals, true)
+}
+
+// AutoDictBuildIntKeys builds a `Dict Int v` a decode read. A key in the
+// plain form Codec.auto writes since v0.29.9 (`"10"`) becomes the stored Int
+// key, so the Dict is the one the program built. A key in the stored form
+// that v0.29.8 and earlier wrote (`"\u0001i10"`) is already one. Any other
+// key stays as it was read, as the reflective walker keeps it, so the two
+// paths read every document alike (the Dict is foreign, and a lookup of an
+// Int key still probes its bare form). A document that holds one key in both
+// forms (`"10"` and `"\u0001i10"`) keeps both entries, as the walker does.
+func AutoDictBuildIntKeys[V any](keys []string, vals []V) SkyDict[V] {
+	seen := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		seen[k] = true
+	}
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = k
+		if n, err := strconv.Atoi(k); err == nil && strconv.Itoa(n) == k {
+			if enc := encodeDictKey(n); !seen[enc] {
+				out[i] = enc
+				seen[enc] = true
+			}
+		}
+	}
+	return dictBuild(out, vals, true)
 }
 
 // AutoDecIntT reads an Int as the Go int a record field holds.

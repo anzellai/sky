@@ -222,7 +222,9 @@ func (b spaDictSummaryBuilder[V]) slot(current dslot[V], old *dslot[V], prior *s
 	if sameKey {
 		s.keyBytes = prior.keyBytes
 	} else {
-		raw, err := json.Marshal(current.key)
+		// The key as Codec.auto writes it (dictJSONKey), so the size
+		// matches the encoding.
+		raw, err := json.Marshal(dictJSONKey(current.key))
 		if err != nil {
 			return nil
 		}

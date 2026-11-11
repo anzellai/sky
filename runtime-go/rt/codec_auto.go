@@ -1583,9 +1583,12 @@ func codecAutoEncodeDictAt(d skyDictAny, valType string, snake bool, snapshot *c
 		k string
 		v any
 	}
+	// Each key is written in its JSON form (dictJSONKey: `"10"` for an Int
+	// key, never the stored `"\u0001i10"`), and the entries are sorted
+	// byte-wise by it. The generated codecs (AutoDictSorted) write the same.
 	pairs := make([]kv, 0, d.dictLen())
 	d.dictRangeAny(func(k string, v any) bool {
-		pairs = append(pairs, kv{k, v})
+		pairs = append(pairs, kv{dictJSONKey(k), v})
 		return true
 	})
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].k < pairs[j].k })

@@ -43,8 +43,16 @@ pub(crate) enum Shape {
     Record(String),
     Maybe(Box<Shape>),
     List(Box<Shape>),
-    /// `Dict String v` or `Dict Int v` (both `rt.SkyDict[V]`).
-    Dict(Box<Shape>),
+    /// `Dict String v` or `Dict Int v` (both `rt.SkyDict[V]`). The key
+    /// decides how a decode reads an object key (`AutoDictBuildIntKeys`).
+    Dict(DictKey, Box<Shape>),
+}
+
+/// The key type of a generated `Dict` codec.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DictKey {
+    Str,
+    Int,
 }
 
 /// A record type's fields: Go field name and Go type, in declaration order.
@@ -78,9 +86,14 @@ fn shape_in(
             e, records, enums, visiting,
         )?))),
         GoTy::Map(k, v) => match k.as_ref() {
-            GoTy::Bare(Prim::Str) | GoTy::Bare(Prim::Int) => Ok(Shape::Dict(Box::new(shape_in(
-                v, records, enums, visiting,
-            )?))),
+            GoTy::Bare(Prim::Str) => Ok(Shape::Dict(
+                DictKey::Str,
+                Box::new(shape_in(v, records, enums, visiting)?),
+            )),
+            GoTy::Bare(Prim::Int) => Ok(Shape::Dict(
+                DictKey::Int,
+                Box::new(shape_in(v, records, enums, visiting)?),
+            )),
             _ => Err(format!("Dict key {}", render_goty(k))),
         },
         GoTy::Named(n, args) if args.is_empty() && enums.contains(n) => Ok(Shape::Enum(n.clone())),
@@ -157,7 +170,20 @@ fn go_ty(s: &Shape, records: &Records) -> String {
         Shape::Enum(n) | Shape::Record(n) => n.clone(),
         Shape::Maybe(e) => format!("rt.SkyMaybe[{}]", go_ty(e, records)),
         Shape::List(e) => format!("[]{}", go_ty(e, records)),
-        Shape::Dict(e) => format!("rt.SkyDict[{}]", go_ty(e, records)),
+        Shape::Dict(_, e) => format!("rt.SkyDict[{}]", go_ty(e, records)),
+    }
+}
+
+/// The identity of a shape's generated functions: its Go type, plus each
+/// `Dict`'s key type, which the Go type erases (`Dict String v` and `Dict Int
+/// v` are both `rt.SkyDict[V]` but decode their keys differently).
+fn shape_key(s: &Shape, records: &Records) -> String {
+    match s {
+        Shape::Maybe(e) => format!("rt.SkyMaybe[{}]", shape_key(e, records)),
+        Shape::List(e) => format!("[]{}", shape_key(e, records)),
+        Shape::Dict(DictKey::Str, e) => format!("rt.SkyDict[{}]", shape_key(e, records)),
+        Shape::Dict(DictKey::Int, e) => format!("rt.SkyDict[int:{}]", shape_key(e, records)),
+        _ => go_ty(s, records),
     }
 }
 
@@ -182,7 +208,7 @@ impl Gen<'_> {
 
     /// The index of the functions for a non-leaf shape (queued on first use).
     fn id(&mut self, s: &Shape) -> usize {
-        let key = go_ty(s, self.records);
+        let key = shape_key(s, self.records);
         if let Some(i) = self.ids.get(&key) {
             return *i;
         }
@@ -301,7 +327,7 @@ impl Gen<'_> {
                 let call = self.dec_call(e, "raw");
                 let _ = writeln!(dec, "\tjust, err := rt.AutoDecMaybe(raw)\n\tif err != nil {{ return out, err }}\n\tif !just {{ return rt.Nothing[{inner}](), nil }}\n\tx, err := {call}\n\tif err != nil {{ return out, err }}\n\treturn rt.Just(x), nil");
             }
-            Shape::Dict(e) => {
+            Shape::Dict(key, e) => {
                 let _ = writeln!(tree, "\tvar err error\n\t_ = err\n\tks, vs := rt.AutoDictSorted(v)\n\tout := make([]any, len(vs))\n\tfor i, e := range vs {{");
                 tree.push_str(&indent(&self.tree_store(e, "e", "out[i]", "nil")));
                 let _ = writeln!(tree, "\t}}\n\treturn rt.AutoObj(ks, out), nil");
@@ -310,7 +336,13 @@ impl Gen<'_> {
                 let _ = writeln!(app, "\t}}\n\treturn append(b, '}}'), nil");
                 let inner = go_ty(e, self.records);
                 let call = self.dec_call(e, "r");
-                let _ = writeln!(dec, "\tks, rs, err := rt.AutoDecDict(raw)\n\tif err != nil {{ return out, err }}\n\tvs := make([]{inner}, len(rs))\n\tfor i, r := range rs {{\n\t\tif vs[i], err = {call}; err != nil {{ return out, err }}\n\t}}\n\treturn rt.AutoDictBuild(ks, vs), nil");
+                // An Int key reads both its plain form (`"10"`, written
+                // since v0.29.9) and the stored form older versions wrote.
+                let build = match key {
+                    DictKey::Str => "AutoDictBuild",
+                    DictKey::Int => "AutoDictBuildIntKeys",
+                };
+                let _ = writeln!(dec, "\tks, rs, err := rt.AutoDecDict(raw)\n\tif err != nil {{ return out, err }}\n\tvs := make([]{inner}, len(rs))\n\tfor i, r := range rs {{\n\t\tif vs[i], err = {call}; err != nil {{ return out, err }}\n\t}}\n\treturn rt.{build}(ks, vs), nil");
             }
             _ => unreachable!("records go through emit_record, leaves are inline"),
         }
@@ -343,7 +375,7 @@ fn records_of(s: &Shape, records: &Records, out: &mut BTreeSet<String>, enums: &
                 }
             }
         }
-        Shape::Maybe(e) | Shape::List(e) | Shape::Dict(e) => records_of(e, records, out, enums),
+        Shape::Maybe(e) | Shape::List(e) | Shape::Dict(_, e) => records_of(e, records, out, enums),
         _ => {}
     }
 }
@@ -643,6 +675,44 @@ mod tests {
         assert!(text.contains("rt.RegisterAutoCodec[Main_Model_R](true"));
         assert!(text.contains("rt.RegisterAutoCodec[Main_Model_R](false"));
         assert!(text.contains(r#""user_name""#) && text.contains(r#""userName""#));
+    }
+
+    /// `Dict String String` and `Dict Int String` have one Go type
+    /// (`rt.SkyDict[string]`) but decode their keys differently: each gets its
+    /// own functions, and only the Int one reads a plain key as an Int key.
+    #[test]
+    fn an_int_keyed_dict_gets_its_own_key_reading_decoder() {
+        let s = GoTy::Bare(Prim::Str);
+        let mut records = Records::new();
+        records.insert(
+            "Main_Pair_R".into(),
+            vec![
+                (
+                    "ByName".into(),
+                    GoTy::Map(Box::new(s.clone()), Box::new(s.clone())),
+                ),
+                (
+                    "ByNum".into(),
+                    GoTy::Map(Box::new(GoTy::Bare(Prim::Int)), Box::new(s.clone())),
+                ),
+            ],
+        );
+        let mut witness = BTreeMap::new();
+        witness.insert(("Main_Pair_R".to_string(), true), named("Main_Pair_R"));
+        let roots = witness.keys().cloned().collect();
+        let text =
+            generate(&roots, &witness, &records, &BTreeSet::new()).expect("the record is eligible");
+        assert_eq!(
+            text.matches("return rt.AutoDictBuildIntKeys(ks, vs), nil")
+                .count(),
+            1,
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("return rt.AutoDictBuild(ks, vs), nil").count(),
+            1,
+            "{text}"
+        );
     }
 
     #[test]

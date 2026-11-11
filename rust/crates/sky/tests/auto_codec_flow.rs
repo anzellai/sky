@@ -100,9 +100,10 @@ fn generated_codecs_match_the_reflective_walker() {
     assert_eq!(lines.last().copied(), Some("round trip ok"), "{stdout}");
     assert!(
         lines[0].starts_with(r#"{"items":[{"title":"a \u003cb\u003e""#)
-            // A Dict Int key is the runtime's encoded key, as the walker
-            // has always written it.
-            && lines[0].contains(r#""by_num":{"\u0001i10":"ten","\u0001i2":"two"}"#)
+            // A Dict Int key is its decimal (v0.29.9), never the runtime's
+            // stored key (`"\u0001i10"`), on the generated path.
+            && lines[0].contains(r#""by_num":{"10":"ten","2":"two"}"#)
+            && !lines[0].contains(r#"\u0001"#)
             && lines[0].contains(r#""nested":3"#)
             && lines[0].contains(r#""price_minor":0"#)
             && lines[1].contains(r#""priceMinor":0"#)
