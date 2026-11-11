@@ -11,6 +11,57 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.9 — generated typed codecs, a 3 MB saved-model cap, plain Dict Int keys, and the web:app first-paint fix (2026-11-11)
+
+### Changed
+
+- **A Sky.Spa client saves a model of up to 3,000,000 bytes (was
+  1,500,000).** The smallest per-origin `localStorage` limit measured in
+  WebKit, Firefox and Chromium is 5,241,856 characters, so the cap still
+  leaves at least 42% of it for the origin's other keys. A larger model is not
+  saved, as before.
+- **`Codec.auto` and `Codec.autoCamel` use compiler-generated typed codecs.**
+  For a record whose fields are `Bool`, `Int`, `Float`, `String`, an enum, a
+  record, `Maybe`, `List`, `Dict String` or `Dict Int` (any depth), the
+  compiler now emits an encoder and a decoder with no reflection, and
+  `Codec.toJson` writes the JSON in one pass. The JSON text, the decoded
+  value and every decode error are the same as before (a differential test
+  and a fuzz target compare them with the reflective path). Other records
+  keep the reflective path. See the perf numbers in
+  `docs/perf/runs/auto-codec-20261110/README.md`.
+
+### Fixed
+
+- **A refused browser write no longer goes unnoticed.** When `localStorage`
+  refuses the saved model (a full quota, a disabled storage), the client
+  keeps the copy saved before, writes one `console.warn` for the page, counts
+  it as `sky_spa_persist_write_failures_total` (`reason` = `quota` or
+  `other`), and does not try a model of that size or larger again until a
+  smaller one is saved. Before, the error was swallowed. The update always
+  runs.
+- **`Codec.auto` writes a `Dict Int` key as its decimal.** A `Dict Int v`
+  field is written `{"10":"ten"}`, not the runtime's internal key
+  `{"\u0001i10":"ten"}`, on the generated and the reflective path (same
+  bytes, keys in byte-wise order as before). A `Float`, `Char` or `Bool` key
+  is written as its plain text too. Round trips worked before, but any other
+  JSON reader saw a wrong key. Old data still decodes: the decoder reads the
+  plain form and the internal form that v0.29.8 and earlier wrote, so a saved
+  Sky.Spa model, an `App.withDurable` snapshot or a stored row from before
+  the upgrade reads as it did. Either way the decoded Dict holds keys of its
+  own type at every depth (a field, a `List`, a `Maybe`, a tuple, a custom
+  type's payload): the compiler now writes each Dict's key type into the
+  declared type the codec reads (`rt.SkyDict[@i:V]`), so a helper written over
+  `Dict k v` gets an `Int` key back, never a `String`.
+- **A `--target web:app` build no longer fails with `Undefined name` in the
+  first-paint model codec.** The split copied the text of `init`'s returned
+  model into the client entry, where a `let` binding around it, `init`'s
+  argument and a private binding of a sibling module that declares `init`
+  named nothing (`examples/19-skyforum`: `seedComments`). The codec now reads
+  the model `init ()` returns.
+- **A `Codec.auto` decode of a `Dict` with several bad entries reports the
+  same error every time.** The entries are now read in key order. Before,
+  which bad entry was named depended on Go's map order.
+
 ## v0.29.8 — sky install prepares the whole Go module graph, so a build after it needs no network (2026-11-10)
 
 ### Fixed
