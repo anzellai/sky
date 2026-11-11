@@ -19,7 +19,7 @@ import time
 
 WORKFLOW = ".github/workflows/release.yml"
 PUBLISHERS = {"release", "docker"}
-EXPECTED_SUCCESS = 50
+EXPECTED_SUCCESS = 54
 MAX_ATTEMPTS = 20
 
 
