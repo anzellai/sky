@@ -265,7 +265,10 @@ func codecDeclaredElem(declared string) string {
 	if e, ok := strings.CutPrefix(declared, "[]"); ok {
 		return e
 	}
-	for _, p := range []string{"rt.SkyMaybe[", "rt.SkyDict[", "rt.SkySet["} {
+	if _, val, ok := codecDeclaredDict(declared); ok {
+		return val
+	}
+	for _, p := range []string{"rt.SkyMaybe[", "rt.SkySet["} {
 		if e, ok := strings.CutPrefix(declared, p); ok {
 			return strings.TrimSuffix(e, "]")
 		}

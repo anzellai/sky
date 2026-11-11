@@ -495,9 +495,9 @@ func codecAutoEncodeTypedMemoAt(rv reflect.Value, declaredType string, snake boo
 		return codecAutoCurrencyCodeExpected(rv)
 	}
 	if declaredType != "" {
-		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyDict["); ok && rv.IsValid() && rv.CanInterface() {
+		if _, val, ok := codecDeclaredDict(declaredType); ok && rv.IsValid() && rv.CanInterface() {
 			if d, ok := rv.Interface().(skyDictAny); ok {
-				return codecAutoEncodeDictAt(d, strings.TrimSuffix(inner, "]"), snake, snapshot)
+				return codecAutoEncodeDictAt(d, val, snake, snapshot)
 			}
 		}
 		if inner, ok := strings.CutPrefix(declaredType, "map["); ok && rv.IsValid() && rv.Kind() == reflect.Map {
@@ -936,8 +936,8 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 		// `rt.SkyADT` alias and cannot tell Money from Decimal from a user ADT,
 		// so it errored "cannot derive data-carrying ADT". List/Maybe already
 		// threaded their element type; Dict was the gap.
-		if inner, ok := strings.CutPrefix(declaredType, "rt.SkyDict["); ok && isSkyDictType(gt) {
-			return codecAutoDecodeDict(gt, strings.TrimSuffix(inner, "]"), raw, snake, w)
+		if kind, val, ok := codecDeclaredDict(declaredType); ok && isSkyDictType(gt) {
+			return codecAutoDecodeDictKeyed(gt, kind, val, raw, snake, w)
 		}
 		if inner, ok := strings.CutPrefix(declaredType, "map["); ok && gt.Kind() == reflect.Map {
 			close := strings.IndexByte(inner, ']')
@@ -1200,7 +1200,9 @@ func codecAutoDecodeVariant(gt reflect.Type, raw any, snake bool) (reflect.Value
 			if err != nil {
 				return reflect.Value{}, fmt.Errorf("%v (in the variant %s)", err, tag)
 			}
-			out.Field(i).Set(fv)
+			// The payload was read by its Go type, which erases a Dict's key
+			// kind: convert its keys by the field's declared type.
+			out.Field(i).Set(codecRetagDicts(fv, skyTagType(f)))
 		}
 	}
 	res := reflect.New(gt).Elem()
@@ -1613,6 +1615,13 @@ func codecAutoEncodeDictAt(d skyDictAny, valType string, snake bool, snapshot *c
 // the declared value type when the caller has one ("" decodes by the Go
 // value type alone).
 func codecAutoDecodeDict(gt reflect.Type, valType string, raw any, snake bool, w reflect.Value) (reflect.Value, error) {
+	return codecAutoDecodeDictKeyed(gt, 0, valType, raw, snake, w)
+}
+
+// codecAutoDecodeDictKeyed is codecAutoDecodeDict for a Dict whose key kind
+// the declared type names (codecDeclaredDict): each object key becomes the
+// stored key of that kind (dictKeysFromJSON).
+func codecAutoDecodeDictKeyed(gt reflect.Type, kind byte, valType string, raw any, snake bool, w reflect.Value) (reflect.Value, error) {
 	// A value of the blank Dict is each value's blank: a `Dict String
 	// Json.Value` with a JSON blank value reads its values as JSON (v0.29.2
 	// sixth Judge).
@@ -1643,7 +1652,7 @@ func codecAutoDecodeDict(gt reflect.Type, valType string, raw any, snake bool, w
 			vals = append(vals, nil)
 		}
 	}
-	out, err := proto.dictFromEntries(keys, vals, true)
+	out, err := proto.dictFromEntries(dictKeysFromJSON(kind, keys), vals, true)
 	if err != nil {
 		return reflect.Value{}, err
 	}

@@ -441,28 +441,11 @@ func AutoDictBuild[V any](keys []string, vals []V) SkyDict[V] {
 
 // AutoDictBuildIntKeys builds a `Dict Int v` a decode read. A key in the
 // plain form Codec.auto writes since v0.29.9 (`"10"`) becomes the stored Int
-// key, so the Dict is the one the program built. A key in the stored form
-// that v0.29.8 and earlier wrote (`"\u0001i10"`) is already one. Any other
-// key stays as it was read, as the reflective walker keeps it, so the two
-// paths read every document alike (the Dict is foreign, and a lookup of an
-// Int key still probes its bare form). A document that holds one key in both
-// forms (`"10"` and `"\u0001i10"`) keeps both entries, as the walker does.
+// key, and a key in the stored form v0.29.8 and earlier wrote (`"\u0001i10"`)
+// is kept, so the Dict is the one the program built. The walker converts the
+// keys of a Dict whose declared type says Int the same way (dictKeysFromJSON).
 func AutoDictBuildIntKeys[V any](keys []string, vals []V) SkyDict[V] {
-	seen := make(map[string]bool, len(keys))
-	for _, k := range keys {
-		seen[k] = true
-	}
-	out := make([]string, len(keys))
-	for i, k := range keys {
-		out[i] = k
-		if n, err := strconv.Atoi(k); err == nil && strconv.Itoa(n) == k {
-			if enc := encodeDictKey(n); !seen[enc] {
-				out[i] = enc
-				seen[enc] = true
-			}
-		}
-	}
-	return dictBuild(out, vals, true)
+	return dictBuild(dictKeysFromJSON('i', keys), vals, true)
 }
 
 // AutoDecIntT reads an Int as the Go int a record field holds.

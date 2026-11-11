@@ -921,44 +921,17 @@ func init() {
 }
 
 // dictsEqual compares two Dicts by content (Sky `==`).
-//
-// A foreign Dict (read from JSON, a Go map, a Std.Db row) may hold a
-// non-String key in its bare form (`"10"`) where a Dict the program built holds
-// the stored form (`"\x01i10"`): Codec.auto writes the bare form, so a decoded
-// model holds it. Both stand for the same key, so a miss tries the other form.
 func dictsEqual(a, b skyDictAny) bool {
 	if a.dictLen() != b.dictLen() {
 		return false
 	}
-	foreign := a.dictForeign() || b.dictForeign()
 	eq := true
 	a.dictRangeAny(func(k string, v any) bool {
 		w, ok := b.dictLookupAny(k)
-		if !ok && foreign {
-			w, ok = dictLookupOtherForm(b, k)
-		}
 		eq = ok && deepEq(v, w)
 		return eq
 	})
 	return eq
-}
-
-// dictLookupOtherForm looks a stored key up under its other form: the bare
-// payload of a tagged non-String key, or each tagged form of a bare key.
-func dictLookupOtherForm(d skyDictAny, k string) (any, bool) {
-	if len(k) >= 2 && k[0] == dictKeyTagByte {
-		switch k[1] {
-		case 'i', 'f', 'c', 'b':
-			return d.dictLookupAny(k[2:])
-		}
-		return nil, false
-	}
-	for _, letter := range []byte{'i', 'f', 'c', 'b'} {
-		if w, ok := d.dictLookupAny(string([]byte{dictKeyTagByte, letter}) + k); ok {
-			return w, true
-		}
-	}
-	return nil, false
 }
 
 // reflectDictOf reads the Dict behind a reflect value: a SkyDict of any value

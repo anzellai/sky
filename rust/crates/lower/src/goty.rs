@@ -253,12 +253,31 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
     base::ensure_stack(|| go_ty_guarded(t, env, cur_mod, params))
 }
 
+/// Run `f` with each `Dict k v` lowered to `GoTy::Map(<k's Go type>, V)`.
+///
+/// A Dict's Go type is `rt.SkyDict[V]` whatever its key, so the lowerer keeps
+/// the key pinned to `Str` (see the `Dict` arm of `app_to_go_with`). The key
+/// type is needed in one place: the declared type of a record field or a
+/// custom type's payload field (`ir::declared_ty`), which tells `Codec.auto`
+/// how to read a Dict's keys back. `codegen::render_ty` ignores the key, so a
+/// type computed here renders the same Go type. The memo is bypassed while
+/// this runs, so no key-kept type reaches any other site.
+pub fn with_dict_keys<R>(f: impl FnOnce() -> R) -> R {
+    let saved = KEEP_DICT_KEYS.with(|k| k.replace(true));
+    let out = f();
+    KEEP_DICT_KEYS.with(|k| k.set(saved));
+    out
+}
+
 fn go_ty_guarded(
     t: &Ty,
     env: &TypeEnv,
     cur_mod: Option<&str>,
     params: &HashMap<Name, GoTy>,
 ) -> GoTy {
+    if KEEP_DICT_KEYS.with(|k| k.get()) {
+        return go_ty_uncached(t, env, cur_mod, params);
+    }
     // A parametric record's Go type depends on `params`; never cache those. Guard
     // hits inside still propagate to `MIN_GUARD_HIT`, so an ancestor that DOES
     // cache correctly sees this subtree's context dependence.
@@ -551,6 +570,10 @@ fn has_unresolved(t: &Ty, params: &HashMap<Name, GoTy>) -> bool {
 }
 
 thread_local! {
+    /// Set while [`with_dict_keys`] runs: a `Dict k v` then lowers to
+    /// `GoTy::Map(<k's Go type>, V)` instead of `GoTy::Map(Str, V)`.
+    static KEEP_DICT_KEYS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+
     /// Field-NAME sets currently being resolved on the stack. A nested record
     /// alias whose field template shares this record's field-name set makes the
     /// `fit` closure's `go_ty(tmpl)` re-enter `select_record_candidate` for the
@@ -1115,7 +1138,15 @@ fn app_to_go_with(
         // `rt.SkyDict[V]`, and narrowing goes through `rt.AsMapT[V]`, which
         // returns one (O(1) for a `SkyDict[V]`). Rendering the key as `goty(k)`
         // would never match that runtime shape, so it stays pinned to `string`.
-        ("Dict", 2) => GoTy::Map(Box::new(GoTy::Bare(Prim::Str)), Box::new(go_arg(1))),
+        ("Dict", 2) => {
+            // The key is kept only for a declared type (`with_dict_keys`).
+            let key = if KEEP_DICT_KEYS.with(|k| k.get()) {
+                go_arg(0)
+            } else {
+                GoTy::Bare(Prim::Str)
+            };
+            GoTy::Map(Box::new(key), Box::new(go_arg(1)))
+        }
         // `Cmd` / `Sub` / `Decoder` / `Value` are handled by the kernel-opaque
         // pre-check at the top of this function, which fires for the qualified
         // form as well. Kept unreachable-but-listed would be a lie; they are

@@ -88,7 +88,8 @@ fn generated_codecs_match_the_reflective_walker() {
         "the fixture's Model must get generated codecs for both key styles"
     );
     assert!(
-        !main_go.contains("rt.RegisterAutoCodec[Main_Mixed_R]"),
+        !main_go.contains("rt.RegisterAutoCodec[Main_Mixed_R]")
+            && !main_go.contains("rt.RegisterAutoCodec[Main_Keyed_R]"),
         "a record with a tuple must keep the reflective path"
     );
 
@@ -107,7 +108,17 @@ fn generated_codecs_match_the_reflective_walker() {
             && lines[0].contains(r#""nested":3"#)
             && lines[0].contains(r#""price_minor":0"#)
             && lines[1].contains(r#""priceMinor":0"#)
-            && lines[2] == r#"{"pair":{"v0":1,"v1":"one"},"count":2}"#,
+            && lines[2] == r#"{"pair":{"v0":1,"v1":"one"},"count":2}"#
+            // `Keyed` keeps the reflective path. Its Dict Int keys are
+            // written plain at every depth, and a key-generic helper reads
+            // each back as an Int, from the plain form and from the stored
+            // form v0.29.8 wrote (2 + 10 + 30 + 40 + 7 + 5 = 94).
+            && lines[3].contains(r#""by_num":{"10":"ten","2":"two"}"#)
+            && !lines[3].contains(r#"\u0001"#)
+            && lines[4] == "keys 94 equal"
+            && lines[5].contains(r#""by_num":{"\u0001i10":"ten","\u0001i2":"two"}"#)
+            && lines[5].contains(r#"{"\u0001i5":"five"}"#)
+            && lines[6] == "keys 94 equal",
         "{stdout}"
     );
 

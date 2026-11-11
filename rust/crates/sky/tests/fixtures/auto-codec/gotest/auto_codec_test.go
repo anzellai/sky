@@ -47,12 +47,10 @@ func decodeWith(snake bool, doc string) (string, any) {
 	return "", r.OkValue
 }
 
-// same is reflect.DeepEqual with a NaN equal to itself, or Sky equality: a
-// `Dict Int v` the generated decoder read holds each plain key (`"10"`) as the
-// Int key the program would build, where the walker, which does not know the
-// key type, keeps the key as read. Both are the same Sky value.
+// same is reflect.DeepEqual with a NaN equal to itself. A `Dict Int v` both
+// paths read holds the same stored keys, so the values are identical.
 func same(a, b any) bool {
-	return reflect.DeepEqual(a, b) || fmt.Sprintf("%#v", a) == fmt.Sprintf("%#v", b) || rt.Eq(a, b) == true
+	return reflect.DeepEqual(a, b) || fmt.Sprintf("%#v", a) == fmt.Sprintf("%#v", b)
 }
 
 var strs = []string{"", "a", "<b>&\"x\"", "  ", "é", "\x01\x1f", string([]byte{0xff, 'a'}), "naïve 🌍", `\`, "</script>"}

@@ -2109,9 +2109,21 @@ fn emit_type_decl(
                     ];
                     return (items, more);
                 }
+                // The struct's field types keep each Dict's key type for the
+                // declared `sky:` tag (`ir::declared_ty`); the Go types render
+                // the same (`rt.SkyDict[V]`).
+                let declared_fields: Vec<(String, GoTy)> = fields
+                    .iter()
+                    .map(|(n, t)| {
+                        let gt = crate::goty::with_dict_keys(|| {
+                            sky_ty_to_go_params(t, env, Some(decl.module.as_str()), &param_map)
+                        });
+                        (capitalize(n), gt)
+                    })
+                    .collect();
                 let mut items = vec![GoItem::Type(
                     decl.go_name.clone(),
-                    GoTypeDef::Struct(go_fields.clone()),
+                    GoTypeDef::Struct(declared_fields),
                 )];
                 items.push(GoItem::Raw(format!(
                     "func init() {{ rt.RegisterGobType({}{{}}) }}",
@@ -2192,7 +2204,17 @@ fn emit_type_decl(
             for (i, (cn, args)) in variants.iter().enumerate() {
                 let ftys: Vec<GoTy> = args.iter().map(&mut collect).collect();
                 let vstruct = format!("{}_{}_V", decl.go_name, cn);
-                variant_defs.push((cn.clone(), i, ftys.clone()));
+                // The payload types keep each Dict's key type for the declared
+                // `sky:` tag, as a record's fields do.
+                let declared_ftys: Vec<GoTy> = args
+                    .iter()
+                    .map(|t| {
+                        crate::goty::with_dict_keys(|| {
+                            sky_ty_to_go_in(t, env, Some(decl.module.as_str()))
+                        })
+                    })
+                    .collect();
+                variant_defs.push((cn.clone(), i, declared_ftys));
                 // typed constructor → returns the sealed interface (struct auto-boxes).
                 let params: Vec<String> = ftys
                     .iter()

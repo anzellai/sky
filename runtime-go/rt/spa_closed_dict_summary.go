@@ -97,7 +97,7 @@ func (c *spaClosedEncodeContext) primitiveDict(value reflect.Value, declared str
 	default:
 		return nil
 	}
-	if declared != "rt.SkyDict["+name+"]" || codecAutoEnumRegisteredAt(name, c.epoch) {
+	if _, val, ok := codecDeclaredDict(declared); !ok || val != name || codecAutoEnumRegisteredAt(name, c.epoch) {
 		return nil
 	}
 	// Only these three wrappers instantiate the generic walker; do not add a

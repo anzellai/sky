@@ -3,7 +3,10 @@ module Main exposing (main)
 {-| Generated typed Codec.auto codecs (v0.29.9). Every shape of the closed
 set: Bool, Int, Float, String, an enum, records (nested), Maybe (nested),
 List (nested), Dict String and Dict Int. `Mixed` holds a tuple, so it keeps
-the reflective path. gotest/auto_codec_test.go compares the generated codecs
+the reflective path. `Keyed` keeps the reflective path too, and holds a Dict Int
+at every depth (a field, in a List, in a Maybe, in a custom type's payload):
+a key-generic helper must read each key back as an Int after a round trip,
+from the plain form and from the stored form v0.29.8 wrote. gotest/auto_codec_test.go compares the generated codecs
 with the reflective walker on this program's own Go types.
 -}
 
@@ -38,6 +41,18 @@ type alias Model =
     , scores : Dict String Float
     , grid : List (List Int)
     , pinned : Maybe Item
+    }
+
+type Shape
+    = Circle (Dict Int String)
+    | Empty
+
+type alias Keyed =
+    { pair : ( Int, String )
+    , byNum : Dict Int String
+    , lists : List (Dict Int Int)
+    , maybeNum : Maybe (Dict Int String)
+    , shape : Shape
     }
 
 type alias Mixed =
@@ -83,6 +98,88 @@ blank =
     }
 
 
+blankKeyed : Keyed
+blankKeyed =
+    { pair = ( 0, "" )
+    , byNum = Dict.empty
+    , lists = []
+    , maybeNum = Nothing
+    , shape = Empty
+    }
+
+
+oneKeyed : Keyed
+oneKeyed =
+    { pair = ( 1, "one" )
+    , byNum = Dict.fromList [ ( 2, "two" ), ( 10, "ten" ) ]
+    , lists = [ Dict.fromList [ ( 30, 1 ) ], Dict.fromList [ ( 40, 2 ) ] ]
+    , maybeNum = Just (Dict.fromList [ ( 7, "seven" ) ])
+    , shape = Circle (Dict.fromList [ ( 5, "five" ) ])
+    }
+
+
+{-| Key-generic: the compiler does not know `k` here. -}
+keysOf : Dict k v -> List k
+keysOf d =
+    List.map Tuple.first (Dict.toList d)
+
+
+sumKeys : Keyed -> Int
+sumKeys k =
+    let
+        shapeKeys =
+            case k.shape of
+
+                Circle d ->
+                    keysOf d
+
+                Empty ->
+                    []
+        maybeKeys =
+            case k.maybeNum of
+
+                Just d ->
+                    keysOf d
+
+                Nothing ->
+                    []
+    in
+        List.foldl
+            (\a b -> a + b)
+            0
+            (keysOf k.byNum ++ List.concatMap keysOf k.lists ++ maybeKeys
+                ++ shapeKeys)
+
+
+{-| The JSON v0.29.8 wrote: each Int key in the runtime's stored form. -}
+storedForm : String -> String
+storedForm text =
+    List.foldl
+        (\n t ->
+            String.replace
+                ("\"" ++ n ++ "\":")
+                ("\"" ++ """\u0001i""" ++ n ++ "\":")
+                t)
+        text
+        [ "2", "10", "30", "40", "7", "5" ]
+
+
+keyedLine : Codec.Codec Keyed -> String -> String
+keyedLine codec text =
+    case Codec.fromJson codec text of
+
+        Ok k ->
+            "keys " ++ String.fromInt (sumKeys k)
+                ++ (if k == oneKeyed then
+                       " equal"
+
+                   else
+                       " DIFFER")
+
+        Err _ ->
+            "keys FAILED"
+
+
 sample : Model
 sample =
     { blank
@@ -105,6 +202,8 @@ main =
         snake = Codec.auto blank
         camel = Codec.autoCamel blank
         mixed = Codec.auto blankMixed
+        keyed = Codec.auto blankKeyed
+        keyedText = Codec.toJson keyed oneKeyed
         text = Codec.toJson snake sample
         back =
             case Codec.fromJson snake text of
@@ -125,5 +224,9 @@ main =
                 [ text
                 , Codec.toJson camel sample
                 , Codec.toJson mixed oneMixed
+                , keyedText
+                , keyedLine keyed keyedText
+                , storedForm keyedText
+                , keyedLine keyed (storedForm keyedText)
                 , back
                 ])

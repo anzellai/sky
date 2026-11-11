@@ -23778,8 +23778,8 @@
       "id": "flow:auto_codec_flow",
       "modules_imported": 3,
       "path": "rust/crates/sky/tests/auto_codec_flow.rs",
-      "refs_generous": 7,
-      "refs_qualified": 6,
+      "refs_generous": 9,
+      "refs_qualified": 8,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []

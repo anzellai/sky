@@ -429,8 +429,10 @@ pub(crate) fn generate(
                         .iter()
                         .map(|(f, _)| lit(&field_key(f, snake)))
                         .collect();
-                    let decl: Vec<String> =
-                        fields.iter().map(|(_, t)| lit(&render_goty(t))).collect();
+                    let decl: Vec<String> = fields
+                        .iter()
+                        .map(|(_, t)| lit(&crate::ir::declared_ty(t)))
+                        .collect();
                     format!(
                         "rt.AutoShape[{r}]([]string{{{}}}, []string{{{}}})",
                         keys.join(", "),

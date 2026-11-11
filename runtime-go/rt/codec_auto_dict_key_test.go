@@ -10,11 +10,13 @@ import (
 // Codec.auto writes a Dict's key as the plain key a JSON reader expects
 // (`"10"` for a `Dict Int v` key 10), never the runtime's internal stored
 // form (`"\u0001i10"`). It reads both: the plain form, and the stored form
-// that v0.29.8 and earlier wrote into saved models and stored rows.
+// that v0.29.8 and earlier wrote into saved models and stored rows. Either
+// way the decoded Dict holds the stored key, because the declared type names
+// the key kind (`rt.SkyDict[@i:V]`), so a key-generic helper reads an Int.
 
 type dictKeyRec struct {
 	Name  string          `sky:"name,string"`
-	ByNum SkyDict[string] `sky:"byNum,rt.SkyDict[string]"`
+	ByNum SkyDict[string] `sky:"byNum,rt.SkyDict[@i:string]"`
 	ByStr SkyDict[int]    `sky:"byStr,rt.SkyDict[int]"`
 }
 
@@ -79,8 +81,13 @@ func dictKeyCheckDecoded(t *testing.T, back dictKeyRec) {
 	if !deepEq(back, want) {
 		t.Fatalf("decoded %#v, want %#v", back, want)
 	}
-	if !deepEq(back.ByNum, want.ByNum) || !deepEq(want.ByNum, back.ByNum) {
-		t.Fatalf("the decoded Dict must equal the built one both ways")
+	if !reflect.DeepEqual(dictContent(back.ByNum), dictContent(want.ByNum)) {
+		t.Fatalf("the decoded Dict must hold the stored keys: %q", dictContent(back.ByNum))
+	}
+	// A key-generic helper (no key type at the call site) reads Ints.
+	keys := AsList(Dict_keys(back.ByNum))
+	if len(keys) != 3 || keys[0] != -1 || keys[1] != 2 || keys[2] != 10 {
+		t.Fatalf("Dict.keys = %#v, want Ints [-1 2 10]", keys)
 	}
 	if got := Dict_get(10, back.ByNum); !deepEq(got, Just[any]("ten")) {
 		t.Fatalf("Dict.get 10 = %#v", got)
@@ -133,5 +140,133 @@ func TestAutoDictBuildIntKeysReadsBothForms(t *testing.T) {
 	both := AutoDictBuildIntKeys([]string{"10", "\x01i10"}, []string{"a", "b"})
 	if both.dictLen() != 2 {
 		t.Fatalf("one key in both forms keeps both entries: %v", dictContent(both))
+	}
+}
+
+// A Dict Int at every depth the walker reads by declared type: in a List, a
+// Maybe, a tuple, and a custom type's payload (read by its Go type, then
+// converted by the payload field's tag).
+type dkShape interface {
+	SkyVariantTag() int
+	SkyVariantName() string
+	isDkShape()
+}
+
+type dkShape_Circle_V struct {
+	V0 SkyDict[string] `sky:"v0,rt.SkyDict[@i:string]"`
+}
+type dkShape_Lines_V struct {
+	V0 []SkyMaybe[SkyDict[int]] `sky:"v0,[]rt.SkyMaybe[rt.SkyDict[@i:int]]"`
+}
+
+func (dkShape_Circle_V) SkyVariantTag() int     { return 0 }
+func (dkShape_Circle_V) SkyVariantName() string { return "Circle" }
+func (dkShape_Circle_V) isDkShape()             {}
+func (dkShape_Lines_V) SkyVariantTag() int      { return 1 }
+func (dkShape_Lines_V) SkyVariantName() string  { return "Lines" }
+func (dkShape_Lines_V) isDkShape()              {}
+
+func init() {
+	RegisterAdtVariant("rt.dkShape", "Circle", func([]JsonRawMessage) any { return dkShape_Circle_V{} })
+	RegisterAdtVariant("rt.dkShape", "Lines", func([]JsonRawMessage) any { return dkShape_Lines_V{} })
+}
+
+type dictKeyDeep struct {
+	Pair   T2[int, SkyDict[string]]  `sky:"pair,rt.T2[int, rt.SkyDict[@i:string]]"`
+	Lists  []SkyDict[int]            `sky:"lists,[]rt.SkyDict[@i:int]"`
+	Maybe  SkyMaybe[SkyDict[string]] `sky:"maybe,rt.SkyMaybe[rt.SkyDict[@i:string]]"`
+	Nested SkyDict[SkyDict[string]]  `sky:"nested,rt.SkyDict[@i:rt.SkyDict[@i:string]]"`
+	Shape  dkShape                   `sky:"shape,dkShape"`
+	Lines  dkShape                   `sky:"lines,dkShape"`
+}
+
+func dkInt(pairs ...any) SkyDict[int] {
+	var xs []any
+	for i := 0; i < len(pairs); i += 2 {
+		xs = append(xs, SkyTuple2{V0: pairs[i], V1: pairs[i+1]})
+	}
+	return AsMapT[int](Dict_fromList(xs))
+}
+
+func dkStr(pairs ...any) SkyDict[string] {
+	var xs []any
+	for i := 0; i < len(pairs); i += 2 {
+		xs = append(xs, SkyTuple2{V0: pairs[i], V1: pairs[i+1]})
+	}
+	return AsMapT[string](Dict_fromList(xs))
+}
+
+func dictKeyDeepSample() dictKeyDeep {
+	return dictKeyDeep{
+		Pair:   T2[int, SkyDict[string]]{V0: 1, V1: dkStr(3, "c")},
+		Lists:  []SkyDict[int]{dkInt(30, 1), dkInt(40, 2)},
+		Maybe:  Just[SkyDict[string]](dkStr(7, "seven")),
+		Nested: AsMapT[SkyDict[string]](Dict_fromList([]any{SkyTuple2{V0: 8, V1: dkStr(9, "nine")}})),
+		Shape:  dkShape_Circle_V{V0: dkStr(5, "five")},
+		Lines:  dkShape_Lines_V{V0: []SkyMaybe[SkyDict[int]]{Just[SkyDict[int]](dkInt(6, 0))}},
+	}
+}
+
+// dkSumKeys adds every key of every Dict in `d` as a key-generic helper reads
+// it (Dict.keys with no key type): an Int key that came back as a String
+// panics here, as it would in the program.
+func dkSumKeys(t *testing.T, d dictKeyDeep) int {
+	t.Helper()
+	sum := 0
+	add := func(dict any) {
+		for _, k := range AsList(Dict_keys(dict)) {
+			n, ok := k.(int)
+			if !ok {
+				t.Fatalf("a key came back as %T %#v, not an Int", k, k)
+			}
+			sum += n
+		}
+	}
+	add(d.Pair.V1)
+	for _, x := range d.Lists {
+		add(x)
+	}
+	add(d.Maybe.JustValue)
+	add(d.Nested)
+	for _, x := range AsList(Dict_values(d.Nested)) {
+		add(x)
+	}
+	add(d.Shape.(dkShape_Circle_V).V0)
+	add(d.Lines.(dkShape_Lines_V).V0[0].JustValue)
+	return sum
+}
+
+func TestCodecAutoReadsIntKeysAtEveryDepth(t *testing.T) {
+	var generic any
+	text := dictKeyEncode(t, dictKeyDeepSample())
+	if strings.Contains(text, `"\u0001i`) {
+		t.Fatalf("the internal key form leaked: %s", text)
+	}
+	old := text
+	for _, n := range []string{"3", "30", "40", "7", "8", "9", "5", "6"} {
+		old = strings.ReplaceAll(old, `"`+n+`":`, `"\u0001i`+n+`":`)
+	}
+	if old == text {
+		t.Fatalf("no key was rewritten: %s", text)
+	}
+	want := 3 + 30 + 40 + 7 + 8 + 9 + 5 + 6
+	for _, doc := range []string{text, old} {
+		if err := json.Unmarshal([]byte(doc), &generic); err != nil {
+			t.Fatal(err)
+		}
+		back, err := codecAutoDecodeVal(reflect.TypeOf(dictKeyDeep{}), generic, false)
+		if err != nil {
+			t.Fatalf("%s: %v", doc, err)
+		}
+		got := back.Interface().(dictKeyDeep)
+		if sum := dkSumKeys(t, got); sum != want {
+			t.Fatalf("key sum %d, want %d", sum, want)
+		}
+		if !deepEq(got, dictKeyDeepSample()) {
+			t.Fatalf("decoded %#v", got)
+		}
+		if again := dictKeyEncode(t, got); again != text {
+			t.Fatalf("re-encode = %s, want %s", again, text)
+		}
 	}
 }
