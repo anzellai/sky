@@ -72,7 +72,10 @@ users =
 -- Store.findBy conn users "id" "u1"  : Task Error (Maybe User)
 ```
 
-**`Codec.auto blank`** reflection-derives the codec from a zero-value witness:
+**`Codec.auto blank`** derives the codec from a zero-value witness (since
+v0.29.9 the compiler generates a typed encoder and decoder for a record of
+scalars, enums, records, `Maybe`, `List`, `Dict String` and `Dict Int`; any
+other record uses reflection, with the same text and errors):
 scalars → typed columns, `Maybe` → nullable, list / nested-record → JSON TEXT
 blob, nullary enum → readable name, a custom type with data → a tagged object
 (`{"tag":"Circle","v0":2.5}`, read back by each variant's payload types, v0.29.2).

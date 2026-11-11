@@ -1706,9 +1706,12 @@ keyCount key cols n =
 
 
 -- ── Derivation ───────────────────────────────────────────────────────────────
--- | Derive a codec from a record type by reflection — no field-by-field
--- pipeline. The argument is a zero-value witness (a `blank` record) that hands
--- the runtime the type. Handles scalars, `Maybe` (↔ null), nested records,
+-- | Derive a codec from a record type — no field-by-field pipeline. The
+-- argument is a zero-value witness (a `blank` record) that names the type.
+-- Since v0.29.9 the compiler generates a typed encoder and decoder when the
+-- type is a record of `Bool`, `Int`, `Float`, `String`, enums, records,
+-- `Maybe`, `List`, `Dict String` and `Dict Int` (any depth). Any other record
+-- uses reflection. The JSON text, the value and every error are the same. Handles scalars, `Maybe` (↔ null), nested records,
 -- lists, and nullary enums (stored as their readable name).
 --
 -- A custom type with data is written as `{"tag":"Circle","v0":2.5}` and read
