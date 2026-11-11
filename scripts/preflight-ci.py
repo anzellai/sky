@@ -19,7 +19,7 @@ import time
 
 WORKFLOW = ".github/workflows/release.yml"
 PUBLISHERS = {"release", "docker"}
-EXPECTED_SUCCESS = 50
+EXPECTED_SUCCESS = 54
 MAX_ATTEMPTS = 20
 
 
@@ -249,7 +249,7 @@ def main():
     state = local_state(root, intended)
     proof = verify(GitHub(root), state, positive(args.ci_run))
     stamp(root, state, proof)
-    print("CI release preflight verified: 50 jobs passed; 2 publishers skipped; local tests not claimed.")
+    print(f"CI release preflight verified: {EXPECTED_SUCCESS} jobs passed; {len(PUBLISHERS)} publishers skipped; local tests not claimed.")
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ class Admission(unittest.TestCase):
                     "status": "completed", "conclusion": "success"}
         self.jobs = [{"id": i + 100, "run_id": 5, "run_attempt": 1,
                       "head_sha": self.head, "name": "gate-" + str(i),
-                      "status": "completed", "conclusion": "success"} for i in range(50)]
+                      "status": "completed", "conclusion": "success"} for i in range(ci.EXPECTED_SUCCESS)]
         self.jobs += [{"id": i + 200, "run_id": 5, "run_attempt": 1,
                        "head_sha": self.head, "name": name,
                        "status": "completed", "conclusion": "skipped"}
@@ -46,7 +46,7 @@ class Admission(unittest.TestCase):
             self.base + "/git/commits/" + self.head: {"sha": self.head, "tree": {"sha": self.tree}},
             self.base + "/git/ref/heads/main": {"ref": "refs/heads/main", "object": {"sha": self.head}},
             self.rpath + "/attempts/1": copy.deepcopy(self.run),
-            self.rpath + "/attempts/1/jobs?per_page=100&page=1": {"total_count": 52, "jobs": self.jobs},
+            self.rpath + "/attempts/1/jobs?per_page=100&page=1": {"total_count": len(self.jobs), "jobs": self.jobs},
         }
         self.calls = []
 
@@ -76,7 +76,7 @@ class Admission(unittest.TestCase):
         stamp = ci.stamp(self.root, self.state, proof)
         record = json.loads(stamp.read_text())
         self.assertEqual(record["mode"], "verified-ci-release-run")
-        self.assertEqual(record["successfulJobs"], 50)
+        self.assertEqual(record["successfulJobs"], ci.EXPECTED_SUCCESS)
         self.assertEqual(record["skippedPublishers"], ["docker", "release"])
         self.assertFalse(record["localTestsClaimed"])
         self.assertEqual(record["sourceTree"], self.tree)
@@ -125,7 +125,7 @@ class Admission(unittest.TestCase):
                 self.refused()
 
     def test_partial_job_set(self):
-        self.responses[self.rpath + "/attempts/1/jobs?per_page=100&page=1"] = {"total_count": 51, "jobs": self.jobs[:-1]}
+        self.responses[self.rpath + "/attempts/1/jobs?per_page=100&page=1"] = {"total_count": len(self.jobs) - 1, "jobs": self.jobs[:-1]}
         self.refused()
 
     def test_unapproved_skip_or_failure(self):

@@ -4204,3 +4204,111 @@ fn nightly_commands_are_gated_by_the_release() {
         missing.join("\n  ")
     );
 }
+
+/// The number of jobs one release run has, with each matrix expanded: a list
+/// matrix is the product of its lists, minus `exclude`, and an `include` entry
+/// that sets no listed key adds a leg (an include-only matrix is one leg per
+/// entry).
+fn release_run_job_count(doc: &serde_yaml::Value) -> usize {
+    let jobs = doc
+        .get("jobs")
+        .and_then(|j| j.as_mapping())
+        .expect("release.yml has jobs");
+    let mut total = 0;
+    for (_, job) in jobs {
+        let Some(matrix) = job
+            .get("strategy")
+            .and_then(|s| s.get("matrix"))
+            .and_then(|m| m.as_mapping())
+        else {
+            total += 1;
+            continue;
+        };
+        let mut keys: Vec<String> = Vec::new();
+        let mut product = 1usize;
+        for (k, v) in matrix {
+            let k = k.as_str().unwrap_or("");
+            if k == "include" || k == "exclude" {
+                continue;
+            }
+            let n = v
+                .as_sequence()
+                .unwrap_or_else(|| panic!("matrix key `{k}` is not a literal list"))
+                .len();
+            keys.push(k.to_string());
+            product *= n;
+        }
+        let list = |name: &str| {
+            matrix
+                .get(serde_yaml::Value::from(name))
+                .and_then(|v| v.as_sequence())
+                .cloned()
+                .unwrap_or_default()
+        };
+        let legs = if keys.is_empty() {
+            list("include").len()
+        } else {
+            let added = list("include")
+                .iter()
+                .filter(|e| {
+                    !keys
+                        .iter()
+                        .any(|k| e.get(serde_yaml::Value::from(k.as_str())).is_some())
+                })
+                .count();
+            product - list("exclude").len() + added
+        };
+        total += legs;
+    }
+    total
+}
+
+/// `scripts/preflight-ci.py` refuses a release run whose job set is not
+/// exactly `EXPECTED_SUCCESS` green jobs plus the skipped `PUBLISHERS`. The
+/// count was a constant nobody tied to the workflow: v0.29.9 added four gate
+/// jobs, the release run was green with 54, and the tag preflight refused it
+/// (`incomplete-job-set`) because the script still said 50.
+#[test]
+fn the_tag_preflight_expects_every_job_the_release_runs() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let doc: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(root.join(".github/workflows/release.yml"))
+            .expect("read release.yml"),
+    )
+    .expect("parse release.yml");
+    let script = std::fs::read_to_string(root.join("scripts/preflight-ci.py"))
+        .expect("read preflight-ci.py");
+    let expected: usize = script
+        .lines()
+        .find_map(|l| l.strip_prefix("EXPECTED_SUCCESS = "))
+        .expect("preflight-ci.py has `EXPECTED_SUCCESS = <n>`")
+        .trim()
+        .parse()
+        .expect("EXPECTED_SUCCESS is a number");
+    let publishers: Vec<String> = script
+        .lines()
+        .find_map(|l| l.strip_prefix("PUBLISHERS = {"))
+        .expect("preflight-ci.py has `PUBLISHERS = {...}`")
+        .trim_end_matches('}')
+        .split(',')
+        .map(|s| s.trim().trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let jobs = doc.get("jobs").and_then(|j| j.as_mapping()).unwrap();
+    for p in &publishers {
+        assert!(
+            jobs.contains_key(serde_yaml::Value::from(p.as_str())),
+            "preflight-ci.py PUBLISHERS names `{p}`, which release.yml does not have"
+        );
+    }
+    let total = release_run_job_count(&doc);
+    assert_eq!(
+        expected + publishers.len(),
+        total,
+        "release.yml runs {total} jobs (matrices expanded), but preflight-ci.py \
+         expects EXPECTED_SUCCESS = {expected} plus {} publishers: set \
+         EXPECTED_SUCCESS = {}",
+        publishers.len(),
+        total - publishers.len()
+    );
+}
