@@ -9,8 +9,12 @@
 # never failed, it was only slow, so apt's own retries never fired, and the
 # gate-web-* jobs ran out of time before a single browser test had run.
 #
-# Each attempt gets SKY_APT_ATTEMPT_SECS (default 600; a normal install takes
-# about 2 minutes). When an attempt runs out of time, the next attempt uses the
+# Each attempt gets SKY_APT_ATTEMPT_SECS (default 240; a normal install takes
+# about 2 minutes). Every caller's step (or job) limit must hold all the
+# attempts: on 2026-11-11 a 15-minute step stopped the first 600 s attempt's
+# successor, so the fallback never ran. rust/crates/xtask/tests/
+# workflows_parse.rs (every_playwright_deps_caller_gives_the_mirror_fallback_
+# its_time) checks every caller against this budget. When an attempt runs out of time, the next attempt uses the
 # next mirror. Packages an attempt already downloaded stay in apt's cache, so
 # the next attempt does not fetch them again. If every mirror fails, the job
 # FAILS with an ::error::. It never skips.
@@ -34,7 +38,7 @@ source "$here/../lib/with-timeout.sh"
 # shellcheck source=../lib/apt-mirror.sh
 source "$here/../lib/apt-mirror.sh"
 
-attempt_secs="${SKY_APT_ATTEMPT_SECS:-600}"
+attempt_secs="${SKY_APT_ATTEMPT_SECS:-240}"
 mirrors=(
   ""   # the runner's own mirror, unchanged
   "http://archive.ubuntu.com/ubuntu/"

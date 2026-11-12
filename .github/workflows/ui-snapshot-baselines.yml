@@ -34,7 +34,9 @@ jobs:
   record:
     runs-on: ubuntu-latest
     # Build sky (~2 min warm) + build the showcase app + one browser pass.
-    timeout-minutes: 25
+    # 40: the apt mirror fallback of playwright-deps.sh may take 19 minutes,
+    # then the sky build and the recording run.
+    timeout-minutes: 40
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
