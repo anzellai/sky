@@ -164,12 +164,44 @@ mod fake_tool_tests {
             quoted(root.join("env-refused.marker").to_str().unwrap()), quoted(version), quoted(&tool), quoted(root.join("unexpected-command.marker").to_str().unwrap()));
         std::fs::write(&go, text).unwrap();
         std::fs::set_permissions(&go, std::fs::Permissions::from_mode(0o755)).unwrap();
+        wait_until_executable(&go, &root);
         Fixture {
             root,
             work,
             go,
             compiler,
             script,
+        }
+    }
+
+    /// Linux refuses to exec a file that any process holds open for writing
+    /// (ETXTBSY). A sibling test thread that forks while `std::fs::write` has
+    /// the script open gives its child a copy of that descriptor, which stays
+    /// open until the child execs. The probe under test then fails to spawn and
+    /// reads as "no version". Exec the script once, in a directory without the
+    /// marker (it exits 92 and writes nothing), until the kernel accepts it:
+    /// no writer opens it again, so every later exec succeeds.
+    fn wait_until_executable(go: &Path, dir: &Path) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match Command::new(go)
+                .arg("version")
+                .current_dir(dir)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+            {
+                Ok(_) => return,
+                // ETXTBSY is errno 26 on Linux and macOS alike.
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "fake go stayed busy: {e}"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(e) => panic!("fake go did not start: {e}"),
+            }
         }
     }
 
