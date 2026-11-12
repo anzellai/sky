@@ -163,11 +163,30 @@ try {
     await page.evaluate(() => `mounts=${window.__editorMounts} destroyed=${window.__editorDestroyed}`)
   );
   check("the widget's events arrived as the typed Msg", await textShows(page, "server-text=" + typed, 10000));
-  const lastTick = await page.evaluate(() => /ticks=(\d+)/.exec(document.body.innerText)[1]);
+  // On Sky.Live "stop" is a server round trip, and ticks keep arriving until
+  // update runs Stop. Read the last tick only once the row has held one value
+  // for 400 ms (20 tick periods): a running tick changes it every 20 ms, and a
+  // tick after Stop is dropped, so a row that holds is final.
+  const tickRow = () => page.evaluate(() => /ticks=(\d+)/.exec(document.body.innerText)[1]);
+  let lastTick = await tickRow();
+  let held = false;
+  for (const end = Date.now() + 10000; Date.now() < end; ) {
+    await page.waitForTimeout(400);
+    const now = await tickRow();
+    if (now === lastTick) {
+      held = true;
+      break;
+    }
+    lastTick = now;
+  }
+  check("the tick stopped after stop", held, `ticks=${lastTick}`);
   check(
     "props flow to the widget (update)",
     await waitFor(page, (t) => document.querySelector(".ed-label").textContent === "ticks=" + t, lastTick, "label", 5000),
-    await page.evaluate(() => document.querySelector(".ed-label").textContent)
+    await page.evaluate(
+      (t) => `row ticks=${t} label ${document.querySelector(".ed-label").textContent}`,
+      lastTick
+    )
   );
 
   // ── 2. a payload the decoder rejects is dropped ──
