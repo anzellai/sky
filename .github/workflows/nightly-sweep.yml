@@ -167,7 +167,9 @@ jobs:
     # console-controls-e2e adds ~8 min: 65.
     # Each long step also carries its own timeout-minutes (as in release.yml
     # gate-web-*), so a hung script fails its own named step with its log.
-    timeout-minutes: 65
+    # 80: the two browser install steps may each take 20 minutes when the
+    # apt mirror fallback runs (scripts/ci/playwright-deps.sh).
+    timeout-minutes: 80
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -213,7 +215,8 @@ jobs:
           shared-key: sky-gates-linux
           save-if: 'false'
       - name: Install Playwright + its browser
-        timeout-minutes: 10
+        # Holds every apt mirror attempt of playwright-deps.sh (workflows_parse.rs).
+        timeout-minutes: 20
         run: |
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" chromium
@@ -285,7 +288,8 @@ jobs:
       # The browser download is its own step: inside the gate's 10 min budget it
       # timed out on a slow mirror, and the gate then read as a canvas failure.
       - name: Install the WebKit and Firefox browsers for the canvas gate
-        timeout-minutes: 15
+        # Holds every apt mirror attempt of playwright-deps.sh (workflows_parse.rs).
+        timeout-minutes: 20
         run: |
           bash "$GITHUB_WORKSPACE/scripts/ci/playwright-deps.sh" webkit firefox
           npx playwright install webkit firefox

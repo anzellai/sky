@@ -4312,3 +4312,107 @@ fn the_tag_preflight_expects_every_job_the_release_runs() {
         total - publishers.len()
     );
 }
+
+/// `scripts/ci/playwright-deps.sh` retries a slow or unreachable Ubuntu mirror
+/// on the next one: up to one attempt per mirror, each bounded by
+/// `SKY_APT_ATTEMPT_SECS`, with a bounded wait for the dpkg lock between them.
+/// That fallback only works when the step (or, with no step limit, the job)
+/// that runs the script gives it time for every attempt. The nightly
+/// `web-runtime` job ran it under 10 and 15 minute step limits against a
+/// 3 × 600 s worst case, so on 2026-11-11 (run 43031741615) a mirror that
+/// could not be resolved used the whole step on the first attempt and the
+/// fallback never ran. On 2026-11-05 and 2026-11-10 the same slow mirror
+/// pushed a gate past its own limit. This test keeps the budgets in step.
+#[test]
+fn every_playwright_deps_caller_gives_the_mirror_fallback_its_time() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let script = std::fs::read_to_string(root.join("scripts/ci/playwright-deps.sh"))
+        .expect("scripts/ci/playwright-deps.sh exists");
+    let default_secs: u64 = script
+        .lines()
+        .find_map(|l| {
+            l.trim()
+                .strip_prefix("attempt_secs=\"${SKY_APT_ATTEMPT_SECS:-")
+                .and_then(|r| r.strip_suffix("}\""))
+                .map(|n| n.parse().expect("the default attempt time is a number"))
+        })
+        .expect("playwright-deps.sh sets attempt_secs from SKY_APT_ATTEMPT_SECS");
+    let mirrors = {
+        let start = script
+            .lines()
+            .position(|l| l.trim() == "mirrors=(")
+            .expect("playwright-deps.sh lists its mirrors");
+        script
+            .lines()
+            .skip(start + 1)
+            .take_while(|l| l.trim() != ")")
+            .filter(|l| l.trim_start().starts_with('"'))
+            .count() as u64
+    };
+    assert!(mirrors >= 2, "the mirror list was not parsed ({mirrors})");
+    // Each attempt can also wait up to ~64 s for the dpkg lock and run
+    // `dpkg --configure -a`; three more minutes cover `npm ci` and the
+    // browser download that follow in the same step.
+    let budget = |secs: u64| (mirrors * (secs + 70)).div_ceil(60) + 3;
+
+    let env_secs = |v: &serde_yaml::Value| -> Option<u64> {
+        v.get("env")?
+            .get("SKY_APT_ATTEMPT_SECS")
+            .and_then(|s| match s {
+                serde_yaml::Value::Number(n) => n.as_u64(),
+                serde_yaml::Value::String(s) => s.parse().ok(),
+                _ => None,
+            })
+    };
+    let minutes = |v: &serde_yaml::Value| v.get("timeout-minutes").and_then(|t| t.as_u64());
+
+    let mut callers = 0;
+    let mut short = Vec::new();
+    for path in workflows() {
+        let text = std::fs::read_to_string(&path).expect("readable");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parsed above");
+        let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else {
+            continue;
+        };
+        for (name, job) in jobs {
+            let job_name = name.as_str().unwrap_or("?");
+            let Some(steps) = job.get("steps").and_then(|s| s.as_sequence()) else {
+                continue;
+            };
+            for step in steps {
+                let runs = step.get("run").and_then(|r| r.as_str()).unwrap_or("");
+                let uses = step.get("uses").and_then(|r| r.as_str()).unwrap_or("");
+                if !runs.contains("playwright-deps.sh") && !uses.contains("playwright-setup") {
+                    continue;
+                }
+                callers += 1;
+                let secs = env_secs(step)
+                    .or_else(|| env_secs(job))
+                    .unwrap_or(default_secs);
+                let need = budget(secs);
+                // No step limit: the job limit bounds it (GitHub's default is 360).
+                let (limit, of) = match minutes(step) {
+                    Some(m) => (m, "step"),
+                    None => (minutes(job).unwrap_or(360), "job"),
+                };
+                if limit < need {
+                    short.push(format!(
+                        "{}: job `{job_name}`, step `{}`: {of} timeout-minutes {limit} < {need} \
+                         ({mirrors} attempts of {secs}s plus the lock wait and the browser download)",
+                        path.file_name().unwrap().to_string_lossy(),
+                        step.get("name").and_then(|n| n.as_str()).unwrap_or(uses),
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        callers > 0,
+        "no workflow step runs playwright-deps.sh: the scan is wrong"
+    );
+    assert!(
+        short.is_empty(),
+        "a step stops the apt mirror fallback before it can try every mirror:\n  {}",
+        short.join("\n  ")
+    );
+}
