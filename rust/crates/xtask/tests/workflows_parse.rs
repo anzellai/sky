@@ -4416,3 +4416,51 @@ fn every_playwright_deps_caller_gives_the_mirror_fallback_its_time() {
         short.join("\n  ")
     );
 }
+
+/// A workflow that cancels an in-flight run must scope that to one ref. The
+/// nightly sweep used the global group `nightly-sweep` with
+/// `cancel-in-progress: true`, so a `workflow_dispatch` on a fix branch
+/// cancelled the scheduled run on main (2026-11-12, run 43240758445).
+#[test]
+fn a_cancelling_concurrency_group_is_scoped_to_its_ref() {
+    // Groups that guard one shared deploy target, where the newest run must win
+    // whatever its ref: (workflow file, group).
+    const ONE_TARGET: &[(&str, &str)] = &[
+        // GitHub Pages holds one site; a newer deploy supersedes an older one.
+        ("docs-site.yml", "pages"),
+    ];
+    let mut global = Vec::new();
+    for path in workflows() {
+        let text = std::fs::read_to_string(&path).expect("readable");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parsed above");
+        let mut groups = vec![("workflow".to_string(), doc.get("concurrency").cloned())];
+        if let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) {
+            for (name, job) in jobs {
+                groups.push((
+                    format!("job `{}`", name.as_str().unwrap_or("?")),
+                    job.get("concurrency").cloned(),
+                ));
+            }
+        }
+        for (owner, c) in groups {
+            let Some(c) = c else { continue };
+            let cancels = c.get("cancel-in-progress").and_then(|v| v.as_bool()) == Some(true);
+            let group = c.get("group").and_then(|g| g.as_str()).unwrap_or("");
+            let file = path.file_name().unwrap().to_string_lossy().to_string();
+            if ONE_TARGET.contains(&(file.as_str(), group)) {
+                continue;
+            }
+            if cancels && !group.contains("github.ref") && !group.contains("github.head_ref") {
+                global.push(format!(
+                    "{} ({owner}): group `{group}`",
+                    path.file_name().unwrap().to_string_lossy()
+                ));
+            }
+        }
+    }
+    assert!(
+        global.is_empty(),
+        "a cancel-in-progress group not scoped to a ref lets a branch run cancel main's:\n  {}",
+        global.join("\n  ")
+    );
+}

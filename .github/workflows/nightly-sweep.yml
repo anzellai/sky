@@ -27,9 +27,11 @@ on:
         # the dropdown had no way to say it, and any other value skipped it.
         options: [both, example-sweep, web-runtime, behaviour-corpus, harness-t3, falsifier-verification, postgres-bundle-licence, nix, build-perf, ai-unsloth-toolchain]
 
-# Don't stack nightly runs; a newer run supersedes an in-flight one.
+# Don't stack nightly runs; a newer run supersedes an in-flight one ON THE
+# SAME REF. With one global group, a dispatch on a branch cancelled the
+# scheduled run on main (2026-11-12, run 43240758445).
 concurrency:
-  group: nightly-sweep
+  group: nightly-sweep-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
