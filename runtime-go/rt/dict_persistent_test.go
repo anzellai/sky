@@ -539,9 +539,6 @@ func TestDictHashSpreadsTheTrieLevelsEvenly(t *testing.T) {
 // 300 seeds: mean 18.4, max 68), so this test failed about 4 runs in 5; with
 // it, 600 seeds gave a max of 31.
 func TestDictHashLongKeysSpreadUnderEverySeed(t *testing.T) {
-	if testing.Short() {
-		t.Skip("256 seeds x 100,000 keys; the single-seed test above runs in -short")
-	}
 	const n = 100000
 	keys := make([]string, n)
 	for i := range keys {
