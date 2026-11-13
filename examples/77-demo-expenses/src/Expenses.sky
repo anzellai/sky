@@ -1,0 +1,84 @@
+module Expenses exposing (open, all, add, decide, seed)
+
+{-| The expenses table. `Std.Db.Store` builds the SQL from `Expense.codec`:
+there is no hand-written CREATE TABLE, INSERT or SELECT, and the same code
+runs on SQLite (the default here) and PostgreSQL (set SKY_DB_PATH to a
+postgres:// URL).
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Config as Config
+import Std.Db as Db exposing (Db)
+import Std.Db.Store as Store exposing (Store)
+import Std.Money as Money exposing (Currency(..))
+import Expense exposing (Expense, Status(..), Category(..))
+
+
+store : Store Expense
+store =
+    Store.fromCodec "expenses" Expense.codec |> Store.serial "id"
+
+
+-- The app's own SQLite file. SKY_DB_PATH wins over it.
+database : Config.Config
+database =
+    Config.default |> Config.withDatabase (Config.Sqlite "expenses.db")
+
+
+-- Connect, and create the table when it is not there yet (idempotent).
+open : Task Error Db
+open =
+    Config.apply database |> Task.andThen (\_ -> Db.connect ())
+        |> Task.andThen (\db -> Store.create db store |> Task.map (\_ -> db))
+
+
+-- Every claim, newest first.
+all : Db -> Task Error (List Expense)
+all db =
+    Store.query store |> Store.orderDesc "id" |> Store.toList db
+
+
+add : Db -> Expense -> Task Error ()
+add db expense =
+    Store.insert db store expense |> Task.map (\_ -> ())
+
+
+decide : Db -> Status -> Expense -> Task Error ()
+decide db status expense =
+    Store.update db store { expense | status = status } |> Task.map (\_ -> ())
+
+
+-- A few claims on an empty table, so the demo starts with data.
+seed : Db -> Task Error ()
+seed db =
+    all db
+        |> Task.andThen
+               (\existing ->
+                   if List.isEmpty existing then
+                       Store.insertMany db store samples |> Task.map (\_ -> ())
+
+                   else
+                       Task.succeed ())
+
+
+samples : List Expense
+samples =
+    [ sample "Ada" "Train to the client site" Travel 4250
+    , sample "Grace" "Team lunch" Meals 8640
+    , sample "Linus" "Laptop for the new starter" Equipment 149900
+    , sample "Margaret" "Design tool licence" Software 1200
+    ]
+
+
+sample : String -> String -> Category -> Int -> Expense
+sample who description category pence =
+    { id = 0
+    , who = who
+    , description = description
+    , category = category
+    , amount = Money.fromMinor GBP pence
+    , status = Pending
+    }

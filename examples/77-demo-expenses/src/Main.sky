@@ -1,0 +1,383 @@
+module Main exposing (main)
+
+{-| examples/77-demo-expenses: a team expenses app in one language.
+
+A person submits a claim. A manager approves or rejects it. Every open
+browser window shows the change at once. The same data is a JSON API.
+
+    sky run src/Main.sky        the app on http://localhost:8077
+                                (and GET /api/expenses)
+    sky test tests/ExpenseTest.sky
+
+There is no JavaScript, no SQL and no API client in this project. The view,
+the server, the database and the API are this file plus two small modules.
+DEMO.md is a 10-minute demo script.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.Result as Result
+import Std.Db exposing (Db)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Money as Money
+import Std.Codec as Codec
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Sky.Http.Server as Server exposing (Request, Response)
+import Expense exposing (Expense, Status(..), Category(..), Claim)
+import Expenses
+
+-- ── Model ───────────────────────────────────────────────────────────
+type alias Model =
+    { expenses : List Expense
+    , category : Category
+    , notice : String
+    }
+
+type Msg
+    = Loaded (Result Error (List Expense))
+    | PickCategory String
+    | Submit Claim
+    | Decide Status Expense
+    | Saved (Result Error ())
+    | Changed
+
+
+-- Every browser session of this app listens on this topic. A write
+-- publishes on it, and each session reloads the list.
+topic : String
+topic =
+    "expenses"
+
+
+-- ── Effects ─────────────────────────────────────────────────────────
+load : Task Error (List Expense)
+load =
+    Expenses.open
+        |> Task.andThen
+               (\db -> Expenses.seed db |> Task.andThen (\_ -> Expenses.all db))
+
+
+withDb : (Db -> Task Error ()) -> Task Error ()
+withDb write =
+    Expenses.open |> Task.andThen write
+
+
+-- ── init / update ───────────────────────────────────────────────────
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { expenses = [], category = Travel, notice = "" }
+    , Cmd.perform load Loaded
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Loaded (Ok expenses) ->
+            ( { model | expenses = expenses }, Cmd.none )
+
+        Loaded (Err e) ->
+            ( { model | notice = Error.toString e }, Cmd.none )
+
+        PickCategory label ->
+            ( { model | category = categoryFrom label }, Cmd.none )
+
+        Submit claim ->
+            case Expense.validate model.category claim of
+
+                Ok expense ->
+                    ( { model | notice = "" }
+                    , Cmd.perform
+                          (withDb (\db -> Expenses.add db expense))
+                          Saved
+                    )
+
+                Err e ->
+                    ( { model | notice = Error.toString e }, Cmd.none )
+
+        Decide status expense ->
+            ( model
+            , Cmd.perform
+                  (withDb (\db -> Expenses.decide db status expense))
+                  Saved
+            )
+
+        Saved (Ok _) ->
+            ( model, Cmd.publish topic "changed" )
+
+        Saved (Err e) ->
+            ( { model | notice = Error.toString e }, Cmd.none )
+
+        Changed ->
+            ( model, Cmd.perform load Loaded )
+
+
+categoryFrom : String -> Category
+categoryFrom label =
+    Expense.categories |> List.filter (\c -> Expense.categoryLabel c == label)
+        |> List.head
+        |> Maybe.withDefault Travel
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.subscribeTopic topic (\_ -> Changed)
+
+
+-- ── view ────────────────────────────────────────────────────────────
+ink : Ui.Color
+ink =
+    Ui.rgb 30 33 40
+
+
+muted : Ui.Color
+muted =
+    Ui.rgb 104 110 122
+
+
+white : Ui.Color
+white =
+    Ui.rgb 255 255 255
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.width (Ui.fill |> Ui.maximum 960)
+        , Ui.centerX
+        , Ui.spacing 20
+        , Ui.padding 24
+        , Font.family "system-ui, -apple-system, sans-serif"
+        , Font.size 15
+        , Font.color ink
+        ]
+        [ Ui.el [ Font.size 26, Font.bold ] (Ui.text "Team expenses")
+        , totals model.expenses
+        , claimForm model
+        , if model.notice == "" then
+              Ui.none
+
+          else
+              Ui.el
+                  [ Ui.padding 10
+                  , Background.color (Ui.rgb 255 237 213)
+                  , Border.rounded 6
+                  , Ui.htmlAttribute "data-test-id" "notice"
+                  ]
+                  (Ui.text model.notice)
+        , Ui.column
+              [ Ui.width Ui.fill
+              , Ui.spacing 8
+              , Ui.htmlAttribute "data-test-id" "claims"
+              ]
+              (List.map row model.expenses)
+        ]
+
+
+totals : List Expense -> Element Msg
+totals expenses =
+    Ui.wrappedRow
+        [ Ui.spacing 12, Ui.htmlAttribute "data-test-id" "totals" ]
+        (List.map (totalCard expenses) [ Pending, Approved, Rejected ])
+
+
+totalCard : List Expense -> Status -> Element Msg
+totalCard expenses status =
+    Ui.column
+        [ Ui.padding 14
+        , Ui.spacing 4
+        , Ui.width (Ui.px 200)
+        , Background.color white
+        , Border.rounded 8
+        , Border.width 1
+        , Border.color (Ui.rgb 226 228 233)
+        ]
+        [ Ui.el
+              [ Font.size 13, Font.color muted ]
+              (Ui.text (Expense.statusLabel status))
+        , Ui.el
+              [ Font.size 22, Font.bold ]
+              (Ui.text
+                  (case Expense.totalFor status expenses of
+
+                      Ok total ->
+                          Money.format total
+
+                      Err e ->
+                          Error.toString e))
+        ]
+
+
+-- A typed form: on submit, the browser sends the fields named "who",
+-- "description" and "amount", and the runtime decodes them into a `Claim`
+-- record. A field the record does not have, or a missing one, is refused
+-- before `update` runs.
+claimForm : Model -> Element Msg
+claimForm model =
+    Ui.form
+        [ Ui.onSubmit Submit ]
+        [ Ui.column
+              [ Ui.width Ui.fill
+              , Ui.spacing 10
+              , Ui.padding 16
+              , Background.color (Ui.rgb 246 247 250)
+              , Border.rounded 8
+              ]
+              [ Ui.el [ Font.bold ] (Ui.text "New claim")
+              , Ui.wrappedRow
+                    [ Ui.spacing 10 ]
+                    [ field "who" "Name"
+                    , field "description" "What for"
+                    , field "amount" "Amount, e.g. 42.50"
+                    ]
+              , Input.radioRow
+                    [ Ui.spacing 14 ]
+                    { onChange = PickCategory
+                    , options =
+                        List.map
+                            (\c ->
+                                Input.option
+                                    (Expense.categoryLabel c)
+                                    (Ui.text (Expense.categoryLabel c)))
+                            Expense.categories
+                    , selected = Expense.categoryLabel model.category
+                    , label =
+                        Input.labelLeft
+                            [ Font.color muted ]
+                            (Ui.text "Category")
+                    }
+              , Ui.input
+                    [ Ui.htmlAttribute "type" "submit"
+                    , Ui.htmlAttribute "value" "Submit claim"
+                    , Ui.paddingXY 14 8
+                    , Background.color (Ui.rgb 37 99 235)
+                    , Font.color white
+                    , Border.rounded 6
+                    ]
+              ]
+        ]
+
+
+field : String -> String -> Element Msg
+field name hint =
+    Ui.input
+        [ Ui.name name
+        , Ui.htmlAttribute "placeholder" hint
+        , Ui.padding 8
+        , Ui.width (Ui.px 220)
+        , Border.width 1
+        , Border.color (Ui.rgb 210 212 218)
+        , Border.rounded 4
+        ]
+
+
+row : Expense -> Element Msg
+row expense =
+    Ui.wrappedRow
+        [ Ui.width Ui.fill
+        , Ui.spacing 12
+        , Ui.padding 12
+        , Background.color white
+        , Border.rounded 8
+        , Border.width 1
+        , Border.color (Ui.rgb 226 228 233)
+        ]
+        [ Ui.column
+              [ Ui.width Ui.fill, Ui.spacing 4 ]
+              [ Ui.el
+                    [ Font.bold ]
+                    (Ui.text (expense.who ++ ": " ++ expense.description))
+              , Ui.el
+                    [ Font.size 13, Font.color muted ]
+                    (Ui.text
+                        (Expense.categoryLabel expense.category
+                            ++ (if Expense.needsFinanceReview expense then
+                                   " · needs finance review"
+
+                               else
+                                   "")))
+              ]
+        , Ui.el [ Font.bold ] (Ui.text (Money.format expense.amount))
+        , actions expense
+        ]
+
+
+-- The compiler checks this `case`: add a new Status and it names this
+-- function until the new state has a view.
+actions : Expense -> Element Msg
+actions expense =
+    case expense.status of
+
+        Pending ->
+            Ui.row
+                [ Ui.spacing 8 ]
+                [ button "Approve" (Ui.rgb 22 163 74) (Decide Approved expense)
+                , button "Reject" (Ui.rgb 220 38 38) (Decide Rejected expense)
+                ]
+
+        Approved ->
+            badge "Approved" (Ui.rgb 220 252 231)
+
+        Rejected ->
+            badge "Rejected" (Ui.rgb 254 226 226)
+
+
+button : String -> Ui.Color -> Msg -> Element Msg
+button label colour msg =
+    Input.button
+        [ Ui.paddingXY 12 6
+        , Background.color colour
+        , Font.color white
+        , Border.rounded 6
+        ]
+        { onPress = Just msg, label = Ui.text label }
+
+
+badge : String -> Ui.Color -> Element Msg
+badge label colour =
+    Ui.el
+        [ Ui.paddingXY 10 4
+        , Background.color colour
+        , Border.rounded 12
+        , Font.size 13
+        ]
+        (Ui.text label)
+
+
+-- ── JSON API ────────────────────────────────────────────────────────
+-- The same records and the same codec as the database:
+--
+--     curl localhost:8077/api/expenses
+expensesApi : Request -> Task Error Response
+expensesApi _ =
+    load
+        |> Task.map
+               (\expenses ->
+                   Server.json
+                       (Codec.toJson (Codec.list Expense.codec) expenses))
+
+
+-- ── The app ─────────────────────────────────────────────────────────
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.api "GET /api/expenses" expensesApi ]
+        |> App.withNotFound ()
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8077 })
+
+
+main =
+    App.run appDef

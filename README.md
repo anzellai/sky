@@ -164,10 +164,11 @@ The same `view : Model -> Element Msg` paints to the DOM, to terminal cells and 
 
 ## Real examples
 
-There are 73 projects in [`examples/`](examples/). Start with these:
+There are 74 projects in [`examples/`](examples/). Start with these:
 
 | Example | What it shows |
 |---|---|
+| [`77-demo-expenses`](examples/77-demo-expenses) | A 10-minute demo: a full-stack app with live updates, exact money and a JSON API |
 | [`19-skyforum`](examples/19-skyforum) | A multi-module forum on Sky.Live |
 | [`13-skyshop`](examples/13-skyshop) | A shop with Stripe and Firebase through `sky add` |
 | [`60-spa-todos`](examples/60-spa-todos) | One app on web, desktop, iOS and Android |

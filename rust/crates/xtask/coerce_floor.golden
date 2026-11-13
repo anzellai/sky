@@ -608,6 +608,10 @@
 #   field costs nothing here: apps/dispatch measures 304 after the merge
 #   (`coerce-floor --only=apps/dispatch`), the same as before it. The new
 #   header functions are not reachable from the app, so DCE drops them.
+#
+# 77-demo-expenses (new): the 10-minute demo app (Sky.Live, Std.Ui, SQLite,
+#   Std.Money). New row: narrow=184, measured with
+#   `coerce-floor --only=77-demo-expenses`.
 00-standard-libs	adapter=0	dispatch=0	narrow=107
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=6
@@ -677,6 +681,7 @@
 73-ai-train	adapter=0	dispatch=0	narrow=1267
 74-ai-cloud	adapter=0	dispatch=0	narrow=1362
 75-ai-everywhere	adapter=0	dispatch=0	narrow=809
+77-demo-expenses	adapter=0	dispatch=0	narrow=184
 apps/dispatch	adapter=0	dispatch=0	narrow=233
 apps/fieldbook	adapter=0	dispatch=0	narrow=401
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2

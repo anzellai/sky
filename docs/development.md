@@ -2,7 +2,7 @@
 
 > **Compiler**: Sky's compiler is written in **Rust** (cargo workspace
 > at `rust/`, crate `sky` builds the `sky` binary). Runtime verification
-> runs across the 73 projects in `examples/`. The earlier Haskell,
+> runs across the 74 projects in `examples/`. The earlier Haskell,
 > TypeScript and Sky-in-Sky compilers were removed from the tree in
 > v0.29.0; see [`history/legacy-compilers.md`](history/legacy-compilers.md).
 
