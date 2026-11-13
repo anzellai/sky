@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"hash/maphash"
 	"math/rand"
 	"os"
 	"reflect"
@@ -527,6 +528,49 @@ func TestDictHashSpreadsTheTrieLevelsEvenly(t *testing.T) {
 		}
 		if pairs > 60 {
 			t.Fatalf("keys like %q: %d pairs share the first 7 trie levels, want about 19", mk(1), pairs)
+		}
+	}
+}
+
+// The test above draws one seed per process, so a mix that is weak for a few
+// seeds passes it most of the time. This one checks the long-key path (over 16
+// bytes, maphash plus the keyed mix) under 256 fresh seeds. Before the mix,
+// about 1 seed in 150 gave more than 60 pairs on these keys (measured over
+// 300 seeds: mean 18.4, max 68), so this test failed about 4 runs in 5; with
+// it, 600 seeds gave a max of 31.
+func TestDictHashLongKeysSpreadUnderEverySeed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("256 seeds x 100,000 keys; the single-seed test above runs in -short")
+	}
+	const n = 100000
+	keys := make([]string, n)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("a-much-longer-key-name-%08d", i)
+	}
+	prefixes := make([]uint64, n)
+	for s := 0; s < 256; s++ {
+		seed := maphash.MakeSeed()
+		a, b := maphash.String(seed, "sky.dict.a")|1, maphash.String(seed, "sky.dict.b")
+		for i, k := range keys {
+			h := dictHashWith(seed, a, b, k)
+			var p uint64
+			for l := 0; l < 7; l++ {
+				p = p<<dictBits | (h>>(dictBits*l))&dictMask
+			}
+			prefixes[i] = p
+		}
+		sort.Slice(prefixes, func(i, j int) bool { return prefixes[i] < prefixes[j] })
+		pairs := 0
+		for i, run := 1, 1; i <= n; i++ {
+			if i < n && prefixes[i] == prefixes[i-1] {
+				run++
+				continue
+			}
+			pairs += run * (run - 1) / 2
+			run = 1
+		}
+		if pairs > 60 {
+			t.Fatalf("seed %d of 256: %d pairs of long keys share the first 7 trie levels, want about 19", s, pairs)
 		}
 	}
 }
