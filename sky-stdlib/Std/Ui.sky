@@ -4124,21 +4124,24 @@ alignSelfX parentCtx h =
                     "align-self: flex-end;"
 
 
+-- A column-like parent (`AsColumn`, `AsEl`, `AsTextColumn`: all render
+-- `flex-direction: column`, the same set `heightFillFor` treats as a column)
+-- has its main axis vertical, so a child moves vertically by auto margins.
+-- `align-self` works on the cross axis only: for an `el` parent (a `Ui.el`, an
+-- `Input.button`) it moved the child sideways, and `Ui.centerY` on a button's
+-- label left the label at the top.
 alignSelfY : LayoutContext -> VAlign -> String
 alignSelfY parentCtx v =
     case parentCtx of
 
         AsColumn ->
-            case v of
+            alignSelfYMain v
 
-                AlignTop ->
-                    "margin-bottom: auto;"
+        AsEl ->
+            alignSelfYMain v
 
-                CenterY ->
-                    "margin-top: auto; margin-bottom: auto;"
-
-                AlignBottom ->
-                    "margin-top: auto;"
+        AsTextColumn ->
+            alignSelfYMain v
 
         _ ->
             case v of
@@ -4151,3 +4154,18 @@ alignSelfY parentCtx v =
 
                 AlignBottom ->
                     "align-self: flex-end;"
+
+
+-- Vertical self-alignment on a column-like parent's main axis: auto margins.
+alignSelfYMain : VAlign -> String
+alignSelfYMain v =
+    case v of
+
+        AlignTop ->
+            "margin-bottom: auto;"
+
+        CenterY ->
+            "margin-top: auto; margin-bottom: auto;"
+
+        AlignBottom ->
+            "margin-top: auto;"

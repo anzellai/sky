@@ -1,6 +1,8 @@
 # Demo script: 10 minutes
 
-Each step has what to do and what to say. Practise it once.
+Each step has what to do and what to say. Practise it once. For the full
+talk around it (timing, slides, what to say before and after), see
+[TALK.md](TALK.md).
 
 ## Before the demo
 
@@ -16,7 +18,8 @@ Open http://localhost:8077 in two browser windows, side by side. Open
 
 ## 1. The app (2 minutes)
 
-- In window A, submit a claim: `Alan`, `Taxi`, `23.10`, Travel.
+- In window A, submit a claim: `Alan`, `Taxi`, `23.10`, and pick the
+  Travel chip.
 - It shows in window B at once. Approve it in window B. The totals change in
   both windows.
 - Submit `abc` as the amount. The form says what is wrong.
@@ -47,7 +50,8 @@ Make each change, run `sky check src/Main.sky`, read the error, undo it.
 This `case` does not cover all cases — missing: Paid
 ```
 
-The compiler names `statusLabel` and the `actions` view. Nothing ships until
+The compiler names three places: `statusLabel` in `src/Expense.sky`, and the
+`tone` colour and the `actions` view in `src/Main.sky`. Nothing ships until
 every place handles the new state.
 
 **A typo.** In `src/Main.sky`, change `expense.amount` to `expense.ammount`:
@@ -56,8 +60,8 @@ every place handles the new state.
 record is missing field(s): ammount
 ```
 
-**Money as a float.** Change `Money.format expense.amount` to
-`Money.format (expense.amount * 1.2)`:
+**Money as a float.** In `src/Main.sky`, change `money expense.amount` to
+`money (expense.amount * 1.2)`:
 
 ```
 `Money` is not a number: this needs an `Int` or a `Float`

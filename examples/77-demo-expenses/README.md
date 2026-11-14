@@ -3,9 +3,14 @@
 A person submits an expense claim. A manager approves or rejects it. Every
 open browser window shows the change at once, and the same data is a JSON API.
 
-It is about 640 lines of Sky in three files, comments included. There is no JavaScript, no SQL,
-no API client and no CSS file. To show it to a team, follow [DEMO.md](DEMO.md)
-(10 minutes).
+It is about 880 lines of Sky in three files, comments included. There is no
+JavaScript, no SQL, no API client and no CSS file.
+
+**To show Sky to your team**, use the three files here:
+
+- [TALK.md](TALK.md): a 15-minute talk, with the timing and what to say
+- [slides.md](slides.md): ten slides for the parts you talk through
+- [DEMO.md](DEMO.md): the live demo, step by step, with the exact errors
 
 ## Run it
 

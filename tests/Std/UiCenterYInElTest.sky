@@ -1,0 +1,88 @@
+module Std.UiCenterYInElTest exposing (tests)
+
+-- `Ui.centerY` centres a child vertically inside a `Ui.el` and an
+-- `Input.button`, as it does inside a `Ui.column`.
+--
+-- THE BUG. `alignSelfY` gave vertical auto margins only for an `AsColumn`
+-- parent. A `Ui.el` and a button also render `flex-direction: column`, but
+-- their children got `align-self: center`, which moves an item along the
+-- cross axis (sideways). A button 34 px high showed its centred label at the
+-- top.
+--
+-- THE RULE. Every column-like parent (`AsColumn`, `AsEl`, `AsTextColumn`)
+-- places a `centerY` / `alignTop` / `alignBottom` child with auto margins. A
+-- row parent keeps `align-self`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+import Sky.Test as Test exposing (Test)
+
+type Msg
+    = Noop
+
+
+render : Element Msg -> String
+render el =
+    Html.render (Ui.layout [] el)
+
+
+centred : String
+centred =
+    "margin-top: auto; margin-bottom: auto;"
+
+
+label : Element Msg
+label =
+    Ui.el [ Ui.centerY ] (Ui.text "Go")
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ui centerY inside a column-like parent"
+          [ Test.test
+                "a centerY child of a Ui.el gets vertical auto margins"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            centred
+                            (render (Ui.el [ Ui.height (Ui.px 40) ] label))))
+          , Test.test
+                "a centerY label of an Input.button gets vertical auto margins"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            centred
+                            (render
+                                (Input.button
+                                    [ Ui.height (Ui.px 34) ]
+                                    { onPress = Just Noop, label = label }))))
+          , Test.test
+                "a centerY child of a Ui.column still gets vertical auto margins"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            centred
+                            (render
+                                (Ui.column [ Ui.height (Ui.px 40) ] [ label ]))))
+          , Test.test
+                "a centerY child of a Ui.row keeps align-self"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "align-self: center;"
+                            (render (Ui.row [ Ui.height (Ui.px 40) ] [ label ]))))
+          , Test.test
+                "a centerY child of a Ui.row gets no vertical auto margins"
+                (\_ ->
+                    Test.isTrue
+                        (not
+                            (String.contains
+                                centred
+                                (render
+                                    (Ui.row [ Ui.height (Ui.px 40) ] [ label ])))))
+          ]
+    ]
