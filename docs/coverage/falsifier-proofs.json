@@ -12,15 +12,15 @@
       "proven_at_unix": 1794688664
     },
     "ai-device-csp": {
-      "inputs_files": 1874,
-      "inputs_hash": "5991df5b8a50de8ae083802443f3a66302a43ef9",
+      "inputs_files": 1876,
+      "inputs_hash": "facd1bcd0dc3732e45da149bef81d0553e0f1562",
       "mutation": "ai-device-csp.evaluate-a-string",
       "mutations": [
         "ai-device-csp.evaluate-a-string"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794575785
+      "proven_at_unix": 1794692143
     },
     "ai-device-decide": {
       "inputs_files": 4,
@@ -78,15 +78,15 @@
       "proven_at_unix": 1794272787
     },
     "ai-device-privacy": {
-      "inputs_files": 1874,
-      "inputs_hash": "8155a60be53019f4c57e722fa841d47fb36429f6",
+      "inputs_files": 1876,
+      "inputs_hash": "ab3f3041db538ef04612d2b2708d3cd6ee1ccbf2",
       "mutation": "ai-device-privacy.device-calls-the-server",
       "mutations": [
         "ai-device-privacy.device-calls-the-server"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794575785
+      "proven_at_unix": 1794692143
     },
     "ai-serve-hot-load": {
       "inputs_files": 1167,
@@ -310,15 +310,15 @@
       "proven_at_unix": 1794072081
     },
     "config-matrix": {
-      "inputs_files": 1864,
-      "inputs_hash": "1632b264ed583574eeb1a9e32fb6d6e3023592bb",
+      "inputs_files": 1866,
+      "inputs_hash": "89dc442a1d132767083ed0d9e732b6d2a09ceb07",
       "mutation": "config-matrix.invert-operator-env-provenance",
       "mutations": [
         "config-matrix.invert-operator-env-provenance"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794574955
+      "proven_at_unix": 1794690958
     },
     "config-migrate": {
       "inputs_files": 5,
@@ -505,15 +505,15 @@
       "proven_at_unix": 1794688578
     },
     "fmt-clean": {
-      "inputs_files": 737,
-      "inputs_hash": "93683e31fe3d34e7fd19f82bbe2a8c6404a77dd0",
+      "inputs_files": 739,
+      "inputs_hash": "5978ecf134c06b8813cd8b06fe4e2abe74955e3c",
       "mutation": "fmt-clean.unformat-a-tracked-file",
       "mutations": [
         "fmt-clean.unformat-a-tracked-file"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794558477
+      "proven_at_unix": 1794691267
     },
     "jobs-complete-failure-is-reported": {
       "inputs_files": 1167,
@@ -583,15 +583,15 @@
       "proven_at_unix": 1794071848
     },
     "roundtrip": {
-      "inputs_files": 528,
-      "inputs_hash": "0424ffa068e8ce113aa204709bce5f5b4e7756ac",
+      "inputs_files": 530,
+      "inputs_hash": "46ad4e2b0db6c955ed1b7d735e5c79dc1eec3baf",
       "mutation": "roundtrip.error-node",
       "mutations": [
         "roundtrip.error-node"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794558243
+      "proven_at_unix": 1794691670
     },
     "shared-world": {
       "inputs_files": 759,
@@ -686,15 +686,15 @@
       "proven_at_unix": 1794071808
     },
     "verify-cli": {
-      "inputs_files": 530,
-      "inputs_hash": "c26abcc709306dc0b947aa122be797915fd774cb",
+      "inputs_files": 532,
+      "inputs_hash": "287cbfaceab12eda4967bee5166587b9097428b9",
       "mutation": "verify-cli.drop-expected-output",
       "mutations": [
         "verify-cli.drop-expected-output"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794558477
+      "proven_at_unix": 1794690721
     }
   },
   "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, older than the declared window, or whose `inputs_hash` no longer matches its proof inputs (`harness --explain-inputs <gate>`), renders UNPROVEN under `--require-proofs` and is re-proven by the next incremental run.",
