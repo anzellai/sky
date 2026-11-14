@@ -984,7 +984,7 @@ Which one a change belongs in is decided by what the change can break.
 |---|---|---|
 | **Layer 1** — the combinatorial corpus | `corpus/manifest.toml` + `xtask corpus` | Systematic VARIATION of language + type shapes, generated, expected values *constructed* by the generator. Membership is the manifest; no gate calls `read_dir`. Every historical defect is a pinned coordinate whose distance-1 neighbourhood is expanded automatically. |
 | **Layer 2** — real-world projects | `apps/manifest.toml` (`apps/ledger`, `apps/relay`, `apps/fieldbook`, `sky-bundled/`, `examples/13-skyshop`, `rust/crates/sky/tests/*_flow.rs`) | Surfaces exercised IN COMBINATION as a user would build them: session/SSE/CSRF lifecycle, a real SQL engine (**the only Postgres coverage in the repo**), multi-replica topology, cross-backend `Std.Ui`, the CLI verbs. The class Layer 1 is structurally blind to. |
-| **`examples/`** | `examples/00`–`examples/76` (73 projects) | **Documentation samples** — and the standing corpus for the *compiler-facing* ratchets that key on them. |
+| **`examples/`** | `examples/00`–`examples/77` (74 projects) | **Documentation samples** — and the standing corpus for the *compiler-facing* ratchets that key on them. |
 
 ### The `examples/` contract
 

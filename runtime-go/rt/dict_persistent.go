@@ -66,11 +66,27 @@ var dictSeedA, dictSeedB = maphash.String(dictSeed, "sky.dict.a") | 1, maphash.S
 // dictHash hashes an encoded key. Keys of up to 16 bytes (nearly every Int,
 // Char and short String key) take an inline keyed multiply-mix in the style of
 // wyhash: two loads and two 64x64->128 multiplies, about half the cost of a
-// maphash call, which is most of a small Dict lookup. Longer keys use maphash.
+// maphash call, which is most of a small Dict lookup. Longer keys use maphash,
+// then one keyed multiply-mix (see dictHashWith).
 func dictHash(k string) uint64 {
+	return dictHashWith(dictSeed, dictSeedA, dictSeedB, k)
+}
+
+// dictHashWith is dictHash under an explicit seed, so a test can check the
+// spread over many seeds rather than the one this process drew.
+//
+// A long key's maphash value goes through one more keyed multiply-mix before
+// the trie reads it. maphash alone is not uniform in its low bits for every
+// seed: over keys that differ only in a numeric suffix
+// ("a-much-longer-key-name-00000001" ...), about 1 seed in 150 put 60 or
+// more of 100,000 keys' pairs on one 28-bit trie prefix, where a uniform
+// hash gives 18.6 on average and above 60 with chance below 1e-12. The mix
+// costs one 64x64->128 multiply, small beside the maphash call.
+func dictHashWith(seed maphash.Seed, seedA, seedB uint64, k string) uint64 {
 	n := len(k)
 	if n > 16 {
-		return maphash.String(dictSeed, k)
+		hi, lo := bits.Mul64(maphash.String(seed, k)^seedA, seedB^0x9E3779B97F4A7C15)
+		return hi ^ lo
 	}
 	var a, b uint64
 	if n > 0 {
@@ -88,8 +104,8 @@ func dictHash(k string) uint64 {
 			a = uint64(p[0])<<16 | uint64(p[n>>1])<<8 | uint64(p[n-1])
 		}
 	}
-	hi, lo := bits.Mul64(a^dictSeedA, b^dictSeedB^uint64(n))
-	hi, lo = bits.Mul64(hi^lo^dictSeedA, uint64(n)^0x9E3779B97F4A7C15^dictSeedB)
+	hi, lo := bits.Mul64(a^seedA, b^seedB^uint64(n))
+	hi, lo = bits.Mul64(hi^lo^seedA, uint64(n)^0x9E3779B97F4A7C15^seedB)
 	return hi ^ lo
 }
 

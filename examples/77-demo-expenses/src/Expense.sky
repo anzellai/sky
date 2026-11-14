@@ -1,0 +1,179 @@
+module Expense exposing
+    ( Expense
+    , Status(..)
+    , Category(..)
+    , Claim
+    , categories
+    , categoryLabel
+    , statusLabel
+    , validate
+    , needsFinanceReview
+    , totalFor
+    , codec
+    )
+
+{-| The business rules of an expense claim. Pure code: no database, no
+network, no clock. Everything here is checked by `sky test` in milliseconds
+(tests/ExpenseTest.sky).
+
+One record type, `Expense`, and ONE codec (`codec`) drive the database
+table, the JSON API and the tests. Change a field here and every place that
+uses it either still compiles or is named by the compiler.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Std.Codec as Codec exposing (Codec)
+import Std.Money as Money exposing (Money, Currency(..))
+
+-- A claim is in exactly one of these states. There is no "null" status and
+-- no free-text status, so a typo such as "aproved" cannot reach the database.
+type Status
+    = Pending
+    | Approved
+    | Rejected
+
+type Category
+    = Travel
+    | Meals
+    | Equipment
+    | Software
+
+type alias Expense =
+    { id : Int
+    , who : String
+    , description : String
+    , category : Category
+    , amount : Money
+    , status : Status
+    }
+
+-- What the form sends: raw text, exactly as the user typed it. `validate`
+-- turns it into an `Expense` or says what is wrong. Nothing else can make an
+-- `Expense` from user input.
+type alias Claim =
+    { who : String
+    , description : String
+    , amount : String
+    }
+
+
+categories : List Category
+categories =
+    [ Travel, Meals, Equipment, Software ]
+
+
+categoryLabel : Category -> String
+categoryLabel category =
+    case category of
+
+        Travel ->
+            "Travel"
+
+        Meals ->
+            "Meals"
+
+        Equipment ->
+            "Equipment"
+
+        Software ->
+            "Software"
+
+
+statusLabel : Status -> String
+statusLabel status =
+    case status of
+
+        Pending ->
+            "Pending"
+
+        Approved ->
+            "Approved"
+
+        Rejected ->
+            "Rejected"
+
+
+-- Money is an exact decimal with a currency, never a Float:
+-- 0.1 + 0.2 is 0.30 here, not 0.30000000000000004.
+validate : Category -> Claim -> Result Error Expense
+validate category claim =
+    let
+        who = String.trim claim.who
+        description = String.trim claim.description
+    in
+        if who == "" then
+            Err (Error.invalidInput "Enter who spent the money.")
+
+        else if description == "" then
+            Err (Error.invalidInput "Enter what the money was for.")
+
+        else
+            Money.fromString GBP (String.trim claim.amount)
+                |> Result.mapError
+                       (\_ -> Error.invalidInput "Enter an amount such as 42.50.")
+                |> Result.andThen (checkPositive who description category)
+
+
+checkPositive : String -> String -> Category -> Money -> Result Error Expense
+checkPositive who description category amount =
+    if Money.isPositive amount then
+        Ok
+            { id = 0
+            , who = who
+            , description = description
+            , category = category
+            , amount = amount
+            , status = Pending
+            }
+
+    else
+        Err (Error.invalidInput "The amount must be more than zero.")
+
+
+-- A claim over £1,000 also goes to finance.
+needsFinanceReview : Expense -> Bool
+needsFinanceReview expense =
+    Money.gt expense.amount (Money.fromMajor GBP 1000)
+        |> Result.withDefault True
+
+
+-- The total of every claim in one state. All amounts are GBP, so the sum
+-- cannot fail. If it ever did (two currencies), the answer is an Err, never a
+-- silently wrong number.
+totalFor : Status -> List Expense -> Result Error Money
+totalFor status expenses =
+    expenses |> List.filter (\e -> e.status == status) |> List.map .amount
+        |> Money.sum GBP
+
+
+-- The ONE codec: the database columns and the JSON shape both come from it.
+-- `status` and `category` are stored as readable text ("approved", "travel").
+-- `amount` is an exact decimal column (NUMERIC on PostgreSQL).
+codec : Codec Expense
+codec =
+    Codec.object Expense |> Codec.field "id" .id Codec.int
+        |> Codec.field "who" .who Codec.string
+        |> Codec.field "description" .description Codec.string
+        |> Codec.field
+               "category"
+               .category
+               (Codec.enum
+                   [ ( Travel, "travel" )
+                   , ( Meals, "meals" )
+                   , ( Equipment, "equipment" )
+                   , ( Software, "software" )
+                   ])
+        |> Codec.field "amount" .amount (Codec.moneyIn GBP)
+        |> Codec.field
+               "status"
+               .status
+               (Codec.enum
+                   [ ( Pending, "pending" )
+                   , ( Approved, "approved" )
+                   , ( Rejected, "rejected" )
+                   ])
+        |> Codec.buildObject

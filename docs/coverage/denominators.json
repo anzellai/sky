@@ -55,20 +55,20 @@
       "vacuous_pass": 6
     },
     "examples": {
-      "assertion_calls_incl_pass": 226,
-      "assertions": 217,
+      "assertion_calls_incl_pass": 234,
+      "assertions": 225,
       "by_assertion_fn": {
-        "equal": 142,
-        "err": 0,
+        "equal": 146,
+        "err": 3,
         "expectErrorKind": 0,
-        "fail": 54,
+        "fail": 55,
         "isFalse": 2,
         "isTrue": 19,
         "notEqual": 0,
         "ok": 0
       },
-      "cases": 172,
-      "suites": 14,
+      "cases": 179,
+      "suites": 15,
       "vacuous_pass": 9
     }
   }

@@ -1,0 +1,83 @@
+module ExpenseTest exposing (tests)
+
+-- The business rules, offline: no database, no server, no browser.
+--
+--     sky test tests/ExpenseTest.sky
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Sky.Test as Test exposing (Test)
+import Std.Money as Money exposing (Currency(..))
+import Expense exposing (Expense, Status(..), Category(..))
+
+
+claim : String -> String -> String -> Expense.Claim
+claim who description amount =
+    { who = who, description = description, amount = amount }
+
+
+pending : Int -> Expense
+pending pence =
+    { id = 0
+    , who = "Ada"
+    , description = "Train"
+    , category = Travel
+    , amount = Money.fromMinor GBP pence
+    , status = Pending
+    }
+
+
+approved : Int -> Expense
+approved pence =
+    let
+        e = pending pence
+    in
+        { e | status = Approved }
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "a valid claim starts as Pending with an exact amount"
+          (\_ ->
+              case Expense.validate Meals (claim " Grace " "Team lunch" "86.40") of
+
+                  Ok e ->
+                      Test.equal
+                          ( "Grace", Pending, "£86.40" )
+                          ( e.who, e.status, Money.format e.amount )
+
+                  Err _ ->
+                      Test.fail "expected a valid claim")
+    , Test.test
+          "an empty name is refused"
+          (\_ -> Test.err (Expense.validate Travel (claim "" "Train" "10")))
+    , Test.test
+          "an amount that is not a number is refused"
+          (\_ -> Test.err (Expense.validate Travel (claim "Ada" "Train" "ten")))
+    , Test.test
+          "a zero or negative amount is refused"
+          (\_ -> Test.err (Expense.validate Travel (claim "Ada" "Train" "-5")))
+    , Test.test
+          "money adds exactly: 0.10 + 0.20 is 0.30"
+          (\_ ->
+              Test.equal
+                  (Ok "£0.30")
+                  (Expense.totalFor Pending [ pending 10, pending 20 ]
+                      |> Result.map Money.format))
+    , Test.test
+          "totals count only claims in that state"
+          (\_ ->
+              Test.equal
+                  (Ok "£10.00")
+                  (Expense.totalFor Approved [ pending 500, approved 1000 ]
+                      |> Result.map Money.format))
+    , Test.test
+          "a claim over £1,000 needs finance review"
+          (\_ ->
+              Test.equal
+                  ( False, True )
+                  ( Expense.needsFinanceReview (pending 100000)
+                  , Expense.needsFinanceReview (pending 100001)
+                  ))
+    ]

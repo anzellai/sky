@@ -335,6 +335,9 @@ declare -a EXAMPLES=(
     # runs until the user asks, so it needs no model. The device flows are
     # scripts/ai-device-e2e.sh and rust/crates/sky/tests/ai_device_*.rs.
     "75-ai-everywhere:server:8075:/"
+    # 77 — the demo app (Sky.Live, Std.Ui, SQLite, Std.Money): GET / renders
+    # the claims from a fresh expenses.db seeded on first load. Port 8077.
+    "77-demo-expenses:server:8077:/"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────
