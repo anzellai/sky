@@ -3398,7 +3398,11 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// the grid layout context, a row's `height fill` stretch, labelled input
 /// fill, `shrink` = `fit-content`, paragraph line spacing, one combined
 /// `box-shadow`, no dead `align-self` / `min-width: 0`).
-pub const SKY_SUITES_EXPECTED: u64 = 1331;
+///
+/// 1331 + 7 = 1338: `Std/UiFixedSizeTest` (a px width in a row or
+/// wrappedRow and a px height in a column or el keep their size; the cross
+/// axis and `fill |> maximum n` add nothing).
+pub const SKY_SUITES_EXPECTED: u64 = 1338;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

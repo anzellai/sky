@@ -3962,6 +3962,7 @@ widthCssIn parentCtx lng =
 
         Px n ->
             "width: " ++ String.fromInt n ++ "px;"
+                ++ keepMainAxisSize AsRowAxis parentCtx
 
         Content ->
             -- `fit-content`, not `max-content`: shrink text still wraps
@@ -4147,6 +4148,7 @@ heightCssIn parentCtx lng =
 
         Px n ->
             "height: " ++ String.fromInt n ++ "px;"
+                ++ keepMainAxisSize AsColumnAxis parentCtx
 
         Content ->
             "height: fit-content;"
@@ -4438,3 +4440,34 @@ alignSelfYMain v =
 
         AlignBottom ->
             "margin-top: auto;"
+
+-- The flex axis a `px` length lies on.
+type MainAxis
+    = AsRowAxis
+    | AsColumnAxis
+
+
+-- A `px` length is a fixed size, as in elm-ui: on its parent's main axis it
+-- gets `flex-shrink: 0`, so a crowded row does not squash a 48 px avatar or
+-- icon. A flex item shrinks by default, and before v0.29.10 `width (px 48)`
+-- in a full row rendered narrower than 48 px with no error. To let a box give
+-- way, write `width (fill |> maximum 48)`. On the cross axis, in a grid or in
+-- a paragraph, nothing is added: a flex item does not shrink there.
+keepMainAxisSize : MainAxis -> LayoutContext -> String
+keepMainAxisSize axis parentCtx =
+    case ( axis, parentCtx ) of
+
+        ( AsRowAxis, AsRow ) ->
+            " flex-shrink: 0;"
+
+        ( AsColumnAxis, AsColumn ) ->
+            " flex-shrink: 0;"
+
+        ( AsColumnAxis, AsEl ) ->
+            " flex-shrink: 0;"
+
+        ( AsColumnAxis, AsTextColumn ) ->
+            " flex-shrink: 0;"
+
+        _ ->
+            ""

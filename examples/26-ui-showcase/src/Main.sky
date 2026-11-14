@@ -135,9 +135,11 @@ swatch caption styled =
         [ styled, Ui.el [ Font.size 12 ] (Ui.text caption) ]
 
 
+-- A wrappedRow: three 90 px swatches and their gaps do not fit a 320 px
+-- phone in one line.
 borderDemo : Element Msg
 borderDemo =
-    Ui.row
+    Ui.wrappedRow
         [ Ui.spacing 16 ]
         [ swatch
               "solid"

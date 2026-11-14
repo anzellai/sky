@@ -397,6 +397,14 @@ ambiguity.
   the control gets `width fill`, and `height fill` only when the attributes
   carry a `Ui.height`. A labelled `Input.text [ Ui.width Ui.fill ]` no
   longer grows vertically. `Input.multiline` always fills the box (#403).
+- **A `px` length keeps its size.** A `Ui.width (Ui.px n)` child of a row,
+  and a `Ui.height (Ui.px n)` child of a column, `el` or `textColumn`, gets
+  `flex-shrink: 0`, as in elm-ui. A crowded row no longer squashes an avatar
+  or an icon. A box that may give way says so: `Ui.width (Ui.fill |>
+  Ui.maximum n)`.
+- **`centerY`, `alignTop` and `alignBottom` in an `el`, a button or a
+  `textColumn`** move the element vertically. Before, they set `align-self`,
+  which in those column-like parents moved it sideways.
 
 ### `Ui.layoutWith` — wrapper customisation (v0.15.56)
 
