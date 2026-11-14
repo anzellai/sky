@@ -1,0 +1,108 @@
+module Std.UiFixedSizeTest exposing (tests)
+
+-- A `px` length keeps its size on its parent's main axis (v0.29.10).
+--
+-- THE BUG. `Ui.width (Ui.px 48)` emitted only `width: 48px;`. A flex item
+-- shrinks by default, so in a row that was too narrow (a phone) a 48 px
+-- avatar or icon rendered narrower than 48 px, squashed, with no error.
+-- elm-ui keeps a px length fixed.
+--
+-- THE RULE. A `px` width in a row, and a `px` height in a column-like parent
+-- (column, el, textColumn), gets `flex-shrink: 0`. On the cross axis, in a
+-- grid and in a paragraph nothing is added. A box that may give way says so
+-- with `fill |> maximum n`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Ui as Ui exposing (Element)
+import Sky.Test as Test exposing (Test)
+
+type Msg
+    = Noop
+
+
+render : Element Msg -> String
+render el =
+    Html.render (Ui.layout [] el)
+
+
+box : List (Ui.Attribute Msg) -> Element Msg
+box attrs =
+    Ui.el attrs (Ui.text "x")
+
+
+keeps : String
+keeps =
+    "flex-shrink: 0;"
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ui px lengths keep their size"
+          [ Test.test
+                "a px width in a row keeps its size"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            ("width: 48px; " ++ keeps)
+                            (render (Ui.row [] [ box [ Ui.width (Ui.px 48) ] ]))))
+          , Test.test
+                "a px width in a wrappedRow keeps its size"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            ("width: 48px; " ++ keeps)
+                            (render
+                                (Ui.wrappedRow [] [ box [ Ui.width (Ui.px 48) ] ]))))
+          , Test.test
+                "a px height in a column keeps its size"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            ("height: 40px; " ++ keeps)
+                            (render
+                                (Ui.column [] [ box [ Ui.height (Ui.px 40) ] ]))))
+          , Test.test
+                "a px height in an el keeps its size"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            ("height: 40px; " ++ keeps)
+                            (render (Ui.el [] (box [ Ui.height (Ui.px 40) ])))))
+          , Test.test
+                "a px width in a column adds nothing (cross axis)"
+                (\_ ->
+                    Test.isTrue
+                        (not
+                            (String.contains
+                                keeps
+                                (render
+                                    (Ui.column [] [ box [ Ui.width (Ui.px 48) ] ])))))
+          , Test.test
+                "a px height in a row adds nothing (cross axis)"
+                (\_ ->
+                    Test.isTrue
+                        (not
+                            (String.contains
+                                keeps
+                                (render
+                                    (Ui.row [] [ box [ Ui.height (Ui.px 40) ] ])))))
+          , Test.test
+                "fill with a maximum in a row may still give way"
+                (\_ ->
+                    Test.isTrue
+                        (not
+                            (String.contains
+                                keeps
+                                (render
+                                    (Ui.row
+                                        []
+                                        [ box
+                                              [ Ui.width
+                                                    (Ui.fill |> Ui.maximum 48)
+                                              ]
+                                        ])))))
+          ]
+    ]

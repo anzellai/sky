@@ -23,7 +23,9 @@ import Std.Db exposing (Db)
 import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
-import Std.Money as Money
+import Std.Money as Money exposing (Money)
+import Std.Decimal as Decimal
+import Sky.Core.String as String
 import Std.Codec as Codec
 import Std.Ui as Ui exposing (Element)
 import Std.Ui.Input as Input
@@ -43,7 +45,7 @@ type alias Model =
 
 type Msg
     = Loaded (Result Error (List Expense))
-    | PickCategory String
+    | PickCategory Category
     | Submit Claim
     | Decide Status Expense
     | Saved (Result Error ())
@@ -86,10 +88,10 @@ update msg model =
             ( { model | expenses = expenses }, Cmd.none )
 
         Loaded (Err e) ->
-            ( { model | notice = Error.toString e }, Cmd.none )
+            ( { model | notice = explain e }, Cmd.none )
 
-        PickCategory label ->
-            ( { model | category = categoryFrom label }, Cmd.none )
+        PickCategory category ->
+            ( { model | category = category }, Cmd.none )
 
         Submit claim ->
             case Expense.validate model.category claim of
@@ -102,7 +104,7 @@ update msg model =
                     )
 
                 Err e ->
-                    ( { model | notice = Error.toString e }, Cmd.none )
+                    ( { model | notice = explain e }, Cmd.none )
 
         Decide status expense ->
             ( model
@@ -115,17 +117,20 @@ update msg model =
             ( model, Cmd.publish topic "changed" )
 
         Saved (Err e) ->
-            ( { model | notice = Error.toString e }, Cmd.none )
+            ( { model | notice = explain e }, Cmd.none )
 
         Changed ->
             ( model, Cmd.perform load Loaded )
 
 
-categoryFrom : String -> Category
-categoryFrom label =
-    Expense.categories |> List.filter (\c -> Expense.categoryLabel c == label)
-        |> List.head
-        |> Maybe.withDefault Travel
+-- The message alone, for a person to read. `Error.toString` also names the
+-- kind ("InvalidInput: ..."), which suits a log, not a form.
+explain : Error -> String
+explain err =
+    case err of
+
+        Error.Error _ info ->
+            info.message
 
 
 subscriptions : Model -> Sub Msg
@@ -134,14 +139,25 @@ subscriptions _ =
 
 
 -- ── view ────────────────────────────────────────────────────────────
+-- The palette. Every colour on the page comes from these names.
 ink : Ui.Color
 ink =
-    Ui.rgb 30 33 40
+    Ui.rgb 15 23 42
 
 
 muted : Ui.Color
 muted =
-    Ui.rgb 104 110 122
+    Ui.rgb 100 116 139
+
+
+line : Ui.Color
+line =
+    Ui.rgb 226 232 240
+
+
+canvas : Ui.Color
+canvas =
+    Ui.rgb 248 250 252
 
 
 white : Ui.Color
@@ -149,72 +165,187 @@ white =
     Ui.rgb 255 255 255
 
 
+accent : Ui.Color
+accent =
+    Ui.rgb 79 70 229
+
+
+-- The colour that marks each state: a strong tone and a light tint.
+tone : Status -> ( Ui.Color, Ui.Color )
+tone status =
+    case status of
+
+        Pending ->
+            ( Ui.rgb 217 119 6, Ui.rgb 254 243 199 )
+
+        Approved ->
+            ( Ui.rgb 22 163 74, Ui.rgb 220 252 231 )
+
+        Rejected ->
+            ( Ui.rgb 220 38 38, Ui.rgb 254 226 226 )
+
+
+-- "£1,499.00": exact decimal, grouped thousands.
+money : Money -> String
+money amount =
+    "£" ++ Decimal.formatWith "," "." 2 (Money.amount amount)
+
+
+card : List (Ui.Attribute Msg) -> List (Element Msg) -> Element Msg
+card attrs children =
+    Ui.column
+        ([ Ui.width Ui.fill
+        , Background.color white
+        , Border.rounded 12
+        , Border.width 1
+        , Border.color line
+        , Border.shadow
+              { offsetX = 0
+              , offsetY = 1
+              , blur = 3
+              , spread = 0
+              , color = Ui.rgba 15 23 42 6.0e-2
+              }
+        ]
+            ++ attrs)
+        children
+
+
 view : Model -> Element Msg
 view model =
     Ui.column
-        [ Ui.width (Ui.fill |> Ui.maximum 960)
-        , Ui.centerX
-        , Ui.spacing 20
-        , Ui.padding 24
-        , Font.family "system-ui, -apple-system, sans-serif"
-        , Font.size 15
+        [ Ui.width Ui.fill
+        , Ui.height Ui.fill
+        , Background.color canvas
+        , Font.family "Inter, system-ui, -apple-system, 'Segoe UI', sans-serif"
+        , Font.size 14
         , Font.color ink
         ]
-        [ Ui.el [ Font.size 26, Font.bold ] (Ui.text "Team expenses")
-        , totals model.expenses
-        , claimForm model
-        , if model.notice == "" then
-              Ui.none
-
-          else
-              Ui.el
-                  [ Ui.padding 10
-                  , Background.color (Ui.rgb 255 237 213)
-                  , Border.rounded 6
-                  , Ui.htmlAttribute "data-test-id" "notice"
-                  ]
-                  (Ui.text model.notice)
+        [ header
         , Ui.column
-              [ Ui.width Ui.fill
-              , Ui.spacing 8
-              , Ui.htmlAttribute "data-test-id" "claims"
+              [ Ui.width (Ui.fill |> Ui.maximum 1040)
+              , Ui.centerX
+              , Ui.spacing 24
+              , Ui.paddingXY 24 32
               ]
-              (List.map row model.expenses)
+              [ Ui.column
+                    [ Ui.width Ui.fill, Ui.spacing 6 ]
+                    [ Ui.el [ Font.size 24, Font.semiBold ] (Ui.text "Claims")
+                    , Ui.el
+                          [ Font.color muted ]
+                          (Ui.text
+                              "Submit a claim. A manager approves or rejects it. Every open window updates at once.")
+                    ]
+              , totals model.expenses
+              , claimForm model
+              , if model.notice == "" then
+                    Ui.none
+
+                else
+                    Ui.el
+                        [ Ui.width Ui.fill
+                        , Ui.paddingXY 14 10
+                        , Background.color (Ui.rgb 255 247 237)
+                        , Border.width 1
+                        , Border.color (Ui.rgb 253 186 116)
+                        , Border.rounded 8
+                        , Font.color (Ui.rgb 154 52 18)
+                        , Ui.htmlAttribute "data-test-id" "notice"
+                        ]
+                        (Ui.text model.notice)
+              , claimList model.expenses
+              ]
         ]
+
+
+header : Element Msg
+header =
+    Ui.el
+        [ Ui.width Ui.fill, Background.color ink, Ui.paddingXY 24 14 ]
+        (Ui.row
+            [ Ui.width (Ui.fill |> Ui.maximum 992), Ui.centerX, Ui.spacing 12 ]
+            [ Ui.el
+                  [ Ui.width (Ui.px 30)
+                  , Ui.height (Ui.px 30)
+                  , Background.color accent
+                  , Border.rounded 8
+                  , Font.color white
+                  , Font.bold
+                  ]
+                  (Ui.el [ Ui.centerX, Ui.centerY ] (Ui.text "£"))
+            , Ui.el
+                  [ Ui.centerY, Font.color white, Font.semiBold, Font.size 16 ]
+                  (Ui.text "Team expenses")
+            , Ui.el
+                  [ Ui.alignRight
+                  , Ui.centerY
+                  , Ui.paddingXY 10 4
+                  , Border.rounded 999
+                  , Background.color (Ui.rgba 34 197 94 0.16)
+                  , Font.color (Ui.rgb 134 239 172)
+                  , Font.size 12
+                  , Font.semiBold
+                  ]
+                  (Ui.text "● Live")
+            ])
 
 
 totals : List Expense -> Element Msg
 totals expenses =
     Ui.wrappedRow
-        [ Ui.spacing 12, Ui.htmlAttribute "data-test-id" "totals" ]
+        [ Ui.width Ui.fill
+        , Ui.spacing 16
+        , Ui.htmlAttribute "data-test-id" "totals"
+        ]
         (List.map (totalCard expenses) [ Pending, Approved, Rejected ])
 
 
 totalCard : List Expense -> Status -> Element Msg
 totalCard expenses status =
-    Ui.column
-        [ Ui.padding 14
-        , Ui.spacing 4
-        , Ui.width (Ui.px 200)
-        , Background.color white
-        , Border.rounded 8
-        , Border.width 1
-        , Border.color (Ui.rgb 226 228 233)
-        ]
-        [ Ui.el
-              [ Font.size 13, Font.color muted ]
-              (Ui.text (Expense.statusLabel status))
-        , Ui.el
-              [ Font.size 22, Font.bold ]
-              (Ui.text
-                  (case Expense.totalFor status expenses of
+    let
+        ( strong, _ ) = tone status
+        count =
+            expenses |> List.filter (\e -> e.status == status) |> List.length
+    in
+        card
+            [ Ui.width (Ui.fill |> Ui.minimum 220)
+            , Ui.padding 18
+            , Ui.spacing 8
+            ]
+            [ Ui.row
+                  [ Ui.spacing 8 ]
+                  [ Ui.el
+                        [ Ui.width (Ui.px 8)
+                        , Ui.height (Ui.px 8)
+                        , Ui.centerY
+                        , Border.rounded 4
+                        , Background.color strong
+                        ]
+                        Ui.none
+                  , Ui.el
+                        [ Font.size 12, Font.semiBold, Font.color muted ]
+                        (Ui.text (String.toUpper (Expense.statusLabel status)))
+                  ]
+            , Ui.el
+                  [ Font.size 26, Font.bold ]
+                  (Ui.text
+                      (case Expense.totalFor status expenses of
 
-                      Ok total ->
-                          Money.format total
+                          Ok total ->
+                              money total
 
-                      Err e ->
-                          Error.toString e))
-        ]
+                          Err e ->
+                              explain e))
+            , Ui.el
+                  [ Font.size 13, Font.color muted ]
+                  (Ui.text
+                      (String.fromInt count
+                          ++ (if count == 1 then
+                                 " claim"
+
+                             else
+                                 " claims")))
+            ]
 
 
 -- A typed form: on submit, the browser sends the fields named "who",
@@ -224,91 +355,163 @@ totalCard expenses status =
 claimForm : Model -> Element Msg
 claimForm model =
     Ui.form
-        [ Ui.onSubmit Submit ]
-        [ Ui.column
-              [ Ui.width Ui.fill
-              , Ui.spacing 10
-              , Ui.padding 16
-              , Background.color (Ui.rgb 246 247 250)
+        [ Ui.onSubmit Submit, Ui.width Ui.fill ]
+        [ card
+              [ Ui.padding 20, Ui.spacing 16 ]
+              [ Ui.el [ Font.size 16, Font.semiBold ] (Ui.text "New claim")
+              , Ui.wrappedRow
+                    [ Ui.width Ui.fill, Ui.spacing 12 ]
+                    [ field "who" "Name" "Ada Lovelace"
+                    , field "description" "What for" "Train to the client site"
+                    , field "amount" "Amount (£)" "42.50"
+                    ]
+              , Ui.wrappedRow
+                    [ Ui.width Ui.fill, Ui.spacing 12 ]
+                    [ categoryPicker model.category
+                    , Ui.input
+                          [ Ui.htmlAttribute "type" "submit"
+                          , Ui.htmlAttribute "value" "Submit claim"
+                          , Ui.alignRight
+                          , Ui.paddingXY 18 10
+                          , Background.color accent
+                          , Background.hoverColor (Ui.rgb 67 56 202)
+                          , Border.width 0
+                          , Border.rounded 8
+                          , Font.color white
+                          , Font.semiBold
+                          , Ui.pointer
+                          ]
+                    ]
+              ]
+        ]
+
+
+-- One chip per category. Each chip is a button that sends its own
+-- `Category`, so there is no string to parse back.
+categoryPicker : Category -> Element Msg
+categoryPicker selected =
+    Ui.wrappedRow
+        [ Ui.spacing 8, Ui.centerY ]
+        (Ui.el
+            [ Ui.centerY, Ui.paddingXY 0 6, Font.semiBold, Font.color muted ]
+            (Ui.text "Category")
+            :: List.map (chip selected) Expense.categories)
+
+
+chip : Category -> Category -> Element Msg
+chip selected category =
+    let
+        on = category == selected
+    in
+        Input.button
+            [ Ui.paddingXY 14 7
+            , Border.rounded 999
+            , Border.width 1
+            , Border.color
+                  (if on then
+                      accent
+
+                  else
+                      Ui.rgb 203 213 225)
+            , Background.color
+                  (if on then
+                      Ui.rgb 238 242 255
+
+                  else
+                      white)
+            , Font.color
+                  (if on then
+                      accent
+
+                  else
+                      ink)
+            , Font.size 13
+            , Font.semiBold
+            ]
+            { onPress = Just (PickCategory category)
+            , label = Ui.text (Expense.categoryLabel category)
+            }
+
+
+field : String -> String -> String -> Element Msg
+field name label hint =
+    Ui.column
+        [ Ui.width (Ui.fill |> Ui.minimum 200), Ui.spacing 6 ]
+        [ Ui.el
+              [ Font.size 13, Font.semiBold, Font.color muted ]
+              (Ui.text label)
+        , Ui.input
+              [ Ui.name name
+              , Ui.htmlAttribute "placeholder" hint
+              , Ui.width Ui.fill
+              , Ui.paddingXY 12 10
+              , Border.width 1
+              , Border.color (Ui.rgb 203 213 225)
+              , Border.focusColor accent
               , Border.rounded 8
               ]
-              [ Ui.el [ Font.bold ] (Ui.text "New claim")
-              , Ui.wrappedRow
-                    [ Ui.spacing 10 ]
-                    [ field "who" "Name"
-                    , field "description" "What for"
-                    , field "amount" "Amount, e.g. 42.50"
-                    ]
-              , Input.radioRow
-                    [ Ui.spacing 14 ]
-                    { onChange = PickCategory
-                    , options =
-                        List.map
-                            (\c ->
-                                Input.option
-                                    (Expense.categoryLabel c)
-                                    (Ui.text (Expense.categoryLabel c)))
-                            Expense.categories
-                    , selected = Expense.categoryLabel model.category
-                    , label =
-                        Input.labelLeft
-                            [ Font.color muted ]
-                            (Ui.text "Category")
-                    }
-              , Ui.input
-                    [ Ui.htmlAttribute "type" "submit"
-                    , Ui.htmlAttribute "value" "Submit claim"
-                    , Ui.paddingXY 14 8
-                    , Background.color (Ui.rgb 37 99 235)
-                    , Font.color white
-                    , Border.rounded 6
-                    ]
-              ]
         ]
 
 
-field : String -> String -> Element Msg
-field name hint =
-    Ui.input
-        [ Ui.name name
-        , Ui.htmlAttribute "placeholder" hint
-        , Ui.padding 8
-        , Ui.width (Ui.px 220)
-        , Border.width 1
-        , Border.color (Ui.rgb 210 212 218)
-        , Border.rounded 4
-        ]
+claimList : List Expense -> Element Msg
+claimList expenses =
+    card
+        [ Ui.htmlAttribute "data-test-id" "claims" ]
+        (Ui.row
+            [ Ui.width Ui.fill, Ui.paddingXY 20 14 ]
+            [ Ui.el [ Font.size 16, Font.semiBold ] (Ui.text "All claims")
+            , Ui.el
+                  [ Ui.alignRight, Font.color muted ]
+                  (Ui.text (String.fromInt (List.length expenses) ++ " total"))
+            ]
+            :: List.map row expenses)
 
 
 row : Expense -> Element Msg
 row expense =
     Ui.wrappedRow
         [ Ui.width Ui.fill
-        , Ui.spacing 12
-        , Ui.padding 12
-        , Background.color white
-        , Border.rounded 8
-        , Border.width 1
-        , Border.color (Ui.rgb 226 228 233)
+        , Ui.spacing 16
+        , Ui.paddingXY 20 14
+        , Border.widthEach { top = 1, right = 0, bottom = 0, left = 0 }
+        , Border.color line
         ]
-        [ Ui.column
-              [ Ui.width Ui.fill, Ui.spacing 4 ]
-              [ Ui.el
-                    [ Font.bold ]
-                    (Ui.text (expense.who ++ ": " ++ expense.description))
+        [ avatar expense.who
+        , Ui.column
+              [ Ui.width (Ui.fill |> Ui.minimum 200), Ui.spacing 4, Ui.centerY ]
+              [ Ui.el [ Font.semiBold ] (Ui.text expense.description)
               , Ui.el
                     [ Font.size 13, Font.color muted ]
                     (Ui.text
-                        (Expense.categoryLabel expense.category
+                        (expense.who ++ " · "
+                            ++ Expense.categoryLabel expense.category
                             ++ (if Expense.needsFinanceReview expense then
                                    " · needs finance review"
 
                                else
                                    "")))
               ]
-        , Ui.el [ Font.bold ] (Ui.text (Money.format expense.amount))
-        , actions expense
+        , Ui.el
+              [ Ui.centerY, Font.semiBold, Font.size 15 ]
+              (Ui.text (money expense.amount))
+        , Ui.el [ Ui.width (Ui.px 190), Ui.centerY ] (actions expense)
         ]
+
+
+avatar : String -> Element Msg
+avatar who =
+    Ui.el
+        [ Ui.width (Ui.px 36)
+        , Ui.height (Ui.px 36)
+        , Ui.centerY
+        , Border.rounded 18
+        , Background.color (Ui.rgb 238 242 255)
+        , Font.color accent
+        , Font.semiBold
+        ]
+        (Ui.el
+            [ Ui.centerX, Ui.centerY ]
+            (Ui.text (String.toUpper (String.left 1 who))))
 
 
 -- The compiler checks this `case`: add a new Status and it names this
@@ -319,38 +522,67 @@ actions expense =
 
         Pending ->
             Ui.row
-                [ Ui.spacing 8 ]
-                [ button "Approve" (Ui.rgb 22 163 74) (Decide Approved expense)
-                , button "Reject" (Ui.rgb 220 38 38) (Decide Rejected expense)
+                [ Ui.spacing 8, Ui.alignRight ]
+                [ button "Approve" True (Decide Approved expense)
+                , button "Reject" False (Decide Rejected expense)
                 ]
 
         Approved ->
-            badge "Approved" (Ui.rgb 220 252 231)
+            badge Approved
 
         Rejected ->
-            badge "Rejected" (Ui.rgb 254 226 226)
+            badge Rejected
 
 
-button : String -> Ui.Color -> Msg -> Element Msg
-button label colour msg =
-    Input.button
-        [ Ui.paddingXY 12 6
-        , Background.color colour
-        , Font.color white
-        , Border.rounded 6
-        ]
-        { onPress = Just msg, label = Ui.text label }
+-- A primary button is filled. A secondary one is outlined. The label is
+-- centred in both directions.
+button : String -> Bool -> Msg -> Element Msg
+button label primary msg =
+    let
+        ( fill, text, hover ) =
+            if primary then
+                ( Ui.rgb 22 163 74, white, Ui.rgb 21 128 61 )
+
+            else
+                ( white, Ui.rgb 185 28 28, Ui.rgb 254 242 242 )
+    in
+        Input.button
+            [ Ui.width (Ui.px 82)
+            , Ui.height (Ui.px 34)
+            , Background.color fill
+            , Background.hoverColor hover
+            , Border.width 1
+            , Border.color
+                  (if primary then
+                      fill
+
+                  else
+                      Ui.rgb 254 202 202)
+            , Border.rounded 8
+            , Font.color text
+            , Font.semiBold
+            , Font.size 13
+            ]
+            { onPress = Just msg
+            , label = Ui.el [ Ui.centerX, Ui.centerY ] (Ui.text label)
+            }
 
 
-badge : String -> Ui.Color -> Element Msg
-badge label colour =
-    Ui.el
-        [ Ui.paddingXY 10 4
-        , Background.color colour
-        , Border.rounded 12
-        , Font.size 13
-        ]
-        (Ui.text label)
+badge : Status -> Element Msg
+badge status =
+    let
+        ( strong, tint ) = tone status
+    in
+        Ui.el
+            [ Ui.alignRight
+            , Ui.paddingXY 12 5
+            , Background.color tint
+            , Border.rounded 999
+            , Font.color strong
+            , Font.size 12
+            , Font.semiBold
+            ]
+            (Ui.text ("● " ++ Expense.statusLabel status))
 
 
 -- ── JSON API ────────────────────────────────────────────────────────

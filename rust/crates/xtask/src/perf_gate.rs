@@ -142,8 +142,13 @@ pub const PROGRAMS: &[Program] = &[
     },
     Program {
         name: "concurrent-cons",
-        what: "eight parallel Tasks, each consing its own 1e5 list",
-        n: 25_000,
+        what: "eight parallel Tasks, each consing its own 4e5 list",
+        // 100_000, not 25_000: at 25_000 the best of five runs took about
+        // 7 ms, and one busy moment on a shared CI runner moved the 4n run
+        // from 12 ms to 60 ms (growth 1.74 on one run, 8.98 on the next, on
+        // the same runtime). At 100_000 each size takes tens of ms, so the
+        // ratio measures the runtime, not the runner.
+        n: 100_000,
         elems_per_n: 8,
         extra_args: &[],
         malloc_budget: 0.5,

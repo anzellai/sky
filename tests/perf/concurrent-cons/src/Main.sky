@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 -- Perf gate program 6: eight Tasks in parallel, each consing its own
--- list of n Ints (1e5 at 4n). Concurrent builders must not evict each
+-- list of n Ints (4e5 at 4n). Concurrent builders must not evict each
 -- other's cons blocks into quadratic copying.
 
 import Sky.Core.Prelude exposing (..)

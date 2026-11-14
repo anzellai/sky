@@ -20,6 +20,8 @@ sky run src/Main.sky
 
 macOS and Linux. Windows through WSL. `sky upgrade` keeps it current and shows the migration notes for each release.
 
+**Showing Sky to your team?** [`examples/77-demo-expenses`](examples/77-demo-expenses) has a 15-minute talk, slides and a live demo script.
+
 **Using an AI coding agent?** Every `sky init` project ships `AGENTS.md` and `CLAUDE.md`. Point your agent at them and ask for the app you want. `sky doc <Module>` gives it exact signatures, and `sky check --format json` gives it machine-readable errors.
 
 ## Where are you coming from?

@@ -176,6 +176,12 @@ totally-broken single-column fallback when the attribute is forgotten).
 `Ui.spacing N` works as the gap (CSS Grid honours the `gap` property
 natively, same as flexbox).
 
+A grid aligns on its own axes. On a grid child, `alignLeft` / `centerX` /
+`alignRight` set `justify-self` and `alignTop` / `centerY` / `alignBottom` set
+`align-self`. On the grid itself, `centerX` sets `justify-items` and `centerY`
+sets `align-items`, so every item is placed in its cell. A `fill` child
+stretches along its track and never makes the grid grow in its parent.
+
 ### `Std.Ui.Grid` — typed track lists (sidebars, content-aware columns)
 
 `Ui.gridColumns` is great for product-card grids where every track
@@ -287,7 +293,7 @@ honours it via the embedded WebKit/Chromium engine.
 Ui.px : Int -> Length                   -- absolute pixels
 Ui.fill : Length                        -- single growing slot (no arg)
 Ui.fillPortion : Int -> Length          -- proportional flex-grow weight
-Ui.shrink : Length                      -- shrink to content size
+Ui.shrink : Length                      -- shrink to content size (fit-content: wraps when narrower)
 Ui.minimum : Int -> Length -> Length    -- minimum constraint on a length
 Ui.maximum : Int -> Length -> Length    -- maximum constraint on a length
 Ui.vh : Int -> Length                   -- viewport-height percent (1..100)
@@ -323,7 +329,9 @@ Ui.column
 | Position | Emitted CSS |
 |---|---|
 | Main-axis fill (e.g. `Ui.width Ui.fill` on a `Ui.row` child, `Ui.height Ui.fill` on a `Ui.column` child) | `flex-grow: N; min-{w,h}: 0;` |
-| Cross-axis HEIGHT fill (`Ui.height Ui.fill` on a `Ui.row` child) | nothing — relies on flex's default `align-items: stretch` |
+| Cross-axis HEIGHT fill (`Ui.height Ui.fill` on a `Ui.row` child) | `align-self: stretch;` (none when the child has its own `alignTop` / `centerY` / `alignBottom`) |
+| Fill in a `Ui.grid` child | `justify-self: stretch;` (width), `align-self: stretch;` (height); left out when the child has its own alignment on that axis |
+| `Ui.minimum N Ui.fill` on the main axis | `flex-grow: 1; min-{w,h}: Npx;` (the floor replaces `min-{w,h}: 0`) |
 | Cross-axis WIDTH fill (`Ui.width Ui.fill` on a `Ui.column` / `Ui.el` / `Ui.textColumn` child) | `width: 100%;` |
 
 The asymmetry isn't sloppy — it closes a real bug class. CSS
@@ -366,6 +374,37 @@ User-visible effect: identical rendering to v0.15.55. The change
 is code-hygiene: clean cascade, explicit precedence (alignment
 attrs always win over implicit fill-stretch), no ordering
 ambiguity.
+
+### Layout fixes (2026-11 audit)
+
+- **Nearby elements** (`above`, `below`, `onLeft`, `onRight`, `inFront`,
+  `behindContent`): the wrapper is a flex column with `align-items:
+  flex-start`, the same axes as a `Ui.el`. `alignRight` and `centerX` on the
+  nearby element move it horizontally, `alignBottom` and `centerY`
+  vertically. An unaligned nearby element keeps its content width.
+- **A `height fill` child of a row** gets `align-self: stretch`, so it still
+  fills the row when the row has `centerY`, `alignTop` or `alignBottom`.
+- **`Ui.shrink`** is `fit-content`, so shrink text wraps on a narrow screen.
+- **`Ui.spacing` on a `Ui.paragraph`** sets the space between lines
+  (`line-height: calc(1em + Npx)`), as in elm-ui. `gap` does nothing on a
+  block. `textColumn`, `row` and `column` keep `gap`.
+- **Shadows combine.** `Border.shadow`, `Border.glow` and
+  `Border.innerShadow` on one element give ONE `box-shadow` with every layer
+  in attribute order, so an outer and an inner shadow show together.
+- **Inline children of a paragraph** get no `align-self` (it has no effect
+  on an inline box).
+- **Labelled inputs.** When a layout attribute goes to the label wrapper,
+  the control gets `width fill`, and `height fill` only when the attributes
+  carry a `Ui.height`. A labelled `Input.text [ Ui.width Ui.fill ]` no
+  longer grows vertically. `Input.multiline` always fills the box (#403).
+- **A `px` length keeps its size.** A `Ui.width (Ui.px n)` child of a row,
+  and a `Ui.height (Ui.px n)` child of a column, `el` or `textColumn`, gets
+  `flex-shrink: 0`, as in elm-ui. A crowded row no longer squashes an avatar
+  or an icon. A box that may give way says so: `Ui.width (Ui.fill |>
+  Ui.maximum n)`.
+- **`centerY`, `alignTop` and `alignBottom` in an `el`, a button or a
+  `textColumn`** move the element vertically. Before, they set `align-self`,
+  which in those column-like parents moved it sideways.
 
 ### `Ui.layoutWith` — wrapper customisation (v0.15.56)
 
