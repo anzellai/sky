@@ -612,6 +612,14 @@
 # 77-demo-expenses (new): the 10-minute demo app (Sky.Live, Std.Ui, SQLite,
 #   Std.Money). New row: narrow=184, measured with
 #   `coerce-floor --only=77-demo-expenses`.
+#
+# 77-demo-expenses 184 -> 244: the demo's view was redesigned (a header,
+#   total cards with counts, labelled fields, category chips that each send
+#   a Category, one claims list with avatars, status pills, grouped money
+#   through Decimal.formatWith, and an `explain` that reads an Error's
+#   message). +55 is that larger view (measured on 583a736a3); +5 is the
+#   Std.Ui layout fixes of bb8a7a961 (the AsGrid context, the row-fill and
+#   shadow rules) inlined into its view. No adapter or dispatch site.
 00-standard-libs	adapter=0	dispatch=0	narrow=107
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=6
@@ -681,7 +689,7 @@
 73-ai-train	adapter=0	dispatch=0	narrow=1267
 74-ai-cloud	adapter=0	dispatch=0	narrow=1362
 75-ai-everywhere	adapter=0	dispatch=0	narrow=809
-77-demo-expenses	adapter=0	dispatch=0	narrow=184
+77-demo-expenses	adapter=0	dispatch=0	narrow=244
 apps/dispatch	adapter=0	dispatch=0	narrow=233
 apps/fieldbook	adapter=0	dispatch=0	narrow=401
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2

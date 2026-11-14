@@ -764,7 +764,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 1304,
+      "expected_assertions": 1331,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -14404,6 +14404,11 @@
             "strength": 3
           },
           {
+            "by": "examples/77-demo-expenses (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_cloud_train_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14446,6 +14451,11 @@
           },
           {
             "by": "examples/35-composite-generics (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/77-demo-expenses (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -20293,9 +20303,8 @@
           ]
         },
         "Std.Decimal": {
-          "count": 9,
+          "count": 8,
           "symbols": [
-            "formatWith",
             "fromFloat",
             "gt",
             "lt",
@@ -20691,12 +20700,10 @@
           ]
         },
         "Std.Ui.Border": {
-          "count": 4,
+          "count": 2,
           "symbols": [
             "activeColor",
-            "focusColor",
-            "focusVisibleColor",
-            "innerShadow"
+            "focusVisibleColor"
           ]
         },
         "Std.Ui.Canvas": {
@@ -20862,8 +20869,8 @@
           ]
         }
       },
-      "count": 871,
-      "pct_of_denominator": 26.8
+      "count": 868,
+      "pct_of_denominator": 26.7
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21770,9 +21777,8 @@
           ]
         },
         "Std.Decimal": {
-          "count": 9,
+          "count": 8,
           "symbols": [
-            "formatWith",
             "fromFloat",
             "gt",
             "lt",
@@ -22229,12 +22235,10 @@
           ]
         },
         "Std.Ui.Border": {
-          "count": 4,
+          "count": 2,
           "symbols": [
             "activeColor",
-            "focusColor",
-            "focusVisibleColor",
-            "innerShadow"
+            "focusVisibleColor"
           ]
         },
         "Std.Ui.Canvas": {
@@ -22414,8 +22418,8 @@
           ]
         }
       },
-      "count": 986,
-      "pct_of_denominator": 30.3
+      "count": 983,
+      "pct_of_denominator": 30.2
     }
   },
   "units": [
@@ -23832,10 +23836,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/77-demo-expenses",
-      "modules_imported": 20,
+      "modules_imported": 21,
       "path": "examples/77-demo-expenses",
-      "refs_generous": 102,
-      "refs_qualified": 93,
+      "refs_generous": 115,
+      "refs_qualified": 107,
       "role": "Example",
       "sky_files": 4,
       "sky_toml_sections": [
@@ -24484,10 +24488,10 @@
       "id": "tests/Std",
       "modules_imported": 52,
       "path": "tests/Std",
-      "refs_generous": 704,
-      "refs_qualified": 678,
+      "refs_generous": 718,
+      "refs_qualified": 692,
       "role": "SkySuite",
-      "sky_files": 25,
+      "sky_files": 27,
       "sky_toml_sections": []
     },
     {
