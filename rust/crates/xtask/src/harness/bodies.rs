@@ -3393,7 +3393,12 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// 1304 + 5 = 1309: `Std/UiCenterYInElTest` (a `centerY` child of a `Ui.el`
 /// and of an `Input.button` gets vertical auto margins, a column keeps them,
 /// a row keeps `align-self` and gets no auto margins).
-pub const SKY_SUITES_EXPECTED: u64 = 1309;
+///
+/// 1309 + 22 = 1331: `Std/UiLayoutAuditTest` (the nearby wrapper is a column,
+/// the grid layout context, a row's `height fill` stretch, labelled input
+/// fill, `shrink` = `fit-content`, paragraph line spacing, one combined
+/// `box-shadow`, no dead `align-self` / `min-width: 0`).
+pub const SKY_SUITES_EXPECTED: u64 = 1331;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

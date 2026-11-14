@@ -317,7 +317,7 @@ multiline attrs cfg =
                 :: Ui.onInput cfg.onChange
                 :: placeholderAttr
                 ++ controlAttrs
-                ++ implicitFillIfHoisted layoutAttrs
+                ++ implicitFillBothIfHoisted layoutAttrs
         textareaEl = Ui.TaggedNode "textarea" Ui.NoDescription baseAttrs []
     in
         wrapWithLabel cfg.label layoutAttrs textareaEl
@@ -656,13 +656,43 @@ isLayoutAttr attr =
 -- at content-line height). When NO layout attrs are supplied —
 -- the default for compact / shrink-to-content inputs — we emit no
 -- implicit fill so the inputs keep their natural intrinsic size.
+--
+-- The control fills the wrapper's height only when the caller gave a
+-- height. A height fill on every control (the old rule) made a labelled
+-- single-line `Input.text [ width fill ]` grow vertically (`flex-grow` in
+-- the label column) and pushed that growth up the column chain.
+-- `Input.multiline` keeps both fills (`implicitFillBothIfHoisted`): a
+-- textarea fills whatever box the caller sized (issue #403).
 implicitFillIfHoisted : List (Attribute msg) -> List (Attribute msg)
 implicitFillIfHoisted layoutAttrs =
     if List.isEmpty layoutAttrs then
         []
 
+    else if List.any isHeightAttr layoutAttrs then
+        [ Ui.width Ui.fill, Ui.height Ui.fill ]
+
+    else
+        [ Ui.width Ui.fill ]
+
+
+implicitFillBothIfHoisted : List (Attribute msg) -> List (Attribute msg)
+implicitFillBothIfHoisted layoutAttrs =
+    if List.isEmpty layoutAttrs then
+        []
+
     else
         [ Ui.width Ui.fill, Ui.height Ui.fill ]
+
+
+isHeightAttr : Attribute msg -> Bool
+isHeightAttr attr =
+    case attr of
+
+        AttrHeight _ ->
+            True
+
+        _ ->
+            False
 
 
 rowLayout : Attribute msg

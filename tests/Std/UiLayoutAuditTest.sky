@@ -1,0 +1,325 @@
+module Std.UiLayoutAuditTest exposing (tests)
+
+-- Layout-CSS defects a Std.Ui audit found (2026-11). One suite per fix.
+--
+-- 1. A nearby wrapper (`below`, `inFront`, ...) was a flex ROW, but its
+--    child renders as the child of an `el` (a column), so `alignRight` and
+--    `centerX` moved the child on the wrong axis.
+-- 2. `Ui.grid` had no layout context of its own. A grid child's `alignRight`
+--    emitted `align-self` (vertical in a grid), the grid's own `centerX` set
+--    `align-items` (vertical in a grid), and a `height fill` child gave the
+--    grid `flex-grow`.
+-- 3. `row [ centerY ]` sets `align-items: center`, and a `height fill` child
+--    emitted nothing, so it was only as tall as its content.
+-- 4. A labelled `Input.text [ width fill ]` also got `height fill` on the
+--    control, which grew it vertically and propagated growth up the column.
+-- 5. `shrink` emitted `max-content`, so shrink text never wrapped.
+-- 7. `spacing` on a `paragraph` emitted `gap`, which does nothing on a block.
+-- 8. `Border.shadow` with `Border.innerShadow` emitted two `box-shadow`
+--    declarations, and the last one won.
+-- 9. An inline child of a paragraph emitted `align-self` (no effect), and
+--    `minimum n fill` in a row emitted `min-width: 0;` before `min-width: Npx;`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Border as Border
+import Std.Ui.Input as Input
+import Sky.Test as Test exposing (Test, TestResult)
+
+type Msg
+    = Edit String
+
+
+render : Element Msg -> String
+render el =
+    Html.render (Ui.layout [] el)
+
+
+has : String -> Element Msg -> TestResult
+has css el =
+    Test.isTrue (String.contains css (render el))
+
+
+hasNot : String -> Element Msg -> TestResult
+hasNot css el =
+    Test.isTrue (not (String.contains css (render el)))
+
+
+occurrences : String -> Element Msg -> Int
+occurrences css el =
+    List.length (String.split css (render el)) - 1
+
+
+box : Element Msg
+box =
+    Ui.el [ Ui.width (Ui.px 10), Ui.height (Ui.px 10) ] Ui.none
+
+
+shadowColour : Ui.Color
+shadowColour =
+    Ui.rgb 0 0 0
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "1. nearby wrapper is a column"
+          [ Test.test
+                "a below wrapper is flex-direction: column"
+                (\_ ->
+                    has
+                        "position: absolute; display: flex; flex-direction: column;"
+                        (Ui.el [ Ui.below (Ui.el [ Ui.alignRight ] box) ] box))
+          ]
+    , Test.suite
+          "2. grid layout context"
+          [ Test.test
+                "an alignRight grid child gets justify-self: end"
+                (\_ ->
+                    has
+                        "justify-self: end;"
+                        (Ui.grid [] [ Ui.el [ Ui.alignRight ] box ]))
+          , Test.test
+                "an alignRight grid child gets no align-self"
+                (\_ ->
+                    hasNot
+                        "align-self: flex-end;"
+                        (Ui.grid [] [ Ui.el [ Ui.alignRight ] box ]))
+          , Test.test
+                "a centerY grid child gets align-self: center, not auto margins"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "align-self: center;"
+                            (render (Ui.grid [] [ Ui.el [ Ui.centerY ] box ]))
+                            && not
+                                   (String.contains
+                                       "margin-top: auto"
+                                       (render
+                                           (Ui.grid
+                                               []
+                                               [ Ui.el [ Ui.centerY ] box ])))))
+          , Test.test
+                "a grid's own centerX sets justify-items"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "justify-items: center;"
+                            (render (Ui.grid [ Ui.centerX ] [ box ]))
+                            && not
+                                   (String.contains
+                                       "align-items: center;"
+                                       (render (Ui.grid [ Ui.centerX ] [ box ])))))
+          , Test.test
+                "a grid's own centerY sets align-items"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "align-items: center;"
+                            (render (Ui.grid [ Ui.centerY ] [ box ]))
+                            && not
+                                   (String.contains
+                                       "justify-content: center;"
+                                       (render (Ui.grid [ Ui.centerY ] [ box ])))))
+          , Test.test
+                "a height fill grid child gives the grid no flex-grow"
+                (\_ ->
+                    hasNot
+                        "flex-grow"
+                        (Ui.column
+                            []
+                            [ Ui.grid [] [ Ui.el [ Ui.height Ui.fill ] Ui.none ]
+                            ]))
+          , Test.test
+                "a width fill grid child stretches along its track"
+                (\_ ->
+                    has
+                        "justify-self: stretch;"
+                        (Ui.grid [] [ Ui.el [ Ui.width Ui.fill ] Ui.none ]))
+          ]
+    , Test.suite
+          "3. height fill in a centred row"
+          [ Test.test
+                "a height fill child of row [ centerY ] gets align-self: stretch"
+                (\_ ->
+                    has
+                        "align-self: stretch;"
+                        (Ui.row
+                            [ Ui.centerY ]
+                            [ Ui.el [ Ui.height Ui.fill ] Ui.none ]))
+          , Test.test
+                "the child's own alignTop wins over the fill stretch"
+                (\_ ->
+                    hasNot
+                        "align-self: stretch;"
+                        (Ui.row
+                            [ Ui.centerY ]
+                            [ Ui.el [ Ui.height Ui.fill, Ui.alignTop ] Ui.none ]))
+          ]
+    , Test.suite
+          "4. labelled input fill"
+          [ Test.test
+                "a labelled Input.text [ width fill ] does not grow vertically"
+                (\_ ->
+                    hasNot
+                        "flex-grow"
+                        (Input.text
+                            [ Ui.width Ui.fill ]
+                            { onChange = Edit
+                            , text = ""
+                            , placeholder = Nothing
+                            , label = Input.labelAbove [] (Ui.text "Name")
+                            }))
+          , Test.test
+                "a labelled Input.text [ width fill ] fills the width"
+                (\_ ->
+                    has
+                        "width: 100%;"
+                        (Input.text
+                            [ Ui.width Ui.fill ]
+                            { onChange = Edit
+                            , text = ""
+                            , placeholder = Nothing
+                            , label = Input.labelAbove [] (Ui.text "Name")
+                            }))
+          , Test.test
+                "Input.multiline [ height fill ] still grows the textarea"
+                (\_ ->
+                    has
+                        "flex-grow: 1;"
+                        (Input.multiline
+                            [ Ui.width Ui.fill, Ui.height Ui.fill ]
+                            { onChange = Edit
+                            , text = ""
+                            , placeholder = Nothing
+                            , label = Input.labelHidden "Body"
+                            , spellcheck = False
+                            }))
+          ]
+    , Test.suite
+          "5. shrink is fit-content"
+          [ Test.test
+                "width shrink emits fit-content"
+                (\_ ->
+                    has
+                        "width: fit-content;"
+                        (Ui.el [ Ui.width Ui.shrink ] (Ui.text "x")))
+          , Test.test
+                "height shrink emits fit-content"
+                (\_ ->
+                    has
+                        "height: fit-content;"
+                        (Ui.el [ Ui.height Ui.shrink ] (Ui.text "x")))
+          ]
+    , Test.suite
+          "7. paragraph spacing"
+          [ Test.test
+                "spacing on a paragraph sets the line height"
+                (\_ ->
+                    has
+                        "line-height: calc(1em + 6px);"
+                        (Ui.paragraph [ Ui.spacing 6 ] [ Ui.text "a b c" ]))
+          , Test.test
+                "spacing on a paragraph emits no gap"
+                (\_ ->
+                    hasNot
+                        "gap: 6px;"
+                        (Ui.paragraph [ Ui.spacing 6 ] [ Ui.text "a b c" ]))
+          , Test.test
+                "spacing on a textColumn keeps gap"
+                (\_ ->
+                    has
+                        "gap: 6px;"
+                        (Ui.textColumn [ Ui.spacing 6 ] [ Ui.text "a" ]))
+          ]
+    , Test.suite
+          "8. shadows combine"
+          [ Test.test
+                "shadow and innerShadow give one box-shadow with both layers"
+                (\_ ->
+                    let
+                        el =
+                            Ui.el
+                                [ Border.shadow
+                                      { offsetX = 0
+                                      , offsetY = 2
+                                      , blur = 4
+                                      , spread = 0
+                                      , color = shadowColour
+                                      }
+                                , Border.innerShadow
+                                      { offsetX = 0
+                                      , offsetY = 1
+                                      , blur = 2
+                                      , spread = 0
+                                      , color = shadowColour
+                                      }
+                                ]
+                                Ui.none
+                    in
+                        Test.isTrue
+                            (occurrences "box-shadow" el == 1
+                                && String.contains
+                                       "box-shadow: 0px 2px 4px 0px rgba(0, 0, 0, 1), inset 0px 1px 2px 0px rgba(0, 0, 0, 1);"
+                                       (render el)))
+          , Test.test
+                "glow and shadow give one box-shadow"
+                (\_ ->
+                    Test.equal
+                        1
+                        (occurrences
+                            "box-shadow"
+                            (Ui.el
+                                [ Border.glow 8 shadowColour
+                                , Border.shadow
+                                      { offsetX = 0
+                                      , offsetY = 2
+                                      , blur = 4
+                                      , spread = 0
+                                      , color = shadowColour
+                                      }
+                                ]
+                                Ui.none)))
+          ]
+    , Test.suite
+          "9. no dead declarations"
+          [ Test.test
+                "a centred inline child of a paragraph emits no align-self"
+                (\_ ->
+                    hasNot
+                        "align-self"
+                        (Ui.paragraph
+                            []
+                            [ Ui.el [ Ui.centerX, Ui.centerY ] (Ui.text "x") ]))
+          , Test.test
+                "minimum n fill in a row emits only the floor"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "min-width: 100px;"
+                            (render
+                                (Ui.row
+                                    []
+                                    [ Ui.el
+                                          [ Ui.width (Ui.minimum 100 Ui.fill) ]
+                                          Ui.none
+                                    ]))
+                            && not
+                                   (String.contains
+                                       "min-width: 0;"
+                                       (render
+                                           (Ui.row
+                                               []
+                                               [ Ui.el
+                                                     [ Ui.width
+                                                           (Ui.minimum
+                                                               100
+                                                               Ui.fill)
+                                                     ]
+                                                     Ui.none
+                                               ])))))
+          ]
+    ]

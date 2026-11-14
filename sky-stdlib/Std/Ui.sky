@@ -361,12 +361,19 @@ type Description
 -- Layout direction the parent imposes on its children. Used to
 -- inject extra wrapper divs when alignment requirements conflict
 -- with the parent's flex-direction.
+--
+-- `AsGrid` is a `Ui.grid` (`display: grid`). A grid child is placed with
+-- `justify-self` (X) and `align-self` (Y), the grid's own content alignment
+-- is `justify-items` (X) and `align-items` (Y), and a `fill` child stretches
+-- along its track. A grid has no flex main axis, so a `fill` child never
+-- gives the grid `flex-grow`.
 type LayoutContext
     = AsRow
     | AsColumn
     | AsEl
     | AsParagraph
     | AsTextColumn
+    | AsGrid
 
 
 -- ─── Building elements ───────────────────────────────────────────
@@ -1532,7 +1539,8 @@ mediaQuery query attrs child =
 -- override via explicit CSS in a `style` attr if needed.
 mediaQueryRulesCss : List (Attribute msg) -> String
 mediaQueryRulesCss attrs =
-    List.foldl (collectStyle AsColumn AsColumn) "" attrs
+    List.foldl (collectStyle noMarkerFlags AsColumn AsColumn) "" attrs
+        ++ shadowCss attrs
 
 
 -- ─── Pseudo-classes (issue #377) ─────────────────────────────────
@@ -2822,6 +2830,11 @@ propagateFillToContainer renderCtx attrs children =
             else
                 attrs
 
+        AsGrid ->
+            -- A grid child fills its track, not the grid's parent: a grid
+            -- has no flex main axis, so nothing propagates.
+            attrs
+
 
 -- True when the container's flex-direction main axis is the
 -- direction the child is asking to grow along. Rows main-axis =
@@ -2869,6 +2882,9 @@ attrsHaveMainAxisFill renderCtx attrs =
             List.any isHeightFillAttr attrs
 
         AsParagraph ->
+            False
+
+        AsGrid ->
             False
 
 
@@ -2973,11 +2989,19 @@ toNearbyPair a =
 -- Location. The child is rendered first, then wrapped in a thin div
 -- carrying the absolute-positioning styles. Inside a paragraph the wrapper
 -- is a <span> (see `Nesting`); its explicit `display: flex` keeps the box.
+--
+-- The wrapper is a flex COLUMN because its child renders as the child of an
+-- `el` (`AsEl`, a column): `alignRight` / `centerX` emit `align-self`, which
+-- is horizontal only in a column, and `centerY` / `alignBottom` emit auto
+-- margins on the vertical main axis. A row wrapper moved the child on the
+-- wrong axis. `align-items: flex-start` keeps an unaligned child at its
+-- content width at the top left, as the row did.
 renderNearby : Nesting -> ( Location, Element msg ) -> any
 renderNearby nest ( loc, el ) =
     let
         positionStyle =
-            "position: absolute; display: flex; " ++ locationCss loc
+            "position: absolute; display: flex; flex-direction: column; align-items: flex-start; "
+                ++ locationCss loc
         wrapperTag = parserSafeTag nest "div"
         rendered =
             renderElementIn (nestingInside nest wrapperTag) AsEl [] el
@@ -3235,9 +3259,19 @@ type alias MarkerFlags =
     , textcolumn : Bool
     , grid : Bool
     , wrap : Bool
+    , alignX : Bool
+    , alignY : Bool
+    , shadow : Bool
     }
 
 
+-- `alignX` / `alignY` record an explicit `alignLeft/centerX/alignRight` /
+-- `alignTop/centerY/alignBottom` on the element. A `fill` that stretches by
+-- `align-self` / `justify-self` (a row's height, a grid's width and height)
+-- emits its stretch only when no explicit alignment is present, so the
+-- alignment always wins whatever the attribute order. `shadow` records a
+-- `Border.shadow` / `glow` / `innerShadow`, so `shadowCss` walks the list only
+-- for an element that has one.
 noMarkerFlags : MarkerFlags
 noMarkerFlags =
     { row = False
@@ -3246,6 +3280,9 @@ noMarkerFlags =
     , textcolumn = False
     , grid = False
     , wrap = False
+    , alignX = False
+    , alignY = False
+    , shadow = False
     }
 
 
@@ -3301,6 +3338,18 @@ markerFlagStep a acc =
             else
                 acc
 
+        AttrAlignX _ ->
+            { acc | alignX = True }
+
+        AttrAlignY _ ->
+            { acc | alignY = True }
+
+        AttrBorderShadow _ _ _ _ _ ->
+            { acc | shadow = True }
+
+        AttrBorderInsetShadow _ _ _ _ _ ->
+            { acc | shadow = True }
+
         _ ->
             acc
 
@@ -3312,7 +3361,12 @@ markerFlagStep a acc =
 -- input.
 layoutContextFromFlags : MarkerFlags -> LayoutContext
 layoutContextFromFlags flags =
-    if flags.row then
+    if flags.grid then
+        -- `buildStyleStringWith` renders `display: grid` whenever the grid
+        -- marker is present, so the grid context wins too.
+        AsGrid
+
+    else if flags.row then
         AsRow
 
     else if flags.col then
@@ -3384,7 +3438,13 @@ buildStyleStringWith flags emitDisplay parentCtx myCtx attrs =
                 -- presence here and append the corresponding CSS. No-op when
                 -- `__grid` is on (grid wraps natively via auto-fill).
                 ""
-        attrParts = List.foldl (collectStyle parentCtx myCtx) "" attrs
+        attrParts =
+            List.foldl (collectStyle flags parentCtx myCtx) "" attrs
+                ++ (if flags.shadow then
+                       shadowCss attrs
+
+                   else
+                       "")
         -- A border needs a style to render. `border-width` no longer
         -- emits `border-style` itself (that clobbered an explicit
         -- Border.dashed / .dotted depending on attribute order), so
@@ -3568,6 +3628,9 @@ displayIn parentCtx myCtx =
                     -- rather than silently rendering as a text run.
                     "display: block;"
 
+                AsGrid ->
+                    "display: inline-grid;"
+
         _ ->
             displayFor myCtx
 
@@ -3604,9 +3667,14 @@ displayFor ctx =
         AsTextColumn ->
             "display: flex; flex-direction: column;"
 
+        AsGrid ->
+            "display: grid;"
 
-collectStyle : LayoutContext -> LayoutContext -> Attribute msg -> String -> String
-collectStyle parentCtx myCtx attr acc =
+
+-- `flags` are the element's own marker flags (see `MarkerFlags`); only the
+-- `alignX` / `alignY` fields are read here, by the fill stretch.
+collectStyle : MarkerFlags -> LayoutContext -> LayoutContext -> Attribute msg -> String -> String
+collectStyle flags parentCtx myCtx attr acc =
     case attr of
 
         NoAttribute ->
@@ -3614,9 +3682,11 @@ collectStyle parentCtx myCtx attr acc =
 
         AttrWidth lng ->
             acc ++ " " ++ widthCssIn parentCtx lng
+                ++ widthStretchFor flags parentCtx lng
 
         AttrHeight lng ->
             acc ++ " " ++ heightCssIn parentCtx lng
+                ++ heightStretchFor flags parentCtx lng
 
         AttrPadding t r b l ->
             acc ++ " padding: " ++ String.fromInt t ++ "px " ++ String.fromInt r
@@ -3627,7 +3697,16 @@ collectStyle parentCtx myCtx attr acc =
                 ++ "px;"
 
         AttrSpacing n ->
-            acc ++ " gap: " ++ String.fromInt n ++ "px;"
+            case myCtx of
+
+                AsParagraph ->
+                    -- A paragraph is a block: `gap` does nothing there. Its
+                    -- spacing is the space between lines, as in elm-ui.
+                    acc ++ " line-height: calc(1em + " ++ String.fromInt n
+                        ++ "px);"
+
+                _ ->
+                    acc ++ " gap: " ++ String.fromInt n ++ "px;"
 
         AttrAlignX h ->
             acc ++ " " ++ alignXCss myCtx h ++ " " ++ alignSelfX parentCtx h
@@ -3745,27 +3824,12 @@ collectStyle parentCtx myCtx attr acc =
         AttrBorderStyle s ->
             acc ++ " border-style: " ++ s ++ ";"
 
-        AttrBorderShadow ox oy blur spread c ->
-            acc ++ " box-shadow: " ++ String.fromInt ox ++ "px "
-                ++ String.fromInt oy
-                ++ "px "
-                ++ String.fromInt blur
-                ++ "px "
-                ++ String.fromInt spread
-                ++ "px "
-                ++ colorCss c
-                ++ ";"
+        AttrBorderShadow _ _ _ _ _ ->
+            -- Every shadow layer goes into ONE `box-shadow` (`shadowCss`).
+            acc
 
-        AttrBorderInsetShadow ox oy blur spread c ->
-            acc ++ " box-shadow: inset " ++ String.fromInt ox ++ "px "
-                ++ String.fromInt oy
-                ++ "px "
-                ++ String.fromInt blur
-                ++ "px "
-                ++ String.fromInt spread
-                ++ "px "
-                ++ colorCss c
-                ++ ";"
+        AttrBorderInsetShadow _ _ _ _ _ ->
+            acc
 
         AttrPointer ->
             acc ++ " cursor: pointer;"
@@ -3808,6 +3872,45 @@ collectStyle parentCtx myCtx attr acc =
             -- Explicit `grid-template-columns|grid-template-rows`
             -- value, read out by `findGridTemplate` (overrides the
             -- legacy `__gridMin` shape). Stripped here.
+
+
+-- All `Border.shadow` / `Border.glow` / `Border.innerShadow` layers of one
+-- element as ONE `box-shadow` declaration, in attribute order. Each used to
+-- emit its own `box-shadow`, so the last one replaced the others: an outer
+-- shadow and an inner shadow could not coexist. Empty when there is none.
+shadowCss : List (Attribute msg) -> String
+shadowCss attrs =
+    case List.foldl shadowLayerStep [] attrs of
+
+        [] ->
+            ""
+
+        layers ->
+            " box-shadow: " ++ String.join ", " (List.reverse layers) ++ ";"
+
+
+shadowLayerStep : Attribute msg -> List String -> List String
+shadowLayerStep a layers =
+    case a of
+
+        AttrBorderShadow ox oy blur spread c ->
+            shadowLayer "" ox oy blur spread c :: layers
+
+        AttrBorderInsetShadow ox oy blur spread c ->
+            shadowLayer "inset " ox oy blur spread c :: layers
+
+        _ ->
+            layers
+
+
+shadowLayer : String -> Int -> Int -> Int -> Int -> Color -> String
+shadowLayer prefix ox oy blur spread c =
+    prefix ++ String.fromInt ox ++ "px " ++ String.fromInt oy ++ "px "
+        ++ String.fromInt blur
+        ++ "px "
+        ++ String.fromInt spread
+        ++ "px "
+        ++ colorCss c
 
 
 -- Render a Color as a CSS rgba(...) string using percentage
@@ -3861,13 +3964,18 @@ widthCssIn parentCtx lng =
             "width: " ++ String.fromInt n ++ "px;"
 
         Content ->
-            "width: max-content;"
+            -- `fit-content`, not `max-content`: shrink text still wraps
+            -- when the space is narrower than its one-line width.
+            "width: fit-content;"
 
         Fill n ->
             widthFillFor parentCtx n
 
         Min n inner ->
-            widthCssIn parentCtx inner ++ " min-width: " ++ String.fromInt n
+            -- The floor replaces the row fill's `min-width: 0`, so emit
+            -- only the floor.
+            widthCssNoFloor parentCtx inner ++ " min-width: "
+                ++ String.fromInt n
                 ++ "px;"
 
         Max n inner ->
@@ -3938,6 +4046,100 @@ widthFillFor parentCtx n =
         AsTextColumn ->
             "width: 100%;"
 
+        AsGrid ->
+            -- Stretches along its column track (`widthStretchFor`).
+            ""
+
+
+-- `widthCssIn` for the inner length of a `minimum n`: a main-axis fill
+-- drops its `min-width: 0`, which the floor that follows replaces.
+widthCssNoFloor : LayoutContext -> Length -> String
+widthCssNoFloor parentCtx lng =
+    case lng of
+
+        Fill n ->
+            case parentCtx of
+
+                AsRow ->
+                    "flex-grow: " ++ String.fromInt n ++ ";"
+
+                _ ->
+                    widthFillFor parentCtx n
+
+        _ ->
+            widthCssIn parentCtx lng
+
+
+heightCssNoFloor : LayoutContext -> Length -> String
+heightCssNoFloor parentCtx lng =
+    case lng of
+
+        Fill n ->
+            case parentCtx of
+
+                AsRow ->
+                    heightFillFor parentCtx n
+
+                AsParagraph ->
+                    heightFillFor parentCtx n
+
+                AsGrid ->
+                    heightFillFor parentCtx n
+
+                _ ->
+                    "flex-grow: " ++ String.fromInt n ++ ";"
+
+        _ ->
+            heightCssIn parentCtx lng
+
+
+-- The cross-axis stretch of a `fill`, emitted by `collectStyle` after the
+-- size. It is omitted when the element carries an explicit alignment on
+-- that axis, so the alignment wins whatever the attribute order.
+--   * Row parent, `height fill`: `align-self: stretch`. The row's own
+--     `centerY` / `alignTop` / `alignBottom` set `align-items`, which the
+--     default stretch then no longer applies, so a fill child was only as
+--     tall as its content.
+--   * Grid parent: `width fill` = `justify-self: stretch`, `height fill` =
+--     `align-self: stretch`, so the child fills its track even when the grid
+--     aligns its items.
+widthStretchFor : MarkerFlags -> LayoutContext -> Length -> String
+widthStretchFor flags parentCtx lng =
+    case parentCtx of
+
+        AsGrid ->
+            if isFillLength lng && not flags.alignX then
+                " justify-self: stretch;"
+
+            else
+                ""
+
+        _ ->
+            ""
+
+
+heightStretchFor : MarkerFlags -> LayoutContext -> Length -> String
+heightStretchFor flags parentCtx lng =
+    case parentCtx of
+
+        AsRow ->
+            stretchSelfUnlessAligned flags lng
+
+        AsGrid ->
+            stretchSelfUnlessAligned flags lng
+
+        _ ->
+            ""
+
+
+stretchSelfUnlessAligned : MarkerFlags -> Length -> String
+stretchSelfUnlessAligned flags lng =
+    if isFillLength lng && not flags.alignY then
+        " align-self: stretch;"
+
+    else
+        ""
+
 
 heightCssIn : LayoutContext -> Length -> String
 heightCssIn parentCtx lng =
@@ -3947,13 +4149,14 @@ heightCssIn parentCtx lng =
             "height: " ++ String.fromInt n ++ "px;"
 
         Content ->
-            "height: max-content;"
+            "height: fit-content;"
 
         Fill n ->
             heightFillFor parentCtx n
 
         Min n inner ->
-            heightCssIn parentCtx inner ++ " min-height: " ++ String.fromInt n
+            heightCssNoFloor parentCtx inner ++ " min-height: "
+                ++ String.fromInt n
                 ++ "px;"
 
         Max n inner ->
@@ -3977,9 +4180,19 @@ heightCssIn parentCtx lng =
 -- redundant `align-self: stretch` as well, so `align-self` is
 -- emitted from ONE place only: `alignSelfX/Y` for explicit
 -- alignment attrs.
+--
+-- 2026-11: a row whose own `centerY` / `alignTop` / `alignBottom` sets
+-- `align-items` no longer stretches its children, so a row's `height fill`
+-- child now gets `align-self: stretch` again, from `heightStretchFor` (which
+-- sees the child's flags and leaves it out when the child has its own
+-- vertical alignment). This function stays a pure size mapping.
 heightFillFor : LayoutContext -> Int -> String
 heightFillFor parentCtx n =
     case parentCtx of
+
+        AsGrid ->
+            -- Stretches along its row track (`heightStretchFor`).
+            ""
 
         AsRow ->
             ""
@@ -4033,6 +4246,18 @@ alignXCss : LayoutContext -> HAlign -> String
 alignXCss ctx h =
     case ctx of
 
+        AsGrid ->
+            case h of
+
+                AlignLeft ->
+                    "justify-items: start;"
+
+                CenterX ->
+                    "justify-items: center;"
+
+                AlignRight ->
+                    "justify-items: end;"
+
         AsRow ->
             case h of
 
@@ -4061,6 +4286,18 @@ alignXCss ctx h =
 alignYCss : LayoutContext -> VAlign -> String
 alignYCss ctx v =
     case ctx of
+
+        AsGrid ->
+            case v of
+
+                AlignTop ->
+                    "align-items: start;"
+
+                CenterY ->
+                    "align-items: center;"
+
+                AlignBottom ->
+                    "align-items: end;"
 
         AsRow ->
             case v of
@@ -4098,6 +4335,22 @@ alignYCss ctx v =
 alignSelfX : LayoutContext -> HAlign -> String
 alignSelfX parentCtx h =
     case parentCtx of
+
+        AsParagraph ->
+            -- An inline child of a paragraph has no self-alignment.
+            ""
+
+        AsGrid ->
+            case h of
+
+                AlignLeft ->
+                    "justify-self: start;"
+
+                CenterX ->
+                    "justify-self: center;"
+
+                AlignRight ->
+                    "justify-self: end;"
 
         AsRow ->
             case h of
@@ -4142,6 +4395,22 @@ alignSelfY parentCtx v =
 
         AsTextColumn ->
             alignSelfYMain v
+
+        AsParagraph ->
+            -- An inline child of a paragraph has no self-alignment.
+            ""
+
+        AsGrid ->
+            case v of
+
+                AlignTop ->
+                    "align-self: start;"
+
+                CenterY ->
+                    "align-self: center;"
+
+                AlignBottom ->
+                    "align-self: end;"
 
         _ ->
             case v of
