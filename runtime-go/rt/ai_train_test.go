@@ -326,7 +326,7 @@ func TestTrainCancelKillsATrainerThatIgnoresSIGTERM(t *testing.T) {
 	if _, err := aiTrainLaunch(dir, driverJSON(t, map[string]any{"maxSteps": 100000, "fakeMode": "hang", "fakeStepMs": 20})); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	waitForTrainerHello(t, dir)
 	aiTrainCancelGrace = 500 * time.Millisecond
 	tr, _ := aiReadTrainer(dir)
 	start := time.Now()
@@ -681,4 +681,24 @@ func TestFakeTrainerRunsOnlyTheFakeBackend(t *testing.T) {
 	if code := aiFakeTrainerMain([]string{"--run", dir, "--launch", "t"}, &out); code != 1 || !strings.Contains(out.String(), `"code":"TrainingFailed"`) {
 		t.Fatalf("exit %d, %s", code, out.String())
 	}
+}
+
+// waitForTrainerHello returns once the trainer has written its hello event.
+// The fake trainer sets its signal handling (a "hang" trainer ignores
+// SIGTERM) before it writes hello, so a test that signals it after hello
+// signals the trainer it means to. A fixed sleep did not: on a slow macOS
+// runner 200 ms passed before the new process ignored SIGTERM, the SIGTERM
+// killed it, and TestTrainCancelKillsATrainerThatIgnoresSIGTERM saw cancel
+// return before the grace period.
+func waitForTrainerHello(t *testing.T, dir string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		b, _ := os.ReadFile(filepath.Join(dir, aiTrainEventsFile))
+		if strings.Contains(string(b), `"type":"hello"`) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the trainer wrote no hello event within 10 s")
 }
