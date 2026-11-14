@@ -324,8 +324,9 @@ disabledButton =
 
 -- ─── Media-query / breakpoint primitive (#376) ─────────────────
 --
--- `Ui.breakpoint Ui.mobile` overrides padding + background on the
--- inner box ONLY when the viewport is ≤ 767 px wide. The runner
+-- `Ui.breakpoint Ui.mobile` adds padding + background to the WRAPPER it
+-- puts around the inner box, ONLY when the viewport is ≤ 767 px wide (the
+-- attrs of `breakpoint` / `mediaQuery` always style that wrapper). The runner
 -- captures desktop (1280 wide → base padding 8, blue bg) AND mobile
 -- (375 wide → overridden padding 24, red bg). Computed style + PNG
 -- snapshot both differ — proves the CSS engine reacts without a JS
@@ -350,14 +351,17 @@ mediaQueryDemo =
         , Ui.mediaQuery
               "(min-width: 800px)"
               [ Background.color (Ui.rgb 96 176 104) ]
+              -- No background of its own: an opaque child would hide the
+              -- wrapper's green, which is the thing this box shows.
               (Ui.el
                   [ Ui.width Ui.fill
                   , Ui.padding 8
-                  , Background.color (Ui.rgb 200 200 200)
-                  , Font.color white
+                  , Border.width 1
+                  , Border.color (Ui.rgb 200 200 200)
+                  , Font.color (Ui.rgb 40 44 52)
                   , testId "mq-raw-box"
                   ]
-                  (Ui.text "green on screens ≥800px wide"))
+                  (Ui.text "this strip turns green on screens ≥800px wide"))
         ]
 
 

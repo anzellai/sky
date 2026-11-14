@@ -2021,10 +2021,11 @@ const (
 	Std_Ui_LayoutContext_AsEl
 	Std_Ui_LayoutContext_AsParagraph
 	Std_Ui_LayoutContext_AsTextColumn
+	Std_Ui_LayoutContext_AsGrid
 )
 
 func init() {
-	rt.RegisterEnum("Std_Ui_LayoutContext", []string{"AsRow", "AsColumn", "AsEl", "AsParagraph", "AsTextColumn"})
+	rt.RegisterEnum("Std_Ui_LayoutContext", []string{"AsRow", "AsColumn", "AsEl", "AsParagraph", "AsTextColumn", "AsGrid"})
 	rt.GobRegister(Std_Ui_LayoutContext(0))
 }
 func (v Std_Ui_LayoutContext) SkyEnumName() string {
@@ -2103,12 +2104,15 @@ type Std_Ui_MarkerFlags_R struct {
 	Textcolumn bool `sky:"textcolumn,bool"`
 	Grid       bool `sky:"grid,bool"`
 	Wrap       bool `sky:"wrap,bool"`
+	AlignX     bool `sky:"alignX,bool"`
+	AlignY     bool `sky:"alignY,bool"`
+	Shadow     bool `sky:"shadow,bool"`
 }
 
 func init() { rt.RegisterGobType(Std_Ui_MarkerFlags_R{}) }
 
-func Std_Ui_MarkerFlags(p0 bool, p1 bool, p2 bool, p3 bool, p4 bool, p5 bool) Std_Ui_MarkerFlags_R {
-	return Std_Ui_MarkerFlags_R{Row: p0, Col: p1, Paragraph: p2, Textcolumn: p3, Grid: p4, Wrap: p5}
+func Std_Ui_MarkerFlags(p0 bool, p1 bool, p2 bool, p3 bool, p4 bool, p5 bool, p6 bool, p7 bool, p8 bool) Std_Ui_MarkerFlags_R {
+	return Std_Ui_MarkerFlags_R{Row: p0, Col: p1, Paragraph: p2, Textcolumn: p3, Grid: p4, Wrap: p5, AlignX: p6, AlignY: p7, Shadow: p8}
 }
 
 type Std_Ui_Nesting_R struct {
@@ -7184,7 +7188,7 @@ func Std_Ui_renderNearby(v_0 Std_Ui_Nesting_R, _t0 rt.T2[Std_Ui_Location, Std_Ui
 	_ = v_1
 	_ = v_2
 	{
-		positionStyle_3 := ("position: absolute; display: flex; " + Std_Ui_locationCss(v_1))
+		positionStyle_3 := ("position: absolute; display: flex; flex-direction: column; align-items: flex-start; " + Std_Ui_locationCss(v_1))
 		_ = positionStyle_3
 		wrapperTag_4 := Std_Ui_parserSafeTag(v_0, "div")
 		_ = wrapperTag_4
@@ -7744,9 +7748,15 @@ func Std_Ui_buildStyleStringWith(v_0 Std_Ui_MarkerFlags_R, v_1 bool, v_2 Std_Ui_
 			}
 		}()
 		_ = wrapPart_7
-		attrParts_8 := rt.List_foldlElemFirstT[Std_Ui_Attribute, string](func(_t0 func(Std_Ui_LayoutContext, Std_Ui_LayoutContext, Std_Ui_Attribute, string) string, _t1 Std_Ui_LayoutContext, _t2 Std_Ui_LayoutContext) func(Std_Ui_Attribute, string) string {
-			return func(_p3 Std_Ui_Attribute, _p4 string) string { return _t0(_t1, _t2, _p3, _p4) }
-		}(Std_Ui_collectStyle, v_2, v_3), "", v_4)
+		attrParts_8 := (rt.List_foldlElemFirstT[Std_Ui_Attribute, string](func(_t0 func(Std_Ui_MarkerFlags_R, Std_Ui_LayoutContext, Std_Ui_LayoutContext, Std_Ui_Attribute, string) string, _t1 Std_Ui_MarkerFlags_R, _t2 Std_Ui_LayoutContext, _t3 Std_Ui_LayoutContext) func(Std_Ui_Attribute, string) string {
+			return func(_p4 Std_Ui_Attribute, _p5 string) string { return _t0(_t1, _t2, _t3, _p4, _p5) }
+		}(Std_Ui_collectStyle, v_0, v_2, v_3), "", v_4) + func() string {
+			if v_0.Shadow {
+				return Std_Ui_shadowCss(v_4)
+			} else {
+				return ""
+			}
+		}())
 		_ = attrParts_8
 		borderStyleDefault_9 := func() string {
 			if rt.String_containsT("border-width", attrParts_8) && rt.Basics_notT(rt.String_containsT("border-style", attrParts_8)) {
@@ -7760,78 +7770,136 @@ func Std_Ui_buildStyleStringWith(v_0 Std_Ui_MarkerFlags_R, v_1 bool, v_2 Std_Ui_
 	}
 }
 
-func Std_Ui_collectStyle(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_LayoutContext, v_2 Std_Ui_Attribute, v_3 string) string {
+func Std_Ui_shadowCss(v_0 []Std_Ui_Attribute) string {
 	{
-		_subj := v_2
-		if _subj.Tag == 0 {
-			return v_3
+		_subj := rt.List_foldlElemFirstT[Std_Ui_Attribute, []string](Std_Ui_shadowLayerStep, []string{}, v_0)
+		if rt.SkyLenT(_subj) == 0 {
+			return ""
 		}
-		if _subj.Tag == 1 {
-			v_4 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj.Fields[0])
+		v_1 := _subj
+		_ = v_1
+		return (" box-shadow: " + (rt.String_joinT(", ", rt.List_reverseT[string](v_1)) + ";"))
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_Ui_shadowLayerStep(v_0 Std_Ui_Attribute, v_1 []string) []string {
+	{
+		_subj := v_0
+		if _subj.Tag == 31 {
+			v_2 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			v_3 := /* generic erase */ rt.AsInt(_subj.Fields[1])
+			v_4 := /* generic erase */ rt.AsInt(_subj.Fields[2])
+			v_5 := /* generic erase */ rt.AsInt(_subj.Fields[3])
+			v_6 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.Fields[4])
+			_ = v_2
+			_ = v_3
 			_ = v_4
-			return (v_3 + (" " + Std_Ui_widthCssIn(v_0, v_4)))
-		}
-		if _subj.Tag == 2 {
-			v_5 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj.Fields[0])
 			_ = v_5
-			return (v_3 + (" " + Std_Ui_heightCssIn(v_0, v_5)))
-		}
-		if _subj.Tag == 6 {
-			v_6 := /* generic erase */ rt.AsInt(_subj.Fields[0])
-			v_7 := /* generic erase */ rt.AsInt(_subj.Fields[1])
-			v_8 := /* generic erase */ rt.AsInt(_subj.Fields[2])
-			v_9 := /* generic erase */ rt.AsInt(_subj.Fields[3])
 			_ = v_6
+			return rt.List_consT[string](Std_Ui_shadowLayer("", v_2, v_3, v_4, v_5, v_6), v_1)
+		}
+		if _subj.Tag == 32 {
+			v_7 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			v_8 := /* generic erase */ rt.AsInt(_subj.Fields[1])
+			v_9 := /* generic erase */ rt.AsInt(_subj.Fields[2])
+			v_10 := /* generic erase */ rt.AsInt(_subj.Fields[3])
+			v_11 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.Fields[4])
 			_ = v_7
 			_ = v_8
 			_ = v_9
-			return (v_3 + (" padding: " + (rt.String_fromIntT(v_6) + ("px " + (rt.String_fromIntT(v_7) + ("px " + (rt.String_fromIntT(v_8) + ("px " + (rt.String_fromIntT(v_9) + "px;")))))))))
+			_ = v_10
+			_ = v_11
+			return rt.List_consT[string](Std_Ui_shadowLayer("inset ", v_7, v_8, v_9, v_10, v_11), v_1)
+		}
+		return v_1
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_Ui_shadowLayer(v_0 string, v_1 int, v_2 int, v_3 int, v_4 int, v_5 Std_Ui_Color) string {
+	return (v_0 + (rt.String_fromIntT(v_1) + ("px " + (rt.String_fromIntT(v_2) + ("px " + (rt.String_fromIntT(v_3) + ("px " + (rt.String_fromIntT(v_4) + ("px " + Std_Ui_colorCss(v_5))))))))))
+}
+
+func Std_Ui_collectStyle(v_0 Std_Ui_MarkerFlags_R, v_1 Std_Ui_LayoutContext, v_2 Std_Ui_LayoutContext, v_3 Std_Ui_Attribute, v_4 string) string {
+	{
+		_subj := v_3
+		if _subj.Tag == 0 {
+			return v_4
+		}
+		if _subj.Tag == 1 {
+			v_5 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj.Fields[0])
+			_ = v_5
+			return (v_4 + (" " + (Std_Ui_widthCssIn(v_1, v_5) + Std_Ui_widthStretchFor(v_0, v_1, v_5))))
+		}
+		if _subj.Tag == 2 {
+			v_6 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj.Fields[0])
+			_ = v_6
+			return (v_4 + (" " + (Std_Ui_heightCssIn(v_1, v_6) + Std_Ui_heightStretchFor(v_0, v_1, v_6))))
+		}
+		if _subj.Tag == 6 {
+			v_7 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			v_8 := /* generic erase */ rt.AsInt(_subj.Fields[1])
+			v_9 := /* generic erase */ rt.AsInt(_subj.Fields[2])
+			v_10 := /* generic erase */ rt.AsInt(_subj.Fields[3])
+			_ = v_7
+			_ = v_8
+			_ = v_9
+			_ = v_10
+			return (v_4 + (" padding: " + (rt.String_fromIntT(v_7) + ("px " + (rt.String_fromIntT(v_8) + ("px " + (rt.String_fromIntT(v_9) + ("px " + (rt.String_fromIntT(v_10) + "px;")))))))))
 		}
 		if _subj.Tag == 7 {
-			v_10 := /* generic erase */ rt.AsInt(_subj.Fields[0])
-			_ = v_10
-			return (v_3 + (" gap: " + (rt.String_fromIntT(v_10) + "px;")))
+			v_11 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			_ = v_11
+			{
+				_subj := v_2
+				if _subj == Std_Ui_LayoutContext_AsParagraph {
+					return (v_4 + (" line-height: calc(1em + " + (rt.String_fromIntT(v_11) + "px);")))
+				}
+				return (v_4 + (" gap: " + (rt.String_fromIntT(v_11) + "px;")))
+				panic(rt.Unreachable("case"))
+			}
 		}
 		if _subj.Tag == 3 {
-			v_11 := /* generic erase */ rt.Coerce[Std_Ui_HAlign](_subj.Fields[0])
-			_ = v_11
-			return (v_3 + (" " + (Std_Ui_alignXCss(v_1, v_11) + (" " + Std_Ui_alignSelfX(v_0, v_11)))))
+			v_12 := /* generic erase */ rt.Coerce[Std_Ui_HAlign](_subj.Fields[0])
+			_ = v_12
+			return (v_4 + (" " + (Std_Ui_alignXCss(v_2, v_12) + (" " + Std_Ui_alignSelfX(v_1, v_12)))))
 		}
 		if _subj.Tag == 4 {
-			v_12 := /* generic erase */ rt.Coerce[Std_Ui_VAlign](_subj.Fields[0])
-			_ = v_12
-			return (v_3 + (" " + (Std_Ui_alignYCss(v_1, v_12) + (" " + Std_Ui_alignSelfY(v_0, v_12)))))
+			v_13 := /* generic erase */ rt.Coerce[Std_Ui_VAlign](_subj.Fields[0])
+			_ = v_13
+			return (v_4 + (" " + (Std_Ui_alignYCss(v_2, v_13) + (" " + Std_Ui_alignSelfY(v_1, v_13)))))
 		}
 		if _subj.Tag == 8 {
-			v_13 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			v_14 := /* generic erase */ rt.AsString(_subj.Fields[1])
-			_ = v_13
+			v_14 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			v_15 := /* generic erase */ rt.AsString(_subj.Fields[1])
 			_ = v_14
-			if v_13 == "__row" {
-				return v_3
+			_ = v_15
+			if v_14 == "__row" {
+				return v_4
 			} else {
-				if v_13 == "__col" {
-					return v_3
+				if v_14 == "__col" {
+					return v_4
 				} else {
-					if v_13 == "__paragraph" {
-						return v_3
+					if v_14 == "__paragraph" {
+						return v_4
 					} else {
-						if v_13 == "__textcolumn" {
-							return v_3
+						if v_14 == "__textcolumn" {
+							return v_4
 						} else {
-							if v_13 == "__wrap" {
-								return v_3
+							if v_14 == "__wrap" {
+								return v_4
 							} else {
-								if v_13 == "__grid" {
-									return v_3
+								if v_14 == "__grid" {
+									return v_4
 								} else {
-									if v_13 == "__gridMin" {
-										return v_3
+									if v_14 == "__gridMin" {
+										return v_4
 									} else {
-										if v_13 == "__gridTracks" {
-											return v_3
+										if v_14 == "__gridTracks" {
+											return v_4
 										} else {
-											return (v_3 + (" " + (v_13 + (": " + (v_14 + ";")))))
+											return (v_4 + (" " + (v_14 + (": " + (v_15 + ";")))))
 										}
 									}
 								}
@@ -7842,156 +7910,136 @@ func Std_Ui_collectStyle(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_LayoutContext, v_2
 			}
 		}
 		if _subj.Tag == 9 {
-			return v_3
+			return v_4
 		}
 		if _subj.Tag == 10 {
-			return v_3
+			return v_4
 		}
 		if _subj.Tag == 5 {
-			return v_3
+			return v_4
 		}
 		if _subj.Tag == 11 {
-			return v_3
+			return v_4
 		}
 		if _subj.Tag == 12 {
-			return v_3
+			return v_4
 		}
 		if _subj.Tag == 13 {
-			v_15 := /* generic erase */ rt.AsInt(_subj.Fields[0])
-			_ = v_15
-			return (v_3 + (" font-size: " + (rt.String_fromIntT(v_15) + "px;")))
+			v_16 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			_ = v_16
+			return (v_4 + (" font-size: " + (rt.String_fromIntT(v_16) + "px;")))
 		}
 		if _subj.Tag == 14 {
-			v_16 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.Fields[0])
-			_ = v_16
-			return (v_3 + (" color: " + (Std_Ui_colorCss(v_16) + ";")))
+			v_17 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.Fields[0])
+			_ = v_17
+			return (v_4 + (" color: " + (Std_Ui_colorCss(v_17) + ";")))
 		}
 		if _subj.Tag == 15 {
-			v_17 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_17
-			return (v_3 + (" font-family: " + (v_17 + ";")))
+			v_18 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_18
+			return (v_4 + (" font-family: " + (v_18 + ";")))
 		}
 		if _subj.Tag == 16 {
-			v_18 := /* generic erase */ rt.AsInt(_subj.Fields[0])
-			_ = v_18
-			return (v_3 + (" font-weight: " + (rt.String_fromIntT(v_18) + ";")))
+			v_19 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			_ = v_19
+			return (v_4 + (" font-weight: " + (rt.String_fromIntT(v_19) + ";")))
 		}
 		if _subj.Tag == 17 {
-			return (v_3 + " font-style: italic;")
+			return (v_4 + " font-style: italic;")
 		}
 		if _subj.Tag == 18 {
-			return (v_3 + " text-decoration: underline;")
+			return (v_4 + " text-decoration: underline;")
 		}
 		if _subj.Tag == 19 {
-			v_19 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_19
-			return (v_3 + (" text-decoration: " + (v_19 + ";")))
-		}
-		if _subj.Tag == 22 {
 			v_20 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_20
-			return (v_3 + (" text-align: " + (v_20 + ";")))
+			return (v_4 + (" text-decoration: " + (v_20 + ";")))
+		}
+		if _subj.Tag == 22 {
+			v_21 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_21
+			return (v_4 + (" text-align: " + (v_21 + ";")))
 		}
 		if _subj.Tag == 20 {
-			v_21 := /* generic erase */ rt.AsFloat(_subj.Fields[0])
-			_ = v_21
-			return (v_3 + (" letter-spacing: " + (rt.String_fromFloatAnyT(any(v_21)) + "em;")))
-		}
-		if _subj.Tag == 21 {
 			v_22 := /* generic erase */ rt.AsFloat(_subj.Fields[0])
 			_ = v_22
-			return (v_3 + (" word-spacing: " + (rt.String_fromFloatAnyT(any(v_22)) + "em;")))
+			return (v_4 + (" letter-spacing: " + (rt.String_fromFloatAnyT(any(v_22)) + "em;")))
+		}
+		if _subj.Tag == 21 {
+			v_23 := /* generic erase */ rt.AsFloat(_subj.Fields[0])
+			_ = v_23
+			return (v_4 + (" word-spacing: " + (rt.String_fromFloatAnyT(any(v_23)) + "em;")))
 		}
 		if _subj.Tag == 23 {
-			v_23 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.Fields[0])
-			_ = v_23
-			return (v_3 + (" background-color: " + (Std_Ui_colorCss(v_23) + ";")))
+			v_24 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.Fields[0])
+			_ = v_24
+			return (v_4 + (" background-color: " + (Std_Ui_colorCss(v_24) + ";")))
 		}
 		if _subj.Tag == 24 {
-			v_24 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_24
-			return (v_3 + (" background-image: url('" + (v_24 + "');")))
-		}
-		if _subj.Tag == 25 {
 			v_25 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_25
-			return (v_3 + (" background-image: " + (v_25 + ";")))
+			return (v_4 + (" background-image: url('" + (v_25 + "');")))
+		}
+		if _subj.Tag == 25 {
+			v_26 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_26
+			return (v_4 + (" background-image: " + (v_26 + ";")))
 		}
 		if _subj.Tag == 26 {
-			v_26 := /* generic erase */ rt.AsInt(_subj.Fields[0])
-			_ = v_26
-			return (v_3 + (" border-width: " + (rt.String_fromIntT(v_26) + "px;")))
+			v_27 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			_ = v_27
+			return (v_4 + (" border-width: " + (rt.String_fromIntT(v_27) + "px;")))
 		}
 		if _subj.Tag == 27 {
-			v_27 := /* generic erase */ rt.AsInt(_subj.Fields[0])
-			v_28 := /* generic erase */ rt.AsInt(_subj.Fields[1])
-			v_29 := /* generic erase */ rt.AsInt(_subj.Fields[2])
-			v_30 := /* generic erase */ rt.AsInt(_subj.Fields[3])
-			_ = v_27
+			v_28 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			v_29 := /* generic erase */ rt.AsInt(_subj.Fields[1])
+			v_30 := /* generic erase */ rt.AsInt(_subj.Fields[2])
+			v_31 := /* generic erase */ rt.AsInt(_subj.Fields[3])
 			_ = v_28
 			_ = v_29
 			_ = v_30
-			return (v_3 + (" border-width: " + (rt.String_fromIntT(v_27) + ("px " + (rt.String_fromIntT(v_28) + ("px " + (rt.String_fromIntT(v_29) + ("px " + (rt.String_fromIntT(v_30) + "px;")))))))))
+			_ = v_31
+			return (v_4 + (" border-width: " + (rt.String_fromIntT(v_28) + ("px " + (rt.String_fromIntT(v_29) + ("px " + (rt.String_fromIntT(v_30) + ("px " + (rt.String_fromIntT(v_31) + "px;")))))))))
 		}
 		if _subj.Tag == 28 {
-			v_31 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.Fields[0])
-			_ = v_31
-			return (v_3 + (" border-color: " + (Std_Ui_colorCss(v_31) + ";")))
+			v_32 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.Fields[0])
+			_ = v_32
+			return (v_4 + (" border-color: " + (Std_Ui_colorCss(v_32) + ";")))
 		}
 		if _subj.Tag == 29 {
-			v_32 := /* generic erase */ rt.AsInt(_subj.Fields[0])
-			_ = v_32
-			return (v_3 + (" border-radius: " + (rt.String_fromIntT(v_32) + "px;")))
+			v_33 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			_ = v_33
+			return (v_4 + (" border-radius: " + (rt.String_fromIntT(v_33) + "px;")))
 		}
 		if _subj.Tag == 30 {
-			v_33 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_33
-			return (v_3 + (" border-style: " + (v_33 + ";")))
+			v_34 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_34
+			return (v_4 + (" border-style: " + (v_34 + ";")))
 		}
 		if _subj.Tag == 31 {
-			v_34 := /* generic erase */ rt.AsInt(_subj.Fields[0])
-			v_35 := /* generic erase */ rt.AsInt(_subj.Fields[1])
-			v_36 := /* generic erase */ rt.AsInt(_subj.Fields[2])
-			v_37 := /* generic erase */ rt.AsInt(_subj.Fields[3])
-			v_38 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.Fields[4])
-			_ = v_34
-			_ = v_35
-			_ = v_36
-			_ = v_37
-			_ = v_38
-			return (v_3 + (" box-shadow: " + (rt.String_fromIntT(v_34) + ("px " + (rt.String_fromIntT(v_35) + ("px " + (rt.String_fromIntT(v_36) + ("px " + (rt.String_fromIntT(v_37) + ("px " + (Std_Ui_colorCss(v_38) + ";")))))))))))
+			return v_4
 		}
 		if _subj.Tag == 32 {
-			v_39 := /* generic erase */ rt.AsInt(_subj.Fields[0])
-			v_40 := /* generic erase */ rt.AsInt(_subj.Fields[1])
-			v_41 := /* generic erase */ rt.AsInt(_subj.Fields[2])
-			v_42 := /* generic erase */ rt.AsInt(_subj.Fields[3])
-			v_43 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.Fields[4])
-			_ = v_39
-			_ = v_40
-			_ = v_41
-			_ = v_42
-			_ = v_43
-			return (v_3 + (" box-shadow: inset " + (rt.String_fromIntT(v_39) + ("px " + (rt.String_fromIntT(v_40) + ("px " + (rt.String_fromIntT(v_41) + ("px " + (rt.String_fromIntT(v_42) + ("px " + (Std_Ui_colorCss(v_43) + ";")))))))))))
+			return v_4
 		}
 		if _subj.Tag == 33 {
-			return (v_3 + " cursor: pointer;")
+			return (v_4 + " cursor: pointer;")
 		}
 		if _subj.Tag == 34 {
-			v_44 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			v_45 := /* generic erase */ rt.AsString(_subj.Fields[1])
-			_ = v_44
-			_ = v_45
-			return (v_3 + (" overflow-x: " + (v_44 + ("; overflow-y: " + (v_45 + ";")))))
+			v_35 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			v_36 := /* generic erase */ rt.AsString(_subj.Fields[1])
+			_ = v_35
+			_ = v_36
+			return (v_4 + (" overflow-x: " + (v_35 + ("; overflow-y: " + (v_36 + ";")))))
 		}
 		if _subj.Tag == 35 {
-			return v_3
+			return v_4
 		}
 		if _subj.Tag == 36 {
-			return v_3
+			return v_4
 		}
 		if _subj.Tag == 37 {
-			return v_3
+			return v_4
 		}
 		panic(rt.Unreachable("case"))
 	}
@@ -8001,16 +8049,28 @@ func Std_Ui_alignSelfY(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_VAlign) string {
 	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsColumn {
+			return Std_Ui_alignSelfYMain(v_1)
+		}
+		if _subj == Std_Ui_LayoutContext_AsEl {
+			return Std_Ui_alignSelfYMain(v_1)
+		}
+		if _subj == Std_Ui_LayoutContext_AsTextColumn {
+			return Std_Ui_alignSelfYMain(v_1)
+		}
+		if _subj == Std_Ui_LayoutContext_AsParagraph {
+			return ""
+		}
+		if _subj == Std_Ui_LayoutContext_AsGrid {
 			{
 				_subj := v_1
 				if _subj == Std_Ui_VAlign_AlignTop {
-					return "margin-bottom: auto;"
+					return "align-self: start;"
 				}
 				if _subj == Std_Ui_VAlign_CenterY {
-					return "margin-top: auto; margin-bottom: auto;"
+					return "align-self: center;"
 				}
 				if _subj == Std_Ui_VAlign_AlignBottom {
-					return "margin-top: auto;"
+					return "align-self: end;"
 				}
 				panic(rt.Unreachable("case"))
 			}
@@ -8032,9 +8092,40 @@ func Std_Ui_alignSelfY(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_VAlign) string {
 	}
 }
 
+func Std_Ui_alignSelfYMain(v_0 Std_Ui_VAlign) string {
+	{
+		_subj := v_0
+		if _subj == Std_Ui_VAlign_AlignTop {
+			return "margin-bottom: auto;"
+		}
+		if _subj == Std_Ui_VAlign_CenterY {
+			return "margin-top: auto; margin-bottom: auto;"
+		}
+		if _subj == Std_Ui_VAlign_AlignBottom {
+			return "margin-top: auto;"
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
 func Std_Ui_alignYCss(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_VAlign) string {
 	{
 		_subj := v_0
+		if _subj == Std_Ui_LayoutContext_AsGrid {
+			{
+				_subj := v_1
+				if _subj == Std_Ui_VAlign_AlignTop {
+					return "align-items: start;"
+				}
+				if _subj == Std_Ui_VAlign_CenterY {
+					return "align-items: center;"
+				}
+				if _subj == Std_Ui_VAlign_AlignBottom {
+					return "align-items: end;"
+				}
+				panic(rt.Unreachable("case"))
+			}
+		}
 		if _subj == Std_Ui_LayoutContext_AsRow {
 			{
 				_subj := v_1
@@ -8070,6 +8161,24 @@ func Std_Ui_alignYCss(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_VAlign) string {
 func Std_Ui_alignSelfX(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_HAlign) string {
 	{
 		_subj := v_0
+		if _subj == Std_Ui_LayoutContext_AsParagraph {
+			return ""
+		}
+		if _subj == Std_Ui_LayoutContext_AsGrid {
+			{
+				_subj := v_1
+				if _subj == Std_Ui_HAlign_AlignLeft {
+					return "justify-self: start;"
+				}
+				if _subj == Std_Ui_HAlign_CenterX {
+					return "justify-self: center;"
+				}
+				if _subj == Std_Ui_HAlign_AlignRight {
+					return "justify-self: end;"
+				}
+				panic(rt.Unreachable("case"))
+			}
+		}
 		if _subj == Std_Ui_LayoutContext_AsRow {
 			{
 				_subj := v_1
@@ -8105,6 +8214,21 @@ func Std_Ui_alignSelfX(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_HAlign) string {
 func Std_Ui_alignXCss(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_HAlign) string {
 	{
 		_subj := v_0
+		if _subj == Std_Ui_LayoutContext_AsGrid {
+			{
+				_subj := v_1
+				if _subj == Std_Ui_HAlign_AlignLeft {
+					return "justify-items: start;"
+				}
+				if _subj == Std_Ui_HAlign_CenterX {
+					return "justify-items: center;"
+				}
+				if _subj == Std_Ui_HAlign_AlignRight {
+					return "justify-items: end;"
+				}
+				panic(rt.Unreachable("case"))
+			}
+		}
 		if _subj == Std_Ui_LayoutContext_AsRow {
 			{
 				_subj := v_1
@@ -8137,6 +8261,55 @@ func Std_Ui_alignXCss(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_HAlign) string {
 	}
 }
 
+func Std_Ui_heightStretchFor(v_0 Std_Ui_MarkerFlags_R, v_1 Std_Ui_LayoutContext, v_2 Std_Ui_Length) string {
+	{
+		_subj := v_1
+		if _subj == Std_Ui_LayoutContext_AsRow {
+			return Std_Ui_stretchSelfUnlessAligned(v_0, v_2)
+		}
+		if _subj == Std_Ui_LayoutContext_AsGrid {
+			return Std_Ui_stretchSelfUnlessAligned(v_0, v_2)
+		}
+		return ""
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_Ui_stretchSelfUnlessAligned(v_0 Std_Ui_MarkerFlags_R, v_1 Std_Ui_Length) string {
+	if Std_Ui_isFillLength(v_1) && rt.Basics_notT(v_0.AlignY) {
+		return " align-self: stretch;"
+	} else {
+		return ""
+	}
+}
+
+func Std_Ui_isFillLength(v_0 Std_Ui_Length) bool {
+	for {
+		_subj0 := v_0
+		if _subj0.Tag == 2 {
+			v_1 := /* generic erase */ rt.AsInt(_subj0.Fields[0])
+			_ = v_1
+			return (v_1 > 0)
+		}
+		if _subj0.Tag == 3 {
+			v_2 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj0.Fields[1])
+			_ = v_2
+			_t1 := v_2
+			v_0 = _t1
+			continue
+		}
+		if _subj0.Tag == 4 {
+			v_3 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj0.Fields[1])
+			_ = v_3
+			_t2 := v_3
+			v_0 = _t2
+			continue
+		}
+		return false
+		panic(rt.Unreachable("case"))
+	}
+}
+
 func Std_Ui_heightCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 	{
 		_subj := v_1
@@ -8146,7 +8319,7 @@ func Std_Ui_heightCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 			return ("height: " + (rt.String_fromIntT(v_2) + "px;"))
 		}
 		if _subj.Tag == 1 {
-			return "height: max-content;"
+			return "height: fit-content;"
 		}
 		if _subj.Tag == 2 {
 			v_3 := /* generic erase */ rt.AsInt(_subj.Fields[0])
@@ -8158,7 +8331,7 @@ func Std_Ui_heightCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 			v_5 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj.Fields[1])
 			_ = v_4
 			_ = v_5
-			return (Std_Ui_heightCssIn(v_0, v_5) + (" min-height: " + (rt.String_fromIntT(v_4) + "px;")))
+			return (Std_Ui_heightCssNoFloor(v_0, v_5) + (" min-height: " + (rt.String_fromIntT(v_4) + "px;")))
 		}
 		if _subj.Tag == 4 {
 			v_6 := /* generic erase */ rt.AsInt(_subj.Fields[0])
@@ -8181,9 +8354,38 @@ func Std_Ui_heightCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 	}
 }
 
+func Std_Ui_heightCssNoFloor(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
+	{
+		_subj := v_1
+		if _subj.Tag == 2 {
+			v_2 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			_ = v_2
+			{
+				_subj := v_0
+				if _subj == Std_Ui_LayoutContext_AsRow {
+					return Std_Ui_heightFillFor(v_0, v_2)
+				}
+				if _subj == Std_Ui_LayoutContext_AsParagraph {
+					return Std_Ui_heightFillFor(v_0, v_2)
+				}
+				if _subj == Std_Ui_LayoutContext_AsGrid {
+					return Std_Ui_heightFillFor(v_0, v_2)
+				}
+				return ("flex-grow: " + (rt.String_fromIntT(v_2) + ";"))
+				panic(rt.Unreachable("case"))
+			}
+		}
+		return Std_Ui_heightCssIn(v_0, v_1)
+		panic(rt.Unreachable("case"))
+	}
+}
+
 func Std_Ui_heightFillFor(v_0 Std_Ui_LayoutContext, v_1 int) string {
 	{
 		_subj := v_0
+		if _subj == Std_Ui_LayoutContext_AsGrid {
+			return ""
+		}
 		if _subj == Std_Ui_LayoutContext_AsRow {
 			return ""
 		}
@@ -8203,6 +8405,21 @@ func Std_Ui_heightFillFor(v_0 Std_Ui_LayoutContext, v_1 int) string {
 	}
 }
 
+func Std_Ui_widthStretchFor(v_0 Std_Ui_MarkerFlags_R, v_1 Std_Ui_LayoutContext, v_2 Std_Ui_Length) string {
+	{
+		_subj := v_1
+		if _subj == Std_Ui_LayoutContext_AsGrid {
+			if Std_Ui_isFillLength(v_2) && rt.Basics_notT(v_0.AlignX) {
+				return " justify-self: stretch;"
+			} else {
+				return ""
+			}
+		}
+		return ""
+		panic(rt.Unreachable("case"))
+	}
+}
+
 func Std_Ui_widthCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 	{
 		_subj := v_1
@@ -8212,7 +8429,7 @@ func Std_Ui_widthCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 			return ("width: " + (rt.String_fromIntT(v_2) + "px;"))
 		}
 		if _subj.Tag == 1 {
-			return "width: max-content;"
+			return "width: fit-content;"
 		}
 		if _subj.Tag == 2 {
 			v_3 := /* generic erase */ rt.AsInt(_subj.Fields[0])
@@ -8224,7 +8441,7 @@ func Std_Ui_widthCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 			v_5 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj.Fields[1])
 			_ = v_4
 			_ = v_5
-			return (Std_Ui_widthCssIn(v_0, v_5) + (" min-width: " + (rt.String_fromIntT(v_4) + "px;")))
+			return (Std_Ui_widthCssNoFloor(v_0, v_5) + (" min-width: " + (rt.String_fromIntT(v_4) + "px;")))
 		}
 		if _subj.Tag == 4 {
 			v_6 := /* generic erase */ rt.AsInt(_subj.Fields[0])
@@ -8247,6 +8464,26 @@ func Std_Ui_widthCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 	}
 }
 
+func Std_Ui_widthCssNoFloor(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
+	{
+		_subj := v_1
+		if _subj.Tag == 2 {
+			v_2 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			_ = v_2
+			{
+				_subj := v_0
+				if _subj == Std_Ui_LayoutContext_AsRow {
+					return ("flex-grow: " + (rt.String_fromIntT(v_2) + ";"))
+				}
+				return Std_Ui_widthFillFor(v_0, v_2)
+				panic(rt.Unreachable("case"))
+			}
+		}
+		return Std_Ui_widthCssIn(v_0, v_1)
+		panic(rt.Unreachable("case"))
+	}
+}
+
 func Std_Ui_widthFillFor(v_0 Std_Ui_LayoutContext, v_1 int) string {
 	{
 		_subj := v_0
@@ -8264,6 +8501,9 @@ func Std_Ui_widthFillFor(v_0 Std_Ui_LayoutContext, v_1 int) string {
 		}
 		if _subj == Std_Ui_LayoutContext_AsTextColumn {
 			return "width: 100%;"
+		}
+		if _subj == Std_Ui_LayoutContext_AsGrid {
+			return ""
 		}
 		panic(rt.Unreachable("case"))
 	}
@@ -8290,6 +8530,9 @@ func Std_Ui_displayIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_LayoutContext) string
 				if _subj == Std_Ui_LayoutContext_AsParagraph {
 					return "display: block;"
 				}
+				if _subj == Std_Ui_LayoutContext_AsGrid {
+					return "display: inline-grid;"
+				}
 				panic(rt.Unreachable("case"))
 			}
 		}
@@ -8315,6 +8558,9 @@ func Std_Ui_displayFor(v_0 Std_Ui_LayoutContext) string {
 		}
 		if _subj == Std_Ui_LayoutContext_AsTextColumn {
 			return "display: flex; flex-direction: column;"
+		}
+		if _subj == Std_Ui_LayoutContext_AsGrid {
+			return "display: grid;"
 		}
 		panic(rt.Unreachable("case"))
 	}
@@ -8511,7 +8757,7 @@ func Std_Ui_markerFlags(v_0 []Std_Ui_Attribute) Std_Ui_MarkerFlags_R {
 var Std_Ui_noMarkerFlags__caf rt.LazyCaf[Std_Ui_MarkerFlags_R]
 
 func Std_Ui_noMarkerFlags__cafInit() Std_Ui_MarkerFlags_R {
-	return Std_Ui_MarkerFlags_R{Row: false, Col: false, Paragraph: false, Textcolumn: false, Grid: false, Wrap: false}
+	return Std_Ui_MarkerFlags_R{Row: false, Col: false, Paragraph: false, Textcolumn: false, Grid: false, Wrap: false, AlignX: false, AlignY: false, Shadow: false}
 }
 
 func Std_Ui_noMarkerFlags() Std_Ui_MarkerFlags_R {
@@ -8574,6 +8820,34 @@ func Std_Ui_markerFlagStep(v_0 Std_Ui_Attribute, v_1 Std_Ui_MarkerFlags_R) Std_U
 				}
 			}
 		}
+		if _subj.Tag == 3 {
+			{
+				_u := v_1
+				_u.AlignX = true
+				return _u
+			}
+		}
+		if _subj.Tag == 4 {
+			{
+				_u := v_1
+				_u.AlignY = true
+				return _u
+			}
+		}
+		if _subj.Tag == 31 {
+			{
+				_u := v_1
+				_u.Shadow = true
+				return _u
+			}
+		}
+		if _subj.Tag == 32 {
+			{
+				_u := v_1
+				_u.Shadow = true
+				return _u
+			}
+		}
 		return v_1
 		panic(rt.Unreachable("case"))
 	}
@@ -8612,6 +8886,9 @@ func Std_Ui_propagateFillToContainer(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Attr
 			} else {
 				return v_1
 			}
+		}
+		if _subj == Std_Ui_LayoutContext_AsGrid {
+			return v_1
 		}
 		panic(rt.Unreachable("case"))
 	}
@@ -8682,6 +8959,9 @@ func Std_Ui_attrsHaveMainAxisFill(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Attribu
 		if _subj == Std_Ui_LayoutContext_AsParagraph {
 			return false
 		}
+		if _subj == Std_Ui_LayoutContext_AsGrid {
+			return false
+		}
 		panic(rt.Unreachable("case"))
 	}
 }
@@ -8693,33 +8973,6 @@ func Std_Ui_isHeightFillAttr(v_0 Std_Ui_Attribute) bool {
 			v_1 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj.Fields[0])
 			_ = v_1
 			return Std_Ui_isFillLength(v_1)
-		}
-		return false
-		panic(rt.Unreachable("case"))
-	}
-}
-
-func Std_Ui_isFillLength(v_0 Std_Ui_Length) bool {
-	for {
-		_subj0 := v_0
-		if _subj0.Tag == 2 {
-			v_1 := /* generic erase */ rt.AsInt(_subj0.Fields[0])
-			_ = v_1
-			return (v_1 > 0)
-		}
-		if _subj0.Tag == 3 {
-			v_2 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj0.Fields[1])
-			_ = v_2
-			_t1 := v_2
-			v_0 = _t1
-			continue
-		}
-		if _subj0.Tag == 4 {
-			v_3 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj0.Fields[1])
-			_ = v_3
-			_t2 := v_3
-			v_0 = _t2
-			continue
 		}
 		return false
 		panic(rt.Unreachable("case"))
@@ -8755,19 +9008,23 @@ func Std_Ui_isWidthAttr(v_0 Std_Ui_Attribute) bool {
 }
 
 func Std_Ui_layoutContextFromFlags(v_0 Std_Ui_MarkerFlags_R) Std_Ui_LayoutContext {
-	if v_0.Row {
-		return Std_Ui_LayoutContext_AsRow
+	if v_0.Grid {
+		return Std_Ui_LayoutContext_AsGrid
 	} else {
-		if v_0.Col {
-			return Std_Ui_LayoutContext_AsColumn
+		if v_0.Row {
+			return Std_Ui_LayoutContext_AsRow
 		} else {
-			if v_0.Paragraph {
-				return Std_Ui_LayoutContext_AsParagraph
+			if v_0.Col {
+				return Std_Ui_LayoutContext_AsColumn
 			} else {
-				if v_0.Textcolumn {
-					return Std_Ui_LayoutContext_AsTextColumn
+				if v_0.Paragraph {
+					return Std_Ui_LayoutContext_AsParagraph
 				} else {
-					return Std_Ui_LayoutContext_AsEl
+					if v_0.Textcolumn {
+						return Std_Ui_LayoutContext_AsTextColumn
+					} else {
+						return Std_Ui_LayoutContext_AsEl
+					}
 				}
 			}
 		}
