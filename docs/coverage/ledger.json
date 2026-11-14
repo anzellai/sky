@@ -23209,8 +23209,8 @@
       "id": "examples/26-ui-showcase",
       "modules_imported": 14,
       "path": "examples/26-ui-showcase",
-      "refs_generous": 95,
-      "refs_qualified": 94,
+      "refs_generous": 96,
+      "refs_qualified": 95,
       "role": "Example",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -24488,10 +24488,10 @@
       "id": "tests/Std",
       "modules_imported": 52,
       "path": "tests/Std",
-      "refs_generous": 718,
-      "refs_qualified": 692,
+      "refs_generous": 720,
+      "refs_qualified": 694,
       "role": "SkySuite",
-      "sky_files": 27,
+      "sky_files": 28,
       "sky_toml_sections": []
     },
     {
