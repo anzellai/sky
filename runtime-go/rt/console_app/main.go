@@ -2097,6 +2097,19 @@ func init() {
 }
 func (v Std_Ui_Location) SkyEnumName() string { return rt.EnumName("Std_Ui_Location", int(v)) }
 
+type Std_Ui_MainAxis int
+
+const (
+	Std_Ui_MainAxis_AsRowAxis Std_Ui_MainAxis = iota
+	Std_Ui_MainAxis_AsColumnAxis
+)
+
+func init() {
+	rt.RegisterEnum("Std_Ui_MainAxis", []string{"AsRowAxis", "AsColumnAxis"})
+	rt.GobRegister(Std_Ui_MainAxis(0))
+}
+func (v Std_Ui_MainAxis) SkyEnumName() string { return rt.EnumName("Std_Ui_MainAxis", int(v)) }
+
 type Std_Ui_MarkerFlags_R struct {
 	Row        bool `sky:"row,bool"`
 	Col        bool `sky:"col,bool"`
@@ -8316,7 +8329,7 @@ func Std_Ui_heightCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 		if _subj.Tag == 0 {
 			v_2 := /* generic erase */ rt.AsInt(_subj.Fields[0])
 			_ = v_2
-			return ("height: " + (rt.String_fromIntT(v_2) + "px;"))
+			return ("height: " + (rt.String_fromIntT(v_2) + ("px;" + Std_Ui_keepMainAxisSize(Std_Ui_MainAxis_AsColumnAxis, v_0))))
 		}
 		if _subj.Tag == 1 {
 			return "height: fit-content;"
@@ -8405,6 +8418,26 @@ func Std_Ui_heightFillFor(v_0 Std_Ui_LayoutContext, v_1 int) string {
 	}
 }
 
+func Std_Ui_keepMainAxisSize(v_0 Std_Ui_MainAxis, v_1 Std_Ui_LayoutContext) string {
+	{
+		_subj := rt.T2[Std_Ui_MainAxis, Std_Ui_LayoutContext]{V0: v_0, V1: v_1}
+		if (_subj.V0 == Std_Ui_MainAxis_AsRowAxis) && (_subj.V1 == Std_Ui_LayoutContext_AsRow) {
+			return " flex-shrink: 0;"
+		}
+		if (_subj.V0 == Std_Ui_MainAxis_AsColumnAxis) && (_subj.V1 == Std_Ui_LayoutContext_AsColumn) {
+			return " flex-shrink: 0;"
+		}
+		if (_subj.V0 == Std_Ui_MainAxis_AsColumnAxis) && (_subj.V1 == Std_Ui_LayoutContext_AsEl) {
+			return " flex-shrink: 0;"
+		}
+		if (_subj.V0 == Std_Ui_MainAxis_AsColumnAxis) && (_subj.V1 == Std_Ui_LayoutContext_AsTextColumn) {
+			return " flex-shrink: 0;"
+		}
+		return ""
+		panic(rt.Unreachable("case"))
+	}
+}
+
 func Std_Ui_widthStretchFor(v_0 Std_Ui_MarkerFlags_R, v_1 Std_Ui_LayoutContext, v_2 Std_Ui_Length) string {
 	{
 		_subj := v_1
@@ -8426,7 +8459,7 @@ func Std_Ui_widthCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 		if _subj.Tag == 0 {
 			v_2 := /* generic erase */ rt.AsInt(_subj.Fields[0])
 			_ = v_2
-			return ("width: " + (rt.String_fromIntT(v_2) + "px;"))
+			return ("width: " + (rt.String_fromIntT(v_2) + ("px;" + Std_Ui_keepMainAxisSize(Std_Ui_MainAxis_AsRowAxis, v_0))))
 		}
 		if _subj.Tag == 1 {
 			return "width: fit-content;"
