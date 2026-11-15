@@ -12,15 +12,15 @@
       "proven_at_unix": 1794711611
     },
     "ai-device-csp": {
-      "inputs_files": 1876,
-      "inputs_hash": "0d89d9134fd191d7893bd94cd2e018713f3201d8",
+      "inputs_files": 1877,
+      "inputs_hash": "a305cbe489ab4fe60f00db8de1c5e4869f7c3109",
       "mutation": "ai-device-csp.evaluate-a-string",
       "mutations": [
         "ai-device-csp.evaluate-a-string"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794702397
+      "proven_at_unix": 1794715483
     },
     "ai-device-decide": {
       "inputs_files": 4,
@@ -78,15 +78,15 @@
       "proven_at_unix": 1794272787
     },
     "ai-device-privacy": {
-      "inputs_files": 1876,
-      "inputs_hash": "8c6fabe64a1428a0268bc06123418596c299a22c",
+      "inputs_files": 1877,
+      "inputs_hash": "54d61c90a8274c3c20a5367a78c34ccab63af633",
       "mutation": "ai-device-privacy.device-calls-the-server",
       "mutations": [
         "ai-device-privacy.device-calls-the-server"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794702397
+      "proven_at_unix": 1794715483
     },
     "ai-serve-hot-load": {
       "inputs_files": 1168,
@@ -144,15 +144,15 @@
       "proven_at_unix": 1794711643
     },
     "analytics-retention-survives-a-panic": {
-      "inputs_files": 1167,
-      "inputs_hash": "6ccaf8ac199874bd7c35a3274f8c23bddf26f33c",
+      "inputs_files": 1168,
+      "inputs_hash": "fda83b7189ea84a98b4625ef02a237424ec8d504",
       "mutation": "analytics-retention.no-recover-inside-the-cycle",
       "mutations": [
         "analytics-retention.no-recover-inside-the-cycle"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794701072
+      "proven_at_unix": 1794714090
     },
     "apps-bundled": {
       "inputs_files": 23,
@@ -310,15 +310,15 @@
       "proven_at_unix": 1794072081
     },
     "config-matrix": {
-      "inputs_files": 1866,
-      "inputs_hash": "18f244bd8f45bf45b6fc6fbb3133463696c42e1b",
+      "inputs_files": 1867,
+      "inputs_hash": "fa7be56120a7bd91ed330d2a292cfcfc321c1971",
       "mutation": "config-matrix.invert-operator-env-provenance",
       "mutations": [
         "config-matrix.invert-operator-env-provenance"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794701547
+      "proven_at_unix": 1794714540
     },
     "config-migrate": {
       "inputs_files": 5,
@@ -343,15 +343,15 @@
       "proven_at_unix": 1794356566
     },
     "config-surface": {
-      "inputs_files": 1174,
-      "inputs_hash": "650b86164b5adaa797a4adf356ad89168f53af99",
+      "inputs_files": 1175,
+      "inputs_hash": "8705b24cd4459bdef19e98cac2fb6f6f25db546c",
       "mutation": "config-surface.seed-a-suffix-nothing-reads",
       "mutations": [
         "config-surface.seed-a-suffix-nothing-reads"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794701072
+      "proven_at_unix": 1794714090
     },
     "conformance": {
       "inputs_files": 134,
@@ -483,15 +483,15 @@
       "proven_at_unix": 1794687981
     },
     "coverage-ledger": {
-      "inputs_files": 5196,
-      "inputs_hash": "ab94b485f100364c345f191235a2ed18d91064b1",
+      "inputs_files": 5197,
+      "inputs_hash": "dfc3087a62642160651d982ddc27255bff255aa5",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1794701373
+      "proven_at_unix": 1794714460
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 1168,
