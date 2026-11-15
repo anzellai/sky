@@ -100,7 +100,16 @@ fn a_fresh_project_is_fmt_clean_and_ignores_local_state_in_images() {
         // datasets, the `sky ai` pipeline build cache): never committed.
         let git =
             std::fs::read_to_string(dir.join(".gitignore")).expect("sky init writes a .gitignore");
-        for want in [".sky/", ".skydata/", ".env", "sky-out/"] {
+        for want in [
+            ".sky/",
+            ".skydata/",
+            ".env",
+            ".env.local",
+            ".env.*.local",
+            "sky-out/",
+            ".skyapp/",
+            ".split/",
+        ] {
             assert!(
                 git.lines().any(|l| l.trim() == want),
                 "{flag:?}: .gitignore lists {want}:\n{git}"

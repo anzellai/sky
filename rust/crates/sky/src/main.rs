@@ -12738,8 +12738,11 @@ main =
     // `.sky/` is per-machine AI state: the local model registry store, frozen
     // dataset versions, the `sky ai` pipeline build cache and dedupe spill
     // files (Std.Ai). A team shares a registry through gs:// or s3://.
-    let gitignore =
-        "sky-out/\n.skycache/\n.skydeps/\n.skydata/\n.sky/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
+    // `.skyapp/` and `.split/` are build outputs (`sky check` / `sky build` and
+    // the Sky.Spa split); `.env.local` / `.env.*.local` are per-machine
+    // overrides of `.env` and `.env.test` and hold credentials.
+    let gitignore = "sky-out/\n.skyapp/\n.split/\n.skycache/\n.skydeps/\n.skydata/\n.sky/\n\
+                     .env\n.env.local\n.env.*.local\n*.db\n*.db-shm\n*.db-wal\n";
     // `.dockerignore`: a `COPY . .` must not bake local state into an image.
     // `.skydata/` holds the dev Sky.Spa session key and the local database
     // cluster; `.env` holds secrets (A-7).
@@ -17028,7 +17031,52 @@ fn run_all_checks(root: &Path) -> Vec<Finding> {
     out.extend(check_auth_secret(root));
     out.extend(check_embedded_postgres(root));
     out.extend(check_path_deps(root));
+    out.extend(check_ignore_hygiene(root));
     out.extend(check_ai(root));
+    out
+}
+
+/// A project under git must ignore `.sky/` (the dev console writes
+/// `.sky/console-token` there, a bare hex secret no scanner flags) and `.env`.
+/// `sky init` writes both, but a hand-written or overwritten `.gitignore` loses
+/// them, and the token is in the first push before anyone looks. git is the
+/// judge (`git check-ignore`), so a monorepo's top-level `.gitignore` and a
+/// global excludes file count. One Warn per path git would commit. Not a
+/// repository, or no git on PATH: nothing to say.
+fn check_ignore_hygiene(root: &Path) -> Vec<Finding> {
+    let ignored = |path: &str| -> Option<bool> {
+        let out = Command::new("git")
+            .args(["check-ignore", "-q", path])
+            .current_dir(root)
+            .output()
+            .ok()?;
+        match out.status.code() {
+            Some(0) => Some(true),
+            Some(1) => Some(false),
+            _ => None, // 128: not a repository, or git could not answer
+        }
+    };
+    let mut out = Vec::new();
+    if ignored(".sky/console-token") == Some(false) {
+        out.push(Finding {
+            check: "gitignore-secrets",
+            severity: Severity::Warn,
+            message: "git would commit `.sky/console-token`, the dev console secret (bare hex \
+                      that secret scanners do not flag)"
+                .to_string(),
+            hint: "add a line `.sky/` to .gitignore (sky init writes one)".to_string(),
+            fix: None,
+        });
+    }
+    if ignored(".env") == Some(false) {
+        out.push(Finding {
+            check: "gitignore-secrets",
+            severity: Severity::Warn,
+            message: "git would commit `.env`, which holds secrets".to_string(),
+            hint: "add a line `.env` to .gitignore (sky init writes one)".to_string(),
+            fix: None,
+        });
+    }
     out
 }
 
