@@ -356,13 +356,16 @@ if [[ -n "$SHARD_INDEX" || -n "$SHARD_TOTAL" ]]; then
         || { echo "SWEEP_SHARD_INDEX must be in [0, $SHARD_TOTAL) (got '$SHARD_INDEX')" >&2; exit 2; }
     declare -a _SHARDED=()
     _i=0
-    for entry in "${EXAMPLES[@]}"; do
+    for entry in ${EXAMPLES[@]+"${EXAMPLES[@]}"}; do
         if (( _i % SHARD_TOTAL == SHARD_INDEX )); then
             _SHARDED+=("$entry")
         fi
         _i=$((_i + 1))
     done
-    EXAMPLES=("${_SHARDED[@]}")
+    # bash 3.2 (stock macOS) treats "${a[@]}" of an empty array as unbound
+    # under `set -u`; a shard can be empty when there are more shards than
+    # examples. The `+` form expands to nothing for an empty array.
+    EXAMPLES=(${_SHARDED[@]+"${_SHARDED[@]}"})
 fi
 
 # ─── list mode ────────────────────────────────────────────────────────────
@@ -370,7 +373,7 @@ fi
 # filter) and exit, building nothing. Used to prove a shard partition is
 # exhaustive + non-overlapping without paying a build.
 if [[ $LIST_ONLY -eq 1 ]]; then
-    for entry in "${EXAMPLES[@]}"; do
+    for entry in ${EXAMPLES[@]+"${EXAMPLES[@]}"}; do
         IFS=':' read -r _name _rest <<<"$entry"
         printf '%s\n' "$_name"
     done
@@ -595,14 +598,14 @@ echo
 
 # Print one "starting" line per example so progress is visible while
 # workers run.  Each worker still writes to $RESULTS_DIR.
-for entry in "${EXAMPLES[@]}"; do
+for entry in ${EXAMPLES[@]+"${EXAMPLES[@]}"}; do
     IFS=':' read -r name kind _port _path <<<"$entry"
     printf '   %-22s %s\n' "$name" "$kind"
 done
 
 # Fan out across xargs -P workers. Each subshell receives one entry
 # string on stdin; sweep_worker parses it and writes its result.
-printf '%s\n' "${EXAMPLES[@]}" \
+printf '%s\n' ${EXAMPLES[@]+"${EXAMPLES[@]}"} \
     | xargs -P "$MAX_WORKERS" -I {} bash -c 'sweep_worker "$@"' _ {}
 
 # Aggregate results.
@@ -617,7 +620,7 @@ printf '%s\n' "${EXAMPLES[@]}" \
 pass=0; fail=0; skip=0
 declare -a failures=()
 declare -a skipped=()
-for entry in "${EXAMPLES[@]}"; do
+for entry in ${EXAMPLES[@]+"${EXAMPLES[@]}"}; do
     IFS=':' read -r name _ _ _ <<<"$entry"
     local_result="$RESULTS_DIR/$name.result"
     if [[ ! -r "$local_result" ]]; then
@@ -642,7 +645,7 @@ fi
 echo "sweep: $pass passed, $fail failed"
 # Which builds the shared gate cache served — a run says what it reused.
 gc_hit=0; gc_miss=0; gc_other=0
-for entry in "${EXAMPLES[@]}"; do
+for entry in ${EXAMPLES[@]+"${EXAMPLES[@]}"}; do
     IFS=':' read -r name _ _ _ <<<"$entry"
     case "$(head -1 "$RESULTS_DIR/$name.result" 2>/dev/null)" in SKIP*) continue ;; esac
     gc_line=$(grep -h '^gate-cache: ' "/tmp/sky-build-$name.log" 2>/dev/null | head -1)

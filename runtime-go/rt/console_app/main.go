@@ -3126,7 +3126,7 @@ func Std_Html_Attributes_style(v_0 string) Std_Html_Attributes_Attribute {
 	return Std_Html_Attributes_Attribute_Attr("style", v_0)
 }
 
-func Std_Ui_html(v_0 any) Std_Ui_Element {
+func Std_Ui_html(v_0 Std_Html_Html) Std_Ui_Element {
 	return Std_Ui_Element_Raw(v_0)
 }
 

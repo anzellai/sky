@@ -1,0 +1,31 @@
+-- defect: `Std.Ui.html` was typed `any -> Element msg`, so nothing inside the
+--         escape hatch was checked. `Html.textarea [ … ]` with its children
+--         list missing is a partial application (`List (Html msg) -> Html msg`),
+--         not a node. It passed `sky check`, built, and panicked the view at
+--         render time: `rt.Coerce: expected rt.SkyADT, got func([]rt.SkyADT)
+--         rt.SkyADT`. `Ui.html` now takes an `Html msg` (v0.29.11), so the
+--         missing list is a type error at the call.
+-- oracle: reject [E2001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+import Std.Log exposing (println)
+import Std.Ui as Ui exposing (Element)
+
+type Msg
+    = Noop
+
+
+form : Element Msg
+form =
+    Ui.column
+        []
+        [ Ui.text "Paste NAME=value lines:"
+        , Ui.html (Html.textarea [ Attr.name "lines", Attr.rows 3 ])
+        ]
+
+
+main =
+    println (Ui.elementText form)

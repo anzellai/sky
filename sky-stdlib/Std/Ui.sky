@@ -1256,12 +1256,18 @@ name value =
     AttrAttribute "name" value
 
 
--- Escape hatch — wrap an arbitrary Std.Html node as an Element.
+-- Escape hatch — wrap a complete Std.Html node as an Element.
 -- Useful when you need a tag Std.Ui doesn't model directly
 -- (`<video>`, `<canvas>`, `<table>`, third-party widgets) without
 -- dropping the rest of your layout. The wrapped node is rendered
 -- in place — Std.Ui adds no inline-style wrapper around it.
-html : any -> Element msg
+--
+-- The argument is an `Html msg`, checked by the compiler (v0.29.11). It
+-- used to be `any`, so a slip inside the raw markup passed `sky check`:
+-- `Ui.html (Html.textarea [ … ])` with the children list missing is a
+-- function, not a node, and it panicked the view at render time
+-- (`rt.Coerce: expected rt.SkyADT, got func(...)`). Now it is `[E2001]`.
+html : Html.Html msg -> Element msg
 html node =
     Raw node
 
