@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.29.11 — `Ui.html` takes an `Html msg` (unreleased)
+## v0.29.11 — `Ui.html` takes an `Html msg`, and the example sweep runs one shard on stock macOS bash (2026-11-15)
 
 ### Migration: `Ui.html`
 
@@ -43,6 +43,13 @@ the before and after.
 - `tests/Std/UiHtmlTest.sky` pins that a complete raw node renders as itself,
   alone and inside a column; the reject corpus gains
   `ui_html_takes_html.sky`, the partial application that used to panic.
+
+### Fixed
+
+- `scripts/example-sweep.sh --shard` with an empty shard (more shards than
+  examples) stopped with `_SHARDED[@]: unbound variable` on stock macOS bash
+  3.2. Every expansion of the example list now allows an empty list, and
+  `example_sweep_shards_are_total` passes on macOS.
 
 ## v0.29.10 — Std.Ui layout fixes, a 10-minute demo, a safer `sky init` .gitignore and an even Dict hash for long keys (2026-11-15)
 
