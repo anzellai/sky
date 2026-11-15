@@ -14989,6 +14989,11 @@
             "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -15055,6 +15060,11 @@
             "by": "examples/34-multi-tier-console (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
           }
         ],
         "strength": 3
@@ -20331,7 +20341,7 @@
           ]
         },
         "Std.Html": {
-          "count": 39,
+          "count": 37,
           "symbols": [
             "area",
             "article",
@@ -20341,7 +20351,6 @@
             "blockquote",
             "br",
             "canvas",
-            "details",
             "dialog",
             "em",
             "embed",
@@ -20367,7 +20376,6 @@
             "tbody",
             "tfoot",
             "thead",
-            "toString",
             "track",
             "video",
             "voidNode",
@@ -20869,8 +20877,8 @@
           ]
         }
       },
-      "count": 868,
-      "pct_of_denominator": 26.7
+      "count": 866,
+      "pct_of_denominator": 26.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21806,7 +21814,7 @@
           ]
         },
         "Std.Html": {
-          "count": 67,
+          "count": 63,
           "symbols": [
             "a",
             "area",
@@ -21822,7 +21830,6 @@
             "code",
             "codeNode",
             "col",
-            "details",
             "dialog",
             "doctype",
             "em",
@@ -21859,17 +21866,14 @@
             "small",
             "source",
             "styleNode",
-            "summary",
             "table",
             "tbody",
             "td",
-            "textarea",
             "tfoot",
             "th",
             "thead",
             "title",
             "titleNode",
-            "toString",
             "tr",
             "track",
             "video",
@@ -21878,7 +21882,7 @@
           ]
         },
         "Std.Html.Attributes": {
-          "count": 41,
+          "count": 40,
           "symbols": [
             "Event",
             "accept",
@@ -21910,7 +21914,6 @@
             "readonly",
             "rel",
             "role",
-            "rows",
             "rowspan",
             "scope",
             "selected",
@@ -22418,8 +22421,8 @@
           ]
         }
       },
-      "count": 983,
-      "pct_of_denominator": 30.2
+      "count": 978,
+      "pct_of_denominator": 30.1
     }
   },
   "units": [
@@ -24486,12 +24489,12 @@
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Std",
-      "modules_imported": 52,
+      "modules_imported": 53,
       "path": "tests/Std",
-      "refs_generous": 720,
-      "refs_qualified": 694,
+      "refs_generous": 728,
+      "refs_qualified": 703,
       "role": "SkySuite",
-      "sky_files": 28,
+      "sky_files": 29,
       "sky_toml_sections": []
     },
     {

@@ -29,6 +29,11 @@ func([]rt.SkyADT) rt.SkyADT`, "This dispatch's view panicked").
   so `Ui.html (Html.input [ … ])` is complete.
 - A call that passed another value must build an `Html msg` first, for
   example with `Html.node tag attrs children`.
+- The message type is now checked too. A helper typed `Html Msg` (your own
+  `Msg`) that a view typed `Element msg` wraps with `Ui.html` is `[E2001]` on
+  that view ("the type annotation says `msg` can be any type, but this code
+  uses it as `Msg`"). If the helper sends no message, type it `Html msg`. If
+  it does, type the view `Element Msg`.
 
 `docs/migration/v0.29.md` ("`Ui.html` takes an `Html msg` (v0.29.11)") has
 the before and after.
