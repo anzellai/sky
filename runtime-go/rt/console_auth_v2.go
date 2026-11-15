@@ -514,7 +514,54 @@ func ensureDevConsoleToken() string {
 	// env, …) — the in-memory token is still usable for one process
 	// lifetime.
 	_ = os.WriteFile(fileName, []byte(tok), 0o600)
+	if reason := consoleTokenCommitRisk("."); reason != "" {
+		logStructured("warn", "console.token",
+			"msg", "the dev console token at .sky/console-token is not ignored by git: "+reason,
+			"fix", "add a line `.sky/` to .gitignore before the next commit (sky init writes one; sky doctor checks it)")
+	}
 	return tok
+}
+
+// consoleTokenCommitRisk says why a freshly written .sky/console-token
+// under dir could reach a commit: dir is inside a git work tree and no
+// .gitignore between dir and the work tree's root lists `.sky/` (or
+// `.sky`). "" when there is no risk, including when dir is not under
+// git at all. The token is bare hex, so no secret scanner catches it
+// later; this warning is the only early signal. git itself is not run
+// here (this is the app's start-up path); `sky doctor` asks git.
+func consoleTokenCommitRisk(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	inGit, sawIgnoreFile := false, false
+	for d := abs; ; {
+		if b, err := os.ReadFile(filepath.Join(d, ".gitignore")); err == nil {
+			sawIgnoreFile = true
+			for _, line := range strings.Split(string(b), "\n") {
+				switch strings.TrimSpace(line) {
+				case ".sky/", ".sky", "/.sky/", "/.sky", ".sky/**", ".sky/console-token", "**/.sky/", "**/.sky":
+					return ""
+				}
+			}
+		}
+		if st, err := os.Stat(filepath.Join(d, ".git")); err == nil && (st.IsDir() || st.Mode().IsRegular()) {
+			inGit = true
+			break
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	if !inGit {
+		return ""
+	}
+	if !sawIgnoreFile {
+		return "there is no .gitignore between " + dir + " and the repository root"
+	}
+	return "no .gitignore between " + dir + " and the repository root lists `.sky/`"
 }
 
 // randomDevToken — 32-byte hex token. Cryptographically random.

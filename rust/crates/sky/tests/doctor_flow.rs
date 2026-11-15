@@ -389,3 +389,54 @@ fn doctor_reports_the_ai_pipeline_and_its_slots() {
     assert_eq!(code, Some(1), "{text}");
     assert!(text.contains("does not expose `pipeline`"), "{text}");
 }
+
+/// A project under git whose `.gitignore` lost `.sky/` (the dev console writes
+/// its secret there) or `.env` gets one Warn per missing entry; a project that
+/// lists both, or one not under git, gets none. The first portal built on Sky
+/// pushed `.sky/console-token` because a hand-written `.gitignore` had replaced
+/// the scaffolded one; this is the check that would have said so.
+#[test]
+fn doctor_warns_when_gitignore_drops_the_console_token_or_env() {
+    if !required(Need::Go, go_on_path()) {
+        return;
+    }
+    let dir = healthy_project("gitignore");
+    let git_init = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&dir)
+        .status();
+    if !git_init.map(|s| s.success()).unwrap_or(false) {
+        panic!("git init failed; git is required for this test");
+    }
+    std::fs::write(dir.join(".gitignore"), "sky-out/\n").unwrap();
+    let (code, out) = run_sky(&dir, &["doctor", "--verbose"]);
+    assert_eq!(
+        code, 1,
+        "a missing .sky/ and .env is at least one finding:\n{out}"
+    );
+    assert!(
+        out.contains("gitignore-secrets"),
+        "check id reported:\n{out}"
+    );
+    assert!(
+        out.contains("`.sky/console-token`") && out.contains("`.env`"),
+        "both paths named:\n{out}"
+    );
+
+    std::fs::write(dir.join(".gitignore"), "sky-out/\n.sky/\n.env\n").unwrap();
+    let (_, out) = run_sky(&dir, &["doctor", "--verbose"]);
+    assert!(
+        !out.contains("gitignore-secrets"),
+        "a complete .gitignore is clean:\n{out}"
+    );
+
+    // git is the judge: a nested project covered by the repository's top-level
+    // .gitignore is clean without a file of its own.
+    std::fs::remove_file(dir.join(".gitignore")).unwrap();
+    let (_, out) = run_sky(&dir, &["doctor", "--verbose"]);
+    assert!(
+        out.contains("gitignore-secrets"),
+        "no .gitignore at all is reported:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
