@@ -11,6 +11,61 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.10 — Std.Ui layout fixes, a 10-minute demo, a safer `sky init` .gitignore and an even Dict hash for long keys (2026-11-15)
+
+### Migration: Std.Ui layout
+
+An audit of the Std.Ui renderer fixed ten places where the CSS did not do
+what the attribute says. Nothing stops compiling. A page can look different
+where it used one of these. `docs/migration/v0.29.md` ("Std.Ui layout fixes
+(v0.29.10)") lists each change with the one-line edit that keeps the old
+look, and every edit works on v0.29.9 too.
+
+- **`Ui.width (Ui.px n)` keeps its size in a row**, and `Ui.height (Ui.px n)`
+  in a column or `el` (`flex-shrink: 0`, as in elm-ui). A crowded row no
+  longer squashes an avatar or an icon. A row that fitted a phone only
+  because its px boxes squashed now overflows: write `Ui.width (Ui.fill |>
+  Ui.maximum n)` for a box that may give way.
+- **`centerY`, `alignTop` and `alignBottom` on a child of an `el`, a button or
+  a `textColumn` move it vertically.** Before, they moved it sideways
+  (`centerY` centred it horizontally). Add `Ui.centerX` where the horizontal
+  centring was wanted. A button's label is now centred both ways.
+
+### Fixed
+
+- **Nearby elements** (`inFront`, `behindContent`, `above`, `below`,
+  `onLeft`, `onRight`): `alignRight` and `centerX` on the nearby element move
+  it. An `inFront` element without `height fill` is as tall as its content.
+- **`Ui.grid`** aligns its children and its own content on the grid axes
+  (`justify-self` / `align-self`, `justify-items` / `align-items`). A
+  `height fill` child no longer makes the grid grow in its parent.
+- **A `height fill` child of a row with `centerY`, `alignTop` or
+  `alignBottom`** fills the row.
+- **A labelled single-line `Input.*`** with a layout attribute is one line
+  tall. Before, it got an implicit height fill and could stretch its form.
+- **`Ui.shrink`** is `fit-content`, so shrink text wraps in a narrow space
+  (it was `max-content`, which ran off a phone).
+- **`Ui.spacing` on a `Ui.paragraph`** sets the space between lines, as in
+  elm-ui (it did nothing).
+- **`Border.shadow` with `Border.innerShadow` or `Border.glow`** shows every
+  shadow (only the last showed).
+- **A `Dict` with long keys keeps an even trie under every hash seed.** For
+  about one seed in 150, keys longer than 16 bytes clustered on the trie's
+  prefixes. Each long-key hash is now mixed once more after `maphash`. A
+  test checks 256 seeds on every run.
+- **`sky init` writes a `.gitignore` that also lists `.skyapp/`, `.split/`,
+  `.env.local` and `.env.*.local`.** `sky doctor` has a new check,
+  `gitignore-secrets`, that asks git whether `.sky/console-token` or `.env`
+  would be committed. The dev console warns once when it writes a new
+  `.sky/console-token` in a git work tree that does not ignore `.sky/`.
+
+### Added
+
+- **`examples/77-demo-expenses`**: a team expenses app (Sky.Live, Std.Ui,
+  SQLite, Std.Money, live sync, a JSON API) with a 15-minute talk
+  (`TALK.md`), ten slides (`slides.md`) and a live demo script (`DEMO.md`)
+  for showing Sky to a team.
+
 ## v0.29.9 — generated typed codecs, a 3 MB saved-model cap, plain Dict Int keys, and the web:app first-paint fix (2026-11-11)
 
 ### Changed
