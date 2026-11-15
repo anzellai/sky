@@ -721,7 +721,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 96,
+      "expected_assertions": 97,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -743,7 +743,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 169,
+      "expected_assertions": 170,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
@@ -764,7 +764,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 1338,
+      "expected_assertions": 1340,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",

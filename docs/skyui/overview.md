@@ -1567,7 +1567,7 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | Layout: `link / image / button` | ✅ | |
 | Layout: `input` (real `<input>`) | ✅ | `Ui.el` renders as `<div>`, so a dedicated helper exists |
 | Layout: `form` (with `onSubmit`-into-typed-record) | ✅ | Wire driver decodes formData into a typed record |
-| Layout: `html` escape hatch | ✅ | `Ui.html node : any -> Element msg` wraps a Std.Html `Html msg` node |
+| Layout: `html` escape hatch | ✅ | `Ui.html : Html msg -> Element msg` wraps a complete Std.Html node; a value that is not an `Html msg` (a partial application such as `Html.textarea [ … ]` with no children) is `[E2001]` since v0.29.11 |
 | Layout: `text / textNoWrap` | ✅ | v0.27.0: `text` is inline in a paragraph and its own wrapping `<span>` elsewhere (the terminal wraps it at the cell width); `textNoWrap` stays on one line |
 | **Canvas**: `Std.Ui.Canvas` scenes | ✅ | v0.27.0: typed shapes, paths, transforms and pointer events in scene units; SVG on Sky.Live, a batched canvas on Sky.Spa, Braille cells on a terminal |
 | **Terminal**: `Std.Ui.Terminal` | ✅ | v0.27.0: a PTY `Process` in a built-in widget island; Sky.Live and desktop (refused on Sky.Spa targets) |

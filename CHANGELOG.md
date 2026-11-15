@@ -11,6 +11,34 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.11 — `Ui.html` takes an `Html msg` (unreleased)
+
+### Migration: `Ui.html`
+
+`Std.Ui.html` is `Html msg -> Element msg`. It was `any -> Element msg`, so
+the compiler checked nothing inside the escape hatch: a raw node with an
+argument missing, such as `Html.textarea [ Attr.name "lines" ]` with no
+children list, is a function and not a node. It passed `sky check`, built,
+and the view panicked when it rendered (`rt.Coerce: expected rt.SkyADT, got
+func([]rt.SkyADT) rt.SkyADT`, "This dispatch's view panicked").
+
+- A call that passes a complete `Html msg` compiles as before. Every use in
+  the stdlib, the examples and the bundled apps does.
+- A call with an argument missing is now `[E2001]` at the call. Add the
+  argument: `Ui.html (Html.textarea [ … ] [])`. `Html.input` takes one list,
+  so `Ui.html (Html.input [ … ])` is complete.
+- A call that passed another value must build an `Html msg` first, for
+  example with `Html.node tag attrs children`.
+
+`docs/migration/v0.29.md` ("`Ui.html` takes an `Html msg` (v0.29.11)") has
+the before and after.
+
+### Added
+
+- `tests/Std/UiHtmlTest.sky` pins that a complete raw node renders as itself,
+  alone and inside a column; the reject corpus gains
+  `ui_html_takes_html.sky`, the partial application that used to panic.
+
 ## v0.29.10 — Std.Ui layout fixes, a 10-minute demo, a safer `sky init` .gitignore and an even Dict hash for long keys (2026-11-15)
 
 ### Migration: Std.Ui layout

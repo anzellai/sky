@@ -1,0 +1,68 @@
+module Std.UiHtmlTest exposing (tests)
+
+-- `Ui.html` takes a complete `Html msg` and renders it in place (v0.29.11).
+--
+-- THE BUG. `Ui.html` was typed `any -> Element msg`, so the compiler checked
+-- nothing inside the escape hatch. A raw node with an argument missing, such
+-- as `Html.textarea [ … ]` with no children list, is a partial application; it
+-- passed `sky check` and panicked the view at render time with
+-- `rt.Coerce: expected rt.SkyADT, got func([]rt.SkyADT) rt.SkyADT`. The
+-- compile-time side is the reject-corpus file `ui_html_takes_html.sky`; this
+-- suite pins the positive side: a complete node still renders as itself.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+import Std.Ui as Ui
+
+
+render : Ui.Element msg -> String
+render el =
+    Html.toString (Ui.layout [] el)
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ui.html takes an Html msg (v0.29.11)"
+          [ Test.test
+                "a complete textarea renders as itself"
+                (\_ ->
+                    let
+                        out =
+                            render
+                                (Ui.html
+                                    (Html.textarea
+                                        [ Attr.name "lines", Attr.rows 3 ]
+                                        []))
+                    in
+                        Test.isTrue
+                            (String.contains "<textarea" out
+                                && String.contains "name=\"lines\"" out))
+          , Test.test
+                "a raw node inside a column keeps its tag and its text"
+                (\_ ->
+                    let
+                        out =
+                            render
+                                (Ui.column
+                                    []
+                                    [ Ui.text "before"
+                                    , Ui.html
+                                          (Html.details
+                                              []
+                                              [ Html.summary
+                                                    []
+                                                    [ Html.text "More" ]
+                                              , Html.text "body"
+                                              ])
+                                    ])
+                    in
+                        Test.isTrue
+                            (String.contains "<details" out
+                                && String.contains "<summary" out
+                                && String.contains "More" out))
+          ]
+    ]

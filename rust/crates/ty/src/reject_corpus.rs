@@ -152,7 +152,7 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// pin `[E1018]` (a value defined in terms of itself).
 /// **96 since v0.29.0**: `regex_invalid_literal.sky` (`[E2014]`) and
 /// `regex_pattern_string_form.sky` (`[E2001]`, the pre-v0.29 Regex form).
-pub const EXPECTED_CORPUS_FILES: usize = 96;
+pub const EXPECTED_CORPUS_FILES: usize = 97;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -190,7 +190,7 @@ pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 50;
 /// oracle agree on the code. A file that turns out to disagree gains a
 /// `-- rust:` line (never an edited `-- oracle:` line) and moves to
 /// [`EXPECTED_FILES_WITH_RUST_CODE`].
-pub const EXPECTED_FILES_WITH_ORACLE_CODE: usize = 46;
+pub const EXPECTED_FILES_WITH_ORACLE_CODE: usize = 47;
 
 /// Total files that declare a code either way. Kept for the report line.
 pub const EXPECTED_FILES_WITH_DECLARED_CODE: usize =
