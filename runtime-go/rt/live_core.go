@@ -1067,33 +1067,59 @@ type styleMarkerSpec struct {
 }
 
 // injectStyleMarker applies a single style-injection spec to a VNode
-// + its descendants. Handles both the non-void case (attach style as
-// first child) and the void case (hoist to sibling after).
+// + its descendants. An element that can hold a <style> gets its own as
+// its first child. An element that cannot (see canHoldInjectedStyle) hands
+// its style to its parent, which places it directly after the element, or
+// hands it further up when the parent cannot hold one either (an <option>
+// inside a <select>). The root has no parent: a root that cannot hold its
+// style drops it.
 func injectStyleMarker(n *VNode, spec styleMarkerSpec) {
-	if n.Kind != "element" {
-		return
-	}
-	if !isVoidTag(n.Tag) {
-		// Non-void self: prepend style child if marker present.
-		applyMarkerAsFirstChild(n, spec)
-	}
-	// Walk children, splicing sibling style blocks after any void
-	// child that still carries a marker (because the self-handler
-	// above bailed for void).
-	n.Children = walkChildrenWithVoidSiblingHoist(n.Children, spec)
+	_ = injectStyleMarkerEscaping(n, spec)
 }
 
-// applyMarkerAsFirstChild handles the canonical case: build the
-// style body, prepend as first child, strip marker(s). Caller must
-// already have decided n is non-void.
-func applyMarkerAsFirstChild(n *VNode, spec styleMarkerSpec) {
-	if n.SkyID == "" {
-		// No id → no scope. Strip markers anyway so they don't leak.
-		for _, ma := range spec.markerAttrs {
-			delete(n.Attrs, ma)
-		}
-		return
+// canHoldInjectedStyle reports whether an injected <style> may be a child
+// of an element with this tag without changing what the element shows.
+// Void elements render no children (#409). A <textarea> or <title> shows
+// its children as its text, so a <style> child became the textarea's
+// value (#326). <select>, <option>, <optgroup> and <datalist> hold only
+// options: the HTML parser drops a <style> there. A <script>, <style>,
+// <iframe> or <noscript> child is text, and a <template> child is inert.
+func canHoldInjectedStyle(tag string) bool {
+	if isVoidTag(tag) {
+		return false
 	}
+	switch tag {
+	case "textarea", "title", "select", "option", "optgroup", "datalist",
+		"script", "style", "iframe", "noscript", "template":
+		return false
+	}
+	return true
+}
+
+// injectStyleMarkerEscaping runs the pass over n and returns the styles n
+// could not hold, in document order, for the parent to place after n.
+func injectStyleMarkerEscaping(n *VNode, spec styleMarkerSpec) []VNode {
+	if n.Kind != "element" {
+		return nil
+	}
+	hosts := canHoldInjectedStyle(n.Tag)
+	own := buildMarkerStyle(n, spec)
+	var escaped []VNode
+	if own != nil && !hosts {
+		escaped = append(escaped, *own)
+	}
+	n.Children, escaped = placeChildStyles(n.Children, spec, hosts, escaped)
+	if own != nil && hosts {
+		n.Children = append([]VNode{*own}, n.Children...)
+	}
+	return escaped
+}
+
+// buildMarkerStyle builds the <style> for n's marker(s) and strips the
+// marker(s) from n. It returns nil when n has no sky-id (no scope), no
+// marker, or a marker that builds no CSS. The markers are stripped in every
+// case, so an empty marker does not leak as an inert data-* attribute.
+func buildMarkerStyle(n *VNode, spec styleMarkerSpec) *VNode {
 	hasAny := false
 	for _, ma := range spec.markerAttrs {
 		if v, ok := n.Attrs[ma]; ok && v != "" {
@@ -1101,21 +1127,20 @@ func applyMarkerAsFirstChild(n *VNode, spec styleMarkerSpec) {
 			break
 		}
 	}
-	if !hasAny {
-		// Strip empty markers regardless.
+	if !hasAny || n.SkyID == "" {
 		for _, ma := range spec.markerAttrs {
 			delete(n.Attrs, ma)
 		}
-		return
+		return nil
 	}
 	styleText := spec.build(n.SkyID, n.Attrs)
 	for _, ma := range spec.markerAttrs {
 		delete(n.Attrs, ma)
 	}
 	if styleText == "" {
-		return
+		return nil
 	}
-	styleNode := VNode{
+	return &VNode{
 		Kind: "element",
 		Tag:  "style",
 		Attrs: map[string]string{
@@ -1124,7 +1149,6 @@ func applyMarkerAsFirstChild(n *VNode, spec styleMarkerSpec) {
 		Children: []VNode{{Kind: "raw", Text: styleText}},
 		SkyID:    injectedStyleID(n.SkyID, spec),
 	}
-	n.Children = append([]VNode{styleNode}, n.Children...)
 }
 
 // injectedStyleID is the sky-id of the <style> a pass injects for the
@@ -1138,76 +1162,41 @@ func injectedStyleID(owner string, spec styleMarkerSpec) string {
 	return owner + ".~" + strings.TrimPrefix(spec.styleAttr, "data-sky-")
 }
 
-// walkChildrenWithVoidSiblingHoist recurses into each child + splices
-// a sibling <style> immediately after any VOID child whose marker
-// survived the self-handler's bail. See #409.
-// It rebuilds the slice ONLY when a hoist actually happens. The
-// previous version allocated `make([]VNode, 0, len(children))` and
-// re-copied every child for every element, on each of the four
-// injection passes, whether or not the tree contained a single style
-// marker — 4 full tree-copies per render, and 17% of what a session
-// retains (`docs/perf/skylive-interaction-cost.md`, "The attribution").
-// A hoist is rare: it needs a VOID child carrying a live marker.
+// placeChildStyles recurses into each child and places the styles a child
+// could not hold directly after that child. When the parent itself cannot
+// hold a style (hosts is false), they join the parent's escaped list
+// instead. See #409 (void elements) and #326 (textarea, select).
 //
-// The recursive call mutates through the pointer either way, so when
-// nothing is hoisted the input slice already holds exactly the values
-// the old code copied out, and returning it is the same result.
-func walkChildrenWithVoidSiblingHoist(children []VNode, spec styleMarkerSpec) []VNode {
-	var out []VNode // nil until the first hoist forces a rebuild
+// It rebuilds the slice ONLY when a style is placed. Copying every child for
+// every element, on each of the four injection passes, was 17% of what a
+// session retains (`docs/perf/skylive-interaction-cost.md`, "The
+// attribution"), and a placement is rare: it needs a child that cannot hold
+// its style. The recursive call mutates through the pointer either way, so
+// when nothing is placed the input slice already holds the result.
+func placeChildStyles(children []VNode, spec styleMarkerSpec, hosts bool, escaped []VNode) ([]VNode, []VNode) {
+	var out []VNode // nil until the first placement forces a rebuild
 	for i := range children {
 		child := &children[i]
-		injectStyleMarker(child, spec)
-		// Capture the void-child's marker BEFORE we append (the recurse
-		// call may have stripped non-void markers from deep descendants
-		// but a void child's marker still sits on the child).
-		var hoist *VNode
-		if child.Kind == "element" && isVoidTag(child.Tag) && child.SkyID != "" {
-			hasAny := false
-			for _, ma := range spec.markerAttrs {
-				if v, ok := child.Attrs[ma]; ok && v != "" {
-					hasAny = true
-					break
-				}
-			}
-			if hasAny {
-				styleText := spec.build(child.SkyID, child.Attrs)
-				if styleText != "" {
-					hoist = &VNode{
-						Kind: "element",
-						Tag:  "style",
-						Attrs: map[string]string{
-							spec.styleAttr: child.SkyID,
-						},
-						Children: []VNode{{Kind: "raw", Text: styleText}},
-						SkyID:    injectedStyleID(child.SkyID, spec),
-					}
-				}
-				for _, ma := range spec.markerAttrs {
-					delete(child.Attrs, ma)
-				}
-			}
-		}
-		if hoist == nil {
+		esc := injectStyleMarkerEscaping(child, spec)
+		if len(esc) == 0 || !hosts {
+			escaped = append(escaped, esc...)
 			if out != nil {
 				out = append(out, *child)
 			}
 			continue
 		}
 		if out == nil {
-			// First hoist in this child list: materialise the prefix
-			// (already recursed, so these are the same values the old
-			// code would have copied) and switch to the rebuilt slice.
-			out = make([]VNode, 0, len(children)+1)
+			out = make([]VNode, 0, len(children)+len(esc))
 			out = append(out, children[:i+1]...)
 		} else {
 			out = append(out, *child)
 		}
-		out = append(out, *hoist)
+		out = append(out, esc...)
 	}
 	if out == nil {
-		return children
+		return children, escaped
 	}
-	return out
+	return out, escaped
 }
 
 // buildPseudoClassStyleText parses the `data-sky-pc-rules` marker
@@ -1425,7 +1414,7 @@ func applyStyleInjections(n *VNode) {
 // have work. It reads KEY PRESENCE, not value: a marker attr present with
 // an EMPTY value still needs its pass to run, because stripping empty
 // markers so they cannot leak into the wire output is part of what the
-// pass does (`applyMarkerAsFirstChild` deletes them on the no-match path
+// pass does (`buildMarkerStyle` deletes them on the no-match path
 // too). Skipping a pass whose key appears on no element is exactly
 // equivalent, because every effect a pass has is keyed on that attr.
 //

@@ -861,6 +861,8 @@ Pseudo-class rules attached to a VOID HTML element (`<input>`, `<img>`, `<br>`, 
 
 Post-v0.15.57: the runtime hoists the `<style>` block to a SIBLING slot immediately AFTER the void element. The CSS selector still keys off the void element's `sky-id`, so the rule applies correctly.
 
+Since v0.29.12 the same rule covers every element whose children are its content or are dropped (#326): `<textarea>` (a child showed as the text in the box), `<title>`, `<select>`, `<option>`, `<optgroup>`, `<datalist>`, `<script>`, `<style>`, `<iframe>`, `<noscript>` and `<template>`. The `<style>` goes directly after the element, or after its nearest ancestor that can hold it (an `<option>` style goes after its `<select>`). This holds for all four style passes: pseudo-class, media query, transition and animation. So `Ui.onPseudo Ui.focusVisible [...]` on an `Input.multiline` keeps the text box empty.
+
 ```elm
 -- Both styles work identically post-v0.15.57:
 Input.text

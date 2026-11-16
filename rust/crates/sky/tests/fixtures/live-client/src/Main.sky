@@ -272,7 +272,12 @@ mainView model =
               [ idA "clear" ]
               { onPress = Just ClearAll, label = Ui.text "clear" }
         , Input.multiline
-              [ idA "draft", Ui.onEnter Send ]
+              [ idA "draft"
+              , Ui.onEnter Send
+              , Ui.onPseudo
+                    Ui.focusVisible
+                    [ Ui.style "outline" "3px solid #1e6999" ]
+              ]
               { onChange = Draft
               , text = model.draft
               , placeholder = Nothing
