@@ -972,6 +972,15 @@ void element's sky-id, so the rule applies correctly.
 **Implication**: `Input.text [Background.activeColor (...), ...] cfg`
 now correctly applies `:active` / `:hover` colours to the `<input>`.
 
+**v0.29.12 (#326)**: the same placement covers every element whose
+children are its content or are dropped by the parser: `<textarea>`,
+`<title>`, `<select>`, `<option>`, `<optgroup>`, `<datalist>`,
+`<script>`, `<style>`, `<iframe>`, `<noscript>`, `<template>`
+(`canHoldInjectedStyle` in `runtime-go/rt/live_core.go`). Such an
+element hands its style to its parent, which places it directly after
+the element or hands it further up. Before this, a `<style>` child of a
+`<textarea>` showed as the text in the box.
+
 **Verification**: a compiler-test spec exists under
 `Sky.Build.UiPseudoClassHoist*Spec` (UNVERIFIED at this read — file
 exists per CLAUDE.md reference; line counts not checked).

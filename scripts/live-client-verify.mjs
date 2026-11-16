@@ -100,6 +100,12 @@ async function run(browser) {
   // ── F1 + L6: composer (onChange + onEnter on one textarea) ──────────
   {
     const { ctx, page } = await freshPage(browser);
+    // #326: the textarea carries a Ui.onPseudo focus-visible rule. Its
+    // <style> must sit outside the box, never as the textarea's text.
+    const before = await page.locator("#draft").inputValue();
+    check(before === "" && (await page.locator("#draft style").count()) === 0,
+      "#326 a pseudo-class rule on Input.multiline keeps the textarea empty",
+      `value=${JSON.stringify(before)}`);
     await page.locator("#draft").click();
     await page.keyboard.type("hello", { delay: 20 });
     await page.keyboard.press("Enter"); // inside the 150 ms debounce

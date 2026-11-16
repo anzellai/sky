@@ -11,6 +11,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.12 — a pseudo-class rule on a textarea no longer shows as its text (2026-11-16)
+
+### Fixed
+
+- `Ui.onPseudo` (and `Background.hoverColor`, `Font.focusColor` and the other
+  pseudo-class helpers) on an `Input.multiline` put the generated CSS inside
+  the text box. The runtime wrote the rule as a `<style>` child of the
+  element, and a `<textarea>` shows its children as its text, so the user saw
+  `[sky-id="…"]:focus-visible { outline: … }` as the value (#326). The
+  `<style>` now goes directly after any element whose children are its
+  content or are dropped: `<textarea>`, `<title>`, `<select>`, `<option>`,
+  `<optgroup>`, `<datalist>`, `<script>`, `<style>`, `<iframe>`,
+  `<noscript>`, `<template>`, and the void elements as before. An `<option>`
+  rule goes after its `<select>`. The fix covers all four style passes
+  (pseudo-class, media query, transition, animation), on Sky.Live and the
+  Sky.Spa client. No app change is needed. An app that kept pseudo-class
+  rules off a textarea to avoid the bug can put them back.
+
 ## v0.29.11 — `Ui.html` takes an `Html msg`, and the example sweep runs one shard on stock macOS bash (2026-11-15)
 
 ### Migration: `Ui.html`

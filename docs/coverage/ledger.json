@@ -22623,8 +22623,8 @@
       "id": "e2e:scripts/live-client-e2e.sh",
       "modules_imported": 12,
       "path": "scripts/live-client-e2e.sh",
-      "refs_generous": 45,
-      "refs_qualified": 43,
+      "refs_generous": 48,
+      "refs_qualified": 46,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
