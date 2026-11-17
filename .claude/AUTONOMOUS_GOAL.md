@@ -41,3 +41,23 @@ item, Conventional Commits title. No outside project named anywhere.
 Gate: every reproduction is a test, the full Sky test suite passes, `sky
 verify` passes on the example projects, then the full release workflow, then
 tag v0.29.14.
+
+## Found during the work (ship in this release, CLAUDE.md §0.2.2)
+
+- F1. An `App.web` app built with `--target web:app` answers a plain 404 for
+  a declared route other than `/`.
+- F2. An undefined type name inside a record alias gives a type mismatch,
+  not an undefined-name error.
+- F3. A failed backend leg prints a "Broken pipe" wasm-name handoff message
+  that hides the real error.
+- F4. `httpRequestDo` does not attach the request context, so an HTTP client
+  call carries no trace and no cancellation (fixed with B2).
+
+## Decisions
+
+- B5: a spike (2026-11-17, go1.27.3) shows `go build -cover` ignores `//line`
+  directives (the profile keeps main.go lines). B5 maps coverage through a
+  side map from main.go line ranges to Sky module, function and case arm.
+- B1 ships with no default limit. The adaptive limit is cut.
+- F5. `scripts/build.sh` installed the compiler with `cp -f`, and macOS
+  killed the new binary (stale code signature). Fixed in 9d3db3af9.
