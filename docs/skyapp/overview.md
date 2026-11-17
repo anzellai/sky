@@ -195,9 +195,15 @@ of `App.app`, on every target. Only the Live/web runner consumes the request.
 The URL fragment (the text after `#`) never reaches the server, so no request
 hook can read it. Subscribe to it instead: `subscriptions = \_ -> Sub.onFragment
 FragmentChanged` delivers it when the page loads with one and on every change,
-on `web`, `web:app`, desktop and mobile. To move the address bar from `update`
-(go to a page after a save, drop a one-time fragment), return a `Std.Nav`
-command: `Nav.pushUrl "/orders/7"`, `Nav.replaceUrl "/"` or
+on `web`, `web:app`, desktop and mobile. `Sub.onQuery QueryChanged` delivers
+the query string (a `Dict String String`, at load and on every change; it is
+user input), and `Sub.onBreakpoint [ 600, 900 ] LayoutChanged` the viewport
+width as one of your breakpoints (at load and when a resize crosses one), so
+one `view` can show a table on a wide screen and cards on a phone. Terminal
+targets have no URL or viewport: these subscriptions never fire there.
+
+To move the address bar from `update` (go to a page after a save, drop a
+one-time fragment), return a `Std.Nav` command: `Nav.pushUrl "/orders/7"`, `Nav.replaceUrl "/"` or
 `Nav.clearFragment`. It routes like an in-app link on every web target, and a
 terminal target ignores it.
 

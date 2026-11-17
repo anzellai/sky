@@ -45,6 +45,9 @@ type liveBootCfg struct {
 	MsgOffline       string               `json:"msgOffline"`
 	HelloTimeoutMs   int                  `json:"helloTimeoutMs"`
 	HeartbeatTtlMs   int                  `json:"heartbeatTtlMs"`
+	// Bp is the widths of the app's Sub.onBreakpoint leaf (sub_viewport.go);
+	// absent when the app has none.
+	Bp []int `json:"bp,omitempty"`
 }
 
 func newLiveBootCfg(sid string, cfg liveBannerConfig, csrfToken, basePath, view string) liveBootCfg {
@@ -76,10 +79,18 @@ func livePageScripts(sid string, cfg liveBannerConfig, csrfToken, basePath, view
 }
 
 func livePageScriptsWithScrolls(sid string, cfg liveBannerConfig, csrfToken, basePath, view, tab, tok string, scrolls []liveScrollDelivery) string {
+	return livePageScriptsWithBreakpoints(sid, cfg, csrfToken, basePath, view, tab, tok, scrolls, nil)
+}
+
+// livePageScriptsWithBreakpoints also hands the page the widths of the app's
+// Sub.onBreakpoint leaf (nil: none), so the client reports its width at load
+// and on crossing one of them (sub_viewport.go).
+func livePageScriptsWithBreakpoints(sid string, cfg liveBannerConfig, csrfToken, basePath, view, tab, tok string, scrolls []liveScrollDelivery, widths []int) string {
 	c := newLiveBootCfg(sid, cfg, csrfToken, basePath, view)
 	c.Tab = tab
 	c.Tok = tok
 	c.Scrolls = scrolls
+	c.Bp = widths
 	return liveCfgBlock(c) +
 		`<script src="` + basePath + liveClientPath + `"></script>`
 }
@@ -1318,6 +1329,7 @@ function __skyPostEventNow(body) {
     // marked form, so accept it. HTML / text responses without the
     // marker are always rejected — those are the proxy-wedge shape.
     var skyMark = r.headers.get("X-Sky-Live");
+    if (skyMark === "1") __skyAdoptBreakpoints(r);
     var ct = r.headers.get("Content-Type") || "";
     var isJson = ct.indexOf("application/json") >= 0;
     if (skyMark !== "1" && !isJson) {
@@ -2156,6 +2168,7 @@ document.addEventListener("click", function(ev) {
   fetch(href, { headers: __skyWithSession({ "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }), credentials: "same-origin" })
     .then(function(r) {
       __skyAdoptToken(r);
+      __skyAdoptBreakpoints(r);
       var navSid = r.headers.get("X-Sky-Sid");
       if (navSid) __skySid = navSid;
       // The page check is load-bearing. Without it, a 404 body like
@@ -2188,6 +2201,7 @@ window.addEventListener("popstate", function() {
   fetch(window.location.href, { headers: __skyWithSession({ "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }), credentials: "same-origin" })
     .then(function(r) {
       __skyAdoptToken(r);
+      __skyAdoptBreakpoints(r);
       var navSid = r.headers.get("X-Sky-Sid");
       if (navSid) __skySid = navSid;
       // Same r.ok gate as the sky-nav click path. Without it,
@@ -2232,6 +2246,7 @@ function __skyNavApply(url, replace) {
   return fetch(target, { headers: __skyWithSession({ "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }), credentials: "same-origin" })
     .then(function(r) {
       __skyAdoptToken(r);
+      __skyAdoptBreakpoints(r);
       var navSid = r.headers.get("X-Sky-Sid");
       if (navSid) __skySid = navSid;
       if (!__skyIsPage(r)) { reload(); return; }
@@ -2253,6 +2268,51 @@ function __skySendFragment() {
 }
 window.addEventListener("hashchange", __skySendFragment);
 if (String(window.location.hash || "").length > 1) __skySendFragment();
+// Sub.onBreakpoint (sub_viewport.go): the client knows the widths of the
+// app's breakpoint leaf (the page config, then the X-Sky-Breakpoints header
+// of each answer) and reports its width only when the breakpoint it falls in
+// changes: at load, and when a resize crosses a listed width. Never a report
+// per pixel. The server computes the breakpoint again from the width.
+var __skyBps = (__skyCfg.bp && __skyCfg.bp.length) ? __skyCfg.bp.slice() : [];
+var __skyBpLast = null;
+var __skyVpPending = false;
+function __skyBreakpointOf(w) {
+  var b = 0;
+  for (var i = 0; i < __skyBps.length; i++) if (w >= __skyBps[i]) b = __skyBps[i];
+  return b;
+}
+function __skyViewportCheck() {
+  if (!__skyBps.length) return;
+  var w = Math.floor(window.innerWidth || 0);
+  var b = __skyBreakpointOf(w);
+  if (b === __skyBpLast) return;
+  __skyBpLast = b;
+  __skySend("__skyViewport", [w], "", { noLoader: true });
+}
+function __skyAdoptBreakpoints(r) {
+  if (!r || !r.headers) return;
+  var h = r.headers.get("X-Sky-Breakpoints");
+  if (h === null || h === undefined) return;
+  var list = [];
+  String(h).split(",").forEach(function(p) {
+    var n = parseInt(p, 10);
+    if (n > 0) list.push(n);
+  });
+  if (list.join(",") === __skyBps.join(",")) return;
+  __skyBps = list;
+  __skyBpLast = null;
+  __skyViewportCheck();
+}
+window.addEventListener("resize", function() {
+  if (__skyVpPending) return;
+  __skyVpPending = true;
+  var later = window.requestAnimationFrame || function(f) { return setTimeout(f, 16); };
+  later(function() {
+    __skyVpPending = false;
+    __skyViewportCheck();
+  });
+});
+__skyViewportCheck();
 // ── Status banner (connection state) ─────────────────────────
 // Single bottom-pinned element rendered by the runtime (NOT by the
 // user's view) showing connection health. State machine:

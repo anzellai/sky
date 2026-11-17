@@ -29,6 +29,12 @@
 #   plain  a page with no Sub.onFragment opened at `/plain#x` keeps its
 #          first paint (the load-time fragment report is a no-op)
 #
+# Then it builds rust/crates/sky/tests/fixtures/std-app-viewport the same two
+# ways and drives Sub.onBreakpoint and Sub.onQuery (scripts/viewport-verify.mjs):
+# the breakpoint and the query at load, no Msg (and on Sky.Live no request)
+# while a resize stays inside one breakpoint, one per crossing, and the query
+# after Nav.pushUrl and Back.
+#
 # Browsers: SKY_E2E_BROWSERS (default "chromium,webkit"); SKY_E2E_CHANNEL=chrome
 # uses Google Chrome; SKY_E2E_HEADED=1 runs them headed.
 #
@@ -69,5 +75,19 @@ echo "==> driving both targets in a browser"
 SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
   with_timeout 600 node "$ROOT/scripts/nav-verify.mjs" "$SPA" "$LIVE" --port "${NAV_E2E_PORT:-9381}" --fixture-root "$TMP/app"
 
-echo "nav-e2e: PASS — Std.Nav moves the address bar the same way on web:app and Sky.Live."
+mkdir -p "$TMP/vp"
+cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/std-app-viewport/." "$TMP/vp/"
+echo "==> building fixture std-app-viewport (--target web:app, --target web)"
+(cd "$TMP/vp" && with_timeout 1200 "$SKY" build --target web:app src/Main.sky) >"$TMP/build-vp-spa.log" 2>&1 \
+  || { cat "$TMP/build-vp-spa.log" >&2; echo "nav-e2e: std-app-viewport web:app build failed" >&2; exit 1; }
+(cd "$TMP/vp" && with_timeout 1200 "$SKY" build --target web src/Main.sky) >"$TMP/build-vp-live.log" 2>&1 \
+  || { cat "$TMP/build-vp-live.log" >&2; echo "nav-e2e: std-app-viewport web build failed" >&2; exit 1; }
+VP_SPA="$TMP/vp/.skyapp/web-app/.split/backend/sky-out/app"
+VP_LIVE="$TMP/vp/.skyapp/web/sky-out/app"
+[ -x "$VP_SPA" ] && [ -x "$VP_LIVE" ] || { echo "nav-e2e: std-app-viewport binaries not built" >&2; exit 1; }
+echo "==> driving Sub.onBreakpoint and Sub.onQuery in a browser"
+SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
+  with_timeout 600 node "$ROOT/scripts/viewport-verify.mjs" "$VP_SPA" "$VP_LIVE" --port "$(( ${NAV_E2E_PORT:-9381} + 10 ))"
+
+echo "nav-e2e: PASS — Std.Nav moves the address bar the same way on web:app and Sky.Live; Sub.onBreakpoint and Sub.onQuery match."
 rm -rf "$TMP"

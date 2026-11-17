@@ -1,0 +1,94 @@
+module Main exposing (main)
+
+-- Sub.onBreakpoint and Sub.onQuery: the viewport's breakpoint and the URL
+-- query reach `update` on every web target. The model field is not named
+-- `page`: Sky.Live's routing writes the fallback page into a `page` field.
+-- The buttons move the query with Std.Nav (scripts/viewport-e2e.sh).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict exposing (Dict)
+import Std.App as App
+import Std.Nav as Nav
+import Std.Sub as Sub
+import Std.Ui as Ui
+
+type alias Model =
+    { breakpoint : Int
+    , pageParam : String
+    , queries : Int
+    }
+
+type Msg
+    = LayoutChanged Int
+    | QueryChanged (Dict String String)
+    | GoPage String
+    | GoHome
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { breakpoint = -1, pageParam = "none", queries = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        LayoutChanged b ->
+            ( { model | breakpoint = b }, Cmd.none )
+
+        QueryChanged q ->
+            ( { model
+                  | pageParam = Dict.get "page" q |> Maybe.withDefault ""
+                  , queries = model.queries + 1
+              }
+            , Cmd.none
+            )
+
+        GoPage p ->
+            ( model, Nav.pushUrl ("/?page=" ++ p) )
+
+        GoHome ->
+            ( model, Nav.pushUrl "/" )
+
+
+button : String -> Msg -> Ui.Element Msg
+button id msg =
+    Ui.button
+        [ Ui.htmlAttribute "id" id ]
+        { onPress = Just msg, label = Ui.text id }
+
+
+view : Model -> Ui.Element Msg
+view m =
+    Ui.column
+        []
+        [ Ui.el
+              [ Ui.htmlAttribute "id" "state" ]
+              (Ui.text
+                  ("BP=" ++ String.fromInt m.breakpoint ++ " PAGE="
+                      ++ m.pageParam
+                      ++ " QUERIES="
+                      ++ String.fromInt m.queries))
+        , button "page8" (GoPage "8")
+        , button "home" GoHome
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.batch
+        [ Sub.onBreakpoint [ 600, 900 ] LayoutChanged
+        , Sub.onQuery QueryChanged
+        ]
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> App.withNotFound ())

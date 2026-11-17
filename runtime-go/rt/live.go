@@ -171,6 +171,16 @@ type liveSession struct {
 	// and replicas (sqlite / postgres / redis / firestore).
 	identity      ConsoleIdentity
 	identityValid bool
+	// Sub.onBreakpoint / Sub.onQuery (sub_viewport.go). viewportWidths is the
+	// widths of the app's breakpoint leaf after the last subscriptions
+	// evaluation (nil: no leaf); viewportBucket / viewportSent the last
+	// breakpoint delivered, so a report in the same bucket dispatches
+	// nothing. lastQuery is the raw query last delivered to the query leaf.
+	// All four are read and written under mu.
+	viewportWidths []int
+	viewportBucket int
+	viewportSent   bool
+	lastQuery      string
 	// userID / boundAt — PULL-model revocation binding (auth_revocation.go).
 	// The APPLICATION user this session is authenticated as, set once at auth
 	// time by Live.bindSessionUser (session apps) or auto-stamped from a
@@ -1833,6 +1843,31 @@ func dispatchOnNavigate(app *liveApp, model any) (any, any) {
 	return tupleFirst(res), tupleSecond(res)
 }
 
+// dispatchQuery delivers a page request's query string to the app's
+// Sub.onQuery leaf (sub_viewport.go): on the session's first page when the
+// query is not empty, and on every page request whose query differs from the
+// last one delivered. The query is client data: it is only parsed, never
+// interpreted. Runs under sess.mu, like dispatchOnNavigate.
+func dispatchQuery(app *liveApp, sess *liveSession, model any, rawQuery string) (any, any) {
+	if app.subscriptions == nil || app.update == nil || sess == nil {
+		return model, nil
+	}
+	if rawQuery == sess.lastQuery {
+		return model, nil
+	}
+	toMsg := queryToMsg(sky_call(app.subscriptions, model))
+	if toMsg == nil {
+		return model, nil
+	}
+	sess.lastQuery = rawQuery
+	msg := sky_call(toMsg, queryDict(rawQuery))
+	if msg == nil {
+		return model, nil
+	}
+	res := sky_call2(app.update, msg, model)
+	return tupleFirst(res), tupleSecond(res)
+}
+
 // matchRoute compares a pattern like `/product/:id` against an incoming
 // path. Returns the ordered list of captured segment values on success.
 func matchRoute(pattern, path string) ([]string, bool) {
@@ -2581,6 +2616,17 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 				cmd = Cmd_batch([]any{cmd, navCmd})
 			}
 		}
+		// Sub.onQuery (sub_viewport.go): every page request carries the
+		// query, so it reaches update in the same step as the route, and
+		// the page this request renders already shows it.
+		model, queryCmd := dispatchQuery(app, sess, model, r.URL.RawQuery)
+		if queryCmd != nil {
+			if cmd == nil {
+				cmd = queryCmd
+			} else {
+				cmd = Cmd_batch([]any{cmd, queryCmd})
+			}
+		}
 		return model
 	}
 	// Hold sess.mu across the model mutation + Cmd/subscription spawn +
@@ -2662,6 +2708,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	initialView := sess.viewID
 	initialSeq := sess.nextLocalSeq()
 	initialScrolls := sess.takeDispatchScrolls()
+	pageWidths := sess.viewportWidths
 	app.persistSession(sess)
 	sess.mu.Unlock()
 	if mirror {
@@ -2671,6 +2718,9 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// from the header, a full page load from the inline script below.
 	w.Header().Set("X-Sky-View", initialView)
 	w.Header().Set("X-Sky-Seq", strconv.FormatInt(initialSeq, 10))
+	if len(pageWidths) > 0 {
+		w.Header().Set("X-Sky-Breakpoints", breakpointsHeader(pageWidths))
+	}
 
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2745,7 +2795,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	if !routed && app.notFound != nil {
 		w.WriteHeader(http.StatusNotFound)
 	}
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s%s</head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", liveBaseStyleTag, baseMeta, headExtra, body, livePageScriptsWithScrolls(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken, initialScrolls), devBanner)
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s%s</head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", liveBaseStyleTag, baseMeta, headExtra, body, livePageScriptsWithBreakpoints(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken, initialScrolls, pageWidths), devBanner)
 }
 
 // renderAppHead invokes the optional `head : Model -> List (Html
@@ -3083,6 +3133,32 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		}
 		msg, ok = sky_call(toMsg, fragmentOf(frag)), true
 	}
+	// Sub.onBreakpoint (sub_viewport.go): the browser reports its width when
+	// it crosses one of the widths it was given. The server takes the width
+	// only (the client is untrusted), computes the breakpoint from the app's
+	// own leaf, and dispatches only a changed breakpoint.
+	if req.Msg == "__skyViewport" && req.HandlerID == "" {
+		var width float64
+		if len(req.Args) > 0 {
+			_ = json.Unmarshal(req.Args[0], &width)
+		}
+		var toMsg any
+		var widths []int
+		if app.subscriptions != nil {
+			toMsg, widths, _ = breakpointLeaf(sky_call(app.subscriptions, sess.model))
+		}
+		sess.viewportWidths = widths
+		bucket := breakpointOf(int(width), widths)
+		if toMsg == nil || (sess.viewportSent && sess.viewportBucket == bucket) {
+			sess.mu.Unlock()
+			w.Header().Set("X-Sky-Live", "1")
+			w.Header().Set("X-Sky-Breakpoints", breakpointsHeader(widths))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		sess.viewportSent, sess.viewportBucket = true, bucket
+		msg, ok = sky_call(toMsg, bucket), true
+	}
 	if !ok && req.Msg != "" && req.HandlerID == "" {
 		// Direct-send path: the frontend called __sky_send("MsgName", args)
 		// without a handler ID (e.g. Firebase auth callback, subscription
@@ -3198,6 +3274,11 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	respSeq := sess.nextLocalSeq()
 	respAck := ackInputsForPrevTree(sess)
 	respScrolls := sess.takeDispatchScrolls()
+	// The breakpoint widths after this update, so a client learns a
+	// Sub.onBreakpoint leaf that appeared (or changed) with this event.
+	if len(sess.viewportWidths) > 0 {
+		w.Header().Set("X-Sky-Breakpoints", breakpointsHeader(sess.viewportWidths))
+	}
 	sess.mu.Unlock()
 	// PULL-model revocation: the dispatch gate evicted this session (revoked /
 	// disabled user). Reply session-lost so the browser clears + re-inits, and
@@ -4328,6 +4409,7 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	sess.rotateCancelSub()
 
 	if app.subscriptions == nil {
+		sess.viewportWidths = nil
 		// No subscriptions at all → tear down anything that was
 		// previously active (e.g. user returned Sub.subscribeTopic
 		// last dispatch, returns Sub.none / no subscriptions fn now).
@@ -4338,6 +4420,7 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	}
 	subResult := sky_call(app.subscriptions, sess.model)
 	leaves := flattenSubs(subResult, nil)
+	_, sess.viewportWidths, _ = breakpointLeaf(subResult)
 
 	// Partition leaves by kind: every Sub.every (SA-4 — all of them, not
 	// only the first), any number of Sub.subscribeTopic entries, any

@@ -794,7 +794,10 @@ These are real, current scope boundaries — not roadmap optimism:
   `Time.now` / `Random` inline; async `Http` via `fetch`), `Sub.every` timers,
   `Sub.subscribeTopic` (an `EventSource` on the backend's push endpoint),
   `Sub.onFragment` (the client reads `location.hash` at load and on every
-  `hashchange`), `Std.Nav` (`pushUrl` / `replaceUrl` / `clearFragment`: the
+  `hashchange`), `Sub.onQuery` (the client reads `location.search` at load
+  and after every navigation and Back / Forward), `Sub.onBreakpoint` (the
+  client reads `innerWidth` at load and on `resize`, and dispatches only when
+  the breakpoint changes; no request to the server), `Std.Nav` (`pushUrl` / `replaceUrl` / `clearFragment`: the
   History API, then the route like a link click; a server branch's navigation
   is returned with its answer and runs after it renders; `scrollToTop` /
   `scrollIntoView` / `scrollIntoViewIfNeeded` run after the corresponding DOM

@@ -721,7 +721,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 97,
+      "expected_assertions": 98,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -1010,7 +1010,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3252,
+    "stdlib_entries": 3254,
     "stdlib_modules": 135,
     "surfaces_covered": 193,
     "surfaces_covered_pct": 95.1,
@@ -20601,6 +20601,13 @@
             "withRoutes"
           ]
         },
+        "Std.Sub": {
+          "count": 2,
+          "symbols": [
+            "onBreakpoint",
+            "onQuery"
+          ]
+        },
         "Std.Sync": {
           "count": 2,
           "symbols": [
@@ -20877,8 +20884,8 @@
           ]
         }
       },
-      "count": 866,
-      "pct_of_denominator": 26.6
+      "count": 868,
+      "pct_of_denominator": 26.7
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -22125,9 +22132,11 @@
           ]
         },
         "Std.Sub": {
-          "count": 1,
+          "count": 3,
           "symbols": [
-            "ConnectionState"
+            "ConnectionState",
+            "onBreakpoint",
+            "onQuery"
           ]
         },
         "Std.Sync": {
@@ -22420,8 +22429,8 @@
           ]
         }
       },
-      "count": 977,
-      "pct_of_denominator": 30.0
+      "count": 979,
+      "pct_of_denominator": 30.1
     }
   },
   "units": [
@@ -24346,10 +24355,10 @@
       "id": "flow:spa_split_flow",
       "modules_imported": 43,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 187,
-      "refs_qualified": 179,
+      "refs_generous": 193,
+      "refs_qualified": 180,
       "role": "FlowTest",
-      "sky_files": 140,
+      "sky_files": 151,
       "sky_toml_sections": []
     },
     {

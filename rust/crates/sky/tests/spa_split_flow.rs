@@ -10075,6 +10075,105 @@ fn a_wrong_init_seed_is_reported_at_init_for_every_target() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// `Sub.onBreakpoint` and `Sub.onQuery`: on Sky.Live the query of each page
+/// request reaches `update` before the page renders (a reload with the same
+/// query keeps it), and the width the browser reports (the `__skyViewport`
+/// event the client sends when it crosses a breakpoint) reaches it as the
+/// breakpoint the server computes; the page hands the client the widths. The
+/// same source builds as a Sky.Spa client whose subscriptions keep both leaves
+/// (the wasm client reads `innerWidth` and `location.search`), and checks for a
+/// terminal target, where they are inert.
+#[test]
+fn the_viewport_breakpoint_and_query_reach_update_on_live_and_build_for_every_target() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("std-app-viewport", &[]);
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        front.contains("Sub.onBreakpoint [ 600, 900 ] LayoutChanged")
+            && front.contains("Sub.onQuery QueryChanged"),
+        "the client keeps both subscriptions:\n{log}\n{front}"
+    );
+    let tui = Command::new(SKY)
+        .args(["check", "--target", "terminal:tui", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky check --target terminal:tui");
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    assert!(
+        tui.status.success(),
+        "the terminal check failed:\n{}{}",
+        String::from_utf8_lossy(&tui.stdout),
+        String::from_utf8_lossy(&tui.stderr)
+    );
+    let (live, port) = start_live_app(&proj);
+    let jar = proj.join("jar.txt");
+    let page = curl_get_jar(port, "/?page=7", &jar);
+    assert!(
+        page.contains("BP=-1 PAGE=7 QUERIES=1") && page.contains(r#""bp":[600,900]"#),
+        "the first paint shows the query and carries the widths:\n{page}"
+    );
+    let page = curl_get_jar(port, "/?page=7", &jar);
+    assert!(
+        page.contains("PAGE=7 QUERIES=1"),
+        "an unchanged query is not delivered again:\n{page}"
+    );
+    let jar_text = std::fs::read_to_string(&jar).unwrap_or_default();
+    let csrf = jar_text
+        .lines()
+        .filter_map(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            (cols.len() >= 7 && cols[5] == "__sky_csrf").then(|| cols[6].to_string())
+        })
+        .last()
+        .unwrap_or_default();
+    let post = |width: u32| {
+        let out = Command::new("curl")
+            .args([
+                "-s",
+                "--max-time",
+                "30",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "-H",
+                "Content-Type: application/json",
+                "-H",
+                &format!("X-Sky-Csrf: {csrf}"),
+                "-X",
+                "POST",
+                "-d",
+                &format!(
+                    r#"{{"sessionId":"","msg":"__skyViewport","args":[{width}],"handlerId":""}}"#
+                ),
+                "-b",
+            ])
+            .arg(&jar)
+            .arg(format!("http://127.0.0.1:{port}/_sky/event"))
+            .output()
+            .expect("curl POST __skyViewport");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    assert_eq!(post(700), "200");
+    assert_eq!(
+        post(899),
+        "204",
+        "a report in the same breakpoint is a no-op"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let page = curl_get_jar(port, "/?page=8", &jar);
+    drop(live);
+    assert!(
+        page.contains("BP=600 PAGE=8 QUERIES=2"),
+        "the breakpoint and the changed query reach update:\n{page}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// `Sub.onFragment`: the Sky.Live app receives the fragment its browser
 /// client reports (the `__skyFragment` event, the path the client JS takes at
 /// load and on hashchange) and renders it; the same source builds as a

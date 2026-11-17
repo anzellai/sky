@@ -11,11 +11,14 @@ module Std.Sub exposing
     , batch
     , subscribeTopic
     , onFragment
+    , onBreakpoint
+    , onQuery
     , ConnectionState(..)
     , connection
     )
 
 import Sky.Ffi as Ffi
+import Sky.Core.Dict exposing (Dict)
 
 
 none : Sub msg
@@ -95,6 +98,45 @@ subscribeTopic =
 onFragment : (String -> msg) -> Sub msg
 onFragment =
     Ffi.kernel "Sub_onFragment"
+
+
+-- | `onBreakpoint widths toMsg` — receive the viewport width as one of your
+-- own breakpoints, so a view can switch between a table and cards. The value
+-- is the largest width in `widths` that the viewport is at least, or `0` when
+-- it is narrower than all of them. It arrives when the page loads, and again
+-- only when a resize crosses one of the widths: never one Msg per pixel. On
+-- Sky.Live each crossing is one request to the server; the server computes
+-- the breakpoint again from the width the browser reports. Sky.Spa and the
+-- `Std.App` client targets compute it in the client. The server never knows
+-- the width at `init`, so keep a default in the model (the widest layout or
+-- the narrowest, as your first paint prefers). A terminal app has no
+-- viewport; there it never fires. Widths of 0 or less are ignored.
+--
+--     subscriptions _ =
+--         Sub.onBreakpoint [ 600, 900 ] LayoutChanged
+--
+--     -- 0: phone (cards), 600: tablet, 900: desktop (table)
+onBreakpoint : List Int -> (Int -> msg) -> Sub msg
+onBreakpoint =
+    Ffi.kernel "Sub_onBreakpoint"
+
+
+-- | `onQuery toMsg` — receive the URL query string (`?page=2&sort=name`),
+-- parsed into a `Dict` (percent-decoded; the first value of a repeated key,
+-- as `Http.parseQuery`). It arrives when the page loads with a query, and on
+-- every change of it: a `sky-nav` link, `Nav.pushUrl` / `Nav.replaceUrl`,
+-- Back and Forward. A query removed by a navigation arrives as an empty
+-- `Dict`. On Sky.Live the server reads the query from each page request, so
+-- the page it renders already shows it; Sky.Spa and the `Std.App` client
+-- targets read it in the client. The query comes from the user: check every
+-- value as untrusted input (`String.toInt`, a list of allowed values). A
+-- terminal app has no URL; there it never fires.
+--
+--     subscriptions _ =
+--         Sub.onQuery QueryChanged
+onQuery : (Dict String String -> msg) -> Sub msg
+onQuery =
+    Ffi.kernel "Sub_onQuery"
 
 -- | The client's connection to its server, as `connection` reports it.
 -- `Online`: requests reach the server. `Reconnecting`: a request failed for a

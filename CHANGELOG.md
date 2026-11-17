@@ -13,6 +13,22 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## v0.29.14 (unreleased)
 
+### Added
+
+- **`Sub.onBreakpoint` and `Sub.onQuery`.** `Sub.onBreakpoint [ 600, 900 ]
+  toMsg` gives the largest listed width the viewport is at least (0 below all
+  of them), at load and only when a resize crosses one of the widths, so a
+  view can switch between a table and cards with no Msg per pixel. On
+  Sky.Live the page hands the client the widths, the client reports its
+  width only on a crossing, and the server computes the breakpoint again
+  from it. `Sub.onQuery toMsg` gives the URL query string as a
+  `Dict String String` (parsed as `Http.parseQuery`), at load when it is not
+  empty and on every change: a `sky-nav` link, `Nav.pushUrl` /
+  `Nav.replaceUrl`, Back and Forward. On Sky.Live the server reads it from
+  each page request and runs `update` before it renders. Sky.Spa and the
+  `Std.App` client targets read `innerWidth` and `location.search` in the
+  client. Terminal targets ignore both.
+
 ### Fixed
 
 - Sky.Live: an `html` patch on a `table`, `thead`, `tbody`, `tfoot` or `tr`
