@@ -57,6 +57,9 @@ From `Sky.Test`:
 # From your project root (containing sky.toml):
 sky test tests/MyTest.sky
 
+# Several suites in one run (the exit code is the worst of them):
+sky test tests/MyTest.sky tests/OtherTest.sky
+
 # Or from any directory:
 cd tests && sky test Core/CoreTest.sky
 ```
@@ -133,6 +136,107 @@ Two limits, so they are not mistaken for bugs:
 `Sky.Test.jsonReport` (pure, `List (String, TestResult) -> String`) and
 `Sky.Test.writeJsonReport` (a `Task`, no-op on an empty path) are exposed for
 callers that drive `Sky.Test.run` themselves.
+
+## Coverage — `sky test --coverage`
+
+`sky test --coverage` records which top-level functions and which `case` arms
+of your Sky modules the suites ran. `sky coverage report` shows the result per
+module.
+
+```bash
+sky test tests/ShapeTest.sky tests/SquareTest.sky --coverage   # data in .sky-coverage/
+sky test tests/ShapeTest.sky --coverage=build/cov              # data in build/cov/
+sky coverage report                                            # text, per function
+sky coverage report --by-module                                # text, one line per module
+sky coverage report --format json                              # the JSON below
+sky coverage report build/cov --all                            # every module, not only the app's
+```
+
+`sky test` takes one or more suites. With `--coverage` each suite is built as
+a coverage build and runs as usual, and the run ends with one summary line on
+stderr:
+
+```
+coverage: 1 module(s), functions 1/3 (33.3%), case arms 1/2 (50.0%)
+```
+
+Each `sky test --coverage` starts the coverage directory afresh, so a report
+covers the suites of one invocation. The default directory is `.sky-coverage/`
+in the project (`sky init` lists it in `.gitignore`). The report merges the
+suites: a function or arm counts as run when any suite ran it.
+
+What is counted:
+
+- **A function** is a top-level definition. It ran when its body ran. A
+  definition that no code path of the suite reaches counts as a function that
+  never ran.
+- **An arm** is one branch of a `case`, in a top-level definition or in a
+  `let` helper or lambda inside one (the arm belongs to the top-level
+  definition). It ran when its body ran. Arms are numbered from 0 in source
+  order. `if` branches are not counted.
+
+By default the report shows the project's own modules (not `tests/`, not Sky
+dependencies, not the stdlib). `--all` adds the test suites, dependencies and
+the stdlib functions the program reached.
+
+The text report prints each module, then each function that never ran or has
+an arm that never ran:
+
+```
+coverage: 1 module(s), functions 1/3 (33.3%), case arms 1/2 (50.0%)
+src/Shape.sky  Shape  functions 1/3  arms 1/2
+  src/Shape.sky:12 describe  ran  arms not run: #1 line 18
+  src/Shape.sky:23 twice  never ran
+  src/Shape.sky:28 area  never ran
+```
+
+`--format json` prints one JSON object. The shape is stable (`version` 1): a
+new field may be added, and no field is removed or renamed within a version.
+
+```json
+{
+  "version": 1,
+  "runs": 1,
+  "functionsHit": 1, "functionsTotal": 3, "armsHit": 1, "armsTotal": 2,
+  "modules": [
+    {
+      "module": "Shape",
+      "file": "src/Shape.sky",
+      "source": "app",
+      "functionsHit": 1, "functionsTotal": 3, "armsHit": 1, "armsTotal": 2,
+      "functions": [
+        { "name": "describe", "line": 12, "hit": true,
+          "arms": [ { "index": 0, "line": 15, "hit": true },
+                    { "index": 1, "line": 18, "hit": false } ] },
+        { "name": "twice", "line": 23, "hit": false, "arms": [] },
+        { "name": "area", "line": 28, "hit": false, "arms": [] }
+      ]
+    }
+  ]
+}
+```
+
+`runs` is the number of suites merged. `source` is `app`, `test`,
+`dependency` or `stdlib`. A function's `line` is the line of its name, an
+arm's `line` the line of its pattern. Modules are sorted by name, functions by
+line, arms by index. (The JSON printer sorts the keys of each object.)
+
+How it works, and why there are no `//line` directives: a coverage build
+records, while it emits `main.go`, where each function body and each arm
+starts in `main.go`, and writes that map as `sky-coverage-map.json` beside
+`main.go`. The emitted `main.go` is byte-identical to an ordinary build. The
+build adds `go build -cover -coverpkg=sky-app`, which instruments the program
+and not the Go runtime, and each suite binary writes its counters to its own
+`GOCOVERDIR` (`.sky-coverage/runs/<n>-<suite>/covdata/`). `sky coverage
+report` turns the counters into a profile with `go tool covdata textfmt` and
+joins its blocks to the map by `main.go` line and column. Sky does not write
+`//line file.sky:N` directives into `main.go`: `go build -cover` ignores them
+(its profile keeps the `main.go` positions), and the build maps `go build`
+errors back to Sky by their `main.go` position, which `//line` would break.
+
+A suite binary that is killed before it exits writes no counters, and its run
+counts as nothing ran. `sky test --coverage --format json` takes one suite per
+run.
 
 ## Module discovery
 

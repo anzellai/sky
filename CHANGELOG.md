@@ -25,6 +25,22 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **Test coverage: `sky test --coverage[=dir]` and `sky coverage report`.**
+  `sky test` takes one or more suites, and `--coverage` records which
+  top-level functions and which `case` arms of your Sky modules the suites
+  ran. The run ends with a summary line (`functions 1/3, case arms 1/2`).
+  `sky coverage report [dir] [--by-module] [--format json|text] [--all]`
+  shows it per module, function and arm, with the Sky file and line. The JSON
+  shape is stable (`version` 1, see `docs/tooling/testing.md`). Only the
+  project's own modules are shown unless `--all`. Data goes to
+  `.sky-coverage/` by default (`sky init` adds it to `.gitignore`). The
+  emitted `main.go` is byte-identical to an ordinary build: the build records
+  where each function body and arm starts in `main.go`, builds with
+  `go build -cover -coverpkg=sky-app` (the Go runtime is not instrumented),
+  and joins the Go profile to that map. There are no `//line` directives,
+  because `go build -cover` ignores them and they would break the mapping of
+  `go build` errors.
+
 - **`Std.Admission` and `App.withAdmission`: a bound on the requests a
   server runs at the same time.** Before, a burst of Sky.Spa `/_rpc/<Msg>`
   calls or `App.api` requests queued inside the process. A policy gives each

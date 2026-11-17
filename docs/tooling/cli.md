@@ -958,6 +958,29 @@ HTTP boundary (method + `urlContains` pre-filled from the typed IR; fill each
 `body` with a captured payload). It never overwrites an existing fixture. See
 [`testing.md`](testing.md#scaffolding-the-fixtures--sky-test---scaffold-mocks).
 
+`sky test` takes several suites (`sky test tests/ATest.sky tests/BTest.sky`)
+and exits with the worst status of them. `--coverage` (data in
+`.sky-coverage/`) or `--coverage=<dir>` records which top-level functions and
+`case` arms the suites ran, and prints a one-line summary on stderr. Read the
+detail with [`sky coverage report`](#sky-coverage-report). With `--format json`
+give one suite per run.
+
+### `sky coverage report`
+
+```bash
+sky coverage report [dir] [--by-module] [--format json|text] [--all]
+```
+
+Reports the coverage the last `sky test --coverage` recorded in `dir`
+(default `.sky-coverage/` in the project): per Sky module, the functions that
+ran and the `case` arms that ran. Text by default. `--by-module` prints one
+line per module. `--format json` prints the stable JSON shape (`version` 1)
+documented in [`testing.md`](testing.md#coverage--sky-test---coverage). Only
+the project's own modules are shown unless `--all` (test suites, Sky
+dependencies, and the stdlib functions the program reached). Needs the `go`
+toolchain (`go tool covdata`). Exits 1 when the directory holds no coverage
+data.
+
 ### `sky fuzz <file>`
 
 The unified app fuzzer for any TEA app (Spa or Live). It always runs the model

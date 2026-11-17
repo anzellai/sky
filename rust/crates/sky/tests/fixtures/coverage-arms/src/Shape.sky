@@ -1,0 +1,29 @@
+module Shape exposing (Shape(..), describe, area)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+
+type Shape
+    = Circle Int
+    | Square Int
+
+
+describe : Shape -> String
+describe shape =
+    case shape of
+
+        Circle r ->
+            "circle " ++ String.fromInt r
+
+        Square n ->
+            twice n
+
+
+twice : Int -> String
+twice n =
+    "square " ++ String.fromInt (n * 2)
+
+
+area : Int -> Int
+area x =
+    x * x

@@ -1,0 +1,13 @@
+module SquareTest exposing (tests)
+
+import Sky.Core.Prelude exposing (..)
+import Shape exposing (Shape(..))
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "a square is described"
+          (\_ -> Test.equal "square 4" (Shape.describe (Square 2)))
+    ]

@@ -1088,6 +1088,8 @@ fn owned_go_computation_preserves_original_pair_and_tracked_revisions() {
             entry_ok: out.entry_ok,
             ffi_used: out.ffi_used,
             console_needed: out.console_needed,
+            coverage_points: out.coverage_points,
+            coverage_marks: Vec::new(),
         }
     }
     fn same(a: &skydb::GoProgram, b: &skydb::GoProgram) {

@@ -5,8 +5,9 @@
 //! (`app/Main.hs:1413`). The synthesised entry is removed regardless of outcome.
 
 use project::{
-    assets_root_for, build_project_scoped, configured_bin_name, declared_module_name,
-    module_name_from_path, project_dir_for, source_root_for_declared, AppScope, BuildOptions,
+    assets_root_for, build_project_coverage, build_project_scoped, configured_bin_name,
+    declared_module_name, module_name_from_path, project_dir_for, source_root_for_declared,
+    AppScope, BuildOptions,
 };
 use std::path::Path;
 
@@ -39,6 +40,11 @@ pub struct TestOptions {
     /// Send the suite binary's stdout (the human `ok` / `FAIL` lines) to
     /// stderr, so the caller's stdout stays machine-readable.
     pub stdout_to_stderr: bool,
+    /// `sky test --coverage`: a run directory made by
+    /// `project::coverage::new_run`. The suite is built as a coverage build,
+    /// its coverage map is copied into the run, and the binary writes its
+    /// counters to the run's `covdata/` (`GOCOVERDIR`).
+    pub coverage_run: Option<std::path::PathBuf>,
 }
 
 /// `sky test` exit status: every test passed.
@@ -185,7 +191,23 @@ pub fn run_test_with(
     // Only the suite and the modules it imports are built: a type error in
     // another suite under `tests/` (or in an app module the suite does not
     // import) must not stop this one.
-    let report = build_project_scoped(&opts, &extra, Some(ENTRY_MODULE), AppScope::EntryClosure);
+    let report = if topts.coverage_run.is_some() {
+        build_project_coverage(&opts, &extra, Some(ENTRY_MODULE), AppScope::EntryClosure)
+    } else {
+        build_project_scoped(&opts, &extra, Some(ENTRY_MODULE), AppScope::EntryClosure)
+    };
+    // The coverage map leaves the scratch dir with the run, which outlives it.
+    if let Some(run_dir) = &topts.coverage_run {
+        if report.go_build_ok {
+            if let Err(e) = std::fs::copy(
+                out_dir.join(project::coverage::MAP_FILE),
+                project::coverage::run_map(run_dir),
+            ) {
+                // The report leaves out a run with no map, so say so here.
+                eprintln!("sky test: coverage map for {module} not saved: {e}");
+            }
+        }
+    }
 
     run.emitted = report.emitted;
     run.build_ok = report.go_build_ok;
@@ -249,6 +271,12 @@ pub fn run_test_with(
         }
         if topts.stdout_to_stderr {
             cmd.stdout(std::process::Stdio::from(std::io::stderr()));
+        }
+        if let Some(run_dir) = &topts.coverage_run {
+            let counters = project::coverage::run_counters(run_dir);
+            // `new_run` made it; recreate it if something removed it since.
+            let _ = std::fs::create_dir_all(&counters);
+            cmd.env("GOCOVERDIR", counters);
         }
 
         // Test-mode activation (opt-in): a project declares it by committing a

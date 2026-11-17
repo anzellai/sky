@@ -42,7 +42,6 @@ use project::{
     assets_root_for, build_example, build_project, is_compiler_repo_root, project_dir_for,
     repo_root_for, run_app, BuildOptions,
 };
-use testrunner::run_test;
 
 mod ai_device;
 mod ai_doctor;
@@ -320,6 +319,7 @@ fn dispatch(args: &[String]) -> ExitCode {
         Some("spa-partition") => cmd_spa_partition(&args[1..]),
         Some("spa-split") => cmd_spa_split(&args[1..]),
         Some("fuzz") => cmd_fuzz(&args[1..]),
+        Some("coverage") => cmd_coverage(&args[1..]),
         Some("upgrade") => cmd_upgrade(&args[1..]),
         // Hidden: warm Sky's isolated Go build cache (native + wasm) so the first
         // real build is not a cold compile. Invoked by `sky upgrade` (with the NEW
@@ -12292,29 +12292,183 @@ fn cmd_test(args: &[String]) -> ExitCode {
         return cmd_scaffold_mocks(args);
     }
     let (positional, out_override) = parse_out(args);
-    let Some(file) = positional.first() else {
-        eprintln!("usage: sky test <suite.sky>");
+    if positional.is_empty() {
+        eprintln!("usage: sky test <suite.sky>... [--coverage[=dir]]");
         return ExitCode::from(2);
-    };
+    }
     let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
+    // `--coverage` / `--coverage=<dir>`: a fresh coverage directory (default
+    // `.sky-coverage/` in the first suite's project), one run per suite.
+    let coverage = coverage_flag(args).map(|dir| {
+        dir.map(PathBuf::from).unwrap_or_else(|| {
+            project_dir_for(Path::new(&positional[0])).join(project::coverage::DEFAULT_DIR)
+        })
+    });
+    if let Some(dir) = &coverage {
+        if let Err(e) = project::coverage::reset(dir) {
+            eprintln!("sky test: cannot prepare {}: {e}", dir.display());
+            return ExitCode::from(testrunner::EXIT_NOT_RUN);
+        }
+    }
     if json_out::active() {
-        return cmd_test_json(Path::new(file), &out_dir_name);
+        if positional.len() > 1 {
+            eprintln!("sky test --format json: give one suite per run");
+            return ExitCode::from(2);
+        }
+        let code = cmd_test_json(
+            Path::new(&positional[0]),
+            &out_dir_name,
+            coverage.as_deref(),
+        );
+        if let Some(dir) = &coverage {
+            print_coverage_summary(dir);
+        }
+        return code;
     }
-    match run_test(Path::new(file), &out_dir_name) {
-        Ok(run) => {
-            if !run.note.is_empty() {
-                eprintln!("sky test: {}", run.note);
+    // 0 all passed, 1 a test failed, 2 nothing ran (build failure). Several
+    // suites report the worst.
+    let mut status = testrunner::EXIT_PASSED;
+    for file in &positional {
+        let suite = Path::new(file);
+        let topts = match test_options_for(suite, coverage.as_deref()) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("sky test: {e}");
+                return ExitCode::from(testrunner::EXIT_NOT_RUN);
             }
-            // 0 all passed, 1 a test failed, 2 nothing ran (build failure).
-            ExitCode::from(run.exit_status())
+        };
+        let code = match testrunner::run_test_with(suite, &out_dir_name, &topts) {
+            Ok(run) => {
+                if !run.note.is_empty() {
+                    eprintln!("sky test: {}", run.note);
+                }
+                run.exit_status()
+            }
+            Err(e) => {
+                // An I/O error before the build (the scratch dir, the
+                // synthesised entry): no test ran.
+                eprintln!("sky test: {e}");
+                testrunner::EXIT_NOT_RUN
+            }
+        };
+        status = status.max(code);
+    }
+    if let Some(dir) = &coverage {
+        print_coverage_summary(dir);
+    }
+    ExitCode::from(status)
+}
+
+/// `--coverage` (`Some(None)`) or `--coverage=<dir>` (`Some(Some(dir))`).
+fn coverage_flag(args: &[String]) -> Option<Option<String>> {
+    args.iter().rev().find_map(|a| {
+        if a == "--coverage" {
+            Some(None)
+        } else {
+            a.strip_prefix("--coverage=").map(|d| Some(d.to_string()))
         }
-        Err(e) => {
-            // An I/O error before the build (the scratch dir, the synthesised
-            // entry): no test ran.
-            eprintln!("sky test: {e}");
-            ExitCode::from(testrunner::EXIT_NOT_RUN)
+    })
+}
+
+/// The runner options for one suite: a new coverage run when `coverage` names
+/// a coverage directory.
+fn test_options_for(
+    suite: &Path,
+    coverage: Option<&Path>,
+) -> std::io::Result<testrunner::TestOptions> {
+    let coverage_run = match coverage {
+        Some(dir) => {
+            let label = suite
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "suite".to_string());
+            Some(project::coverage::new_run(dir, &label)?)
+        }
+        None => None,
+    };
+    Ok(testrunner::TestOptions {
+        coverage_run,
+        ..Default::default()
+    })
+}
+
+/// The coverage summary after `sky test --coverage`, on stderr (stdout may be
+/// the NDJSON stream).
+fn print_coverage_summary(dir: &Path) {
+    match project::coverage::report(dir) {
+        Ok(r) => {
+            let r = r.filtered(false);
+            eprintln!(
+                "coverage: {}\n  data in {}; `sky coverage report {}` for detail",
+                r.summary_line(),
+                dir.display(),
+                dir.display()
+            );
+        }
+        Err(e) => eprintln!("sky test: coverage: {e}"),
+    }
+}
+
+/// `sky coverage report [dir] [--by-module] [--format json|text] [--all]`:
+/// the function and `case`-arm coverage `sky test --coverage` recorded, per
+/// Sky module. Text by default; `--format json` prints the stable JSON shape
+/// (docs/tooling/testing.md, "Coverage"). Only the project's own modules
+/// unless `--all` (tests, dependencies and the stdlib too).
+fn cmd_coverage(args: &[String]) -> ExitCode {
+    const USAGE: &str =
+        "usage: sky coverage report [dir] [--by-module] [--format json|text] [--all]";
+    if wants_help(args) {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    if args.first().map(String::as_str) != Some("report") {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    let rest = &args[1..];
+    let mut dir: Option<PathBuf> = None;
+    let mut by_module = false;
+    let mut all = false;
+    let mut json = false;
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--by-module" => by_module = true,
+            "--all" => all = true,
+            "--format" => match it.next().map(String::as_str) {
+                Some("json") => json = true,
+                Some("text") => json = false,
+                other => {
+                    eprintln!("sky coverage report: --format takes json or text, not {other:?}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--format=json" => json = true,
+            "--format=text" => json = false,
+            s if s.starts_with('-') => {
+                eprintln!("sky coverage report: unknown flag {s}\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            s => dir = Some(PathBuf::from(s)),
         }
     }
+    let dir = dir.unwrap_or_else(|| {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        project_dir_for(&cwd.join("sky.toml")).join(project::coverage::DEFAULT_DIR)
+    });
+    let report = match project::coverage::report(&dir) {
+        Ok(r) => r.filtered(all),
+        Err(e) => {
+            eprintln!("sky coverage report: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if json {
+        println!("{}", report.to_json());
+    } else {
+        print!("{}", report.to_text(by_module));
+    }
+    ExitCode::SUCCESS
 }
 
 /// `sky test --format json`: the build's diagnostics, one `test` line per
@@ -12323,7 +12477,7 @@ fn cmd_test(args: &[String]) -> ExitCode {
 /// the case counts. The suite binary's human `ok` / `FAIL` lines go to stderr.
 /// The exit code is the text mode's: 0 all passed, 1 a test failed, 2 nothing
 /// ran.
-fn cmd_test_json(suite: &Path, out_dir_name: &str) -> ExitCode {
+fn cmd_test_json(suite: &Path, out_dir_name: &str, coverage: Option<&Path>) -> ExitCode {
     use serde_json::Value;
     let root = project_dir_for(suite);
     json_out::set_root(&root);
@@ -12335,10 +12489,15 @@ fn cmd_test_json(suite: &Path, out_dir_name: &str) -> ExitCode {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    let topts = testrunner::TestOptions {
-        json_report: Some(report_path.clone()),
-        stdout_to_stderr: true,
+    let mut topts = match test_options_for(suite, coverage) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("sky test: {e}");
+            return ExitCode::from(testrunner::EXIT_NOT_RUN);
+        }
     };
+    topts.json_report = Some(report_path.clone());
+    topts.stdout_to_stderr = true;
     let run = match testrunner::run_test_with(suite, out_dir_name, &topts) {
         Ok(r) => r,
         Err(e) => {
@@ -12766,9 +12925,11 @@ main =
     // dataset versions, the `sky ai` pipeline build cache and dedupe spill
     // files (Std.Ai). A team shares a registry through gs:// or s3://.
     // `.skyapp/` and `.split/` are build outputs (`sky check` / `sky build` and
-    // the Sky.Spa split); `.env.local` / `.env.*.local` are per-machine
-    // overrides of `.env` and `.env.test` and hold credentials.
-    let gitignore = "sky-out/\n.skyapp/\n.split/\n.skycache/\n.skydeps/\n.skydata/\n.sky/\n\
+    // the Sky.Spa split). `.sky-coverage/` holds `sky test --coverage` data.
+    // `.env.local` / `.env.*.local` are per-machine overrides of `.env` and
+    // `.env.test` and hold credentials.
+    let gitignore =
+        "sky-out/\n.skyapp/\n.split/\n.skycache/\n.skydeps/\n.skydata/\n.sky/\n.sky-coverage/\n\
                      .env\n.env.local\n.env.*.local\n*.db\n*.db-shm\n*.db-wal\n";
     // `.dockerignore`: a `COPY . .` must not bake local state into an image.
     // `.skydata/` holds the dev Sky.Spa session key and the local database
@@ -12776,7 +12937,7 @@ main =
     let dockerignore = "# Local state and secrets never go into an image.\n\
                         .skydata/\n.sky/\n.env\n*.db\n*.db-shm\n*.db-wal\n\
                         # Build outputs are rebuilt inside the image.\n\
-                        sky-out/\n.skycache/\n.skydeps/\n.skyapp/\n.split/\n.git/\n";
+                        sky-out/\n.skycache/\n.skydeps/\n.skyapp/\n.split/\n.sky-coverage/\n.git/\n";
 
     // docker-compose.yml — always scaffolded so the production path is one command
     // away, whether or not you start on Postgres. Host port 5433 avoids clashing
@@ -18863,7 +19024,8 @@ fn print_help() {
          \x20 package --release --target mobile:ios|mobile:android|desktop:mac [file]\n\
          \x20                  the signed store artefact → sky-out/release/ (.ipa · .apk/.aab · .app/.dmg)\n\
          \x20 fmt   <file...>  format in place (--check / --stdin)\n\
-         \x20 test  <file>     run a Sky.Test suite\n\
+         \x20 test  <file...>  run Sky.Test suites (--coverage[=dir] records function + case-arm coverage)\n\
+         \x20 coverage report [dir] [--by-module] [--format json|text] [--all]  report `sky test --coverage`\n\
          \x20 --format json    check / build / test / fmt --check: NDJSON diagnostics on stdout\n\
          \x20 lsp              launch the sky-lsp server (stdio)\n\
          \x20 clean            remove sky-out/ + .skycache/\n\

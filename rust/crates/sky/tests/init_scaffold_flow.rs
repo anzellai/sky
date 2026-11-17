@@ -109,6 +109,7 @@ fn a_fresh_project_is_fmt_clean_and_ignores_local_state_in_images() {
             "sky-out/",
             ".skyapp/",
             ".split/",
+            ".sky-coverage/",
         ] {
             assert!(
                 git.lines().any(|l| l.trim() == want),

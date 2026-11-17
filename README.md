@@ -161,7 +161,7 @@ The same `view : Model -> Element Msg` paints to the DOM, to terminal cells and 
 - **Auth, money and crypto.** `Std.Auth` (bcrypt, JWT, roles), `Std.Money` on exact decimals, and XChaCha20, Ed25519, X25519 and Noise sessions for encryption and signatures.
 - **Durable workflows.** `Std.Durable` runs multi-step processes that survive a restart. [Design](docs/design/durable-execution.md)
 - **AI.** `Std.Ai`: swappable providers (OpenAI, any compatible endpoint, or a managed local model), durable agents, a policy firewall, cost tracing in `Std.Money`, datasets, evals, a model registry, LoRA training, GPU serving and on-device models. [Guides](docs/ai/)
-- **Tooling.** `sky fmt`, `sky test`, `sky fuzz`, `sky watch`, an LSP, `sky doc` for the live API, and an OpenAPI spec from your source with `sky doc --api openapi`. [CLI](docs/tooling/cli.md)
+- **Tooling.** `sky fmt`, `sky test` (with function and `case`-arm coverage: `sky test --coverage`, `sky coverage report`), `sky fuzz`, `sky watch`, an LSP, `sky doc` for the live API, and an OpenAPI spec from your source with `sky doc --api openapi`. [CLI](docs/tooling/cli.md)
 - **Operations.** Structured logs, Prometheus metrics, health checks, OpenTelemetry and a built-in console at `/_sky/console`. `Std.Admission` bounds the requests a server runs at once and answers a burst with 503 and `Retry-After`. [Observability](docs/observability.md)
 
 ## Real examples

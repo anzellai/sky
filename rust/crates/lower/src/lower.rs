@@ -61,6 +61,9 @@ pub struct LowerOutput {
     /// materialisation in the build driver, so the inline dev console links
     /// (mirrors the Haskell oracle's `consoleNeededFromImports`, Compile.hs).
     pub console_needed: bool,
+    /// The coverage points of a coverage build (`LowerConfig::coverage`): one
+    /// per top-level definition and one per `case` arm. Empty otherwise.
+    pub coverage_points: Vec<crate::coverage::CovPoint>,
 }
 
 /// The pinned FFI surface, projected to exactly what lowering needs: for each
@@ -317,6 +320,11 @@ pub struct LowerConfig {
     /// finds its server slot, even when nothing else references the binding.
     /// Empty for every program without one, which is then byte-identical.
     pub device_slots: Vec<(String, String, String)>,
+    /// `sky test --coverage`: record a coverage point per top-level definition
+    /// and per `case` arm, each with a marker in the Go-IR that codegen renders
+    /// as nothing (`crate::coverage`). False for every other build, whose
+    /// Go-IR then holds no marker and whose output is byte-identical.
+    pub coverage: bool,
 }
 
 pub fn lower_program(db: &dyn TyDb, entry: ModuleId) -> LowerOutput {
@@ -376,6 +384,9 @@ fn lower_program_impl(
     let mut roots: Vec<DefId> = Vec::new();
     let mut candidates: BTreeMap<DefId, (ModuleId, Vec<DefId>)> = BTreeMap::new();
     let mut resolved_by_module = HashMap::new();
+    // Every top-level definition with a body, for a coverage build: the ones
+    // the program never lowers are reported as functions that never ran.
+    let mut cov_all_tops: Vec<(DefId, String, String)> = Vec::new();
     for m in db.module_ids() {
         let mname = db.module_name(m).to_string();
         let resolved = db.resolve(m);
@@ -399,6 +410,9 @@ fn lower_program_impl(
         }
         for td in &resolved.top_defs {
             if let Some(body) = resolved.bodies.get(&td.def) {
+                if cfg.coverage {
+                    cov_all_tops.push((td.def, mname.clone(), td.name.as_str().to_string()));
+                }
                 let name = td.name.as_str();
                 let is_root = ((name == "main" || name == "config")
                     && module_prefix(&mname) == entry_prefix)
@@ -754,6 +768,7 @@ fn lower_program_impl(
             entry_ok: false,
             ffi_used: BTreeSet::new(),
             console_needed,
+            coverage_points: Vec::new(),
         };
     };
 
@@ -868,6 +883,8 @@ fn lower_program_impl(
     let mut used_go_types: HashSet<String> = HashSet::new();
     let mut ffi_used: BTreeSet<String> = BTreeSet::new();
     let mut auto_codec_sites: BTreeMap<(String, bool), GoTy> = BTreeMap::new();
+    let mut coverage_points: Vec<crate::coverage::CovPoint> = Vec::new();
+    let mut cov_lowered: HashSet<DefId> = HashSet::new();
 
     while let Some(d) = work.pop() {
         if !seen.insert(d) {
@@ -946,8 +963,17 @@ fn lower_program_impl(
                 // Only `lower_main` reads this; harmless to carry on every Ctx.
                 apply_config: config_go_name.clone(),
                 device_regs: device_regs.clone(),
+                coverage: cfg.coverage,
+                cov_points: Vec::new(),
+                cov_base: coverage_points.len(),
             };
-            let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_deref(), d == main_def);
+            let mut def_items =
+                cx.lower_def(&e.name, &e.module_name, e.sig.as_deref(), d == main_def);
+            if cfg.coverage {
+                cx.mark_function(&mut def_items, &e.name, &e.module_name);
+                cov_lowered.insert(d);
+                coverage_points.append(&mut cx.cov_points);
+            }
             // determinism (L4): `discovered` is a Vec (ordered), and the two set
             // drains below are order-INDEPENDENT — they only union into another
             // set/BTreeSet, so the resulting membership is identical regardless of the
@@ -983,6 +1009,20 @@ fn lower_program_impl(
                 errors.extend(cx.errors);
                 funcs.extend(def_items);
             }
+        }
+    }
+
+    // A coverage build reports a top-level definition the program never lowers
+    // as a function that never ran (no code path reaches it).
+    for (d, module, name) in cov_all_tops {
+        if !cov_lowered.contains(&d) && !kernel_alias.contains_key(&d) {
+            coverage_points.push(crate::coverage::CovPoint {
+                mark: None,
+                kind: crate::coverage::CovKind::Function,
+                module,
+                function: name,
+                span: def_spans.get(&d).copied(),
+            });
         }
     }
 
@@ -1070,6 +1110,7 @@ fn lower_program_impl(
         entry_ok: true,
         ffi_used,
         console_needed,
+        coverage_points,
     }
 }
 
@@ -2607,6 +2648,13 @@ struct Ctx<'a> {
     apply_config: Option<String>,
     /// `(slot, Go name)` of each Std.Ai device slot `main` registers.
     device_regs: Vec<(String, String)>,
+    /// A coverage build (`LowerConfig::coverage`): record points + markers.
+    coverage: bool,
+    /// The coverage points this def recorded (`crate::coverage`).
+    cov_points: Vec<crate::coverage::CovPoint>,
+    /// The program-wide id of this def's first point: ids stay unique across
+    /// the defs, which are lowered one `Ctx` at a time.
+    cov_base: usize,
 }
 
 /// The tail-call-optimisation context for one def. Present only while the def's
@@ -2846,6 +2894,60 @@ impl<'a> Ctx<'a> {
             Some(r) => self.goty_ref(r),
             None => GoTy::Any,
         }
+    }
+
+    /// Record a coverage point and return its marker statement.
+    fn cov_mark(
+        &mut self,
+        kind: crate::coverage::CovKind,
+        function: &str,
+        module: &str,
+        span: Option<base::Span>,
+    ) -> GoStmt {
+        let id = self.cov_base + self.cov_points.len();
+        self.cov_points.push(crate::coverage::CovPoint {
+            mark: Some(id),
+            kind,
+            module: module.to_string(),
+            function: function.to_string(),
+            span,
+        });
+        GoStmt::Comment(crate::coverage::mark_text(id))
+    }
+
+    /// The function point of a lowered top-level definition: a marker at the
+    /// top of the Go function that holds its body (`X__cafInit` for a
+    /// memoised value, else the one function the def lowered to).
+    fn mark_function(&mut self, items: &mut [GoItem], name: &str, module: &str) {
+        let span = self.def_span;
+        let target = items
+            .iter()
+            .position(|it| matches!(it, GoItem::Func(f) if f.name.ends_with("__cafInit")))
+            .or_else(|| items.iter().position(|it| matches!(it, GoItem::Func(_))));
+        let Some(i) = target else { return };
+        let mark = self.cov_mark(crate::coverage::CovKind::Function, name, module, span);
+        if let GoItem::Func(f) = &mut items[i] {
+            f.body.insert(0, mark);
+        }
+    }
+
+    /// The marker of a `case` arm, in a coverage build.
+    fn cov_arm_mark(&mut self, pat: PatId) -> Option<GoStmt> {
+        if !self.coverage {
+            return None;
+        }
+        let span = self.body.pat_span(pat);
+        let function = self.cov_def_name();
+        let module = self.cur_module.clone();
+        Some(self.cov_mark(crate::coverage::CovKind::Arm, &function, &module, span))
+    }
+
+    /// The Sky name of the definition being lowered.
+    fn cov_def_name(&self) -> String {
+        self.defs
+            .get(&self.cur_def)
+            .map(|e| e.name.clone())
+            .unwrap_or_default()
     }
 
     fn lower_def(
@@ -9891,7 +9993,9 @@ impl<'a> Ctx<'a> {
                         binder_name
                     };
                     let discards = discard_binds(&binds);
-                    let mut then_inner: Vec<GoStmt> = binds;
+                    let mut then_inner: Vec<GoStmt> = Vec::new();
+                    then_inner.extend(self.cov_arm_mark(br.pat));
+                    then_inner.extend(binds);
                     then_inner.extend(discards);
                     if tail {
                         self.lower_tail_stmts(br.body, actual, &mut then_inner);
@@ -9920,7 +10024,9 @@ impl<'a> Ctx<'a> {
         // Go's "declared and not used". `_ = v` is always legal — harmless when
         // the var IS used. Mirrors the oracle's per-binding discard.
         let discards = discard_binds(&binds);
-        let mut then: Vec<GoStmt> = binds;
+        let mut then: Vec<GoStmt> = Vec::new();
+        then.extend(self.cov_arm_mark(br.pat));
+        then.extend(binds);
         then.extend(discards);
         if tail {
             self.lower_tail_stmts(br.body, actual, &mut then);
