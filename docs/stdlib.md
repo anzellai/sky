@@ -3147,6 +3147,89 @@ Sky.Live model (the session store cannot save it). Two values are equal only
 when they are the same `Ref` / `Mutex` / `Queue`. `withLock` is not
 re-entrant. In a Sky.Spa app these calls run on the server.
 
+### `Std.Breaker` — a circuit breaker for calls to another service (v0.29.14)
+
+A breaker counts the failures of the calls it wraps. When `failures` of them
+fail within `windowMs`, it opens: it refuses every call at once, without
+running it, for `openForMs`. Then it lets `halfOpenProbes` trial calls
+through. One trial success closes it. One trial failure opens it again.
+It is written in Sky on `Std.Sync.Ref` and the clock.
+
+```elm
+type Breaker                       -- opaque
+type State = Closed | Open { untilMs : Int } | HalfOpen
+type alias Settings = { failures : Int, windowMs : Int, openForMs : Int, halfOpenProbes : Int }
+
+defaults      : Settings                                  -- 5 in 10000 ms, open 30000 ms, 1 trial
+new           : String -> Settings -> Task Error Breaker  -- Err InvalidInput for a bad setting
+name          : Breaker -> String
+call          : Breaker -> Task Error a -> Task Error a    -- counts what Error.isRetryable accepts
+callCounting  : (Error -> Bool) -> Breaker -> Task Error a -> Task Error a
+state         : Breaker -> Task Error State
+reset         : Breaker -> Task Error ()                  -- close it and forget its failures
+isOpenRefusal : Error -> Bool
+```
+
+`call` counts a failure that `Error.isRetryable` accepts: a `Network`,
+`Timeout` or `Unavailable` error, or a domain failure marked retryable, such
+as a missed `Task.timeout` deadline. A `NotFound` or an `InvalidInput` says
+nothing about the health of the other service and does not count.
+`callCounting` takes your own rule. A refused call fails with an
+`Unavailable` error whose domain failure is `"breaker"` / `"Open"`
+(retryable, attribute `name`), and `Error.retryAfter` gives the milliseconds
+until the breaker lets a trial call through. A trial that ends with a
+failure the rule does not count frees its place for the next trial.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Std.Breaker as Breaker exposing (Breaker)
+import Std.Log exposing (println)
+
+
+payments : Result Error Breaker
+payments =
+    Task.run (Breaker.new "payments" Breaker.defaults)
+
+
+charge : Breaker -> Int -> Task Error String
+charge breaker cents =
+    Breaker.call breaker
+        (Task.succeed ("charged " ++ String.fromInt cents)
+            |> Task.timeout 2000
+        )
+
+
+main =
+    case payments of
+        Ok breaker ->
+            charge breaker 1250
+                |> Task.andThen println
+                |> Task.onError
+                    (\e ->
+                        if Breaker.isOpenRefusal e then
+                            println "payments are paused, try again later"
+
+                        else
+                            println (Error.toString e)
+                    )
+                |> Task.run
+
+        Err e ->
+            Err e
+```
+
+A breaker holds its state in a `Std.Sync.Ref`, so it has the same limits: it
+lives in this process only, it does not survive a restart, it is not shared
+between replicas, and it cannot be stored in a Sky.Live model. Make one per
+service at the top level (a top-level binding runs once) and share it. In a
+Sky.Spa app a call through a breaker runs on the server. A trial call that
+never reports back (it panicked) holds its place for at most `openForMs`,
+then a new trial may run.
+
 ---
 
 ### `Std.Ai.Endpoint` and `Std.Ai.Local` — model slots and the managed local engine (v0.28.0)

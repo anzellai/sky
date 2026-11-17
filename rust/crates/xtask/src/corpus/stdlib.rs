@@ -398,6 +398,16 @@ pub const SURFACES: &[Surface] = &[
         "Sky.Core.Task",
         &["Sky.Core.Time as Time", "Sky.Core.Error as Error"],
     ),
+    // v0.29.14 Std.Breaker: a circuit breaker on Std.Sync. The expected values
+    // are the documented contract (closed until `failures` counting failures,
+    // an open breaker refuses with `breaker` / `Open` and does not run the
+    // call, a non-counting error leaves it closed, a trial success closes it),
+    // not observations of this runtime.
+    sf2(
+        "breaker",
+        "Std.Breaker",
+        &["Sky.Core.Task as Task", "Sky.Core.Error as Error"],
+    ),
     // v0.28.0 Std.Ai.Local: a model reference and a spec are pure values (the
     // reference string IS the pinning contract: it carries the digest), and a
     // refusal of an unpinned model is decided before any fetch, so the
@@ -898,6 +908,8 @@ pub const ASSERTED_MODULES: &[&str] = &[
     // v0.29.14: Sky.Core.Task is asserted by the `deadline` surface
     // (`Task.timeout`, `Task.remaining`).
     "Sky.Core.Task",
+    // v0.29.14: Std.Breaker lands covered (`breaker` surface).
+    "Std.Breaker",
     // v0.28.0: Std.Ai.Local lands covered (`ailocal` surface).
     "Std.Ai.Local",
     // v0.28.0: Std.Ai.Failure lands covered (`aifailure` surface).
@@ -1567,6 +1579,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "watch" => watch_battery(edge),
         "sync" => sync_battery(edge),
         "deadline" => deadline_battery(edge),
+        "breaker" => breaker_battery(edge),
         "ailocal" => ailocal_battery(edge),
         "aifailure" => aifailure_battery(edge),
         "aieval" => aieval_battery(edge),
@@ -4775,6 +4788,48 @@ fn deadline_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Breaker -----------------------------------------------------------
+//
+// Each helper builds a breaker, runs its calls with `Task.run` and renders
+// the outcome as a String (`E` for an Err the helper does not expect).
+fn breaker_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Breaker.new", "Breaker.call", "Breaker.defaults"],
+                "breakerRuns",
+                "7",
+            ),
+            s(&["Breaker.name", "Breaker.new"], "breakerName", "payments"),
+            s(&["Breaker.state", "Breaker.new"], "breakerFresh", "Closed"),
+            s(
+                &["Breaker.reset", "Breaker.state", "Breaker.call"],
+                "breakerReset",
+                "Open,Closed",
+            ),
+        ],
+        "failure" => vec![
+            s(
+                &["Breaker.call", "Breaker.state"],
+                "breakerOpens",
+                "Closed,Open",
+            ),
+            s(
+                &["Breaker.isOpenRefusal", "Breaker.call"],
+                "breakerRefuses",
+                "breaker/Open,T,not run",
+            ),
+            s(
+                &["Breaker.callCounting", "Breaker.state"],
+                "breakerNotCounted",
+                "Closed",
+            ),
+            s(&["Breaker.new"], "breakerBadSettings", "E"),
+        ],
+        _ => vec![],
+    }
+}
+
 // --- Std.Ai.Local ---------------------------------------------------------
 //
 // `hf:<org>/<repo>/<file>#sha256=<hex>` and `file:<path>#sha256=<hex>` are the
@@ -7170,6 +7225,142 @@ deadlineRemainingOutside =
         |> failureName
 "#
         }
+        "breaker" => {
+            r#"orE : Result Error String -> String
+orE r =
+    case r of
+        Ok v ->
+            v
+
+        Err _ ->
+            "E"
+
+
+stateName : State -> String
+stateName st =
+    case st of
+        Closed ->
+            "Closed"
+
+        Open _ ->
+            "Open"
+
+        HalfOpen ->
+            "HalfOpen"
+
+
+tight : Breaker.Settings
+tight =
+    { failures = 2, windowMs = 60000, openForMs = 60000, halfOpenProbes = 1 }
+
+
+down : Task Error Int
+down =
+    Task.fail (Error.unavailable "down")
+
+
+swallow : Task Error Int -> Task Error ()
+swallow t =
+    t |> Task.map (\_ -> ()) |> Task.onError (\_ -> Task.succeed ())
+
+
+withBreaker : Breaker.Settings -> (Breaker -> Task Error String) -> String
+withBreaker settings body =
+    Breaker.new "payments" settings
+        |> Task.andThen body
+        |> Task.run
+        |> orE
+
+
+breakerRuns : String
+breakerRuns =
+    withBreaker Breaker.defaults (\b -> Breaker.call b (Task.succeed 7) |> Task.map String.fromInt)
+
+
+breakerName : String
+breakerName =
+    withBreaker Breaker.defaults (\b -> Task.succeed (Breaker.name b))
+
+
+breakerFresh : String
+breakerFresh =
+    withBreaker Breaker.defaults (\b -> Breaker.state b |> Task.map stateName)
+
+
+breakerReset : String
+breakerReset =
+    withBreaker tight
+        (\b ->
+            Task.sequence [ swallow (Breaker.call b down), swallow (Breaker.call b down) ]
+                |> Task.andThen (\_ -> Breaker.state b)
+                |> Task.andThen
+                    (\before ->
+                        Breaker.reset b
+                            |> Task.andThen (\_ -> Breaker.state b)
+                            |> Task.map (\after -> stateName before ++ "," ++ stateName after)
+                    )
+        )
+
+
+breakerOpens : String
+breakerOpens =
+    withBreaker tight
+        (\b ->
+            swallow (Breaker.call b down)
+                |> Task.andThen (\_ -> Breaker.state b)
+                |> Task.andThen
+                    (\one ->
+                        swallow (Breaker.call b down)
+                            |> Task.andThen (\_ -> Breaker.state b)
+                            |> Task.map (\two -> stateName one ++ "," ++ stateName two)
+                    )
+        )
+
+
+refusalText : Error -> String
+refusalText e =
+    Maybe.withDefault "none" (Error.domain e)
+        ++ "/"
+        ++ (Error.failureOf e |> Maybe.map Error.failureCode |> Maybe.withDefault "none")
+        ++ ","
+        ++ (if Breaker.isOpenRefusal e then
+                "T"
+
+            else
+                "F"
+           )
+
+
+breakerRefuses : String
+breakerRefuses =
+    withBreaker tight
+        (\b ->
+            Task.sequence [ swallow (Breaker.call b down), swallow (Breaker.call b down) ]
+                |> Task.andThen (\_ -> Breaker.call b (Task.succeed 1))
+                |> Task.map (\_ -> "ran")
+                |> Task.onError (\e -> Task.succeed (refusalText e ++ ",not run"))
+        )
+
+
+breakerNotCounted : String
+breakerNotCounted =
+    withBreaker tight
+        (\b ->
+            List.repeat 5 (swallow (Breaker.callCounting (\_ -> False) b down))
+                |> Task.sequence
+                |> Task.andThen (\_ -> Breaker.state b)
+                |> Task.map stateName
+        )
+
+
+breakerBadSettings : String
+breakerBadSettings =
+    Breaker.new "payments" { tight | failures = 0 }
+        |> Task.map Breaker.name
+        |> Task.run
+        |> orE
+"#
+        }
         "watch" => {
             r#"baseName : String -> String
 baseName path =
@@ -8145,6 +8336,8 @@ fn import_exposing(module: &str) -> Option<&'static str> {
         // The AI failure battery builds failures from their constructors.
         "Std.Ai.Failure" => Some("Failure(..)"),
         "Std.Ai.Eval" => Some("Expect(..)"),
+        // The breaker battery matches on the state constructors.
+        "Std.Breaker" => Some("Breaker, State(..)"),
         _ => None,
     }
 }

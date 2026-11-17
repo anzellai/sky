@@ -939,7 +939,10 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **894 since the v0.29.14 `deadline` Family-S surface** (+2: the nominal
 /// and failure cases of `Task.timeout` / `Task.remaining`).
-pub const CORPUS_EXPECTED: u64 = 894;
+///
+/// **896 since the v0.29.14 `breaker` Family-S surface** (+2: the nominal
+/// and failure cases of `Std.Breaker`).
+pub const CORPUS_EXPECTED: u64 = 896;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -1043,7 +1046,10 @@ pub const CORPUS_EXPECTED: u64 = 894;
 ///
 /// **730 since the v0.29.14 `deadline` Family-S surface** (+2, both built
 /// and run; the same +2 as `CORPUS_EXPECTED`).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 730;
+///
+/// **732 since the v0.29.14 `breaker` Family-S surface** (+2, both built
+/// and run).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 732;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -3414,7 +3420,10 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///
 /// 1340 + 11 = 1351: `Sky/Core/TaskTimeoutTest` (v0.29.14 `Task.timeout`,
 /// `Task.remaining`, and `Sync.popWithin` under a deadline).
-pub const SKY_SUITES_EXPECTED: u64 = 1351;
+///
+/// 1351 + 16 = 1367: `Std/BreakerTest` (v0.29.14 `Std.Breaker`: opens after
+/// N, the refusal, a non-counting error, trials, concurrent counts).
+pub const SKY_SUITES_EXPECTED: u64 = 1367;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

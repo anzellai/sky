@@ -73,6 +73,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   new field `minRemaining : Int` (`0` in `defaultRequest`), so a request
   written as a full record literal adds `minRemaining = 0`
   (`docs/migration/v0.29.md`).
+- `Std.Breaker`, a circuit breaker for calls to another service, written in
+  Sky on `Std.Sync.Ref`. `Breaker.call breaker task` counts the failures
+  `Error.isRetryable` accepts (a missed `Task.timeout` deadline included,
+  and `callCounting` takes your own rule). `failures` of them within
+  `windowMs` open it for `openForMs`. An open breaker refuses at once,
+  without running the call, with an `Unavailable` error whose domain failure
+  is `"breaker"` / `"Open"` and whose `Error.retryAfter` is the time until a
+  trial call. Then `halfOpenProbes` trial calls run: one success closes it,
+  one failure opens it again. `state`, `reset` and `isOpenRefusal` complete
+  it. Its state lives in this process only and cannot be stored in a
+  Sky.Live model.
 
 ### Fixed
 

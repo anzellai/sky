@@ -67,7 +67,7 @@ images on the server, v0.29.0) and `Std.Qr`.
 `Std.Money`.
 
 **Effects and operations.** `Std.Durable`, `Std.Jobs`, `Std.PubSub`,
-`Std.Sync`, `Std.Watch`, `Std.Email`, `Std.Time`, `Std.System`, `Std.Config`,
+`Std.Sync`, `Std.Breaker` (a circuit breaker, v0.29.14), `Std.Watch`, `Std.Email`, `Std.Time`, `Std.System`, `Std.Config`,
 `Std.Log`, `Std.Trace` and `Std.Analytics`.
 
 **AI (`Std.Ai`).** Calling models: `Std.Ai.Provider`, `Std.Ai.Endpoint` (model

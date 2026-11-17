@@ -1,0 +1,357 @@
+-- | Std.Breaker — a circuit breaker for calls to another service (a port).
+--
+-- A breaker counts the failures of the calls it wraps. When too many fail
+-- within a time window, it OPENS: it refuses every call at once, without
+-- running it, for `openForMs` milliseconds. Then it lets `halfOpenProbes`
+-- trial calls through. One success closes it again. One failure opens it for
+-- another `openForMs`.
+--
+--     payments : Task Error Breaker
+--     payments =
+--         Breaker.new "payments" Breaker.defaults
+--
+--     charge : Breaker -> Order -> Task Error Receipt
+--     charge breaker order =
+--         Breaker.call breaker (Payments.charge order |> Task.timeout 2000)
+--
+-- Only a failure that a retry could fix counts (`Error.isRetryable`: a
+-- `Network`, `Timeout` or `Unavailable` error, or a domain failure marked
+-- retryable, such as a missed `Task.timeout` deadline). A `NotFound` or an
+-- `InvalidInput` says nothing about the health of the other service, so it
+-- does not count. `callCounting` takes your own rule.
+--
+-- A refused call fails with an `Unavailable` error whose domain failure is
+-- `"breaker"` / `"Open"` (retryable, attribute `name`), and `Error.retryAfter`
+-- gives the milliseconds until the breaker lets a trial call through.
+-- `isOpenRefusal` recognises it.
+--
+-- A breaker holds its state in a `Std.Sync.Ref`. It lives in this process
+-- only: it does not survive a restart, it is not shared between replicas,
+-- and it cannot be stored in a Sky.Live model (the session store cannot save
+-- it). Create one per port at the top level, so every request shares it:
+-- `breaker = Task.run (Breaker.new "payments" Breaker.defaults)` runs once.
+-- It runs on the server: a Sky.Spa client calls it through the backend.
+module Std.Breaker exposing
+    ( Breaker
+    , State(..)
+    , Settings
+    , defaults
+    , new
+    , name
+    , call
+    , callCounting
+    , state
+    , reset
+    , isOpenRefusal
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Std.Sync as Sync exposing (Ref)
+
+-- | What a breaker does with the next call. `Open` refuses calls until
+-- `untilMs` (Unix milliseconds); `HalfOpen` lets trial calls through.
+type State
+    = Closed
+    | Open { untilMs : Int }
+    | HalfOpen
+
+-- | When a breaker opens and for how long:
+--
+--   * `failures` counting failures within `windowMs` milliseconds open it,
+--   * it stays open for `openForMs` milliseconds,
+--   * then `halfOpenProbes` trial calls may run at the same time.
+type alias Settings =
+    { failures : Int
+    , windowMs : Int
+    , openForMs : Int
+    , halfOpenProbes : Int
+    }
+
+
+-- | 5 failures within 10 000 ms open the breaker for 30 000 ms, then 1 trial
+-- call runs.
+defaults : Settings
+defaults =
+    { failures = 5, windowMs = 10000, openForMs = 30000, halfOpenProbes = 1 }
+
+-- The breaker's state as the Ref holds it.
+--   ClosedMode: the times of the counting failures inside the window, newest
+--     first.
+--   OpenMode: open until this time.
+--   HalfOpenMode: the trial calls running now, and when the first started.
+type Mode
+    = ClosedMode (List Int)
+    | OpenMode Int
+    | HalfOpenMode Int Int
+
+-- What one call was allowed to do. `Sync.update` returns the value it stored,
+-- so the decision a caller reads is the one made for that caller.
+type Decision
+    = Admit
+    | AdmitProbe
+    | Refuse (Maybe Int)
+
+type alias Cell =
+    { mode : Mode
+    , decision : Decision
+    }
+
+-- | A circuit breaker. Opaque: build it with `new`.
+type Breaker
+    = Breaker__Internal String Settings (Ref Cell)
+
+
+-- | `new name settings` — a closed breaker. The name goes into the refusal
+-- (attribute `name`) and the logs. `Err InvalidInput` when `failures` or
+-- `halfOpenProbes` is below 1, or `windowMs` or `openForMs` is negative.
+new : String -> Settings -> Task Error Breaker
+new n settings =
+    if settings.failures < 1 || settings.halfOpenProbes < 1 then
+        Task.fail
+            (Error.invalidInput
+                "Breaker.new: failures and halfOpenProbes must be 1 or more")
+
+    else if settings.windowMs < 0 || settings.openForMs < 0 then
+        Task.fail
+            (Error.invalidInput
+                "Breaker.new: windowMs and openForMs must not be negative")
+
+    else
+        Sync.newRef { mode = ClosedMode [], decision = Admit }
+            |> Task.map (\ref -> Breaker__Internal n settings ref)
+
+
+-- | The name the breaker was made with.
+name : Breaker -> String
+name breaker =
+    case breaker of
+
+        Breaker__Internal n _ _ ->
+            n
+
+
+-- | `call breaker task` — run `task` through the breaker. Closed: the task
+-- runs, and a failure `Error.isRetryable` accepts is counted. Open: the call
+-- is refused at once, and the task does not run. Half open: up to
+-- `halfOpenProbes` calls run as trials.
+call : Breaker -> Task Error a -> Task Error a
+call breaker task =
+    callCounting Error.isRetryable breaker task
+
+
+-- | `callCounting counts breaker task` — `call`, with your own rule for
+-- which failures count. A failure the rule rejects is returned unchanged and
+-- leaves the breaker as it was (a trial call that ends with one frees its
+-- place for the next trial).
+--
+--     -- every failure of this port counts, an InvalidInput too
+--     Breaker.callCounting (\_ -> True) breaker fetch
+callCounting : (Error -> Bool) -> Breaker -> Task Error a -> Task Error a
+callCounting counts breaker task =
+    case breaker of
+
+        Breaker__Internal n settings ref ->
+            Time.now ()
+                |> Task.andThen (\now -> Sync.update (admit settings now) ref)
+                |> Task.andThen
+                       (\cell ->
+                           runAdmitted counts n settings ref cell.decision task)
+
+
+runAdmitted : (Error -> Bool) -> String -> Settings -> Ref Cell -> Decision -> Task Error a -> Task Error a
+runAdmitted counts n settings ref decision task =
+    case decision of
+
+        Refuse after ->
+            Task.fail (refusal n after)
+
+        _ ->
+            task
+                |> Task.onError
+                       (\e ->
+                           record settings ref decision (counted (counts e))
+                               |> Task.andThen (\_ -> Task.fail e))
+                |> Task.andThen
+                       (\v ->
+                           record settings ref decision Succeeded
+                               |> Task.map (\_ -> v))
+
+-- How a call ended, for `record`.
+type Outcome
+    = Succeeded
+    | Counted
+    | NotCounted
+
+
+record : Settings -> Ref Cell -> Decision -> Outcome -> Task Error ()
+record settings ref decision outcome =
+    Time.now ()
+        |> Task.andThen
+               (\now -> Sync.update (settle settings now decision outcome) ref)
+        |> Task.map (\_ -> ())
+
+
+counted : Bool -> Outcome
+counted yes =
+    if yes then
+        Counted
+
+    else
+        NotCounted
+
+
+admit : Settings -> Int -> Cell -> Cell
+admit settings now cell =
+    case cell.mode of
+
+        ClosedMode _ ->
+            { cell | decision = Admit }
+
+        OpenMode untilMs ->
+            if now >= untilMs then
+                { mode = HalfOpenMode 1 now, decision = AdmitProbe }
+
+            else
+                { cell | decision = Refuse (Just (untilMs - now)) }
+
+        HalfOpenMode running since ->
+            if running < settings.halfOpenProbes then
+                { mode = HalfOpenMode (running + 1) since
+                , decision = AdmitProbe
+                }
+
+            else if now - since >= settings.openForMs then
+                -- The trials have run for a whole open period without an
+                -- answer (a trial that panicked never reports): start again.
+                { mode = HalfOpenMode 1 now, decision = AdmitProbe }
+
+            else
+                { cell | decision = Refuse Nothing }
+
+
+settle : Settings -> Int -> Decision -> Outcome -> Cell -> Cell
+settle settings now decision outcome cell =
+    case decision of
+
+        AdmitProbe ->
+            case cell.mode of
+
+                HalfOpenMode running since ->
+                    case outcome of
+
+                        Succeeded ->
+                            { cell | mode = ClosedMode [] }
+
+                        Counted ->
+                            { cell
+                                | mode = OpenMode (now + settings.openForMs)
+                            }
+
+                        NotCounted ->
+                            { cell
+                                | mode =
+                                    HalfOpenMode (max 0 (running - 1)) since
+                            }
+
+                _ ->
+                    cell
+
+        Admit ->
+            case ( cell.mode, outcome ) of
+
+                ( ClosedMode times, Counted ) ->
+                    let
+                        recent =
+                            now
+                                :: List.filter
+                                       (\t -> now - t < settings.windowMs)
+                                       times
+                    in
+                        if List.length recent >= settings.failures then
+                            { cell
+                                | mode = OpenMode (now + settings.openForMs)
+                            }
+
+                        else
+                            { cell | mode = ClosedMode recent }
+
+                _ ->
+                    cell
+
+        Refuse _ ->
+            cell
+
+
+refusal : String -> Maybe Int -> Error
+refusal n after =
+    let
+        base =
+            Error.failure "breaker" "Open" |> Error.withRetryable True
+                |> Error.withAttr "name" n
+        f =
+            case after of
+
+                Just ms ->
+                    Error.withRetryAfter ms base
+
+                Nothing ->
+                    Error.withAttr "state" "HalfOpen" base
+    in
+        Error.fromDomain
+            Unavailable
+            ("circuit breaker " ++ n ++ " is open: the call was not made")
+            f
+
+
+-- | The breaker's state now. An open breaker whose time is up reads as
+-- `HalfOpen`: the next call is a trial.
+state : Breaker -> Task Error State
+state breaker =
+    case breaker of
+
+        Breaker__Internal _ _ ref ->
+            Time.now ()
+                |> Task.andThen
+                       (\now ->
+                           Sync.get ref
+                               |> Task.map (\cell -> stateOf now cell.mode))
+
+
+stateOf : Int -> Mode -> State
+stateOf now mode =
+    case mode of
+
+        ClosedMode _ ->
+            Closed
+
+        OpenMode untilMs ->
+            if now >= untilMs then
+                HalfOpen
+
+            else
+                Open { untilMs = untilMs }
+
+        HalfOpenMode _ _ ->
+            HalfOpen
+
+
+-- | Close the breaker and forget its failures (an operator's override).
+reset : Breaker -> Task Error ()
+reset breaker =
+    case breaker of
+
+        Breaker__Internal _ _ ref ->
+            Sync.set { mode = ClosedMode [], decision = Admit } ref
+
+
+-- | True for the error a breaker returns when it refuses a call (domain
+-- `"breaker"`, code `"Open"`).
+isOpenRefusal : Error -> Bool
+isOpenRefusal e =
+    Error.domain e == Just "breaker"
+        && (Error.failureOf e |> Maybe.map Error.failureCode) == Just "Open"

@@ -136,6 +136,7 @@ cardDeclined reason =
 |---|---|---|---|---|---|
 | `"task"` | `DeadlineExceeded` | `Timeout` | yes | `op`, `timeoutMs` (from `Task.timeout`) | `Task.timeout` when the task is not done by the deadline; `Http.*` and `Sync.pop` / `popWithin` when a `Task.timeout` deadline ends the call or the wait (v0.29.14) |
 | `"http"` | `DeadlineTooShort` | `Timeout` | no | `op`, `minRemainingMs`, `remainingMs` | `Http.request` with `Http.withMinRemaining ms`, refused before it is sent when less than `ms` milliseconds are left before the deadline (v0.29.14) |
+| `"breaker"` | `Open` | `Unavailable` | yes, with `retryAfter` = the time until a trial call may run (none while the trials are busy, attribute `state` = `HalfOpen`) | `name` | `Std.Breaker.call` / `callCounting` when the breaker is open and refuses the call without running it; `Breaker.isOpenRefusal` recognises it (v0.29.14) |
 
 **Write code that does not break when a domain grows.** Prefer the generic
 helpers, or a domain's typed view with a `_ ->` branch. A `case` over

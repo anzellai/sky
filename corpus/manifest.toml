@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 894
+n_min = 896
 n_iso = 61
 n_iso_ceiling = 62
 n_iso_static = 164
 n_iso_static_ceiling = 300
-class_v = 893
+class_v = 895
 class_d = 1
-family_S = 218
+family_S = 220
 family_L = 513
 family_E = 10
 family_R = 153
@@ -5164,6 +5164,32 @@ axes       = { edge = "failure", surface = "deadline" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "task/DeadlineExceeded|task/DeadlineExceeded|none/none"
+
+[[case]]
+id         = "stdlib_edge/nominal-breaker"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "breaker" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "7|payments|Closed|Open,Closed"
+
+[[case]]
+id         = "stdlib_edge/failure-breaker"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "breaker" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "Closed,Open|breaker/Open,T,not run|Closed|E"
 
 [[case]]
 id         = "stdlib_import/plain-none"

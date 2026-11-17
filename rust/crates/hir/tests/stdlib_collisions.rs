@@ -141,6 +141,12 @@ const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
     // qualified (`import Std.Admission as Admission`).
     "type Decision",
     "value withRetryAfter",
+    // v0.29.14: Std.Breaker. `Breaker.new` is named like `Cache.new` (a
+    // constructor Task) and `Breaker.call` for what it does with a Task; the
+    // other `call` is `Ffi.call`, which is stdlib-only. A program reads them
+    // qualified.
+    "value call",
+    "value new",
     // v0.29.0: Sky.Core.Array has Elm's Array API, which shares its names
     // with List, String, Dict, Set, Bytes and the Std.Sync / Std.Cache
     // accessors, as in Elm. It is a new module, so no existing program
