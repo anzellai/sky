@@ -10409,6 +10409,42 @@ fn a_legacy_follow_up_answer_carries_the_follow_up_writes() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// F1: a fully client-local routed app (`App.web`, a `Std.Html` view, no
+/// server arm) serves every route on `--target web:app`, as the docs say: a
+/// path that matches a route is 200 with the server-rendered first paint, an
+/// unknown path is the NotFound page with 404. The backend used to be
+/// static-only, so `GET /about` was the file server's plain 404.
+#[test]
+#[cfg(unix)]
+fn a_client_only_routed_app_serves_its_deep_routes() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-client-routes", &[]);
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (_child, port) = start_split_backend(&proj);
+    let root = curl_body_p(port, "/").unwrap_or_default();
+    assert!(root.contains("Counter page"), "GET / renders the root:\n{root}");
+    let (code, _) = curl_status_ctype(port, "/about").unwrap_or((0, String::new()));
+    assert_eq!(code, 200, "GET /about matches a route");
+    let about = curl_body_p(port, "/about").unwrap_or_default();
+    assert!(
+        about.contains("data-sky-ssr") && about.contains("About this app"),
+        "GET /about renders the About page:\n{about}"
+    );
+    let (code, _) = curl_status_ctype(port, "/nowhere").unwrap_or((0, String::new()));
+    assert_eq!(code, 404, "an unknown path is the NotFound page with 404");
+    let missing = curl_body_p(port, "/nowhere").unwrap_or_default();
+    assert!(
+        missing.contains("No such page"),
+        "an unknown path renders the NotFound page:\n{missing}"
+    );
+    let asset = curl_status_ctype(port, "/wasm_exec.js").map(|(c, _)| c);
+    assert_eq!(asset, Some(200), "the assets are still served");
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// D7: a user `type Route` in its own module, used as the page type of an
 /// `App.app` web:app app with `App.withRoutes`, never clashes with the stdlib
 /// `App.Route`. The route table sits next to the type and is annotated

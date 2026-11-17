@@ -9741,7 +9741,14 @@ fn gen_backend(
     // runtime — spa_ssr_safe.go). So SSR now emits for the onNavigate content-site
     // shape (`init = Cmd.none`, per-route data loaded on navigation) too.
     let nav_ssr = has_synth_routes && has_synth_on_navigate;
-    let emit_ssr = (!(server.is_empty() && !push_mode) || init_get_safe || nav_ssr)
+    // F1: a routed app's route paths are pages. A cold GET of `/about` must be
+    // 200 with that route's first paint and an unknown path the NotFound page
+    // with 404 (docs/skyspa/overview.md), even when every arm runs in the
+    // client. Without this a fully client-local routed app got a static-only
+    // backend: `/` served the static shell and every other route was the file
+    // server's plain 404.
+    let route_ssr = has_synth_routes;
+    let emit_ssr = (!(server.is_empty() && !push_mode) || init_get_safe || nav_ssr || route_ssr)
         && has_synth_view
         && has_synth_head;
     if emit_ssr {

@@ -1,0 +1,76 @@
+module Main exposing (main)
+
+-- F1: a fully client-local routed app (`App.web`, a `Std.Html` view, no server
+-- arm) on `--target web:app`. Every route path is a page: a cold GET of
+-- `/about` is 200 with the server-rendered first paint, and an unknown path
+-- is the NotFound page with 404. The backend used to serve only the assets
+-- and the root, so `/about` was the Go file server's plain 404.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Html.Events exposing (onClick)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+type alias Model =
+    { page : Page
+    , count : Int
+    }
+
+type Page
+    = CounterPage
+    | AboutPage
+    | MissingPage
+
+type Msg
+    = Navigate Page
+    | Increment
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { page = CounterPage, count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Navigate page ->
+            ( { model | page = page }, Cmd.none )
+
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    case model.page of
+
+        CounterPage ->
+            div
+                []
+                [ h1 [] [ text "Counter page" ]
+                , button [ onClick Increment ] [ text "+" ]
+                ]
+
+        AboutPage ->
+            div [] [ h1 [] [ text "About this app" ] ]
+
+        MissingPage ->
+            div [] [ h1 [] [ text "No such page" ] ]
+
+
+main =
+    App.run
+        (App.web
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withRoutes
+                   [ App.route "/" CounterPage, App.route "/about" AboutPage ]
+            |> App.withNotFound MissingPage)

@@ -8,10 +8,10 @@ module Main exposing (main)
 --   * a distinctive NotFound page so a genuinely-unmatched cold path can be told
 --     apart from Home when the backend SSRs the fallback.
 --
--- `update`'s `Reload` branch reads a file (an effect ⇒ SERVER branch), which is
--- what puts the app on the SSR path (a fully-client app gets a static-only
--- backend with no SSR handler). `init` is `Cmd.none`, so there is no data-settle
--- round — the SSR just renders each route's own view.
+-- `update`'s `Reload` branch reads a file (an effect ⇒ SERVER branch). A routed
+-- app is on the SSR path either way (since v0.29.14 a fully-client routed app
+-- server-renders its routes too). `init` is `Cmd.none`, so there is no
+-- data-settle round — the SSR just renders each route's own view.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.File as File
