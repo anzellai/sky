@@ -35,6 +35,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   server's plain 404 and `GET /` had no first paint. The backend now
   server-renders every route of a routed app (200, and the NotFound page with
   404 for an unknown path), whether or not an arm runs on the server.
+- Sky.Spa: the client copy of a module kept a function named `update` that
+  the app does not configure, but dropped the server helpers it calls. The
+  split skipped every def named `update`, `init`, `view`, `subscriptions` or
+  `main` in every module, so a module imported only for a type failed in the
+  frontend with `Undefined name`. Only the app's configured entry points (and
+  the entry's `main`) are skipped now. Any other def is tainted by the normal
+  rule.
 
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 

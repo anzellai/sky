@@ -3678,6 +3678,78 @@ fn web_app_sibling_update_with_rpc_error_builds() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// A sibling module's own `update` that the app does NOT configure is an
+/// ordinary binding. `Area.update` performs `fetchText ()`, a `File` read.
+///
+///   * `spa-sibling-area-update`: `Main` imports `Area` only for the type
+///     `AreaMsg`. Before the fix the split skipped every def NAMED `update` in
+///     every module, so the client copy of `Area` kept `update` but dropped its
+///     server helper `fetchText`, and the frontend failed with `Undefined name:
+///     fetchText`.
+///   * `spa-sibling-area-update-delegate`: the entry's `ForArea sub` arm
+///     delegates to `Area.update`; the arm becomes a server arm.
+///
+/// Both must build, and neither client copy may carry the server helper.
+#[test]
+fn web_app_unconfigured_sibling_update_is_tainted() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    for fixture in [
+        "spa-sibling-area-update",
+        "spa-sibling-area-update-delegate",
+    ] {
+        let proj = scratch();
+        let _ = std::fs::remove_dir_all(&proj);
+        copy_tree(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(fixture),
+            &proj,
+        );
+        let output = Command::new(SKY)
+            .args(["build", "--target", "web:app", "src/Main.sky"])
+            .current_dir(&proj)
+            .output()
+            .expect("run sky build --target web:app");
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !log.contains("Undefined name"),
+            "{fixture}: the client copy of Area must not keep `update` without its helper:\n{log}"
+        );
+        let front_tree = concat_sky_tree(&proj.join(".skyapp/web-app/.split/frontend"));
+        for needle in ["fetchText", "File."] {
+            assert!(
+                !front_tree.contains(needle),
+                "{fixture}: SECURITY: `{needle}` must not reach the wasm frontend:\n{front_tree}"
+            );
+        }
+        if fixture.ends_with("-delegate") {
+            let front_main =
+                std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+                    .expect("the frontend Main module must exist");
+            assert!(
+                front_main.contains("/_rpc/ForArea"),
+                "{fixture}: the delegating `ForArea` arm must become an RPC:\n{front_main}"
+            );
+        }
+        if required(Need::Go, have_go()) {
+            assert!(
+                output.status.success(),
+                "{fixture}: --target web:app must build end to end:\n{log}"
+            );
+            assert!(
+                proj.join(".skyapp/web-app/.split/backend/sky-out/app")
+                    .is_file(),
+                "{fixture}: backend binary must be built:\n{log}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&proj);
+    }
+}
+
 /// Soundness regression for Sky.Spa auto-split bug #1 — the RPC request must
 /// carry `reads union writes`, not the reads alone.
 ///
@@ -10425,7 +10497,10 @@ fn a_client_only_routed_app_serves_its_deep_routes() {
     assert!(out.status.success(), "the web:app build failed:\n{log}");
     let (_child, port) = start_split_backend(&proj);
     let root = curl_body_p(port, "/").unwrap_or_default();
-    assert!(root.contains("Counter page"), "GET / renders the root:\n{root}");
+    assert!(
+        root.contains("Counter page"),
+        "GET / renders the root:\n{root}"
+    );
     let (code, _) = curl_status_ctype(port, "/about").unwrap_or((0, String::new()));
     assert_eq!(code, 200, "GET /about matches a route");
     let about = curl_body_p(port, "/about").unwrap_or_default();

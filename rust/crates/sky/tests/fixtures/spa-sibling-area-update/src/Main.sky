@@ -1,0 +1,59 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Types exposing (..)
+import Area exposing (AreaMsg)
+
+
+describe : AreaMsg -> String
+describe _ =
+    "area"
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { text = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Load ->
+            ( model, Cmd.perform (File.readFile "main.txt") Got )
+
+        Got (Ok t) ->
+            ( { model | text = t }, Cmd.none )
+
+        Got (Err _) ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text model.text
+        , Ui.text (describe Area.Refresh)
+        , Ui.button [] { onPress = Just Load, label = Ui.text "load" }
+        ]
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound (\_ -> Ui.text "not found")
+
+
+main : Task Error ()
+main =
+    App.run app

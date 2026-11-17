@@ -1,0 +1,22 @@
+module Types exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Std.Codec as Codec exposing (Codec)
+
+type alias Model =
+    { text : String }
+
+type AreaMsg
+    = Refresh
+    | Clear
+
+
+areaMsgCodec : Codec AreaMsg
+areaMsgCodec =
+    Codec.enum [ ( Refresh, "refresh" ), ( Clear, "clear" ) ]
+
+type Msg
+    = Load
+    | Got (Result Error String)
+    | ForArea AreaMsg

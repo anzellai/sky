@@ -2251,19 +2251,35 @@ pub fn analyze_checked(
     }
 
     // ---- server-tainted top-level bindings (app modules only) ----
+    // The structural TEA entry points the app is CONFIGURED with (its `update`,
+    // `init`, `view`, `subscriptions`) and the entry's `main` are server only by
+    // virtue of *containing* a server branch, and are not standalone helpers
+    // that leak to the client build. They are skipped by DefId, never by bare
+    // name: a sibling module's own `update` that the app does not configure is
+    // an ordinary binding, tainted by the normal rule, so the client copy of its
+    // module drops it together with the server helpers it reaches.
+    let mut entry_points: HashSet<DefId> = HashSet::new();
+    if let UpdateField::Def(d) = &update_field {
+        entry_points.insert(*d);
+    }
+    for field in ["init", "view", "subscriptions"] {
+        if let Some(d) = find_config_field_def(db, &check_ids, entry, field) {
+            entry_points.insert(d);
+        }
+    }
+    if let Some(d) = def_by_name(db, entry, "main") {
+        entry_points.insert(d);
+    }
     let mut tainted: Vec<TaintedBinding> = Vec::new();
     for mid in &check_ids {
         let resolved = db.resolve(*mid);
         let mname = db.module_name(*mid).to_string();
         for td in &resolved.top_defs {
             if graph.server.contains(&td.def) {
-                // Skip the structural TEA entry points + `update` itself — they
-                // are server only by virtue of *containing* a server branch, and
-                // are not standalone "values"/helpers that leak to the client
-                // build. The interesting members here are effectful-origin CAFs
-                // (a `Task.run` binding, an env read) and server helper fns.
+                // The interesting members here are effectful-origin CAFs (a
+                // `Task.run` binding, an env read) and server helper fns.
                 let n = td.name.as_str();
-                if matches!(n, "main" | "view" | "init" | "subscriptions" | "update") {
+                if entry_points.contains(&td.def) {
                     continue;
                 }
                 tainted.push(TaintedBinding {
@@ -8656,5 +8672,64 @@ mod returned_scroll_classification_tests {
         ] {
             assert_eq!(classify_kernel("Nav", member), KernelClass::ClientEffect);
         }
+    }
+}
+
+#[cfg(test)]
+mod configured_entry_point_tests {
+    use std::path::PathBuf;
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    }
+
+    fn tainted_names(fixture: &str) -> Vec<String> {
+        let root = repo_root();
+        let dir = root.join("rust/crates/sky/tests/fixtures").join(fixture);
+        let report = super::analyze(&root, &dir, None)
+            .unwrap_or_else(|e| panic!("analyze {fixture} failed: {e}"));
+        report
+            .tainted
+            .iter()
+            .map(|t| format!("{}.{}", t.module, t.name))
+            .collect()
+    }
+
+    /// Only the app's CONFIGURED `update` / `init` / `view` / `subscriptions`
+    /// (and the entry's `main`) are skipped as structural entry points. A def
+    /// that is merely NAMED `update` in another module is an ordinary binding:
+    /// when it reaches a server effect it is tainted, so the client copy of its
+    /// module drops it together with its server helpers.
+    #[test]
+    fn a_sibling_def_named_update_is_tainted_when_not_configured() {
+        for fixture in [
+            "spa-sibling-area-update",
+            "spa-sibling-area-update-delegate",
+        ] {
+            let names = tainted_names(fixture);
+            assert!(
+                names.contains(&"Area.update".to_string()),
+                "{fixture}: Area.update reaches File through fetchText and is not the \
+                 configured update, so it must be tainted; got {names:?}"
+            );
+            assert!(
+                names.contains(&"Area.fetchText".to_string()),
+                "{fixture}: Area.fetchText must be tainted; got {names:?}"
+            );
+            assert!(
+                !names.iter().any(|n| n == "Main.update" || n == "Main.main"),
+                "{fixture}: the configured update and the entry main stay skipped; got {names:?}"
+            );
+        }
+    }
+
+    /// A configured `update` that lives in a sibling module stays skipped.
+    #[test]
+    fn a_configured_sibling_update_is_still_skipped() {
+        let names = tainted_names("spa-sibling-update");
+        assert!(
+            !names.iter().any(|n| n.ends_with(".update")),
+            "the configured sibling update must not be listed as tainted; got {names:?}"
+        );
     }
 }
