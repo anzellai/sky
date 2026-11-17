@@ -250,3 +250,85 @@ fn imported_type_in_a_record_alias_field_is_not_hijacked_by_a_stdlib_type() {
 
     let _ = std::fs::remove_dir_all(&proj);
 }
+
+/// D7: a QUALIFIED stdlib type is never captured by a same-named local type.
+/// `Std.App` declares `type Route page` without exposing it, so HIR has no
+/// entry for `App.Route`, and the checker fell back to the bare `Route`: in a
+/// module that declares its own `type Route`, `List (App.Route Route)` was
+/// read as the app's `Main.Route Route`, and the routes list was rejected
+/// (`Std.App.Route Route` vs `Main.Route Route`). Both an annotated value, a
+/// parameter and an alias body are covered, and the program must run.
+#[test]
+fn a_qualified_stdlib_type_is_not_captured_by_a_same_named_local_type() {
+    let _lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    std::fs::create_dir_all(proj.join("src")).unwrap();
+    std::fs::write(proj.join("sky.toml"), "[project]\nname = \"qual-route\"\n").unwrap();
+    std::fs::write(
+        proj.join("src/Main.sky"),
+        r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Log exposing (println)
+
+
+type Route
+    = Home
+    | About
+
+
+type alias Routes =
+    List (App.Route Route)
+
+
+routes : List (App.Route Route)
+routes =
+    [ App.route "/" Home, App.route "/about" About ]
+
+
+more : Routes
+more =
+    [ App.route "/x" About ]
+
+
+count : List (App.Route Route) -> Int
+count rs =
+    List.length rs
+
+
+main =
+    println ("routes=" ++ String.fromInt (count routes + count more))
+"#,
+    )
+    .unwrap();
+    let output = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "`App.Route` must name the stdlib type, not the local `Route`:\n{log}"
+    );
+    let run = Command::new(proj.join("sky-out/app"))
+        .current_dir(&proj)
+        .output()
+        .expect("run the built app");
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        run.status.success() && out.contains("routes=3"),
+        "the app must run and count its routes:\n{out}{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}

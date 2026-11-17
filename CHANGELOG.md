@@ -25,6 +25,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `spaFollow_ = "[]"`, but the answer held only the first arm's write-set. The
   answer now carries the merged write-set of the arm and all its follow-ups,
   and the request carries what the follow-ups read.
+- A qualified type name was captured by a same-named local type. In a module
+  that declares `type Route`, `List (App.Route Page)` was checked as the
+  module's own `Route` (`Std.App` does not expose `Route`, so the checker fell
+  back to the bare name). A qualified name now always names the type of the
+  qualifier's module.
 
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 

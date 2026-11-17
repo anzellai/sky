@@ -2274,6 +2274,34 @@ fn rewrite_alias_refs(
                 // registered bare). A hit that lands on a DECLARED alias or union is
                 // rewritten to that declaration's defining-module key; anything else
                 // stays bare, exactly as before this fix.
+                // A QUALIFIED reference (`App.Route`) names a type of the
+                // qualifier's module, never a same-named type of this one. When
+                // HIR has no entry for it (the module declares the type but does
+                // not expose it, or it is kernel-implicit), the bare fallback
+                // below must not land on a type of ANOTHER module: a local
+                // `type Route` captured `App.Route` there, so `List (App.Route
+                // Page)` was read as the app's own `Route` (D7). Name the
+                // qualifier's own declaration instead. A bare hit in the
+                // qualifier's module itself, or a builtin, keeps the old path.
+                let qual_dep = full
+                    .rsplit_once('.')
+                    .and_then(|(q, _)| match qualifiers.get(q) {
+                        Some(hir::ImportSource::Dep(dep)) => Some(*dep),
+                        _ => None,
+                    });
+                if let (Some(dep), None) = (qual_dep, type_refs.get(full)) {
+                    let captured = type_refs
+                        .get(base)
+                        .and_then(|tr| db.def_loc(tr.con))
+                        .is_some_and(|l| l.module.index() != u32::MAX && l.module != dep);
+                    if captured {
+                        let key = crate::nominal::qualify(db.module_name(dep), base);
+                        if keys.union.contains(&key) || keys.alias.contains(&key) {
+                            return Ty::App(Name::new(&key), args);
+                        }
+                        return Ty::App(Name::new(base), args);
+                    }
+                }
                 if let Some(tr) = type_refs.get(full).or_else(|| type_refs.get(base)) {
                     if let Some(loc) = db.def_loc(tr.con) {
                         // Check the SENTINEL before touching `module_name`: builtins

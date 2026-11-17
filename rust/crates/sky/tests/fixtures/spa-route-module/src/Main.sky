@@ -1,0 +1,80 @@
+module Main exposing (main)
+
+-- D7: the page type is a user `type Route` declared in its own module, next
+-- to the route table (`routes : List (App.Route Route)`), and the app routes
+-- with `App.withRoutes Route.routes`. A user type named like a stdlib type
+-- must keep its own identity in the checker and in the generated Go.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Route exposing (Route(..))
+
+type alias Model =
+    { page : Route
+    , note : String
+    }
+
+type Msg
+    = Reload
+    | Reloaded (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home, note = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Reload ->
+            ( model, Cmd.perform (File.readFile "data/note.txt") Reloaded )
+
+        Reloaded (Ok raw) ->
+            ( { model | note = raw }, Cmd.none )
+
+        Reloaded (Err _) ->
+            ( { model | note = "" }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    case model.page of
+
+        Home ->
+            Ui.column
+                []
+                [ Ui.text (Route.toTitle model.page)
+                , Ui.link
+                      []
+                      { url = "/blog/hello", label = Ui.text "Read hello" }
+                ]
+
+        Post slug ->
+            Ui.column [] [ Ui.text "Blog post", Ui.text slug ]
+
+        NotFoundPage ->
+            Ui.column [] [ Ui.text "No such page here" ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes Route.routes
+        |> App.withNotFound NotFoundPage
+
+
+main =
+    App.run app

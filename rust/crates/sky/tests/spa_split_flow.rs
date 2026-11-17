@@ -10409,6 +10409,37 @@ fn a_legacy_follow_up_answer_carries_the_follow_up_writes() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// D7: a user `type Route` in its own module, used as the page type of an
+/// `App.app` web:app app with `App.withRoutes`, never clashes with the stdlib
+/// `App.Route`. The route table sits next to the type and is annotated
+/// `List (App.Route Route)`, which the checker used to read as the app's own
+/// `Route`. The app builds and serves each route.
+#[test]
+#[cfg(unix)]
+fn a_user_route_type_in_its_own_module_builds_and_serves_its_routes() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-route-module", &[]);
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (_child, port) = start_split_backend(&proj);
+    let home = curl_status_ctype(port, "/").map(|(c, _)| c);
+    assert_eq!(home, Some(200), "GET / serves the Home route");
+    let post = curl_body_p(port, "/blog/hello").unwrap_or_default();
+    assert!(
+        post.contains("data-sky-ssr") && post.contains("hello"),
+        "GET /blog/hello renders the Post route:\n{post}"
+    );
+    let err = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/server.err"))
+        .unwrap_or_default();
+    assert!(
+        !err.contains("panic") && !err.contains("interface conversion"),
+        "the backend must not panic:\n{err}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// A server arm whose navigation a helper returns builds: the server evaluates
 /// the actual command (the helper included) and returns the navigation as
 /// data. It used to be refused, because the split copied navigation source
