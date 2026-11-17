@@ -568,8 +568,14 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
     while (ctxEl.firstChild) frag.appendChild(ctxEl.firstChild);
     tmp = frag;
   } else {
-    tmp = document.createElement("div");
-    tmp.innerHTML = newHTML;
+    // A <template>, not a <div>: a <div> parses the markup in body context,
+    // where the HTML parser drops <thead>, <tbody>, <tr>, <td> and <th>
+    // tags that are not inside a <table>. An html patch on a table, a
+    // tbody or a row then lost every row and cell. A template's content
+    // parses in its own context and keeps them, as the kids patch does.
+    var tpl = document.createElement("template");
+    tpl.innerHTML = newHTML;
+    tmp = tpl.content;
   }
 
   // Widget islands (island_client.go) keep their element — and with it the

@@ -11,6 +11,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.14 (unreleased)
+
+### Fixed
+
+- Sky.Live: an `html` patch on a `table`, `thead`, `tbody`, `tfoot` or `tr`
+  kept no rows or cells. The client parsed the new markup inside a `div`,
+  where the HTML parser drops table tags, so a table whose rows changed when
+  a tab switched lost its rows, cells and roles. The patch now parses in a
+  `template` element, as the `kids` patch does.
+
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 
 ### Fixed
