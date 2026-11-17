@@ -1,0 +1,7 @@
+module Inner exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Tags
+
+type alias Inner =
+    { tag : Tags.Tag }

@@ -1,0 +1,77 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import P1
+import P2
+
+type alias Model =
+    { card : P1.Card
+    , row : P2.Row
+    , why : P1.Refusal
+    , code : P2.Refusal
+    }
+
+type Msg
+    = Load
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { card = { title = "", status = P1.Open }
+      , row = { n = 0, verdict = P2.Refused }
+      , why = { why = "" }
+      , code = { code = 0 }
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Load ->
+            let
+                t =
+                    Task.run (File.readFile "x.txt")
+                        |> Result.withDefault "none"
+            in
+                ( { model
+                      | card = { title = t, status = P1.Matched }
+                      , row = { n = 1, verdict = P2.Matched }
+                      , why = { why = t }
+                      , code = { code = 7 }
+                  }
+                , Cmd.none
+                )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text
+              ("TITLE=" ++ model.card.title ++ " CODE="
+                  ++ String.fromInt model.code.code)
+        , Ui.button [] { onPress = Just Load, label = Ui.text "load" }
+        ]
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound (\_ -> Ui.text "not found")
+
+
+main : Task Error ()
+main =
+    App.run app

@@ -88,6 +88,11 @@ struct CodecBinding {
     /// unannotated `presetListCodec = Codec.list presetCodec` put `List any`
     /// into the generated wire records.)
     surface: Option<String>,
+    /// How generated code names the binding: bare for an entry codec (copied
+    /// into `Shared`), `SpaTy_<Mod>_.<name>` for a codec of any other module
+    /// (`Shared` imports that module qualified; the qualifier is removed when
+    /// `Shared` copies the codec instead, see [`strip_owned_qualifiers`]).
+    reference: String,
 }
 
 /// A resolved field codec: the codec expression to emit + the surface type name
@@ -292,6 +297,11 @@ struct ProjectShapes {
     /// the fields, so the resolver recovers the arguments by matching these
     /// field types against the row ([`CodecResolver::instantiation`]).
     generic_records: HashMap<String, GenericRecord>,
+    /// The entry module's name. `Shared` declares the entry's wire types
+    /// itself (it cannot import the entry), so they are named bare; every
+    /// other project type is named through its module (see
+    /// [`ProjectShapes::type_ref`]).
+    entry_module: String,
 }
 
 /// A record alias with type parameters, as [`ProjectShapes::generic_records`]
@@ -457,26 +467,52 @@ impl ProjectShapes {
         self.external_modules.contains(Self::module_of(key))
     }
 
-    /// How generated source names the type `key`: its bare name for a project
-    /// type (copied into or imported by `Shared`), `SpaTy_<Mod>_.<Name>` for a
-    /// dependency type.
+    /// Whether `key` is declared in the entry module, whose wire types
+    /// `Shared` declares itself.
+    fn is_entry(&self, key: &str) -> bool {
+        Self::module_of(key) == self.entry_module
+    }
+
+    /// How generated source names the type `key`: its bare name for an entry
+    /// type (`Shared` declares it), `SpaTy_<Mod>_.<Name>` for a type of any
+    /// other module, project or dependency. A generated module never names a
+    /// user type bare, so two modules that export the same name (`P1.Refusal`,
+    /// `P2.Refusal`) never collide in it. A module whose types `Shared` copies
+    /// (it imports `Shared`, so `Shared` cannot import it) has the qualifier
+    /// removed once the copy set is known ([`strip_owned_qualifiers`]).
     fn type_ref(&self, key: &str) -> String {
-        if self.is_external(key) {
+        if self.is_entry(key) {
+            Self::bare(key).to_string()
+        } else {
             format!(
                 "{}.{}",
                 external_alias(Self::module_of(key)),
                 Self::bare(key)
             )
+        }
+    }
+
+    /// How a message to the user names the type `key`: as its module writes
+    /// it, bare for a project type, qualified for a dependency type.
+    fn display(&self, key: &str) -> String {
+        if self.is_external(key) {
+            key.to_string()
         } else {
             Self::bare(key).to_string()
         }
     }
 
     /// An identifier fragment for the type `key` (the auto-derived codec and
-    /// blank names): the bare name for a project type, module-mangled for a
-    /// dependency type.
+    /// blank names): the bare name for a project type whose bare name no
+    /// other declaration has, module-mangled for a dependency type or a
+    /// project type that shares its bare name with another one.
     fn ident(&self, key: &str) -> String {
-        if self.is_external(key) {
+        let shared_name = !self.is_entry(key)
+            && self
+                .by_bare
+                .get(Self::bare(key))
+                .is_some_and(|keys| keys.len() > 1);
+        if self.is_external(key) || shared_name {
             format!(
                 "{}_{}",
                 Self::module_of(key).replace('.', "_"),
@@ -487,12 +523,13 @@ impl ProjectShapes {
         }
     }
 
-    /// How generated source names constructor `ctor` of union `key`.
+    /// How generated source names constructor `ctor` of union `key` (the
+    /// same rule as [`ProjectShapes::type_ref`]).
     fn ctor_ref(&self, key: &str, ctor: &str) -> String {
-        if self.is_external(key) {
-            format!("{}.{ctor}", external_alias(Self::module_of(key)))
-        } else {
+        if self.is_entry(key) {
             ctor.to_string()
+        } else {
+            format!("{}.{ctor}", external_alias(Self::module_of(key)))
         }
     }
 }
@@ -596,7 +633,7 @@ impl<'a> CodecResolver<'a> {
                 };
                 self.needed.insert(b.name.clone());
                 return Ok(ResolvedCodec {
-                    codec: b.name.clone(),
+                    codec: b.reference.clone(),
                     surface,
                 });
             }
@@ -720,7 +757,7 @@ impl<'a> CodecResolver<'a> {
                     .get(&key)
                     .is_some_and(|ctors| ctors.iter().all(|(_, nullary)| *nullary));
                 return Err(bare_union_no_codec_msg(
-                    &self.shapes.type_ref(&key),
+                    &self.shapes.display(&key),
                     &render_ty(t),
                     enum_only,
                 ));
@@ -787,9 +824,9 @@ impl<'a> CodecResolver<'a> {
     /// `Shared` names the type. The synthesised nominal blank (`blank<N>_ :
     /// <T>`) is built once and cached in [`CodecResolver::auto_records`]; a
     /// self-referential record is refused (fail closed) rather than looped.
-    /// Two DIFFERENT records that `Shared` would name alike (two project
-    /// modules each declaring `Item`) are refused too: the generated module
-    /// names a project type by its bare name, so it could not tell them apart.
+    /// Two records with one bare name (`P1.Refusal`, `P2.Refusal`) get
+    /// module-mangled codec names ([`ProjectShapes::ident`]); only two records
+    /// whose mangled names still meet (`A_B.C` and `A.B_C`) are refused.
     ///
     /// A record alias with type parameters (`type alias Paged a = { … }`) is
     /// named with the arguments of this use (`Paged Item`), recovered from the
@@ -830,10 +867,10 @@ impl<'a> CodecResolver<'a> {
             }
             Some(existing) if existing.key != key => {
                 return Err(format!(
-                    "two record types named `{}` cross the Sky.Spa wire (`{}` and `{}`). The generated wire module names a project type by its bare name, so it cannot tell them apart. Rename one of them. {}",
-                    ProjectShapes::bare(&key),
+                    "two record types `{}` and `{}` cross the Sky.Spa wire, and the generated wire module would give both the codec name `auto{}Codec_`. Rename one of them. {}",
                     existing.key,
                     key,
+                    ident,
                     crate::migration_see(SPLIT_REFUSALS)
                 ));
             }
@@ -4715,12 +4752,16 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // taint. Each binding remembers its module so the copy-vs-import decision
     // below can COPY an entry- or mixed-module codec into `Shared` but IMPORT a
     // pure-sibling one.
-    let pure_sibling_set: HashSet<ModuleId> = pure_sibling_mods.iter().copied().collect();
     let mut codec_scan_mods: Vec<ModuleId> = vec![entry];
     codec_scan_mods.extend(pure_sibling_mods.iter().copied());
     codec_scan_mods.extend(tainted_mods.iter().copied());
-    let registry = build_codec_registry(&db, &codec_scan_mods);
-    let shapes = build_project_shapes(&db, &codec_scan_mods, &dependency_modules(&db, &check_ids));
+    let registry = build_codec_registry(&db, &codec_scan_mods, entry);
+    let shapes = build_project_shapes(
+        &db,
+        &codec_scan_mods,
+        &dependency_modules(&db, &check_ids),
+        &entry_name,
+    );
     // PATTERN-2 (client-result perform): map each server root to its result Msg +
     // the task's result type (read from the result Msg's union-variant argument).
     // The map is the single source of truth consulted by build_wire / gen_backend
@@ -4919,92 +4960,93 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     }
     seed_ty.extend(resolver.named_types.iter().cloned());
 
-    // ---- copy-vs-import: which modules feed `Shared` by COPY (§14 #2) ----
-    // A codec binding a wire references is COPIED into `Shared` when it lives in
-    // the ENTRY or in a MIXED (server-tainted) module — the latter because
-    // importing a tainted module into `Shared` would drag its server effect into
-    // BOTH trees (`Shared` compiles into the wasm frontend too). A codec in a
-    // PURE sibling module is IMPORTED instead (that module is copied whole to
-    // both trees). Wire-field TYPES declared in a mixed module are copied for the
-    // same reason; those in a pure sibling are imported.
-    let mut copy_mods: BTreeSet<ModuleId> = BTreeSet::new();
-    copy_mods.insert(entry);
-    for b in &registry {
-        if resolver.needed.contains(&b.name)
-            && b.module != entry
-            && !pure_sibling_set.contains(&b.module)
-        {
-            copy_mods.insert(b.module);
+    // ---- copy-vs-import: which modules feed `Shared` by COPY (§14 #2, §29) ----
+    // `Shared` owns no type of a module it can import. It IMPORTS every module
+    // that declares a wire type or a referenced codec, qualified only (`import
+    // Store as SpaTy_Store_`), and every generated reference names the type,
+    // constructor or codec through that alias ([`ProjectShapes::type_ref`]).
+    // A module with a server function is imported too: since §23 each module
+    // whose type the client names has a client copy that keeps its type
+    // declarations and pure codecs, and the backend has the whole module. So
+    // no module copy loses its own types, an alias chain (`View.CardView =
+    // Store.CardView`) resolves in the user's own scope, and two modules that
+    // export one name never meet in `Shared`.
+    //
+    // `Shared` COPIES the declarations only of a module it cannot import: the
+    // entry, and every module whose import closure reaches a generated module
+    // that imports `Shared` (R: the module that declares `update` or the `Msg`
+    // union, the module of `init` with a server command, a copy that strips a
+    // copied declaration, a module that names a union `Shared` owns). Importing
+    // such a module would close a cycle (`Wire -> Tags -> Shared -> Wire`, the
+    // v0.29.13 failure). A module that does not export a wire type or codec
+    // `Shared` must name is copied too. R grows with the copy set (a copied
+    // union moves into `Shared`, and the modules that name it import
+    // `Shared`), so the two are computed to a fixpoint.
+    let module_by_name: HashMap<String, ModuleId> = check_ids
+        .iter()
+        .map(|m| (db.module_name(*m).to_string(), *m))
+        .collect();
+    let project_mods: HashSet<ModuleId> = check_ids.iter().copied().collect();
+    let dep_mods: HashSet<ModuleId> = dependency_modules(&db, &check_ids).into_iter().collect();
+    // The project import graph as the user wrote it. The generated copies keep
+    // a subset of these imports and add only `Shared` and the `SpaTy_` aliases,
+    // so a path here over-approximates a path in either generated tree.
+    let proj_imports: HashMap<ModuleId, Vec<ModuleId>> = check_ids
+        .iter()
+        .map(|m| {
+            let p = db.module_parse(*m);
+            let deps = collect_imports(&p.tree(), &p.syntax().text().to_string())
+                .iter()
+                .filter_map(|i| module_by_name.get(&i.module_path).copied())
+                .filter(|d| d != m)
+                .collect();
+            (*m, deps)
+        })
+        .collect();
+    // The import path from `m` (itself included) to a module of `targets`.
+    let path_to = |m: ModuleId, targets: &HashSet<ModuleId>| -> Option<Vec<ModuleId>> {
+        let mut prev: HashMap<ModuleId, ModuleId> = HashMap::new();
+        let mut queue: std::collections::VecDeque<ModuleId> = std::collections::VecDeque::new();
+        let mut seen: HashSet<ModuleId> = HashSet::from([m]);
+        queue.push_back(m);
+        while let Some(x) = queue.pop_front() {
+            if targets.contains(&x) {
+                let mut path = vec![x];
+                let mut cur = x;
+                while let Some(p) = prev.get(&cur) {
+                    path.push(*p);
+                    cur = *p;
+                }
+                path.reverse();
+                return Some(path);
+            }
+            for d in proj_imports.get(&x).into_iter().flatten() {
+                if seen.insert(*d) {
+                    prev.insert(*d, x);
+                    queue.push_back(*d);
+                }
+            }
+        }
+        None
+    };
+    let exports_type = |m: ModuleId, name: &str| db.module_exports(m).type_(name).is_some();
+    let exports_value = |m: ModuleId, name: &str| db.module_exports(m).value(name).is_some();
+    // The modules whose generated copies import `Shared` whatever `Shared`
+    // copies: `update`'s module (its regenerated `update` reads the wire
+    // codecs), the `Msg` module (the `Applied<Msg>` variants name the `Resp`
+    // records), and `init`'s module when its command became an RPC.
+    let mut r_base: HashSet<ModuleId> = HashSet::new();
+    if !server.is_empty() {
+        r_base.insert(update_module);
+        if let Some(mm) = msg_module {
+            r_base.insert(mm);
         }
     }
-    // A wire-field type declared in a MIXED module must be copied from there too
-    // (it cannot be imported without leaking the module's effects).
-    for m in tainted_mods.iter().copied() {
-        let mparse = db.module_parse(m);
-        let mtypes = project_type_decls(&mparse.tree());
-        if seed_for_module(&seed_ty, &seed_keys, db.module_name(m))
-            .iter()
-            .any(|n| mtypes.contains_key(n))
-        {
-            copy_mods.insert(m);
-        }
+    if init_plan.is_some() {
+        r_base.insert(init_mod);
     }
-
-    // GAP-A cycle break — the co-located `Msg` + wire-types shape. When the `Msg`
-    // union lives in a PURE sibling module that ALSO declares a wire type/codec
-    // `Shared` references, injecting the `Applied<Msg>` RPC variants makes that
-    // module `import Shared`. If `Shared` then IMPORTED the module back (it would
-    // land in `needed_siblings`) the two-way import is a cycle (E1010 — the
-    // refusal this fix deletes). Resolve it by MOVING ownership of those wire
-    // declarations INTO `Shared` (add the module to `copy_mods`): `Shared`
-    // declares its own copy and never imports the Msg module. A wire record is a
-    // structural `type alias`, so `Shared`'s copy and the copy left in the Msg
-    // module unify — the model field and the RPC response field reconcile without
-    // a nominal single-definition. (A NOMINAL wire type — a `union` — cannot be
-    // duplicated soundly; that case is caught below and refused, since it is the
-    // genuinely-unavoidable residual cycle.)
-    let msg_is_pure_sibling = msg_module
-        .map(|m| pure_sibling_set.contains(&m))
-        .unwrap_or(false);
-    if let (Some(mm), true) = (msg_module, msg_is_pure_sibling) {
-        copy_mods.insert(mm);
-    }
-
-    // The pure transitive value closure of every referenced codec, grouped by the
-    // module that DECLARES it (only defs living in `copy_mods` are copied). Fails
-    // closed if a referenced codec's closure reaches a server-tainted def — that
-    // codec would drag an effect into `Shared`, so it is not eligible.
-    let copied_values_by_mod = compute_value_copy(
-        &db,
-        &copy_mods,
-        &registry,
-        &resolver.needed,
-        &tainted_by_module,
-    )?;
-
-    // Assemble the copied declarations + `exposing` list per source module, then
-    // concatenate. Each module contributes its own value + type closure, rendered
-    // verbatim from its own source (a mixed module's `Item` / `itemCodec` are
-    // copied out of `Data.sky`, not the entry).
-    let mut copied_names: HashSet<String> = HashSet::new();
-    let mut copied_decls = String::new();
-    let mut copied_exposing: Vec<String> = Vec::new();
-    // Every copied name → the source module NAME that declared it. A consumer that
-    // still reaches the name through a surviving `import <src> exposing (..)` reads
-    // it from there; only a consumer that lost it (declared-and-stripped, or an
-    // explicit import that was stripped) needs it re-imported from `Shared`. Used
-    // by `shared_expose_clause` to keep a copied structural type single-sourced per
-    // consumer (never imported from BOTH `Shared` and its origin — an ambiguity).
-    let mut copied_name_source: BTreeMap<String, String> = BTreeMap::new();
-    // The moved NOMINAL unions: type name → the words that name it in source (the
-    // type name plus every constructor). A `union` is a NOMINAL type — two
-    // same-named unions in different modules are distinct `DefId`s that never
-    // unify — so it cannot be duplicated copy-and-leave the way a structural
-    // record `type alias` can. `Shared` therefore OWNS each moved union as its
-    // SINGLE definition: every other module copy strips its declaration and
-    // imports the name (with `(..)` for the constructors) from `Shared`. The
-    // `Msg` union itself is NEVER moved (it is the `Applied<Msg>` inject target,
-    // stays in its module, and is not a wire field), so it is excluded below.
+    r_base.remove(&entry);
+    let tainted_set_c: HashSet<ModuleId> = tainted_mods.iter().copied().collect();
     let msg_union_name: Option<String> = msg_module.and_then(|m| {
         db.module_parse(m)
             .tree()
@@ -5015,127 +5057,216 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             })
             .and_then(|d| decl_name(&d))
     });
-    // A copied type may name a type of ANOTHER module (`at : Shape.Point`).
-    // `Shared` must see that type too (v0.27.0: the copy lost it, and the
-    // client reported `Undefined name: Chan.Batch`). Read the references from
-    // the resolver (`type_occs` inside the copied declarations):
-    //   * a type of a PURE sibling is imported (the module is in both trees),
-    //     under the qualifier the copied text uses;
-    //   * a type of a server-tainted module is COPIED too (importing that
-    //     module into `Shared` would put its effects in the wasm client), and
-    //     each qualified reference to it is rewritten to the bare name;
-    //   * a stdlib type keeps the source module's own import line.
-    let pure_sibling_names: HashMap<ModuleId, String> = pure_sibling_mods
-        .iter()
-        .map(|m| (*m, db.module_name(*m).to_string()))
-        .collect();
-    let project_mods: HashSet<ModuleId> = check_ids.iter().copied().collect();
-    let copy_types_of =
-        |m: ModuleId, seed: &BTreeSet<String>, keys: &BTreeSet<String>| -> BTreeSet<String> {
-            let mparse = db.module_parse(m);
-            let mfile = mparse.tree();
-            let mtypes = project_type_decls(&mfile);
-            let mut values: BTreeSet<String> =
-                copied_values_by_mod.get(&m).cloned().unwrap_or_default();
-            values.retain(|n| !mtypes.contains_key(n));
-            let seed = seed_for_module(seed, keys, db.module_name(m));
-            compute_type_copy(&mfile, &mtypes, &seed, &values)
-        };
-    // The type-name occurrences inside module `m`'s declarations named `names`:
-    // (occurrence byte range, the text as written, the defining module, the
-    // type's own name).
-    let foreign_type_occs = |m: ModuleId, names: &BTreeSet<String>| {
+    let mut r_set: HashSet<ModuleId> = r_base.clone();
+    let mut copy_mods: BTreeSet<ModuleId>;
+    let mut copied_values_by_mod: BTreeMap<ModuleId, BTreeSet<String>>;
+    // The moved NOMINAL unions: type name → the words that name it in source (the
+    // type name plus every constructor). A `union` is a NOMINAL type — two
+    // same-named unions in different modules are distinct `DefId`s that never
+    // unify — so it cannot be duplicated copy-and-leave the way a structural
+    // record `type alias` can. `Shared` therefore OWNS each moved union as its
+    // SINGLE definition: every other module copy strips its declaration and
+    // imports the name (with `(..)` for the constructors) from `Shared`. The
+    // `Msg` union itself is NEVER moved (it is the `Applied<Msg>` inject target,
+    // stays in its module, and is not a wire field), so it is excluded below.
+    let mut moved_unions: BTreeMap<String, Vec<String>>;
+    let copy_types_of = |m: ModuleId,
+                         seed: &BTreeSet<String>,
+                         keys: &BTreeSet<String>,
+                         values_by_mod: &BTreeMap<ModuleId, BTreeSet<String>>|
+     -> BTreeSet<String> {
         let mparse = db.module_parse(m);
         let mfile = mparse.tree();
-        let text = mparse.syntax().text().to_string();
-        let ranges: Vec<(u32, u32)> = mfile
+        let mtypes = project_type_decls(&mfile);
+        let mut values: BTreeSet<String> = values_by_mod.get(&m).cloned().unwrap_or_default();
+        values.retain(|n| !mtypes.contains_key(n));
+        let seed = seed_for_module(seed, keys, db.module_name(m));
+        compute_type_copy(&mfile, &mtypes, &seed, &values)
+    };
+    // The byte ranges of module `m`'s declarations named `names`.
+    let decl_ranges = |m: ModuleId, names: &BTreeSet<String>| -> Vec<(usize, usize)> {
+        db.module_parse(m)
+            .tree()
             .decls()
             .filter(|d| decl_name(d).is_some_and(|n| names.contains(&n)))
             .map(|d| {
                 let r = d.syntax().text_range();
-                (u32::from(r.start()), u32::from(r.end()))
+                (usize::from(r.start()), usize::from(r.end()))
             })
-            .collect();
-        let mut out: Vec<(u32, u32, String, ModuleId, String)> = Vec::new();
-        for occ in &db.resolve(m).type_occs {
-            let (a, b) = occ.span.range;
-            if !ranges.iter().any(|(s, e)| a >= *s && b <= *e) {
-                continue;
-            }
-            let Some(loc) = db.def_loc(occ.con) else {
-                continue;
-            };
-            // Builtin and kernel-implicit types live in the sentinel module
-            // `ModuleId(u32::MAX)`, which is not a real module.
-            if loc.module == m || loc.module.index() == u32::MAX {
-                continue;
-            }
-            // The occurrence span covers the type's own name; a qualifier
-            // (`S.` in `S.Point`) sits right before it.
-            let mut start = a as usize;
-            let bytes = text.as_bytes();
-            while start > 0 && bytes[start - 1] == b'.' {
-                let mut q = start - 1;
-                while q > 0 && (bytes[q - 1].is_ascii_alphanumeric() || bytes[q - 1] == b'_') {
-                    q -= 1;
-                }
-                if q == start - 1 || !bytes[q].is_ascii_uppercase() {
-                    break;
-                }
-                start = q;
-            }
-            let written = text.get(start..b as usize).unwrap_or("").to_string();
-            out.push((
-                start as u32,
-                b,
-                written,
-                loc.module,
-                occ.name.as_str().to_string(),
-            ));
-        }
-        out
+            .collect()
     };
     loop {
-        let mut grew = false;
-        for m in copy_mods.clone() {
-            let types = copy_types_of(m, &seed_ty, &seed_keys);
-            for (_, _, _, owner, tname) in foreign_type_occs(m, &types) {
-                let tainted_owner = project_mods.contains(&owner)
-                    && !pure_sibling_names.contains_key(&owner)
-                    && owner != entry;
-                if tainted_owner {
-                    grew |= copy_mods.insert(owner);
-                    let key = ty::nominal::qualify(db.module_name(owner), &tname);
-                    grew |= seed_keys.insert(key);
-                    grew |= seed_ty.insert(tname);
+        // Every module that declares a wire type or owns a referenced codec,
+        // and cannot be imported, is copied.
+        copy_mods = BTreeSet::from([entry]);
+        for m in check_ids.iter().copied().filter(|m| *m != entry) {
+            let mname = db.module_name(m).to_string();
+            let mtypes = project_type_decls(&db.module_parse(m).tree());
+            // The wire types `Shared` names in `m`, by qualified key: a bare
+            // seed name of unknown owner does not make `m` a wire module.
+            let wire_types: Vec<String> = seed_keys
+                .iter()
+                .filter(|k| ProjectShapes::module_of(k) == mname)
+                .map(|k| ProjectShapes::bare(k).to_string())
+                .filter(|n| mtypes.contains_key(n))
+                .collect();
+            let codecs: Vec<&CodecBinding> = registry
+                .iter()
+                .filter(|b| b.module == m && resolver.needed.contains(&b.name))
+                .collect();
+            if wire_types.is_empty() && codecs.is_empty() {
+                continue;
+            }
+            let hidden = wire_types.iter().any(|n| !exports_type(m, n))
+                || codecs.iter().any(|b| !exports_value(m, &b.name));
+            if hidden || path_to(m, &r_set).is_some() {
+                copy_mods.insert(m);
+            }
+        }
+        copied_values_by_mod = compute_value_copy(
+            &db,
+            &copy_mods,
+            &registry,
+            &resolver.needed,
+            &tainted_by_module,
+        )?;
+        // A copied declaration that names a type of a module `Shared` cannot
+        // import copies that module's type too (it is a wire type as well).
+        loop {
+            let mut grew = false;
+            for m in copy_mods.clone() {
+                let types = copy_types_of(m, &seed_ty, &seed_keys, &copied_values_by_mod);
+                let mtext = db.module_parse(m).syntax().text().to_string();
+                for (_, _, _, owner, tname) in type_occs_in(&db, m, &mtext, &decl_ranges(m, &types))
+                {
+                    if !project_mods.contains(&owner) || owner == entry {
+                        continue;
+                    }
+                    let blocked = path_to(owner, &r_set).is_some() || !exports_type(owner, &tname);
+                    if blocked || copy_mods.contains(&owner) {
+                        grew |= copy_mods.insert(owner);
+                        let key = ty::nominal::qualify(db.module_name(owner), &tname);
+                        grew |= seed_keys.insert(key);
+                        grew |= seed_ty.insert(tname);
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+            copied_values_by_mod = compute_value_copy(
+                &db,
+                &copy_mods,
+                &registry,
+                &resolver.needed,
+                &tainted_by_module,
+            )?;
+        }
+        // The unions `Shared` now owns, and the modules that import `Shared`
+        // because of them or because their copy strips a copied declaration.
+        moved_unions = BTreeMap::new();
+        for m in copy_mods.iter().copied() {
+            let mtypes = project_type_decls(&db.module_parse(m).tree());
+            for n in copy_types_of(m, &seed_ty, &seed_keys, &copied_values_by_mod) {
+                let Some(d) = mtypes.get(&n) else { continue };
+                if decl_kind(d) == DeclKind::Union && Some(&n) != msg_union_name.as_ref() {
+                    let mut words = vec![n.clone()];
+                    words.extend(union_variant_names(d));
+                    moved_unions.insert(n, words);
                 }
             }
         }
-        if !grew {
+        let mut next_r = r_base.clone();
+        for m in copy_mods.iter().copied().filter(|m| *m != entry) {
+            if tainted_set_c.contains(&m) {
+                next_r.insert(m);
+            }
+        }
+        if !moved_unions.is_empty() {
+            for m in check_ids.iter().copied().filter(|m| *m != entry) {
+                let msrc = db.module_parse(m).syntax().text().to_string();
+                if moved_unions
+                    .values()
+                    .any(|words| words.iter().any(|w| module_mentions_word(&msrc, w)))
+                {
+                    next_r.insert(m);
+                }
+            }
+        }
+        if next_r == r_set {
             break;
         }
+        r_set = next_r;
     }
-    // Per copy module: the qualified references to a type `Shared` now owns
-    // (rewritten to the bare name), and the imports `Shared` needs.
-    let mut copied_rewrites: HashMap<ModuleId, Vec<(u32, u32, String)>> = HashMap::new();
-    let mut foreign_sibling_imports: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // A codec `Shared` names in place must not reach a server effect: the
+    // client copy of its module drops every tainted def.
+    for b in registry
+        .iter()
+        .filter(|b| resolver.needed.contains(&b.name) && !copy_mods.contains(&b.module))
+    {
+        let mname = db.module_name(b.module).to_string();
+        if tainted_by_module
+            .get(&mname)
+            .is_some_and(|s| s.contains(&b.name))
+        {
+            return Err(format!(
+                "no codec: the `Codec` binding `{mname}.{}` reaches a server effect, so the wasm client cannot use it. Move the codec (and its pure helpers) into a module that runs no effect, or reduce the wire field to a primitive / `List` / `Maybe`.",
+                b.name
+            ));
+        }
+    }
+
+    // Assemble the copied declarations + `exposing` list per source module, then
+    // concatenate. Each module contributes its own value + type closure, rendered
+    // verbatim from its own source. A type-name occurrence in a copied
+    // declaration names a type `Shared` copies bare, and any other project or
+    // dependency type through its `SpaTy_` alias (`Shared` imports that module).
+    let mut copied_names: HashSet<String> = HashSet::new();
+    let mut copied_decls = String::new();
+    let mut copied_exposing: Vec<String> = Vec::new();
+    // Every copied name → the source module NAME that declared it. A consumer that
+    // still reaches the name through a surviving `import <src> exposing (..)` reads
+    // it from there; only a consumer that lost it (declared-and-stripped, or an
+    // explicit import that was stripped) needs it re-imported from `Shared`. Used
+    // by `shared_expose_clause` to keep a copied structural type single-sourced per
+    // consumer (never imported from BOTH `Shared` and its origin — an ambiguity).
+    let mut copied_name_source: BTreeMap<String, String> = BTreeMap::new();
     let mut foreign_stdlib_imports: Vec<String> = Vec::new();
     for m in copy_mods.iter().copied() {
-        let types = copy_types_of(m, &seed_ty, &seed_keys);
         let mparse = db.module_parse(m);
-        let mimports = collect_imports(&mparse.tree(), &mparse.syntax().text().to_string());
-        for (a, b, written, owner, tname) in foreign_type_occs(m, &types) {
-            let qual = written.rsplit_once('.').map(|(q, _)| q.to_string());
+        let mfile = mparse.tree();
+        let msrc = mparse.syntax().text().to_string();
+        let mtypes = project_type_decls(&mfile);
+        let mut values: BTreeSet<String> =
+            copied_values_by_mod.get(&m).cloned().unwrap_or_default();
+        // A record-alias constructor (`Codec.object Item`) resolves to a def named
+        // like the type — keep those in the TYPE-copy set, never the value set.
+        values.retain(|n| !mtypes.contains_key(n));
+        let types = copy_types_of(m, &seed_ty, &seed_keys, &copied_values_by_mod);
+        let mut names: HashSet<String> = HashSet::new();
+        names.extend(values.iter().cloned());
+        names.extend(types.iter().cloned());
+        if names.is_empty() {
+            continue;
+        }
+        let mimports = collect_imports(&mfile, &msrc);
+        let mut rewrites: Vec<(usize, usize, String)> = Vec::new();
+        let copied_set: BTreeSet<String> = names.iter().cloned().collect();
+        for (a, b, written, owner, tname) in
+            type_occs_in(&db, m, &msrc, &decl_ranges(m, &copied_set))
+        {
             if copy_mods.contains(&owner) {
-                if qual.is_some() {
-                    copied_rewrites.entry(m).or_default().push((a, b, tname));
+                if written.contains('.') {
+                    rewrites.push((a, b, tname));
                 }
-            } else if let Some(name) = pure_sibling_names.get(&owner) {
-                let aliases = foreign_sibling_imports.entry(name.clone()).or_default();
-                if let Some(q) = qual.filter(|q| q != name) {
-                    aliases.insert(q);
-                }
-            } else if !project_mods.contains(&owner) && m != entry {
+            } else if project_mods.contains(&owner) || dep_mods.contains(&owner) {
+                rewrites.push((
+                    a,
+                    b,
+                    format!("{}.{tname}", external_alias(db.module_name(owner))),
+                ));
+            } else if m != entry {
+                // A stdlib type keeps the source module's own import line.
                 let oname = db.module_name(owner).to_string();
                 if let Some(i) = mimports.iter().find(|i| i.module_path == oname) {
                     if !imports.iter().any(|e| e.module_path == oname)
@@ -5146,23 +5277,100 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 }
             }
         }
+        // A copied VALUE (a user codec) may name a value or constructor of
+        // another module (`P1.kindCodec`, or `kindCodec` through `exposing
+        // (..)`): the same rule, read from the resolver (`ref_occs`).
+        let value_ranges = decl_ranges(m, &values);
+        let bytes = msrc.as_bytes();
+        for occ in &db.resolve(m).ref_occs {
+            let (a, b) = (occ.span.range.0 as usize, occ.span.range.1 as usize);
+            if !value_ranges.iter().any(|(s, e)| a >= *s && b <= *e) {
+                continue;
+            }
+            let target = match &occ.res {
+                hir::Res::Def(d) => *d,
+                hir::Res::Ctor(c) => c.def,
+                _ => continue,
+            };
+            let Some(loc) = db.def_loc(target) else {
+                continue;
+            };
+            let owner = loc.module;
+            if owner == m || !(project_mods.contains(&owner) || dep_mods.contains(&owner)) {
+                continue;
+            }
+            let name = loc.name.as_str().to_string();
+            let mut start = a;
+            while start > 0 && bytes[start - 1] == b'.' {
+                let mut q = start - 1;
+                while q > 0 && (bytes[q - 1].is_ascii_alphanumeric() || bytes[q - 1] == b'_') {
+                    q -= 1;
+                }
+                if q == start - 1 || !bytes[q].is_ascii_uppercase() {
+                    break;
+                }
+                start = q;
+            }
+            let written = msrc.get(start..b).unwrap_or("");
+            // The span must end in the name it resolves to (a record-field
+            // access or an operator section is not a rewritable reference).
+            if !written.ends_with(name.as_str()) {
+                continue;
+            }
+            let with = if copy_mods.contains(&owner) {
+                name
+            } else {
+                format!("{}.{name}", external_alias(db.module_name(owner)))
+            };
+            if written != with {
+                rewrites.push((start, b, with));
+            }
+        }
+        rewrites.sort_by(|x, y| y.0.cmp(&x.0));
+        rewrites.dedup_by(|x, y| x.0 == y.0 && x.1 == y.1);
+        if rewrites.is_empty() {
+            copied_decls.push_str(&render_copied_decls(&mfile, &msrc, &names));
+        } else {
+            rewrites.sort_by(|x, y| y.0.cmp(&x.0));
+            let mut t = msrc.clone();
+            for (a, b, n) in rewrites {
+                t.replace_range(a..b, &n);
+            }
+            let rparse = syntax::parse(&t, base::FileId(0));
+            copied_decls.push_str(&render_copied_decls(&rparse.tree(), &t, &names));
+        }
+        for e in copied_exposing_list(&mtypes, &types, &values) {
+            copied_exposing.push(e);
+        }
+        let mname = db.module_name(m).to_string();
+        for n in &names {
+            if let Some(other) = copied_name_source.insert(n.clone(), mname.clone()) {
+                if other != mname {
+                    return Err(format!(
+                        "cannot auto-split: `Shared` must declare `{n}` from both `{other}` and `{mname}` (it cannot import either: the entry, or a module that imports one that imports `Shared`). Rename one of them.\n{}",
+                        crate::migration_see(SPLIT_REFUSALS)
+                    ));
+                }
+            }
+        }
+        copied_names.extend(names);
     }
     // A VALUE copied into `Shared` from a sibling (a user codec, `itemCodec =
     // Codec.object Item |> …`) names stdlib modules through ITS module's
     // imports. Carry each such import, under the qualifier the value wrote.
     // Before v0.29.7 `Shared` always imported `Std.Codec as Codec`, which hid
     // this for `Codec.` alone and collided with a project module `Codec`.
-    for m in copy_mods.iter().copied().filter(|m| *m != entry) {
+    let project_names: HashSet<String> = project_mods
+        .iter()
+        .map(|p| db.module_name(*p).to_string())
+        .collect();
+    for m in copy_mods.iter().copied() {
         let Some(names) = copied_values_by_mod.get(&m) else {
             continue;
         };
         let mparse = db.module_parse(m);
         let msrc = mparse.syntax().text().to_string();
         let mimports = collect_imports(&mparse.tree(), &msrc);
-        let project_names: HashSet<String> = project_mods
-            .iter()
-            .map(|p| db.module_name(*p).to_string())
-            .collect();
         for d in mparse.tree().decls() {
             if !decl_name(&d).is_some_and(|n| names.contains(&n)) {
                 continue;
@@ -5170,15 +5378,17 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             let text = strip_sky_comments(slice(&msrc, d.syntax()));
             // A name the sibling exposes from a stdlib import (`Codec` in
             // `itemCodec : Codec Item`, from `exposing (Codec)`).
-            for i in &mimports {
-                if project_names.contains(&i.module_path) {
-                    continue;
-                }
-                for n in explicit_exposed_names(&i.text) {
-                    if references_word(&text, &n) {
-                        let line = format!("import {} exposing ({n})", i.module_path);
-                        if !foreign_stdlib_imports.contains(&line) {
-                            foreign_stdlib_imports.push(line);
+            if m != entry {
+                for i in &mimports {
+                    if project_names.contains(&i.module_path) {
+                        continue;
+                    }
+                    for n in explicit_exposed_names(&i.text) {
+                        if references_word(&text, &n) {
+                            let line = format!("import {} exposing ({n})", i.module_path);
+                            if !foreign_stdlib_imports.contains(&line) {
+                                foreign_stdlib_imports.push(line);
+                            }
                         }
                     }
                 }
@@ -5187,10 +5397,17 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 let Some(i) = mimports.iter().find(|i| import_qualifier(&i.text) == q) else {
                     continue;
                 };
-                if project_names.contains(&i.module_path) {
+                // A project module's references were rewritten to its
+                // `SpaTy_` alias (or made bare) above; the entry's stdlib
+                // imports are `Shared`'s own.
+                if project_names.contains(&i.module_path) || m == entry {
                     continue;
                 }
-                let line = format!("import {} as {q}", i.module_path);
+                let line = if q == i.module_path {
+                    format!("import {}", i.module_path)
+                } else {
+                    format!("import {} as {q}", i.module_path)
+                };
                 if let Some(e) = imports
                     .iter()
                     .find(|e| import_qualifier(&e.text) == q && e.module_path != i.module_path)
@@ -5205,88 +5422,91 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                         crate::migration_see(SPLIT_REFUSALS)
                     ));
                 }
-                if !imports.iter().any(|e| import_qualifier(&e.text) == q)
-                    && !foreign_stdlib_imports.contains(&line)
-                {
+                let carried_by_entry = imports.iter().any(|e| import_qualifier(&e.text) == q);
+                if !carried_by_entry && !foreign_stdlib_imports.contains(&line) {
                     foreign_stdlib_imports.push(line);
                 }
             }
         }
     }
-    let mut moved_unions: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for m in copy_mods.iter().copied() {
-        let mparse = db.module_parse(m);
-        let mfile = mparse.tree();
-        let msrc = mparse.syntax().text().to_string();
-        let mtypes = project_type_decls(&mfile);
-        let mut values: BTreeSet<String> =
-            copied_values_by_mod.get(&m).cloned().unwrap_or_default();
-        // A record-alias constructor (`Codec.object Item`) resolves to a def named
-        // like the type — keep those in the TYPE-copy set, never the value set.
-        values.retain(|n| !mtypes.contains_key(n));
-        let seed_m = seed_for_module(&seed_ty, &seed_keys, db.module_name(m));
-        let types = compute_type_copy(&mfile, &mtypes, &seed_m, &values);
-        // A moved NOMINAL type (a `union`) in this module's type-copy set cannot be
-        // duplicated: two same-named unions in different modules never unify. So
-        // record it as a MOVED UNION — `Shared` owns the single definition (it is
-        // in `copied_names`, rendered by `render_copied_decls`), every other copy
-        // strips its declaration and imports `Name(..)` from `Shared`. The `Msg`
-        // union is never in this set (it is not a wire field), and is excluded by
-        // name defensively. Structural record `type alias`es keep copy-and-leave.
-        for n in &types {
-            let is_union = mtypes
-                .get(n)
-                .map(|d| decl_kind(d) == DeclKind::Union)
-                .unwrap_or(false);
-            if is_union && Some(n) != msg_union_name.as_ref() {
-                let mut words = vec![n.clone()];
-                if let Some(d) = mtypes.get(n) {
-                    words.extend(union_variant_names(d));
-                }
-                moved_unions.insert(n.clone(), words);
-            }
-        }
-        let mut names: HashSet<String> = HashSet::new();
-        names.extend(values.iter().cloned());
-        names.extend(types.iter().cloned());
-        if names.is_empty() {
-            continue;
-        }
-        let rewritten_src = match copied_rewrites.get(&m) {
-            Some(rw) => {
-                let mut rw = rw.clone();
-                rw.sort_by(|x, y| y.0.cmp(&x.0));
-                let mut t = msrc.clone();
-                for (a, b, bare) in rw {
-                    t.replace_range(a as usize..b as usize, &bare);
-                }
-                t
-            }
-            None => msrc.clone(),
-        };
-        if rewritten_src != msrc {
-            let rparse = syntax::parse(&rewritten_src, base::FileId(0));
-            copied_decls.push_str(&render_copied_decls(&rparse.tree(), &rewritten_src, &names));
-        } else {
-            copied_decls.push_str(&render_copied_decls(&mfile, &msrc, &names));
-        }
-        for e in copied_exposing_list(&mtypes, &types, &values) {
-            copied_exposing.push(e);
-        }
-        let mname = db.module_name(m).to_string();
-        for n in &names {
-            copied_name_source.insert(n.clone(), mname.clone());
-        }
-        copied_names.extend(names);
-    }
     // De-dup the exposing list (a name never appears twice across modules).
     let mut seen_exp: HashSet<String> = HashSet::new();
     copied_exposing.retain(|e| seen_exp.insert(e.clone()));
+
+    // The `SpaTy_` alias of every project and dependency module, and the
+    // aliases of the modules `Shared` copies from (their qualifier is removed:
+    // `Shared` declares those types itself).
+    let mut spaty_modules: HashMap<String, String> = HashMap::new();
+    for m in project_mods.iter().chain(dep_mods.iter()) {
+        let name = db.module_name(*m).to_string();
+        if let Some(other) = spaty_modules.insert(external_alias(&name), name.clone()) {
+            if other != name {
+                return Err(format!(
+                    "sky.spa: the modules `{other}` and `{name}` get the same generated import alias `{}`. Rename one of them.\n{}",
+                    external_alias(&name),
+                    crate::migration_see(SPLIT_REFUSALS)
+                ));
+            }
+        }
+    }
+    let owned_aliases: Vec<String> = copy_mods
+        .iter()
+        .map(|m| external_alias(db.module_name(*m)))
+        .collect();
+    // The modules `Shared` names through their alias: each needs a client
+    // copy (a module with a server function gets its client subset).
+    let shared_named_modules: BTreeSet<ModuleId> = {
+        let mut text = String::new();
+        text.push_str(&auto_codec_defs);
+        text.push_str(&copied_decls);
+        for w in &wires {
+            for f in w.req_fields.iter().chain(w.resp_fields.iter()) {
+                text.push_str(&f.ty_name);
+                text.push('\n');
+                if let Some(c) = &f.codec {
+                    text.push_str(c);
+                    text.push('\n');
+                }
+            }
+        }
+        for p in &session_projection {
+            text.push_str(&p.surface);
+            text.push('\n');
+            text.push_str(&p.codec);
+            text.push('\n');
+        }
+        let text = strip_owned_qualifiers(&text, &owned_aliases);
+        spaty_aliases_in(&text)
+            .iter()
+            .filter_map(|a| spaty_modules.get(a))
+            .filter_map(|n| module_by_name.get(n).copied())
+            .collect()
+    };
+    for m in &shared_named_modules {
+        if let Some(path) = path_to(*m, &r_set) {
+            let shown: Vec<String> = path
+                .iter()
+                .map(|p| db.module_name(*p).to_string())
+                .collect();
+            return Err(format!(
+                "cannot auto-split: `Shared` must import `{}` for the wire types it names, but `{}` imports `Shared`, so the import path {} -> Shared would be a cycle. Move the wire types out of the modules on that path.\n{}",
+                shown[0],
+                shown[shown.len() - 1],
+                shown.join(" -> "),
+                crate::migration_see(SPLIT_REFUSALS)
+            ));
+        }
+        if tainted_set_c.contains(m) && !subset_mods.contains(m) {
+            subset_mods.push(*m);
+            no_frontend_mods.retain(|x| x != m);
+        }
+    }
 
     // A module kept only for types that `Shared` now owns, each named bare,
     // needs no client copy: the frontend reads those types from `Shared`.
     for m in subset_mods.clone() {
         let only_copied_types = !needs_module_copy.contains(&m)
+            && !shared_named_modules.contains(&m)
             && m != update_module
             && Some(m) != msg_module
             && type_only_needs.get(&m).is_some_and(|needs| {
@@ -5325,114 +5545,41 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         ));
     }
 
-    // ---- pure sibling modules the wire references (Shared imports them) ----
-    // A referenced codec or a wire-field type DECLARED in a PURE sibling module
-    // is NOT copied into Shared (the module is copied whole to both trees);
-    // Shared imports the module instead. A codec in a MIXED/tainted module is
-    // COPIED above, never imported (importing it would leak its server effects
-    // into the wasm frontend).
-    let mut needed_siblings: BTreeSet<String> = BTreeSet::new();
-    for b in &registry {
-        // A module already in `copy_mods` (the co-located Msg module) is COPIED
-        // into `Shared`, never imported — importing it would re-open the cycle.
-        if resolver.needed.contains(&b.name)
-            && pure_sibling_set.contains(&b.module)
-            && !copy_mods.contains(&b.module)
-        {
-            needed_siblings.insert(db.module_name(b.module).to_string());
-        }
-    }
-    // Wire-field types declared in a pure sibling module (e.g. `Todo` in `Domain`).
-    for m in &pure_sibling_mods {
-        if copy_mods.contains(m) {
-            continue; // owned by `Shared` (copied), not imported
-        }
-        let mname = db.module_name(*m).to_string();
-        let mparse = db.module_parse(*m);
-        let mfile = mparse.tree();
-        let mtypes = project_type_decls(&mfile);
-        if seed_for_module(&seed_ty, &seed_keys, &mname)
-            .iter()
-            .any(|n| mtypes.contains_key(n))
-        {
-            needed_siblings.insert(mname);
-        }
-    }
-    // Residual (the one genuinely-unclosable shape). A pure sibling that `Shared`
-    // IMPORTS (a `needed_sibling` — it provides a wire type/codec that is not
-    // copied) yet which ALSO references a moved union would need to import
-    // `Shared` back for that union's single definition — a two-way import cycle
-    // (E1010). Refuse precisely rather than emit a cyclic tree. (The common
-    // shape — a `Msg` module in `copy_mods`, never a `needed_sibling` — does not
-    // hit this; only a module that is BOTH a wire-type provider AND a moved-union
-    // consumer does.)
-    if !moved_unions.is_empty() {
-        for m in &pure_sibling_mods {
-            let mname = db.module_name(*m).to_string();
-            if !needed_siblings.contains(&mname) {
-                continue;
-            }
-            let msrc = db.module_parse(*m).syntax().text().to_string();
-            if let Some((u, _)) = moved_unions
-                .iter()
-                .find(|(_, words)| words.iter().any(|w| module_mentions_word(&msrc, w)))
-            {
-                return Err(format!(
-                    "cannot auto-split: module `{mname}` provides a wire type/codec that `Shared` imports, and it ALSO references the union `{u}` that `Shared` must OWN — so `{mname}` would have to import `Shared` back, forming an import cycle (E1010). Move `{u}` (and any type that references it) into a module `Shared` does not import, or move the wire type/codec out of `{mname}`."
-                ));
-            }
-        }
-    }
     // EVERY non-entry project module — Shared drops the entry's import of any of
-    // them (a needed wire-type sibling is re-added with a canonical `exposing
-    // (..)`). This MUST include the tainted/subset modules, not only the pure
-    // siblings: a subset module (e.g. a sibling `update`) now imports `Shared`
-    // for the wire codecs, so if `Shared` also carried the entry's `import
-    // <that module>` it would form a `Shared` ↔ module cycle (E1010).
+    // them. `Shared` imports a project module only under its `SpaTy_` alias
+    // (added once its text is final, see `finish_type_refs`) or as a copied
+    // value names it (above). Carrying the entry's own sibling imports (`import
+    // Data`, `import Routes`) would be both unnecessary and unsound: those
+    // modules may import a module that imports `Shared` (a cycle, E1010).
     let all_project_sibling_names: HashSet<String> = check_ids
         .iter()
         .copied()
         .filter(|m| *m != entry)
         .map(|m| db.module_name(m).to_string())
         .collect();
-    for name in foreign_sibling_imports.keys() {
-        needed_siblings.insert(name.clone());
-    }
-    let mut shared_imports = shared_import_lines(
-        &imports,
-        &needed_siblings,
-        &no_frontend_names,
-        &all_project_sibling_names,
-    );
-    // A pure sibling a copied type names under an import alias
-    // (`import Shape as S` … `at : S.Point`) is imported under that alias.
-    for (name, aliases) in &foreign_sibling_imports {
-        if aliases.len() > 1 {
-            return Err(format!(
-                "sky.spa: the wire types copied into `Shared` name module `{name}` under \
-                 several import aliases ({}). Use one alias for `{name}` in the modules \
-                 that declare the wire types.\n{}",
-                aliases.iter().cloned().collect::<Vec<_>>().join(", "),
-                crate::migration_see(SPLIT_REFUSALS)
-            ));
-        }
-        if let Some(alias) = aliases.iter().next() {
-            let canonical = format!("import {name} exposing (..)");
-            for line in shared_imports.iter_mut() {
-                if *line == canonical {
-                    *line = format!("import {name} as {alias} exposing (..)");
-                }
-            }
-        }
-    }
+    let mut shared_imports =
+        shared_import_lines(&imports, &no_frontend_names, &all_project_sibling_names);
     shared_imports.extend(foreign_stdlib_imports);
-    // A dependency type a wire codec names (`Geo.Shape.Point`) is imported
-    // under a generated alias and named qualified: both generated projects
-    // carry the dependency, and a qualified reference cannot be captured by a
-    // same-named type the app declares or imports.
-    for m in &resolver.external_modules {
-        shared_imports.push(format!("import {m} as {}", external_alias(m)));
-    }
+    // The text every generated file is finished with: a `SpaTy_` qualifier of
+    // a module `Shared` copies from, or of the file's own module, is removed,
+    // and each other `SpaTy_` alias the file uses gets its `import <Mod> as
+    // SpaTy_<Mod>_` line.
+    let finish_type_refs = |content: &str, own_module: Option<&str>| -> String {
+        let mut owned = owned_aliases.clone();
+        if let Some(own) = own_module {
+            owned.push(external_alias(own));
+        }
+        let out = strip_owned_qualifiers(content, &owned);
+        let lines: Vec<String> = spaty_aliases_in(&out)
+            .into_iter()
+            .filter_map(|alias| {
+                spaty_modules
+                    .get(&alias)
+                    .map(|module| format!("import {module} as {alias}"))
+            })
+            .collect();
+        add_import_lines(&out, &lines)
+    };
 
     // ---- `update`'s DECLARING module (GAP-1) ----
     // `update` may live in the entry OR a sibling. Read its param names +
@@ -5612,6 +5759,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &session_projection,
         wire_decl_orders(&shapes),
     );
+    // Name each project and dependency type through its `SpaTy_` alias (and
+    // import it), or bare when `Shared` declares it.
+    shared_src = finish_type_refs(&shared_src, None);
     if returned_scrolls {
         // Includes init-only String RPCs: their INNER envelope changed even if
         // there are no ordinary response fields. Existing409/reload gate binds it.
@@ -5863,7 +6013,16 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         // its code uses ([`RESERVED_ALIASES`]); a verbatim copy uses none.
         let reserved;
         let content = if rel.ends_with(".sky") {
-            reserved = ensure_reserved_imports(content);
+            // The module the file declares (`backend/src/Geo/Shape.sky` is
+            // `Geo.Shape`): a `SpaTy_` reference to its own types is bare.
+            let own = rel
+                .rsplit_once("src/")
+                .map(|(_, m)| m)
+                .unwrap_or(rel)
+                .trim_end_matches(".sky")
+                .replace('/', ".");
+            let finished = finish_type_refs(content, Some(&own));
+            reserved = ensure_reserved_imports(&finished);
             generated_source_parses(rel, &reserved)?;
             reserved.as_str()
         } else {
@@ -6148,6 +6307,12 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         ));
     }
 
+    // The generated trees must not import in a cycle through `Shared`: the
+    // copy set above is chosen so that none does, and this check turns any
+    // shape it missed into a refusal that names the path, never a raw
+    // `[E1010]` from a generated file.
+    check_shared_acyclic(out_dir, &files)?;
+
     Ok((
         SpaSplitReport {
             out_dir: out_dir.to_string_lossy().to_string(),
@@ -6165,6 +6330,64 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         arm_routes.plan_heads.clone(),
         arm_routes.plan_candidates.clone(),
     ))
+}
+
+/// Refuse a generated tree whose modules import in a cycle through `Shared`
+/// (see [`generate_inner`]), naming the path.
+fn check_shared_acyclic(out_dir: &Path, files: &[String]) -> Result<(), String> {
+    for leg in ["frontend/src/", "backend/src/"] {
+        let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for rel in files
+            .iter()
+            .filter(|f| f.starts_with(leg) && f.ends_with(".sky"))
+        {
+            let module = rel[leg.len()..].trim_end_matches(".sky").replace('/', ".");
+            let text = std::fs::read_to_string(out_dir.join(rel)).unwrap_or_default();
+            let deps = text
+                .lines()
+                .filter_map(|l| l.strip_prefix("import "))
+                .filter_map(|r| r.split_whitespace().next())
+                .map(str::to_string)
+                .collect();
+            graph.insert(module, deps);
+        }
+        // Breadth-first from `Shared`'s imports back to `Shared`.
+        let mut prev: HashMap<String, String> = HashMap::new();
+        let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+        for d in graph.get("Shared").into_iter().flatten() {
+            if graph.contains_key(d) && !prev.contains_key(d) {
+                prev.insert(d.clone(), "Shared".to_string());
+                queue.push_back(d.clone());
+            }
+        }
+        while let Some(x) = queue.pop_front() {
+            if x == "Shared" {
+                let mut path = vec!["Shared".to_string()];
+                let mut cur = prev.get("Shared").cloned();
+                while let Some(c) = cur {
+                    if c == "Shared" {
+                        break;
+                    }
+                    path.push(c.clone());
+                    cur = prev.get(&c).cloned();
+                }
+                path.push("Shared".to_string());
+                path.reverse();
+                return Err(format!(
+                    "cannot auto-split: the generated modules would import each other in a cycle ({}). The wire types `Shared` names live in a module that imports a module the split extends with `import Shared`. Move those wire types into a module that imports neither `update`'s module nor the `Msg` module.\n{}",
+                    path.join(" -> "),
+                    crate::migration_see(SPLIT_REFUSALS)
+                ));
+            }
+            for d in graph.get(&x).into_iter().flatten() {
+                if graph.contains_key(d) && !prev.contains_key(d) {
+                    prev.insert(d.clone(), x.clone());
+                    queue.push_back(d.clone());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A module's frontend text with the client copies of the helpers it
@@ -7363,7 +7586,12 @@ fn dependency_modules(db: &SkyDatabase, check_ids: &[ModuleId]) -> Vec<ModuleId>
         .collect()
 }
 
-fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId], deps: &[ModuleId]) -> ProjectShapes {
+fn build_project_shapes(
+    db: &SkyDatabase,
+    mods: &[ModuleId],
+    deps: &[ModuleId],
+    entry_module: &str,
+) -> ProjectShapes {
     use syntax::ast::Decl;
     use ty::TyDb;
     let world = db.type_world();
@@ -7562,6 +7790,7 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId], deps: &[ModuleId]) 
         external_modules,
         project_modules,
         generic_records,
+        entry_module: entry_module.to_string(),
     }
 }
 
@@ -7709,8 +7938,13 @@ fn classify_field_kind(
 /// project's own zero-arg `Codec <T>` bindings. Each binding records the module
 /// it lives in, so the generator can decide whether to COPY it into `Shared`
 /// (entry-module codecs) or reference it via an `import` (sibling-module codecs).
-fn build_codec_registry(db: &SkyDatabase, mods: &[ModuleId]) -> Vec<CodecBinding> {
+fn build_codec_registry(db: &SkyDatabase, mods: &[ModuleId], entry: ModuleId) -> Vec<CodecBinding> {
     let mut out: Vec<CodecBinding> = Vec::new();
+    let user_mods: HashSet<ModuleId> = mods
+        .iter()
+        .copied()
+        .chain(dependency_modules(db, mods))
+        .collect();
     for &mid in mods {
         let resolved = db.resolve(mid);
         let parse = db.module_parse(mid);
@@ -7731,18 +7965,118 @@ fn build_codec_registry(db: &SkyDatabase, mods: &[ModuleId]) -> Vec<CodecBinding
                     let bname = td.name.as_str().to_string();
                     // Prefer the user's declared surface (`Codec (List Todo)` →
                     // `List Todo`); fall back to the solved (alias-expanded) type.
-                    let surface = decl_text_by(&file, &src, &bname, DeclKind::TypeAnno)
-                        .and_then(|a| codec_arg_surface(&a));
+                    // Each project type the annotation names is spelt the way
+                    // generated code names it (`SpaTy_<Mod>_.<Name>`), so the
+                    // surface means the same type in `Shared` as in `mid`.
+                    let surface = file
+                        .decls()
+                        .find(|d| {
+                            decl_name(d).as_deref() == Some(bname.as_str())
+                                && decl_kind(d) == DeclKind::TypeAnno
+                        })
+                        .and_then(|d| {
+                            let r = d.syntax().text_range();
+                            let range = (usize::from(r.start()), usize::from(r.end()));
+                            let anno = qualify_type_refs(db, mid, &src, range, &|owner, name| {
+                                if !user_mods.contains(&owner) {
+                                    None
+                                } else if owner == entry {
+                                    Some(name.to_string())
+                                } else {
+                                    Some(format!(
+                                        "{}.{name}",
+                                        external_alias(db.module_name(owner))
+                                    ))
+                                }
+                            });
+                            codec_arg_surface(&anno)
+                        });
+                    let reference = if mid == entry {
+                        bname.clone()
+                    } else {
+                        format!("{}.{bname}", external_alias(db.module_name(mid)))
+                    };
                     out.push(CodecBinding {
                         name: bname,
                         def: td.def,
                         module: mid,
                         coded_ty: args[0].clone(),
                         surface,
+                        reference,
                     });
                 }
             }
         }
+    }
+    out
+}
+
+/// The text `src[range]` of module `m` with each type-name occurrence the
+/// resolver records in it (`type_occs`) replaced by `name_for(owner, name)`,
+/// qualifier included (`S.Point` is one occurrence). An occurrence whose
+/// `name_for` is `None` (a stdlib type, a builtin) keeps its text.
+fn qualify_type_refs(
+    db: &SkyDatabase,
+    m: ModuleId,
+    src: &str,
+    range: (usize, usize),
+    name_for: &dyn Fn(ModuleId, &str) -> Option<String>,
+) -> String {
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for (a, b, _written, owner, tname) in type_occs_in(db, m, src, &[range]) {
+        if let Some(n) = name_for(owner, &tname) {
+            edits.push((a, b, n));
+        }
+    }
+    let mut out = src.get(range.0..range.1).unwrap_or("").to_string();
+    edits.sort_by(|x, y| y.0.cmp(&x.0));
+    for (a, b, n) in edits {
+        out.replace_range(a - range.0..b - range.0, &n);
+    }
+    out
+}
+
+/// The type-name occurrences of module `m` inside the byte `ranges` of its
+/// source `src`, from the resolver (`type_occs`): (start including any
+/// qualifier, end, the text as written, the declaring module, the type's own
+/// name). A builtin (the sentinel module) is left out; a type `m` declares
+/// itself is kept.
+fn type_occs_in(
+    db: &SkyDatabase,
+    m: ModuleId,
+    src: &str,
+    ranges: &[(usize, usize)],
+) -> Vec<(usize, usize, String, ModuleId, String)> {
+    let mut out = Vec::new();
+    let bytes = src.as_bytes();
+    for occ in &db.resolve(m).type_occs {
+        let (a, b) = (occ.span.range.0 as usize, occ.span.range.1 as usize);
+        if !ranges.iter().any(|(s, e)| a >= *s && b <= *e) {
+            continue;
+        }
+        let Some(loc) = db.def_loc(occ.con) else {
+            continue;
+        };
+        // Builtin and kernel-implicit types live in the sentinel module
+        // `ModuleId(u32::MAX)`, which is not a real module.
+        if loc.module.index() == u32::MAX {
+            continue;
+        }
+        // The occurrence span covers the type's own name; a qualifier (`S.`
+        // in `S.Point`) sits right before it.
+        let mut start = a;
+        while start > 0 && bytes[start - 1] == b'.' {
+            let mut q = start - 1;
+            while q > 0 && (bytes[q - 1].is_ascii_alphanumeric() || bytes[q - 1] == b'_') {
+                q -= 1;
+            }
+            if q == start - 1 || !bytes[q].is_ascii_uppercase() {
+                break;
+            }
+            start = q;
+        }
+        let written = src.get(start..b).unwrap_or("").to_string();
+        out.push((start, b, written, loc.module, occ.name.as_str().to_string()));
     }
     out
 }
@@ -7968,15 +8302,15 @@ fn copied_exposing_list(
 
 /// Shared's imports: the input's imports (a server-only stdlib module's goes
 /// through the usage gate on the finished `Shared`), minus the `Std.Spa`
-/// framework (Shared is pure wire types + codecs), and any
-/// **backend-only** project module (whose effects must never reach the wasm
-/// client), with Prelude + Codec guaranteed present. `needed_siblings` are the
-/// PURE sibling project modules whose types/codecs the wire references — Shared
-/// imports each with a canonical `exposing (..)` (dropping the entry's own,
-/// possibly-aliased, form to avoid a duplicate import).
+/// framework (Shared is pure wire types + codecs), any **backend-only** project
+/// module (whose effects must never reach the wasm client) and every other
+/// project module, with Prelude guaranteed present. A project module `Shared`
+/// names is imported under its generated `SpaTy_` alias once the text is final
+/// (`finish_type_refs` in [`generate_inner`]), never `exposing (..)`: two
+/// modules that export one name (`P1.Matched`, `P2.Matched`) would make every
+/// bare use ambiguous (`[E1012]`).
 fn shared_import_lines(
     imports: &[ImportInfo],
-    needed_siblings: &BTreeSet<String>,
     backend_only: &HashSet<String>,
     project_siblings: &HashSet<String>,
 ) -> Vec<String> {
@@ -7991,33 +8325,80 @@ fn shared_import_lines(
         if backend_only.contains(&i.module_path) {
             continue;
         }
-        if needed_siblings.contains(&i.module_path) {
-            continue;
-        }
-        // Drop EVERY project sibling module import that the wire does not need
-        // (a needed one is re-added below with a canonical `exposing (..)`).
-        // `Shared` is pure wire records + codecs and only references stdlib +
-        // the `needed_siblings`; carrying the entry's other sibling imports
-        // (`import Data`, `import Routes`, `import State`) is both unnecessary
-        // and unsound — those modules transitively import the `Msg` module,
-        // whose frontend copy now imports `Shared` for the injected
-        // `Applied<Msg>` variants (GAP-A), so a carried sibling import forms a
-        // `Shared` → sibling → `Msg` → `Shared` cycle (E1010). By the design's
-        // own invariant (needed_siblings = the siblings the wire references) a
-        // copied codec/type body never references a non-needed sibling, so
-        // dropping them is sound.
+        // Drop EVERY project sibling module import: `Shared` names a project
+        // module only through its `SpaTy_` alias. Carrying the entry's sibling
+        // imports (`import Data`, `import Routes`, `import State`) is both
+        // unnecessary and unsound — those modules may import the `Msg`
+        // module, whose frontend copy imports `Shared` for the injected
+        // `Applied<Msg>` variants (GAP-A): a `Shared` → sibling → `Msg` →
+        // `Shared` cycle (E1010).
         if project_siblings.contains(&i.module_path) {
             continue;
         }
         out.push(i.text.clone());
     }
-    for m in needed_siblings {
-        out.push(format!("import {m} exposing (..)"));
-    }
     if !imports.iter().any(|i| i.module_path == "Sky.Core.Prelude") {
         out.insert(0, "import Sky.Core.Prelude exposing (..)".to_string());
     }
     out
+}
+
+/// `text` with every `SpaTy_<Mod>_.` qualifier whose alias is in `owned`
+/// removed: `Shared` declares those types itself (it copies them from a module
+/// it cannot import), so it, and every module that reads them from `Shared`,
+/// names them bare.
+fn strip_owned_qualifiers(text: &str, owned: &[String]) -> String {
+    let mut out = text.to_string();
+    for alias in owned {
+        let q = format!("{alias}.");
+        if out.contains(&q) {
+            out = out.replace(&q, "");
+        }
+    }
+    out
+}
+
+/// Every generated `SpaTy_<Mod>_` alias `text` uses as a qualifier.
+fn spaty_aliases_in(text: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let bytes = text.as_bytes();
+    let mut from = 0usize;
+    while let Some(rel) = text[from..].find("SpaTy_") {
+        let at = from + rel;
+        let mut end = at;
+        while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+            end += 1;
+        }
+        let boundary = at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
+        if boundary && bytes.get(end) == Some(&b'.') && text[at..end].ends_with('_') {
+            out.insert(text[at..end].to_string());
+        }
+        from = end.max(at + 1);
+    }
+    out
+}
+
+/// `src` with `lines` (whole `import` statements) added after its last import
+/// statement (a multi-line `exposing` list included), skipping a line it has.
+fn add_import_lines(src: &str, lines: &[String]) -> String {
+    let to_add: Vec<&str> = lines
+        .iter()
+        .map(|l| l.as_str())
+        .filter(|l| !src.lines().any(|x| x.trim() == l.trim()))
+        .collect();
+    if to_add.is_empty() {
+        return src.to_string();
+    }
+    let block = to_add.join("\n");
+    let insert_at = src
+        .match_indices("\nimport ")
+        .last()
+        .map(|(i, _)| import_stmt_end(src, i + 1))
+        .or_else(|| src.find('\n'));
+    match insert_at {
+        Some(pos) => format!("{}\n{block}{}", &src[..pos], &src[pos..]),
+        None => format!("{src}\n{block}\n"),
+    }
 }
 
 /// The GENERATED wire names `Shared` publishes for each server branch: the
@@ -13274,8 +13655,16 @@ fn unwireable_continuations(
     check_ids: &[ModuleId],
     report: &SpaPartitionReport,
 ) -> BTreeSet<String> {
-    let registry = build_codec_registry(db, check_ids);
-    let shapes = build_project_shapes(db, check_ids, &dependency_modules(db, check_ids));
+    let Some(&first) = check_ids.first() else {
+        return BTreeSet::new();
+    };
+    let registry = build_codec_registry(db, check_ids, first);
+    let shapes = build_project_shapes(
+        db,
+        check_ids,
+        &dependency_modules(db, check_ids),
+        db.module_name(first),
+    );
     let mut resolver = CodecResolver::new(&registry, &shapes);
     resolver.device_keys = report.client_crypto;
     let arg_tys = |name: &str| -> Option<Vec<ty::Ty>> {
@@ -14096,6 +14485,7 @@ mod type_identity_tests {
             external_modules: HashSet::from(["Geo.Shape".to_string()]),
             project_modules: HashSet::from(["Main".to_string()]),
             generic_records: HashMap::new(),
+            entry_module: "Main".to_string(),
         }
     }
 
@@ -14127,6 +14517,58 @@ mod type_identity_tests {
         );
         assert_eq!(s.type_ref("Main.Pending"), "Pending");
         assert_eq!(s.ident("Main.Pending"), "Pending");
+    }
+
+    /// A type of a project module other than the entry is named through its
+    /// module too (D3, v0.29.14): `Shared` imports that module qualified, so
+    /// `P1.Matched` and `P2.Matched` never meet. Two declarations with one
+    /// bare name get module-mangled codec names.
+    #[test]
+    fn a_non_entry_project_type_is_named_by_its_module() {
+        let mut s = shapes();
+        s.project_modules.insert("P1".into());
+        s.project_modules.insert("P2".into());
+        s.unions
+            .insert("P1.Status".into(), vec![("Matched".into(), true)]);
+        s.unions
+            .insert("P2.Verdict".into(), vec![("Matched".into(), true)]);
+        s.records.insert("P1.Refusal".into(), Vec::new());
+        s.records.insert("P2.Refusal".into(), Vec::new());
+        s.by_bare.insert(
+            "Refusal".into(),
+            vec!["P1.Refusal".into(), "P2.Refusal".into()],
+        );
+        s.by_bare.insert("Status".into(), vec!["P1.Status".into()]);
+        assert_eq!(s.type_ref("P1.Refusal"), "SpaTy_P1_.Refusal");
+        assert_eq!(s.ctor_ref("P1.Status", "Matched"), "SpaTy_P1_.Matched");
+        assert_eq!(s.ctor_ref("P2.Verdict", "Matched"), "SpaTy_P2_.Matched");
+        assert_eq!(s.ident("P1.Refusal"), "P1_Refusal");
+        assert_eq!(s.ident("P2.Refusal"), "P2_Refusal");
+        assert_eq!(s.ident("P1.Status"), "Status");
+        assert_eq!(s.display("P1.Refusal"), "Refusal");
+    }
+
+    /// The `SpaTy_` helpers: a copied module's qualifier is removed, every
+    /// other alias is found (and only as a qualifier), and an import lands
+    /// after a multi-line `exposing` list.
+    #[test]
+    fn spaty_qualifiers_are_found_stripped_and_imported() {
+        let text = "x : SpaTy_P1_.Card\ny = SpaTy_Geo_Shape_.origin\nz = MySpaTy_X_.a\n";
+        let found: Vec<String> = spaty_aliases_in(text).into_iter().collect();
+        assert_eq!(found, vec!["SpaTy_Geo_Shape_", "SpaTy_P1_"]);
+        let stripped = strip_owned_qualifiers(text, &["SpaTy_P1_".to_string()]);
+        assert!(stripped.contains("x : Card") && stripped.contains("SpaTy_Geo_Shape_.origin"));
+        let src =
+            "module M exposing (..)\n\nimport A exposing\n    ( b\n    , c\n    )\n\n\nv = 1\n";
+        let out = add_import_lines(src, &["import P1 as SpaTy_P1_".to_string()]);
+        assert!(
+            out.contains("    )\nimport P1 as SpaTy_P1_\n"),
+            "the import lands after the whole exposing list:\n{out}"
+        );
+        assert_eq!(
+            add_import_lines(&out, &["import P1 as SpaTy_P1_".to_string()]),
+            out
+        );
     }
 
     /// A user `Codec` binding matches a wire type by nominal identity, so the

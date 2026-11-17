@@ -108,6 +108,23 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   the entry's module name and path (`module Other`, `src/Other.sky`), the
   split never writes one file twice, and a project module named `Shared` (the
   name of the generated wire contract) is refused with a message.
+- Sky.Spa split (`--target web:app`): three multi-module shapes that `sky
+  check` accepted failed to build. A record alias of another module's record
+  alias (`View.CardView = Store.CardView`) through a module with a server
+  function failed with `[E2001] type mismatch: record vs CardView` (or
+  `[E1016]` when both modules were copied): `Shared` copied the record and the
+  module's client copy dropped its own declaration. Two modules that export
+  one constructor (`P1.Matched`, `P2.Matched`) failed with `[E1012]` in
+  `Shared`, which imported both `exposing (..)` and wrote the blank's
+  constructor bare, and two wire records with one name (`P1.Refusal`,
+  `P2.Refusal`) were refused. A pure module that names a type of a server
+  module (`Wire.Card = { tag : Tags.Tag }`) made the import cycle `Wire ->
+  Tags -> Shared -> Wire` (`[E1010]`), also through a chain of modules.
+  `Shared` now copies only the types of the entry and of a module that
+  imports one that imports `Shared`; it imports every other module under a
+  generated alias (`import Store as SpaTy_Store_`) and every generated
+  reference to a type, constructor or codec of another module is qualified.
+  A cycle the copy set cannot avoid is refused with the import path.
 
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 

@@ -1,0 +1,9 @@
+module Wire exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Tags
+
+type alias Card =
+    { title : String
+    , tag : Tags.Tag
+    }

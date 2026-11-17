@@ -1,7 +1,11 @@
-//! The three Sky.Spa split refusals of v0.27.0 (two wire records with one
-//! name, one module under several import aliases, a server arm the split
-//! cannot read) each end with their migration link,
-//! `docs/migration/v0.27.md#spa-split-refusals`.
+//! The Sky.Spa split refusals of v0.27.0. A server arm the split cannot read
+//! still ends with its migration link,
+//! `docs/migration/v0.27.md#spa-split-refusals`. The other two (two wire
+//! records with one name, one module under several import aliases) were
+//! lifted in v0.29.14: `Shared` names every type of another module through a
+//! generated alias (`SpaTy_Shape_.Point`) and imports that module once under
+//! it, so neither shape is ambiguous any more. Their tests now assert that
+//! the split succeeds and names each type by its module.
 //!
 //! Each case writes a small project to a temp dir and runs the real split
 //! generator over it (no Go build).
@@ -32,6 +36,22 @@ fn project(tag: &str, files: &[(&str, &str)]) -> PathBuf {
         std::fs::write(dir.join("src").join(name), src).unwrap();
     }
     dir
+}
+
+/// Run the split over `dir` and return the generated `Shared` source; the
+/// split must succeed.
+fn split_shared(dir: &Path, tag: &str) -> String {
+    let out =
+        std::env::temp_dir().join(format!("sky-spa-refusal-out-{}-{tag}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    let r = spa_split::generate(&repo_root(), dir, None, &out, None, None);
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&out);
+    let _ = std::fs::remove_dir_all(dir);
+    if let Err(e) = r {
+        panic!("`{tag}`: the split must succeed, got:\n{e}");
+    }
+    shared
 }
 
 fn refusal(dir: &Path, tag: &str) -> String {
@@ -69,11 +89,13 @@ fn assert_linked(err: &str, names: &[&str]) {
     );
 }
 
-/// Two project records named `Point` cross the wire (one as a follow-up Msg
-/// argument, so the refusal sits inside a wider message): the link still ends
-/// it.
+/// Two project records named `Point` cross the wire (the entry's own and
+/// `Shape.Point`). Before v0.29.14 the split refused them, because `Shared`
+/// named a project type by its bare name. Now the entry's `Point` is copied
+/// into `Shared` and named bare, and `Shape.Point` is named through its
+/// module, each with its own codec.
 #[test]
-fn two_wire_records_with_one_name_are_refused_with_the_migration_link() {
+fn two_wire_records_with_one_name_split_with_one_codec_each() {
     let dir = project(
         "dup",
         &[
@@ -81,17 +103,27 @@ fn two_wire_records_with_one_name_are_refused_with_the_migration_link() {
             ("Main.sky", &DUP_MAIN.replace("WIRE", "Shape")),
         ],
     );
-    let err = refusal(&dir, "dup");
-    assert_linked(
-        &err,
-        &["two record types named `Point`", "Rename one of them"],
-    );
+    let shared = split_shared(&dir, "dup");
+    for want in [
+        "import Shape as SpaTy_Shape_",
+        "blankShape_Point_ : SpaTy_Shape_.Point",
+        "blankPoint_ : Point",
+        "type alias Point =",
+    ] {
+        assert!(
+            shared.contains(want),
+            "Shared must hold `{want}`:\n{shared}"
+        );
+    }
 }
 
-/// The wire types copied into `Shared` name `Shape` as `S` in one module and
-/// as `Sh` in another.
+/// The wire types name `Shape` as `S` in one module and as `Sh` in another.
+/// Before v0.29.14 the split refused this, because it copied `Wire.Other` into
+/// `Shared` and had to import `Shape` under the one alias the copy wrote.
+/// Now `Shared` imports `Wire` and `Shape` under generated aliases and copies
+/// neither type.
 #[test]
-fn one_module_under_several_aliases_is_refused_with_the_migration_link() {
+fn one_module_under_several_aliases_splits_through_generated_aliases() {
     let main = main_src(
         "import Shape as S\nimport Wire",
         "",
@@ -106,8 +138,22 @@ fn one_module_under_several_aliases_is_refused_with_the_migration_link() {
             ("Main.sky", &main),
         ],
     );
-    let err = refusal(&dir, "alias");
-    assert_linked(&err, &["several import aliases (S, Sh)"]);
+    let shared = split_shared(&dir, "alias");
+    for want in [
+        "import Shape as SpaTy_Shape_",
+        "import Wire as SpaTy_Wire_",
+        "at : SpaTy_Shape_.Point",
+        "other : SpaTy_Wire_.Other",
+    ] {
+        assert!(
+            shared.contains(want),
+            "Shared must hold `{want}`:\n{shared}"
+        );
+    }
+    assert!(
+        !shared.contains("type alias Other") && !shared.contains("import Shape as S\n"),
+        "Shared copies no type of another module and keeps no user alias:\n{shared}"
+    );
 }
 
 /// A server arm of a polymorphic `Msg a` matches inside its argument, so the

@@ -1,0 +1,9 @@
+module Extra exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Inner
+
+type alias Extra =
+    { note : String
+    , inner : Inner.Inner
+    }

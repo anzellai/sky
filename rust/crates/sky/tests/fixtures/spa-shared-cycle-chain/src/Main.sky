@@ -1,0 +1,77 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Wire
+import Tags
+
+type alias Model =
+    { card : Wire.Card
+    , tag : Tags.Tag
+    }
+
+type Msg
+    = Load
+
+
+blankTag : Tags.Tag
+blankTag =
+    { label = "" }
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { card = { title = "", extra = { note = "", inner = { tag = blankTag } } }
+      , tag = blankTag
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Load ->
+            let
+                t =
+                    Task.run (Tags.loadTag ())
+                        |> Result.withDefault { label = "none" }
+            in
+                ( { model
+                      | card =
+                          { title = "x"
+                          , extra = { note = "n", inner = { tag = t } }
+                          }
+                      , tag = t
+                  }
+                , Cmd.none
+                )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text
+              ("TAG=" ++ model.tag.label ++ " NOTE=" ++ model.card.extra.note)
+        , Ui.button [] { onPress = Just Load, label = Ui.text "load" }
+        ]
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound (\_ -> Ui.text "not found")
+
+
+main : Task Error ()
+main =
+    App.run app

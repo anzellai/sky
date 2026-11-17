@@ -1084,8 +1084,9 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
         "Shared must import the sibling Domain module for the codec/type:\n{shared}"
     );
     assert!(
-        shared.contains("SpaCodec_.field \"todos\" .todos todoListCodec"),
-        "the todos field must wire to the sibling `todoListCodec`:\n{shared}"
+        shared.contains("import Domain as SpaTy_Domain_")
+            && shared.contains("SpaCodec_.field \"todos\" .todos SpaTy_Domain_.todoListCodec"),
+        "the todos field must wire to the sibling `todoListCodec`, qualified:\n{shared}"
     );
     assert!(
         !shared.contains("type alias Todo ="),
@@ -1456,14 +1457,19 @@ fn splits_a_module_whose_wire_rides_a_nominal_union_by_owning_it_in_shared() {
 }
 
 /// A `Codec <T>` binding that lives in a MIXED module (one that ALSO owns a
-/// server effect) is itself PURE, and the wire needs it. The generator must
-/// COPY that codec + its type into `Shared` — NEVER import the tainted module
-/// into `Shared` (that would drag the File effect into the wasm frontend, which
-/// `Shared` compiles into). Before this fix the codec registry scanned only the
-/// entry + PURE sibling modules, so a `List Item` field whose `itemCodec` lived
-/// beside a `File` effect fell through to `no codec for a field of type any`.
+/// server effect) is itself PURE, and the wire needs it. Before this fix the
+/// codec registry scanned only the entry + PURE sibling modules, so a `List
+/// Item` field whose `itemCodec` lived beside a `File` effect fell through to
+/// `no codec for a field of type any`.
+///
+/// Until v0.29.14 the split COPIED the codec and its type into `Shared`. Now
+/// `Shared` imports the module under a generated alias and names the codec in
+/// place (`SpaTy_Data_.itemCodec`): the wasm client gets the module's client
+/// SUBSET (§23), which keeps `Item` and `itemCodec` and drops every server
+/// def, and the backend gets the whole module. The security property is
+/// unchanged: no server effect reaches the client.
 #[test]
-fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
+fn splits_a_mixed_module_codec_by_naming_it_in_place() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let out = scratch();
     let _ = std::fs::remove_dir_all(&out);
@@ -1479,7 +1485,7 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
         .expect("run sky spa-split");
     assert!(
         status.success(),
-        "sky spa-split should succeed by COPYING the mixed-module codec into Shared (was: `no codec for a field of type any`)"
+        "sky spa-split should succeed with the mixed-module codec (was: `no codec for a field of type any`)"
     );
 
     let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
@@ -1487,18 +1493,16 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
     let front_shared = std::fs::read_to_string(out.join("frontend/src/Shared.sky")).unwrap();
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
 
-    // --- Shared COPIES the mixed-module codec + its type (never imports Data). ---
+    // --- Shared names the mixed-module codec in place, through its alias. ---
     assert!(
-        shared.contains("itemCodec") && shared.contains("type alias Item ="),
-        "Shared must COPY the pure `itemCodec` + `Item` type from the mixed module:\n{shared}"
+        shared.contains("import Data as SpaTy_Data_")
+            && !shared.contains("type alias Item =")
+            && !shared.contains("itemCodec ="),
+        "Shared must import `Data` qualified and copy nothing from it:\n{shared}"
     );
     assert!(
-        !shared.contains("import Data"),
-        "SECURITY LEAK: Shared must NOT import the server-tainted `Data` module:\n{shared}"
-    );
-    assert!(
-        shared.contains("SpaCodec_.field \"items\" .items (SpaCodec_.list itemCodec)"),
-        "the items field must wire to `Codec.list itemCodec`:\n{shared}"
+        shared.contains("SpaCodec_.field \"items\" .items (SpaCodec_.list SpaTy_Data_.itemCodec)"),
+        "the items field must wire to `Codec.list SpaTy_Data_.itemCodec`:\n{shared}"
     );
 
     // --- The server File effect must be routed backend-only; Data stays backend. ---
@@ -1518,14 +1522,27 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
             "SECURITY LEAK: frontend/src/Shared.sky contains `{needle}`:\n{front_shared}"
         );
     }
+    // The client copy of `Data` is its subset: the type and the pure codec,
+    // no server def and no server-only import.
+    let front_data = std::fs::read_to_string(out.join("frontend/src/Data.sky")).unwrap();
     assert!(
-        !front.contains("import Data"),
-        "SECURITY LEAK: frontend/src/Main.sky imports the backend-only `Data` module:\n{front}"
+        front_data.contains("type alias Item")
+            && front_data.contains("itemCodec =")
+            && !front_data.contains("import Shared"),
+        "the client subset of `Data` keeps its type and pure codec:\n{front_data}"
     );
-    assert!(
-        !out.join("frontend/src/Data.sky").exists(),
-        "SECURITY LEAK: the server-tainted `Data` module must NOT be in the frontend"
-    );
+    // The module's header comment names the server functions; the code may not.
+    let front_data_code: String = front_data
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for needle in ["File.", "loadItems", "saveItems", "import Sky.Core.File"] {
+        assert!(
+            !front_data_code.contains(needle),
+            "SECURITY LEAK: frontend/src/Data.sky contains `{needle}`:\n{front_data}"
+        );
+    }
 
     // --- The backend keeps the effect + carries the codec via Shared (no clash). ---
     assert!(
@@ -1535,10 +1552,8 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
         "backend Data must keep the File effect (it runs it server-side)"
     );
     assert!(
-        back.contains("import Shared exposing (")
-            && back.contains("Item")
-            && back.contains("itemCodec"),
-        "backend Main imports Shared for the copied codec/type (explicit exposing list):\n{back}"
+        back.contains("import Shared exposing (") && back.contains("saveRespCodec"),
+        "backend Main imports Shared for the wire codecs (explicit exposing list):\n{back}"
     );
 
     // --- Both build (Go-gated). Backend native, frontend wasm. ---
@@ -1903,11 +1918,15 @@ fn generated_wire_types_name_every_type_they_hold() {
         "names : Paged String",
         "type alias Item =",
         "products : List Product",
-        "hits : List Preset",
-        "pick : Maybe Preset",
-        "slots : List (Maybe Preset)",
-        "groups : Maybe (List Preset)",
-        "byCode : Dict String Preset",
+        // `Preset` is declared in `Types`, which `Shared` imports under a
+        // generated alias (v0.29.14): a type of another module is named
+        // qualified, never through an `exposing (..)` import.
+        "hits : List SpaTy_Types_.Preset",
+        "pick : Maybe SpaTy_Types_.Preset",
+        "slots : List (Maybe SpaTy_Types_.Preset)",
+        "groups : Maybe (List SpaTy_Types_.Preset)",
+        "byCode : Dict String SpaTy_Types_.Preset",
+        "SpaTy_Data_.presetCodec",
     ] {
         assert!(
             shared.contains(want),
@@ -9763,10 +9782,17 @@ fn a_server_only_module_keeps_its_types_in_the_client() {
 }
 
 /// A wire record copied into `Shared` that names another module's type gets
-/// what that type needs: an import of a pure module (under the alias the
-/// source uses), or a copy of a type from a server-only module. Before, the
-/// copy lost it (`Undefined name: Chan.Batch`; in this fixture a type
-/// mismatch). The client-result RPC answers the nested record.
+/// what that type needs. Before, the copy lost it (`Undefined name:
+/// Chan.Batch`; in this fixture a type mismatch). The client-result RPC
+/// answers the nested record.
+///
+/// Since v0.29.14 `Shared` names every type of another module through a
+/// generated alias and imports that module once under it (`import Shape as
+/// SpaTy_Shape_`, `at : SpaTy_Shape_.Point`), whatever alias the source wrote
+/// and whether or not the module has a server function. Before, it imported a
+/// pure module `exposing (..)` under the source's alias (two modules that
+/// export one name then made a bare use ambiguous, `[E1012]`) and copied the
+/// type of a server module (its client copy then lost the type, `[E2001]`).
 #[test]
 #[cfg(unix)]
 fn a_copied_wire_record_brings_the_types_it_names() {
@@ -9775,8 +9801,10 @@ fn a_copied_wire_record_brings_the_types_it_names() {
     let (proj, out, log) = web_app_build("spa-shared-foreign-type", &[]);
     let shared = split_file(&proj, "shared/Shared.sky");
     assert!(
-        shared.contains("import Shape exposing (..)") && shared.contains("at : Shape.Point"),
-        "Shared imports the pure module the copied record names:\n{shared}"
+        shared.contains("import Shape as SpaTy_Shape_")
+            && shared.contains("at : SpaTy_Shape_.Point")
+            && !shared.contains("import Shape exposing"),
+        "Shared imports the pure module the copied record names, qualified:\n{shared}"
     );
     if go {
         assert!(out.status.success(), "the web:app build failed:\n{log}");
@@ -9812,8 +9840,10 @@ fn a_copied_wire_record_brings_the_types_it_names() {
     );
     let shared = split_file(&proj, "shared/Shared.sky");
     assert!(
-        shared.contains("import Shape as S exposing (..)"),
-        "Shared imports the module under the alias the copied record uses:\n{shared}"
+        shared.contains("import Shape as SpaTy_Shape_")
+            && shared.contains("at : SpaTy_Shape_.Point")
+            && !shared.contains("import Shape as S "),
+        "Shared names the type through its generated alias, not the source's:\n{shared}"
     );
     if go {
         assert!(
@@ -9823,7 +9853,8 @@ fn a_copied_wire_record_brings_the_types_it_names() {
     }
     let _ = std::fs::remove_dir_all(&proj);
 
-    // The named type lives in a module with a server function: it is copied.
+    // The named type lives in a module with a server function: `Shared`
+    // imports that module too (its client copy keeps the type).
     let (proj, out, log) = web_app_build(
         "spa-shared-foreign-type",
         &[
@@ -9836,10 +9867,10 @@ fn a_copied_wire_record_brings_the_types_it_names() {
     );
     let shared = split_file(&proj, "shared/Shared.sky");
     assert!(
-        shared.contains("type alias Point")
-            && shared.contains("at : Point")
-            && !shared.contains("import Shape"),
-        "a server module's type is copied into Shared, its references made bare:\n{shared}"
+        !shared.contains("type alias Point")
+            && shared.contains("at : SpaTy_Shape_.Point")
+            && shared.contains("import Shape as SpaTy_Shape_"),
+        "a server module's type is named in place, not copied into Shared:\n{shared}"
     );
     if go {
         assert!(
@@ -9848,6 +9879,218 @@ fn a_copied_wire_record_brings_the_types_it_names() {
         );
     }
     let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// Build `fixture` as web:app (with `edits`), write `data` files into the
+/// split backend's working directory, start the backend and POST `body` to
+/// `/_rpc/<msg>`. Returns the Shared source and the answer. Without Go only
+/// the generated sources are returned (answer `None`).
+#[cfg(unix)]
+fn split_and_post(
+    fixture: &str,
+    edits: &[(&str, &str, &str)],
+    data: &[(&str, &str)],
+    msg: &str,
+    body: &str,
+) -> (PathBuf, String, Option<(u32, String)>) {
+    let (proj, out, log) = web_app_build(fixture, edits);
+    let shared = split_file(&proj, "shared/Shared.sky");
+    if !required(Need::Go, have_go()) {
+        return (proj, shared, None);
+    }
+    assert!(
+        out.status.success(),
+        "the web:app build of `{fixture}` failed:\n{log}\n--- Shared.sky ---\n{shared}"
+    );
+    let dir = proj.join(".skyapp/web-app/.split/backend");
+    for (name, text) in data {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let (back, port) = start_split_backend(&proj);
+    let posted = curl_post_status_body(port, &format!("/_rpc/{msg}"), body);
+    drop(back);
+    (proj, shared, posted)
+}
+
+/// D2: a record alias that names another module's record alias
+/// (`View.CardView = Store.CardView`, both modules with a server function)
+/// crosses the wire. Before, `Shared` copied `Store`'s record and `Store`'s
+/// client copy dropped its own declaration and imported it from `Shared`,
+/// which `exposing (..)` does not re-export, so `View.CardView` named a
+/// missing type (`[E2001] type mismatch: record vs CardView`). Now `Shared`
+/// copies no type of another module: it imports `Store` under a generated
+/// alias and names `SpaTy_Store_.CardView`, and every client copy keeps its
+/// own declarations.
+#[test]
+#[cfg(unix)]
+fn a_record_alias_chain_through_server_modules_crosses_the_split() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, shared, posted) = split_and_post(
+        "spa-alias-chain",
+        &[],
+        &[("card.txt", "from-disk")],
+        "Load",
+        "{}",
+    );
+    assert!(
+        shared.contains("import Store as SpaTy_Store_")
+            && shared.contains("SpaTy_Store_.CardView")
+            && !shared.contains("type alias CardView"),
+        "Shared imports the declaring module qualified and copies no type:\n{shared}"
+    );
+    let store = split_file(&proj, "frontend/src/Store.sky");
+    assert!(
+        store.contains("type alias CardView") && !store.contains("import Shared"),
+        "the client copy of `Store` keeps its own record and needs no Shared:\n{store}"
+    );
+    if let Some(posted) = posted {
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(
+            posted.1.contains("\"title\":\"from-disk\""),
+            "the server arm answers the record it read: {posted:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// D2 through the `Msg` module: a pure module holds `Model` and `Msg` and
+/// aliases a record of a module with a server function, which also declares
+/// the record's codec. Before, `Shared` copied the record and the codec and
+/// the server module's client copy lost them (`[E2001] type mismatch:
+/// CardView vs record`). Now `Shared` imports that module qualified and uses
+/// its codec in place.
+#[test]
+#[cfg(unix)]
+fn a_record_alias_chain_through_the_msg_module_crosses_the_split() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, shared, posted) = split_and_post(
+        "spa-alias-chain-msg",
+        &[],
+        &[("card.txt", "from-disk")],
+        "Load",
+        "{}",
+    );
+    assert!(
+        shared.contains("import Cards as SpaTy_Cards_")
+            && shared.contains("SpaTy_Cards_.cardViewCodec")
+            && !shared.contains("cardViewCodec =")
+            && !shared.contains("type alias CardView =\n    { title"),
+        "Shared uses the server module's codec in place, qualified:\n{shared}"
+    );
+    let cards = split_file(&proj, "frontend/src/Cards.sky");
+    assert!(
+        cards.contains("type alias CardView")
+            && cards.contains("cardViewCodec =")
+            && !cards.contains("loadCard _ ="),
+        "the client copy of `Cards` keeps its record and pure codec, not its server function:\n{cards}"
+    );
+    if let Some(posted) = posted {
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(posted.1.contains("\"title\":\"from-disk\""), "{posted:?}");
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+
+    // The same program without a user codec: the record is auto-derived.
+    let (proj, shared, posted) = split_and_post(
+        "spa-alias-chain-msg",
+        &[(
+            "src/Cards.sky",
+            "\n\ncardViewCodec : Codec CardView\ncardViewCodec =\n    Codec.object CardView |> Codec.field \"title\" .title Codec.string\n        |> Codec.buildObject\n",
+            "\n",
+        )],
+        &[("card.txt", "from-disk")],
+        "Load",
+        "{}",
+    );
+    assert!(
+        shared.contains("SpaTy_Cards_.CardView")
+            && !shared.contains("type alias CardView =\n    { title"),
+        "the auto-derived codec names the record qualified:\n{shared}"
+    );
+    if let Some(posted) = posted {
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(posted.1.contains("\"title\":\"from-disk\""), "{posted:?}");
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// D3: two pure modules export a constructor of the same name (`P1.Matched`,
+/// `P2.Matched`) and a record of the same name (`P1.Refusal`,
+/// `P2.Refusal`). Before, `Shared` imported both `exposing (..)` and the
+/// generated blanks wrote `Matched` bare (`[E1012]`), and the split refused
+/// the two `Refusal` records. Now every generated reference is qualified
+/// (`SpaTy_P1_.Matched`) and each record gets its own codec.
+#[test]
+#[cfg(unix)]
+fn generated_shared_code_names_user_types_and_constructors_qualified() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, shared, posted) = split_and_post(
+        "spa-shared-ctor-clash",
+        &[],
+        &[("x.txt", "from-disk")],
+        "Load",
+        "{}",
+    );
+    assert!(
+        !shared.contains("import P1 exposing") && !shared.contains("import P2 exposing"),
+        "Shared imports no project module exposing everything:\n{shared}"
+    );
+    assert!(
+        shared.contains("import P1 as SpaTy_P1_")
+            && shared.contains("import P2 as SpaTy_P2_")
+            && shared.contains("SpaTy_P1_.Matched")
+            && shared.contains("SpaTy_P2_.Refusal")
+            && shared.contains("SpaTy_P1_.Refusal"),
+        "generated code names each project type and constructor by its module:\n{shared}"
+    );
+    if let Some(posted) = posted {
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(
+            posted.1.contains("\"title\":\"from-disk\"")
+                && posted.1.contains("\"code\":7")
+                && posted.1.contains("\"why\":\"from-disk\""),
+            "the answer carries both records: {posted:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// D4: a pure module (`Wire`) names a record of a module with a server
+/// function (`Tags.Tag`), and the model holds both. Before, `Shared` copied
+/// `Tag`, `Tags`' client copy imported it back from `Shared`, and `Shared`
+/// imported `Wire`: the cycle `Wire -> Tags -> Shared -> Wire` (`[E1010]`).
+/// The same holds through a chain of pure modules (`Wire -> Extra -> Inner
+/// -> Tags`). Now `Shared` imports `Wire` and `Tags` qualified and no module
+/// it imports imports `Shared`.
+#[test]
+#[cfg(unix)]
+fn shared_imports_no_module_that_imports_shared() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    for fixture in ["spa-shared-cycle", "spa-shared-cycle-chain"] {
+        let (proj, shared, posted) =
+            split_and_post(fixture, &[], &[("tag.txt", "from-disk")], "Load", "{}");
+        assert!(
+            shared.contains("import Wire as SpaTy_Wire_")
+                && shared.contains("import Tags as SpaTy_Tags_")
+                && !shared.contains("type alias Tag"),
+            "`{fixture}`: Shared imports the declaring modules and copies no type:\n{shared}"
+        );
+        for m in ["Tags", "Wire", "Extra", "Inner"] {
+            let text = split_file(&proj, &format!("frontend/src/{m}.sky"));
+            assert!(
+                !text.contains("import Shared"),
+                "`{fixture}`: the client copy of `{m}` must not import Shared:\n{text}"
+            );
+        }
+        if let Some(posted) = posted {
+            assert_eq!(posted.0, 200, "`{fixture}`: {posted:?}");
+            assert!(
+                posted.1.contains("\"label\":\"from-disk\""),
+                "`{fixture}`: {posted:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&proj);
+    }
 }
 
 /// A result Msg that the server arm applies to a captured argument
