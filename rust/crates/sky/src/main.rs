@@ -4525,8 +4525,8 @@ fn spa_split_and_build(
         t.end();
     };
     // Deliver the frontend's wasm name (or `failed`) to the backend leg. A
-    // write error means the backend child has already exited; its own output
-    // (reported below) says why.
+    // backend child that has already exited is not an error here (the Sender
+    // ignores the broken pipe): its own output, reported below, says why.
     let deliver_name = |frontend: &std::io::Result<std::process::Output>| {
         let Some(tx) = &handoff else { return };
         use project::spa_wasm_handoff::Delivered;

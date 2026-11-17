@@ -42,6 +42,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   frontend with `Undefined name`. Only the app's configured entry points (and
   the entry's `main`) are skipped now. Any other def is tainted by the normal
   rule.
+- Sky.Spa: when the backend leg of a `web:app` build failed, the build printed
+  `could not hand the frontend's wasm name to the backend leg: Broken pipe`
+  above the backend's real error. A backend that has already exited is now
+  not reported as a separate handoff failure. The build shows only the
+  backend's own error.
 
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 
