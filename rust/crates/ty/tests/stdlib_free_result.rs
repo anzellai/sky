@@ -71,6 +71,10 @@ const ALLOWED: &[(&str, &str)] = &[
         "phantom: the task always succeeds (the trampoline wraps the thunk in Ok), so it never fails with an `e`; a panic stays a classified panic",
     ),
     (
+        "Sky.Core.Task.remaining",
+        "phantom: the task always succeeds (`Task_remaining` returns Ok in both branches, `TestTaskRemaining_NothingWithoutADeadline` and the `remainingProbe` timeout tests in rt), so it never fails with an `e`",
+    ),
+    (
         "Sky.Core.Task.succeed",
         "phantom: the task always succeeds, it never fails with an `e`",
     ),
