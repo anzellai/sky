@@ -13,6 +13,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## v0.29.14 (unreleased)
 
+### ⚠ Breaking changes
+
+- `Sky.Core.Task` exports `timeout`, and `Sky.Core.Error` already exports the
+  value `timeout`. A program that imports both with `exposing (..)` and writes
+  a bare `timeout` gets `[E1012]`: write `Error.timeout` or `Task.timeout`
+  (`docs/migration/v0.29.md`).
+- `HttpRequest` has the new field `minRemaining`. A request written as a full
+  record literal is `[E2001]` until it adds `minRemaining = 0`. A request
+  built from `Http.defaultRequest` is unchanged.
+
 ### Added
 
 - **`Std.Admission` and `App.withAdmission`: a bound on the requests a
@@ -45,6 +55,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   each page request and runs `update` before it renders. Sky.Spa and the
   `Std.App` client targets read `innerWidth` and `location.search` in the
   client. Terminal targets ignore both.
+- `Task.timeout ms task` runs a task with a deadline. A task that has not
+  finished in time fails with a `Timeout` error whose domain failure is
+  `"task"` / `"DeadlineExceeded"` (retryable). The deadline travels: tasks
+  started inside it (`Task.parallel`, `parallelN`, `spawn`, a nested
+  `Task.timeout`) see the earliest deadline, `Http.get` / `post` / `request`
+  stop at it and refuse to start once it has passed, and `Sync.pop` /
+  `popWithin` stop waiting at it. A timed-out task is abandoned, not stopped:
+  an effect that is already running finishes in the background. In a Sky.Spa
+  client each timeout has its own timer and a nested task does not see an
+  outer deadline.
+- `Task.remaining : Task e (Maybe Int)` gives the milliseconds left before
+  the current deadline, or `Nothing` outside a `Task.timeout`.
+- `Http.withMinRemaining ms` refuses a request before it is sent when less
+  than `ms` milliseconds are left before the deadline (`Timeout`, domain
+  `"http"`, code `"DeadlineTooShort"`, not retryable). `HttpRequest` has the
+  new field `minRemaining : Int` (`0` in `defaultRequest`), so a request
+  written as a full record literal adds `minRemaining = 0`
+  (`docs/migration/v0.29.md`).
 
 ### Fixed
 
@@ -63,6 +91,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   app with routes. An unknown path on a route-less app still answers 404
   with the app's view. The Sky.Spa client and its server render already
   wrote the field only for an app with routes.
+- `Http.request` sent its request without the calling Task's context, so it
+  carried neither the trace context nor any cancellation, and a call under a
+  deadline ran on until the client timeout. It now carries the trace context
+  and stops at a `Task.timeout` deadline. The end of the HTTP request that
+  started the work still does not cancel it.
 - Sky.Live: an `html` patch on a `table`, `thead`, `tbody`, `tfoot` or `tr`
   kept no rows or cells. The client parsed the new markup inside a `div`,
   where the HTML parser drops table tags, so a table whose rows changed when

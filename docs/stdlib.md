@@ -741,6 +741,8 @@ main =
 | `Task.Step state a` | ADT | `Loop state \| Done a` — what a `Task.loop` step returns: go again with a new state, or stop with a result |
 | `Task.loop` | `(state -> Task e (Step state a)) -> state -> Task e a` | Stack-safe loop: run the step, then again on each `Loop` state, until `Done`. An `Err` stops it. The clearest form for a loop with explicit state (`andThen` recursion is stack-safe too) |
 | `Task.forever` | `Task e a -> Task e b` | Re-run a task until it fails, then fail with that error. Stack-safe. The free `b` says it never succeeds |
+| `Task.timeout` | `Int -> Task Error a -> Task Error a` | v0.29.14. Run a task with a deadline `ms` away. A task that has not finished by then fails with a `Timeout` error, domain `"task"`, code `"DeadlineExceeded"` (retryable). The deadline travels: see below |
+| `Task.remaining` | `Task e (Maybe Int)` | v0.29.14. The milliseconds left before the current deadline (`Just 0` once it has passed), `Nothing` outside a `Task.timeout` |
 | `Task.run` | `Task e a -> Result e a` | Force at the boundary |
 | `Task.fromResult` | `Result e a -> Task e a` | Bridge from Result |
 | `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` | Chain Result step after Task |
@@ -780,6 +782,31 @@ countStep limit n =
 ```
 
 `Loop` and `Done` come from `Sky.Core.Task`: import them with `exposing (Step(..))`, or write `Task.Loop` / `Task.Done` after `import Sky.Core.Task as Task`.
+
+**Deadlines: `Task.timeout` and `Task.remaining` (v0.29.14).** `Task.timeout ms task` runs `task` with a deadline `ms` milliseconds away. A result that arrives in time, `Ok` or `Err`, is returned unchanged. When the task has not finished by then, the result is an `Error` of kind `Timeout` whose domain failure is `"task"` / `"DeadlineExceeded"` (retryable, attributes `op` and `timeoutMs`), so `Error.isRetryable` counts it as transient.
+
+The deadline travels with the work:
+
+- A task started inside it (`Task.parallel`, `parallelN`, `spawn`, a nested `Task.timeout`) sees the EARLIEST deadline in force. An inner `Task.timeout 5000` inside an outer `Task.timeout 1000` ends at the outer deadline.
+- `Http.get`, `Http.post` and `Http.request` send the request with the deadline, so the call stops at it, and they refuse to start once it has passed. `Http.withMinRemaining ms` asks for more time before a request is sent.
+- `Sync.pop` and `Sync.popWithin` stop waiting at the deadline, with the deadline's error. A shorter `popWithin` limit still ends with its own `Timeout`.
+- `Task.remaining` reads the time left, so a task can skip optional work near the deadline.
+
+A timed-out task is **abandoned, not stopped**. Its result is discarded and a later panic in it is logged. An `Http` call or a `Sync` wait in it ends at the deadline, but an effect that is already running (a database query, a file write) finishes in the background. Use `Task.timeout` to stop waiting, not to undo work. The end of the HTTP request that started the work does not cancel a deadline-bound task: only the deadline does.
+
+```elm
+import Sky.Core.Http as Http
+import Sky.Core.Task as Task
+
+quote : Task Error Http.HttpResponse
+quote =
+    Http.defaultRequest "https://quotes.example.test/today"
+        |> Http.withMinRemaining 500
+        |> Http.request
+        |> Task.timeout 2000
+```
+
+In a Sky.Spa client each `Task.timeout` has its own timer. A nested task does not see an outer deadline, `Task.remaining` is `Nothing`, and the timer fires only while the task waits (a fetch, a sleep), because the client runs one goroutine at a time.
 
 ### `Cmd` / `Sub` — Sky.Live commands and subscriptions
 
@@ -906,7 +933,20 @@ req =
         |> Http.withHeader "Authorization" ("Bearer " ++ token)
         |> Http.withBody jsonBody
         |> Http.withTimeout 60000              -- 60 s; 0 disables
+        |> Http.withMinRemaining 500           -- v0.29.14, see below
 ```
+
+**Deadlines (v0.29.14).** Under a `Task.timeout` deadline, `get`, `post` and
+`request` send the request with the deadline: the call stops when it passes
+and fails with the deadline's error (`"task"` / `"DeadlineExceeded"`). A call
+is refused before it is sent once the deadline has passed. `withMinRemaining
+ms` refuses it earlier, when less than `ms` milliseconds are left: the error
+has kind `Timeout`, domain `"http"`, code `"DeadlineTooShort"`, is not
+retryable and carries the attributes `minRemainingMs` and `remainingMs`. The
+default (`minRemaining = 0` in `defaultRequest`) refuses only once the
+deadline has passed. Outside a `Task.timeout` it has no effect. `HttpRequest`
+gained the `minRemaining : Int` field in v0.29.14, so a request written as a
+full record literal adds `minRemaining = 0`.
 
 Pair with `Task.retryWith` for flaky upstreams:
 
@@ -3043,6 +3083,7 @@ newQueue  : Int -> Task Error (Queue a)                    -- a capacity of 1 or
 push      : a -> Queue a -> Task Error ()                  -- waits while full
 pop       : Queue a -> Task Error (Maybe a)                -- waits; Nothing once closed and empty
 popWithin : Int -> Queue a -> Task Error (Maybe a)         -- Err Timeout after the ms
+                                                           -- (both stop at a Task.timeout deadline)
 close     : Queue a -> Task Error ()                       -- pushes then fail with Unavailable
 size      : Queue a -> Task Error Int
 ```

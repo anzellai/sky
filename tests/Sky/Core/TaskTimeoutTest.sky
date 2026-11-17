@@ -1,0 +1,152 @@
+module Sky.Core.TaskTimeoutTest exposing (tests)
+
+-- Task.timeout and Task.remaining (v0.29.14): a deadline that travels with a
+-- Task. The runtime races, the HTTP cancellation and the goroutine-context
+-- hygiene are covered by runtime-go/rt/task_deadline_test.go. This suite pins
+-- the Sky surface: the error a timeout produces, the result that arrives in
+-- time, the earliest deadline inside nested and parallel tasks, and the
+-- Sync.popWithin cap.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Std.Sync as Sync
+import Sky.Test as Test exposing (Test)
+
+
+slow : Int -> a -> Task Error a
+slow ms v =
+    Time.sleep ms |> Task.map (\_ -> v)
+
+
+-- The domain and code of a failed run, or "ok".
+failureOf : Result Error a -> String
+failureOf r =
+    case r of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            Maybe.withDefault "none" (Error.domain e) ++ "/"
+                ++ (Error.failureOf e |> Maybe.map Error.failureCode
+                       |> Maybe.withDefault "none")
+
+
+remainingOr : Int -> Task Error Int
+remainingOr none =
+    Task.remaining |> Task.map (Maybe.withDefault none)
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Task.timeout"
+          [ Test.test
+                "a task that does not finish in time fails with task/DeadlineExceeded"
+                (\_ ->
+                    Test.equal
+                        "task/DeadlineExceeded"
+                        (failureOf
+                            (Task.run (Task.timeout 30 (slow 2000 "late")))))
+          , Test.test
+                "the deadline error is a retryable Timeout"
+                (\_ ->
+                    Test.expectErrorKind
+                        Error.Timeout
+                        (Task.run (Task.timeout 30 (slow 2000 "late"))))
+          , Test.test
+                "isRetryable counts a missed deadline as transient"
+                (\_ ->
+                    case Task.run (Task.timeout 30 (slow 2000 "late")) of
+
+                        Err e ->
+                            Test.isTrue (Error.isRetryable e)
+
+                        Ok _ ->
+                            Test.fail "the task finished")
+          , Test.test
+                "a result in time is returned unchanged"
+                (\_ ->
+                    Test.equal
+                        (Ok "fast")
+                        (Task.run (Task.timeout 2000 (Task.succeed "fast"))))
+          , Test.test
+                "an Err in time passes through"
+                (\_ ->
+                    Test.equal
+                        "none/none"
+                        (failureOf
+                            (Task.run
+                                (Task.timeout 2000 (Task.fail (Error.io "disk"))))))
+          , Test.test
+                "a nested timeout ends at the earlier outer deadline"
+                (\_ ->
+                    Test.equal
+                        "task/DeadlineExceeded"
+                        (failureOf
+                            (Task.run
+                                (Task.timeout
+                                    40
+                                    (Task.timeout 10000 (slow 3000 "late"))))))
+          ]
+    , Test.suite
+          "Task.remaining"
+          [ Test.test
+                "Nothing outside a timeout"
+                (\_ -> Test.equal (Ok (-1)) (Task.run (remainingOr (-1))))
+          , Test.test
+                "inside a timeout it is at most the deadline"
+                (\_ ->
+                    case Task.run (Task.timeout 1000 (remainingOr (-1))) of
+
+                        Ok left ->
+                            Test.isTrue (left > 0 && left <= 1000)
+
+                        Err _ ->
+                            Test.fail "remaining failed")
+          , Test.test
+                "a nested task sees the earliest deadline"
+                (\_ ->
+                    case Task.run
+                             (Task.timeout
+                                 300
+                                 (Task.timeout 10000 (remainingOr (-1)))) of
+
+                        Ok left ->
+                            Test.isTrue (left >= 0 && left <= 300)
+
+                        Err _ ->
+                            Test.fail "remaining failed")
+          , Test.test
+                "a Task.parallel branch sees the deadline"
+                (\_ ->
+                    case Task.run
+                             (Task.timeout
+                                 1000
+                                 (Task.parallel
+                                     [ remainingOr (-1), remainingOr (-1) ])) of
+
+                        Ok lefts ->
+                            Test.isTrue
+                                (List.all (\l -> l > 0 && l <= 1000) lefts
+                                    && List.length lefts == 2)
+
+                        Err _ ->
+                            Test.fail "parallel failed")
+          ]
+    , Test.suite
+          "Sync.popWithin under a deadline"
+          [ Test.test
+                "the wait stops at the deadline, not at its own longer limit"
+                (\_ ->
+                    Sync.newQueue 1
+                        |> Task.andThen (\q -> Sync.popWithin 10000 q)
+                        |> Task.timeout 50
+                        |> Task.run
+                        |> failureOf
+                        |> Test.equal "task/DeadlineExceeded")
+          ]
+    ]

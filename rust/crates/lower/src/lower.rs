@@ -1290,6 +1290,8 @@ fn is_fresh_value_kernel(module: &str, func: &str) -> bool {
             | ("Random", "weighted")
             | ("Time", "now")
             | ("Time", "unixMillis")
+            // The time left before a deadline differs on every run.
+            | ("Task", "remaining")
             | ("Crypto", "randomBytes")
             | ("Crypto", "randomToken")
     )

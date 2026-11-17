@@ -250,12 +250,13 @@ type Sky_Core_Http_HttpRequest_R struct {
 	Timeout         int                     `sky:"timeout,int"`
 	FollowRedirects bool                    `sky:"followRedirects,bool"`
 	MaxRedirects    int                     `sky:"maxRedirects,int"`
+	MinRemaining    int                     `sky:"minRemaining,int"`
 }
 
 func init() { rt.RegisterGobType(Sky_Core_Http_HttpRequest_R{}) }
 
-func Sky_Core_Http_HttpRequest(p0 string, p1 string, p2 string, p3 []rt.T2[string, string], p4 int, p5 bool, p6 int) Sky_Core_Http_HttpRequest_R {
-	return Sky_Core_Http_HttpRequest_R{Method: p0, Url: p1, Body: p2, Headers: p3, Timeout: p4, FollowRedirects: p5, MaxRedirects: p6}
+func Sky_Core_Http_HttpRequest(p0 string, p1 string, p2 string, p3 []rt.T2[string, string], p4 int, p5 bool, p6 int, p7 int) Sky_Core_Http_HttpRequest_R {
+	return Sky_Core_Http_HttpRequest_R{Method: p0, Url: p1, Body: p2, Headers: p3, Timeout: p4, FollowRedirects: p5, MaxRedirects: p6, MinRemaining: p7}
 }
 
 type Sky_Core_Http_HttpResponse_R = rt.HttpResponse
@@ -10156,7 +10157,7 @@ func Main_apiGet(v_0 string, v_1 string, v_2 any) rt.SkyTask[Sky_Core_Error_Erro
 }
 
 func Sky_Core_Http_defaultRequest(v_0 string) Sky_Core_Http_HttpRequest_R {
-	return Sky_Core_Http_HttpRequest_R{Method: "GET", Url: v_0, Body: "", Headers: []rt.T2[string, string]{}, Timeout: 30000, FollowRedirects: true, MaxRedirects: 10}
+	return Sky_Core_Http_HttpRequest_R{Method: "GET", Url: v_0, Body: "", Headers: []rt.T2[string, string]{}, Timeout: 30000, FollowRedirects: true, MaxRedirects: 10, MinRemaining: 0}
 }
 
 func Sky_Core_Http_withBearer(v_0 any, v_1 Sky_Core_Http_HttpRequest_R) Sky_Core_Http_HttpRequest_R {

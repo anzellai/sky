@@ -37,6 +37,12 @@ use std::path::{Path, PathBuf};
 /// A new entry here is a decision, not a formality: prefer a name that does not
 /// collide. The failure message lists the module pairs for each name.
 const EXPECTED_COLLISIONS: &[&str] = &[
+    // v0.29.14: Task.timeout, the deadline combinator (the name the request
+    // asked for, beside Task.loop / Task.forever). Sky.Core.Error already
+    // exports the value `timeout : Error`; a program that exposes
+    // Sky.Core.Error and Sky.Core.Task with `(..)` and uses the bare name
+    // gets `[E1012]`. Breaking line in the v0.29.14 CHANGELOG.
+    "value timeout",
     // v0.29.2: Std.Money.sum replaces sumOf (the user's Money API redesign).
     // Std.Decimal already exports `sum`; a program that exposes both modules
     // with `(..)` and uses the bare name gets `[E1012]`. Breaking line in the

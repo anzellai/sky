@@ -580,9 +580,10 @@ pub static GATES: &[Gate] = &[
                 // Std.Zip surfaces (+10 cases, 827 → 837), and the v0.29.0
                 // Std.Office surface (+5 cases, 837 → 842), and the v0.29.0
                 // Std.Image.Canvas surface (+2 cases, 842 → 844), and the
-                // v0.29.6 generic_fn_record_slot stratum (+48 cases, 844 → 892).
-                from: "n_min = 892",
-                to: "n_min = 893",
+                // v0.29.6 generic_fn_record_slot stratum (+48 cases, 844 → 892),
+                // and the v0.29.14 deadline surface (+2 cases, 892 → 894).
+                from: "n_min = 894",
+                to: "n_min = 895",
             },
         }]),
         body: bodies::corpus_manifest,

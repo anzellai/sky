@@ -20,6 +20,7 @@ module Sky.Core.Http exposing
     , withTimeout
     , withFollowRedirects
     , withMaxRedirects
+    , withMinRemaining
     , parseQuery
     , header
     )
@@ -79,6 +80,7 @@ type alias HttpRequest =
     , timeout : Int
     , followRedirects : Bool
     , maxRedirects : Int
+    , minRemaining : Int
     }
 
 
@@ -103,6 +105,7 @@ defaultRequest url =
     , timeout = 30000
     , followRedirects = True
     , maxRedirects = 10
+    , minRemaining = 0
     }
 
 
@@ -174,6 +177,22 @@ withFollowRedirects b req =
 withMaxRedirects : Int -> HttpRequest -> HttpRequest
 withMaxRedirects n req =
     { req | maxRedirects = n }
+
+
+-- | `withMinRemaining ms req` — refuse the call before it is sent when a
+-- `Task.timeout` deadline is in force and less than `ms` milliseconds are
+-- left. The refusal is a `Timeout`-kind error whose domain failure is
+-- `"http"` / `"DeadlineTooShort"` (not retryable, attributes
+-- `minRemainingMs` and `remainingMs`). The default, `0`, refuses only once
+-- the deadline has passed. Outside a `Task.timeout` it has no effect.
+--
+--     defaultRequest url
+--         |> withMinRemaining 800
+--         |> request
+--         |> Task.timeout 2000
+withMinRemaining : Int -> HttpRequest -> HttpRequest
+withMinRemaining ms req =
+    { req | minRemaining = ms }
 
 
 -- | `parseQuery raw` — parse a URL query string (`"a=1&b=2"`)

@@ -118,4 +118,5 @@ upstreamRequest =
     , timeout = 30000
     , followRedirects = True
     , maxRedirects = 10
+    , minRemaining = 0
     }

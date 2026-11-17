@@ -125,14 +125,18 @@ push =
 
 
 -- | Take the item at the front, waiting until there is one: `Just item`, or
--- `Nothing` once the queue is closed and empty.
+-- `Nothing` once the queue is closed and empty. Under a `Task.timeout`
+-- deadline the wait ends at the deadline, with its `"task"` /
+-- `"DeadlineExceeded"` error.
 pop : Queue a -> Task Error (Maybe a)
 pop =
     Ffi.kernel "Sync_pop"
 
 
 -- | `popWithin ms queue` — `pop`, waiting at most `ms` milliseconds:
--- `Err Timeout` when nothing arrived in time.
+-- `Err Timeout` when nothing arrived in time. Under a `Task.timeout`
+-- deadline it waits for the earlier of the two, and a wait the deadline ends
+-- fails with the deadline's `"task"` / `"DeadlineExceeded"` error.
 popWithin : Int -> Queue a -> Task Error (Maybe a)
 popWithin =
     Ffi.kernel "Sync_popWithin"

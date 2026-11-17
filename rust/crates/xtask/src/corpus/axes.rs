@@ -212,6 +212,7 @@ pub const SURFACE: Axis = Axis::new(
         "zip",
         "office",
         "imagecanvas",
+        "deadline",
     ],
 );
 

@@ -61,6 +61,9 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
             | ("Sub", "none")
             | ("Uuid", "v4")
             | ("Uuid", "v7")
+            // `Task.remaining : Task e (Maybe Int)` (v0.29.14), a zero-arg
+            // `func Task_remaining() any` returning the Task.
+            | ("Task", "remaining")
             | ("JsonEnc", "null")
             | ("JsonDec", "string" | "int" | "float" | "bool" | "value")
             | ("Config", "string" | "int" | "float" | "bool")
@@ -293,6 +296,8 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Task", "retryWith", "rt.Task_retryWith"),
     ("Task", "loop", "rt.Task_loop"),
     ("Task", "forever", "rt.Task_forever"),
+    ("Task", "timeout", "rt.Task_timeout"),
+    ("Task", "remaining", "rt.Task_remaining"),
     ("Cmd", "none", "rt.Cmd_none"),
     ("Cmd", "batch", "rt.Cmd_batch"),
     ("Cmd", "perform", "rt.Cmd_perform"),
