@@ -490,6 +490,12 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
   `__Host-sky_sid` over HTTPS, and its value changes at sign-in), and
   cross-instance pub/sub (`store=redis` or
   `SKY_LIVE_BROKER_URL`). `memory` and `sqlite` are single-instance only.
+- Bursts: by default a burst of `/_rpc/<Msg>` or `App.api` requests queues
+  inside the process. Bound them with `App.withAdmission (Admission.policy |>
+  Admission.withLimit Admission.Rpc 64)` (`Std.Admission`; a hook can also
+  answer 429 / 503 per request) or `SKY_ADMISSION_RPC_LIMIT` /
+  `SKY_ADMISSION_API_LIMIT`. A request over the limit gets 503 with
+  `Retry-After` at once, and the Sky.Spa client re-sends it by itself.
 - Health checks: probe **`/_sky/healthz`** (liveness, always 200) or
   **`/_sky/readyz`** (503 until the store and database answer, and while
   draining). Never probe a path the app does not declare (`/healthz`,

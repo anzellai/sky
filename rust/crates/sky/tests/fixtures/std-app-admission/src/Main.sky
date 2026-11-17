@@ -1,0 +1,90 @@
+module Main exposing (main)
+
+-- App.withAdmission: the admission policy gates the App.api routes on
+-- Sky.Live and on the Sky.Spa backend. The hook reads the request and the
+-- load and answers Admit, Throttle or Shed.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Http.Server as Server exposing (Request, Response)
+import Std.Admission as Admission
+import Std.App as App
+import Std.Sub as Sub
+import Std.Ui as Ui
+
+type Page
+    = Home
+
+type alias Model =
+    { page : Page
+    , count : Int
+    }
+
+type Msg
+    = Increment
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = Home, count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> Ui.Element Msg
+view m =
+    Ui.text ("COUNT=" ++ String.fromInt m.count)
+
+
+decide : Request -> Admission.Load -> Task Error Admission.Decision
+decide req load =
+    case Server.header "X-Load-Test" req of
+
+        Just "throttle" ->
+            Task.succeed (Admission.Throttle 2500)
+
+        Just "shed" ->
+            Task.succeed (Admission.Shed 1000)
+
+        Just "load" ->
+            if load.routeClass == Admission.Api && load.route == "/api/ping"
+                && load.inFlight == 1 then
+                Task.succeed (Admission.Throttle (load.limit * 1000))
+
+            else
+                Task.succeed Admission.Admit
+
+        _ ->
+            Task.succeed Admission.Admit
+
+
+admission : Admission.Policy
+admission =
+    Admission.policy |> Admission.withLimit Admission.Api 5
+        |> Admission.withLimit Admission.Rpc 32
+        |> Admission.withHook decide
+
+
+ping : Request -> Task Error Response
+ping _ =
+    Task.succeed (Server.text "pong")
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withRoutes
+                   [ App.route "/" Home, App.api "GET /api/ping" ping ]
+            |> App.withNotFound Home
+            |> App.withAdmission admission)

@@ -81,6 +81,14 @@ func firstHeaderValues(h http.Header) (names, values []string) {
 }
 
 func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, paramNames []string) {
+	dispatchSkyHandlerAdmitted(w, req, handler, paramNames, nil)
+}
+
+// dispatchSkyHandlerAdmitted is dispatchSkyHandler for a route behind the
+// admission gate (admission_http.go): the request is built once, then the
+// policy's hook decides with it, then the handler runs. A nil ticket is no
+// gate.
+func dispatchSkyHandlerAdmitted(w http.ResponseWriter, req *http.Request, handler any, paramNames []string, ticket *admissionTicket) {
 	// The mux set req.Pattern. Record it now, so a panic report and
 	// Middleware.withLogging inside the handler see the route template, not
 	// the raw path (telemetry_url.go).
@@ -163,6 +171,9 @@ func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, p
 	// derived from the `:name` segments this route registered.
 	for _, pn := range paramNames {
 		skyReq.Params[pn] = req.PathValue(pn)
+	}
+	if !admissionAdmit(w, ticket, skyReq) {
+		return
 	}
 
 	// Call the Sky handler and invoke the returned Task
@@ -531,12 +542,33 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 		if route.Rpc {
 			// Server.rpc: the origin / content-type guard runs BEFORE the
 			// handler, so a refused request never reaches app code.
+			// Then the admission gate (admission_http.go): a refused
+			// request is answered before its body is read.
 			rpcMethod := route.Method
+			rpcRoute := route.Path
 			mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
 				if !rpcRequestGuard(w, req, rpcMethod) {
 					return
 				}
-				dispatchSkyHandler(w, req, handler, paramNames)
+				ticket, ok := admissionEnter(w, admissionRpc, rpcRoute)
+				if !ok {
+					return
+				}
+				defer ticket.release()
+				dispatchSkyHandlerAdmitted(w, req, handler, paramNames, ticket)
+			})
+			continue
+		}
+		if route.Api {
+			// Server.api / App.api: behind the admission gate's Api class.
+			apiRoute := route.Path
+			mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
+				ticket, ok := admissionEnter(w, admissionApi, apiRoute)
+				if !ok {
+					return
+				}
+				defer ticket.release()
+				dispatchSkyHandlerAdmitted(w, req, handler, paramNames, ticket)
 			})
 			continue
 		}
@@ -892,7 +924,7 @@ func Server_api(spec any, handler any) any {
 		pattern = strings.TrimSpace(s[idx+1:])
 	}
 	WithoutCsrfMethod(method, pattern)
-	return SkyRoute{Method: method, Path: pattern, Handler: handler}
+	return SkyRoute{Method: method, Path: pattern, Handler: handler, Api: true}
 }
 
 // Middleware.withCsrf : Handler -> Handler

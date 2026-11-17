@@ -41,7 +41,7 @@ sequences, v0.29.0), `Dict`, `Set`, `String`, `Char`, `Tuple`, `Math`,
 `Http`, `Http.Stream` and `WebSocket`. Every collection function states its
 cost in a `Cost:` line in `sky doc`.
 
-**Apps and UI.** `Std.App`, `Std.Cmd`, `Std.Sub`, `Std.Nav`, `Std.Native`,
+**Apps and UI.** `Std.App`, `Std.Admission`, `Std.Cmd`, `Std.Sub`, `Std.Nav`, `Std.Native`,
 `Std.Bundle`; `Std.Ui` with `Std.Ui.Animation`, `Background`, `Border`,
 `Canvas`, `Chart`, `Events`, `Font`, `Grid`, `Input`, `Keyed`, `Lazy`,
 `Region`, `Responsive`, `Terminal`, `Transform` and `Transition`; `Std.Html`

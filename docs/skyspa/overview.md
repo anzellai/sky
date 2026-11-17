@@ -426,6 +426,16 @@ retry code and no network banner (v0.27.3, `runtime-go/rt/spa_retry.go`).
   (`SpaInit_`) is held too, and a wasm download that WebKit cancels for the
   navigation raises no page error (the loader starts again if the page
   stays).
+- **Bounding a burst on the server.** By default the backend runs every
+  `/_rpc/<Msg>` call at once. `App.withAdmission` (`Std.Admission`) gives the
+  RPC calls and the `App.api` routes a limit on the requests that run at the
+  same time, and an optional hook that can answer 429 or 503 per request. A
+  call over the limit gets 503 with `Retry-After` before its body is read; the
+  client treats it as transient and re-sends it after the `Retry-After`. The
+  build carries the policy into the backend's boot (the argument must be a
+  value the backend can compute). `SKY_ADMISSION_RPC_LIMIT` /
+  `SKY_ADMISSION_API_LIMIT` override the limits. The limits are fixed: an
+  adaptive limit is not provided.
 - **Protecting a recovering server.** A retry token bucket per origin (10
   tokens; a failure costs 1, a success refunds 0.1; below 5 no automatic
   retry starts) and, after a 429 or 503, client-side adaptive throttling of

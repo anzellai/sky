@@ -1038,7 +1038,16 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// Lowered 76 -> 75 (v0.29.0): `Sky.Core.Array` gained the `array` surface
 /// (every export asserted at the nominal, empty, boundary, unicode and
 /// failure edges, including pushes across the 32 and 1,024 trie boundaries).
-pub const DARK_MODULE_CEILING: usize = 75;
+/// Raised 75 -> 76 (v0.29.14): the new `Std.Admission`. It is config-shaped,
+/// like `Sky.Config`: an opaque `Policy` built by `withX` builders and consumed
+/// for its EFFECT by `install` (a `Task`) and `App.withAdmission`. What it does
+/// happens to HTTP requests under load, so it is covered by
+/// `runtime-go/rt/admission_test.go` (limit, Retry-After, origin first, slot
+/// released after a panic, hook decisions, env over code, the Sky.Live api
+/// path) and `spa_split_flow.rs`
+/// `an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend`
+/// (the Sky hook on Sky.Live and the split backend), not here.
+pub const DARK_MODULE_CEILING: usize = 76;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`

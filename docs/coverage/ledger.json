@@ -805,7 +805,7 @@
       "tier": "T1"
     },
     "stdlib-bodies": {
-      "expected_assertions": 135,
+      "expected_assertions": 136,
       "falsifier_mutation": "stdlib-bodies.record-missing-field",
       "falsifier_proven": true,
       "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
@@ -1010,13 +1010,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3254,
-    "stdlib_modules": 135,
+    "stdlib_entries": 3267,
+    "stdlib_modules": 136,
     "surfaces_covered": 193,
-    "surfaces_covered_pct": 95.1,
-    "surfaces_equal": 15,
+    "surfaces_covered_pct": 94.6,
+    "surfaces_equal": 16,
     "surfaces_stronger": 188,
-    "surfaces_total": 203,
+    "surfaces_total": 204,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -3533,6 +3533,11 @@
           },
           {
             "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -10134,6 +10139,22 @@
     {
       "category": "stdlib",
       "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Admission public API",
+      "id": "stdlib.Std.Admission",
+      "verdict": "equal"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
         "class": "Falsified",
         "evidence": [
           {
@@ -16665,6 +16686,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -19451,18 +19477,19 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 8,
+      "count": 9,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
         "Sky.Core.Path",
+        "Std.Admission",
         "Std.Cli",
         "Std.Db.Migrate",
         "Std.Db.Table",
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 5.9
+      "pct_of_denominator": 6.6
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -19470,13 +19497,14 @@
       "modules": []
     },
     "surfaces_with_zero_new_cover": {
-      "count": 9,
+      "count": 10,
       "surfaces": [
         "cli.console",
         "cli.console-serve",
         "cli.spa-partition",
         "cli.upgrade-claude",
         "stdlib.Sky.Core.Io",
+        "stdlib.Std.Admission",
         "stdlib.Std.Cli",
         "stdlib.Std.Db.Table",
         "stdlib.Std.Tui",
@@ -19732,6 +19760,22 @@
             "run",
             "summarise",
             "writeJsonReport"
+          ]
+        },
+        "Std.Admission": {
+          "count": 11,
+          "symbols": [
+            "Decision",
+            "Load",
+            "Policy",
+            "RouteClass",
+            "install",
+            "limitOf",
+            "policy",
+            "retryAfterOf",
+            "withHook",
+            "withLimit",
+            "withRetryAfter"
           ]
         },
         "Std.Ai.Agent": {
@@ -20051,7 +20095,7 @@
           ]
         },
         "Std.App": {
-          "count": 21,
+          "count": 23,
           "symbols": [
             "BaseConfig",
             "DesktopOpts",
@@ -20061,6 +20105,7 @@
             "TerminalOpts",
             "WebOpts",
             "apiServerRoute",
+            "applyAdmission",
             "applyServerConfig",
             "applySessionLifetime",
             "baseDefaults",
@@ -20070,6 +20115,7 @@
             "spaRoute",
             "tabletDefaults",
             "terminalDefaults",
+            "withAdmission",
             "withAppUrl",
             "withBase",
             "withPersistExclude",
@@ -20601,13 +20647,6 @@
             "withRoutes"
           ]
         },
-        "Std.Sub": {
-          "count": 2,
-          "symbols": [
-            "onBreakpoint",
-            "onQuery"
-          ]
-        },
         "Std.Sync": {
           "count": 2,
           "symbols": [
@@ -20884,8 +20923,8 @@
           ]
         }
       },
-      "count": 868,
-      "pct_of_denominator": 26.7
+      "count": 879,
+      "pct_of_denominator": 26.9
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21177,6 +21216,22 @@
             "run",
             "summarise",
             "writeJsonReport"
+          ]
+        },
+        "Std.Admission": {
+          "count": 11,
+          "symbols": [
+            "Decision",
+            "Load",
+            "Policy",
+            "RouteClass",
+            "install",
+            "limitOf",
+            "policy",
+            "retryAfterOf",
+            "withHook",
+            "withLimit",
+            "withRetryAfter"
           ]
         },
         "Std.Ai.Agent": {
@@ -21516,7 +21571,7 @@
           ]
         },
         "Std.App": {
-          "count": 24,
+          "count": 26,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -21529,6 +21584,7 @@
             "TerminalOpts",
             "WebOpts",
             "apiServerRoute",
+            "applyAdmission",
             "applyServerConfig",
             "applySessionLifetime",
             "baseDefaults",
@@ -21538,6 +21594,7 @@
             "spaRoute",
             "tabletDefaults",
             "terminalDefaults",
+            "withAdmission",
             "withAppUrl",
             "withBase",
             "withPersistExclude",
@@ -22132,11 +22189,9 @@
           ]
         },
         "Std.Sub": {
-          "count": 3,
+          "count": 1,
           "symbols": [
-            "ConnectionState",
-            "onBreakpoint",
-            "onQuery"
+            "ConnectionState"
           ]
         },
         "Std.Sync": {
@@ -22429,8 +22484,8 @@
           ]
         }
       },
-      "count": 979,
-      "pct_of_denominator": 30.1
+      "count": 990,
+      "pct_of_denominator": 30.3
     }
   },
   "units": [
@@ -22641,12 +22696,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/nav-e2e.sh",
-      "modules_imported": 9,
+      "modules_imported": 11,
       "path": "scripts/nav-e2e.sh",
-      "refs_generous": 31,
-      "refs_qualified": 30,
+      "refs_generous": 35,
+      "refs_qualified": 35,
       "role": "FlowTest",
-      "sky_files": 1,
+      "sky_files": 2,
       "sky_toml_sections": []
     },
     {
@@ -24355,10 +24410,10 @@
       "id": "flow:spa_split_flow",
       "modules_imported": 43,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 193,
-      "refs_qualified": 180,
+      "refs_generous": 195,
+      "refs_qualified": 182,
       "role": "FlowTest",
-      "sky_files": 151,
+      "sky_files": 152,
       "sky_toml_sections": []
     },
     {

@@ -10075,6 +10075,82 @@ fn a_wrong_init_seed_is_reported_at_init_for_every_target() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// `App.withAdmission`: the policy reaches the server on both web targets.
+/// On Sky.Live it is installed before the app starts; on the Sky.Spa split the
+/// build carries it into the backend's boot task (never into the client). The
+/// app's own hook, written in Sky, decides each `App.api` request with the
+/// request and the load: `Throttle` is a 429, `Shed` a 503, both with
+/// `Retry-After` in whole seconds, and the `Load` it reads names the route
+/// class, the route, the in-flight count and the limit.
+#[test]
+fn an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("std-app-admission", &[]);
+    let backend = split_file(&proj, "backend/src/Main.sky");
+    assert!(
+        backend.contains("App.applyAdmission admission"),
+        "the backend installs the policy at boot:\n{log}\n{backend}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let probe = |port: u16, mode: &str| -> (String, String) {
+        let out = Command::new("curl")
+            .args(["-s", "--max-time", "30", "-o", "/dev/null", "-D", "-"])
+            .args(["-H", &format!("X-Load-Test: {mode}")])
+            .arg(format!("http://127.0.0.1:{port}/api/ping"))
+            .output()
+            .expect("curl GET /api/ping");
+        let head = String::from_utf8_lossy(&out.stdout).into_owned();
+        let status = head
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .unwrap_or("")
+            .to_string();
+        let retry = head
+            .lines()
+            .find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.eq_ignore_ascii_case("retry-after")
+                    .then(|| v.trim().to_string())
+            })
+            .unwrap_or_default();
+        (status, retry)
+    };
+    let check = |port: u16, what: &str| {
+        assert_eq!(
+            probe(port, "none"),
+            ("200".into(), String::new()),
+            "{what}: admit"
+        );
+        assert_eq!(
+            probe(port, "throttle"),
+            ("429".into(), "3".into()),
+            "{what}: throttle"
+        );
+        assert_eq!(
+            probe(port, "shed"),
+            ("503".into(), "1".into()),
+            "{what}: shed"
+        );
+        assert_eq!(
+            probe(port, "load"),
+            ("429".into(), "5".into()),
+            "{what}: the load the hook reads"
+        );
+    };
+    let (live, port) = start_live_app(&proj);
+    check(port, "Sky.Live");
+    drop(live);
+    let (split, port) = start_split_backend(&proj);
+    check(port, "split backend");
+    drop(split);
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// `Sub.onBreakpoint` and `Sub.onQuery`: on Sky.Live the query of each page
 /// request reaches `update` before the page renders (a reload with the same
 /// query keeps it), and the width the browser reports (the `__skyViewport`

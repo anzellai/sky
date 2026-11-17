@@ -61,7 +61,7 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:17216 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:17239 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
@@ -84,7 +84,7 @@
     "env.prefix": [
       "rust/crates/sky/src/db_cluster.rs:1666 (sky_toml_section_key)",
       "rust/crates/sky/src/db_pool_sizing.rs:161 (toml_value)",
-      "rust/crates/sky/src/main.rs:17091 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:17114 (sky_toml_section_key)"
     ],
     "go.dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — same reader, same verbs; materialises the go.mod pins a build needs before it can start."
@@ -96,17 +96,17 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "name": [
-      "rust/crates/sky/src/main.rs:13141 (sky_toml_project_key)",
-      "rust/crates/sky/src/main.rs:13261 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:13164 (sky_toml_project_key)",
+      "rust/crates/sky/src/main.rs:13284 (sky_toml_project_key)"
     ],
     "root": [
       "rust/crates/project/src/build.rs:2928 (sky_toml_project_key)"
     ],
     "spa.wire": [
-      "rust/crates/sky/src/main.rs:6034 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:6057 (sky_toml_section_key)"
     ],
     "version": [
-      "rust/crates/sky/src/main.rs:13148 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:13171 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [
@@ -188,6 +188,8 @@
   ],
   "runtime_read_suffixes": [
     "ADMIN_TOKEN",
+    "ADMISSION_API_LIMIT",
+    "ADMISSION_RPC_LIMIT",
     "AI_ACCEL",
     "AI_FETCH",
     "AI_GCP_ENDPOINT",
@@ -287,12 +289,12 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 184,
+    "documented_names": 186,
     "documented_without_reader": 19,
     "pre_binary_surfaces": 17,
     "read_without_doc": 25,
     "runtime_read_literal_sky_names": 48,
-    "runtime_read_suffixes": 74,
+    "runtime_read_suffixes": 76,
     "seeded_suffixes": 20,
     "seeded_without_reader": 0,
     "unclassified_keys": 0,

@@ -2373,6 +2373,11 @@ struct AppFields {
     /// `spaServerConfig_` boot task (`App.applySessionLifetime`), so the
     /// backend sets it before it listens (operator env > code > 30 days).
     session_lifetime: Option<String>,
+    /// `App.withAdmission <policy>` (v0.29.14): the server's admission
+    /// policy (`Std.Admission`). Carried into the `spaServerConfig_` boot task
+    /// (`App.applyAdmission`), so the backend installs it before it listens.
+    /// Server-only: the client never sees it.
+    admission: Option<String>,
     /// `App.withPersistExclude [ … ]` (v0.29.0): model fields the client never
     /// stores in localStorage and always takes from the server-rendered seed.
     /// Carried into a `spaPersistExclude_` binding the client config chain
@@ -2418,6 +2423,7 @@ const SPA_CARRIED_BUILDERS: &[&str] = &[
     "withConfig",
     "withBase",
     "withSessionLifetime",
+    "withAdmission",
     "withPersistExclude",
 ];
 
@@ -2496,6 +2502,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
     let mut server_configs: Vec<String> = Vec::new();
     let mut server_base: Option<String> = None;
     let mut session_lifetime: Option<String> = None;
+    let mut admission: Option<String> = None;
     let mut persist_exclude: Option<String> = None;
     let mut client_crypto = false;
     let mut dropped_builders: Vec<String> = Vec::new();
@@ -2564,6 +2571,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
             }
             "withBase" => server_base = Some(place("base", arg)),
             "withSessionLifetime" => session_lifetime = Some(place("sessionLifetime", arg)),
+            "withAdmission" => admission = Some(place("admission", arg)),
             "withPersistExclude" => persist_exclude = Some(place("persistExclude", arg)),
             _ => unreachable!("carried builder list and match disagree: {name}"),
         }
@@ -2584,6 +2592,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
         server_configs,
         server_base,
         session_lifetime,
+        admission,
         persist_exclude,
         client_crypto,
         dropped_builders,
@@ -3542,13 +3551,27 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 .unwrap_or_else(|| format!("{aq}.baseDefaults"))
         ))
     };
-    let server_config_binding = match (config_task, &fields.session_lifetime) {
-        (None, None) => String::new(),
-        (Some(t), None) => format!("spaServerConfig_ =\n    {t}\n\n\n"),
-        (t, Some(l)) => format!(
-            "spaServerConfig_ =\n    {}\n        |> Task.andThen (\\_ -> {aq}.applySessionLifetime {l})\n\n\n",
-            t.unwrap_or_else(|| "Task.succeed ()".to_string())
-        ),
+    // `App.withAdmission` joins it too (v0.29.14): the backend installs the
+    // admission policy (`Std.Admission`) before it listens.
+    let mut boot_steps: Vec<String> = Vec::new();
+    if let Some(l) = &fields.session_lifetime {
+        boot_steps.push(format!("{aq}.applySessionLifetime {l}"));
+    }
+    if let Some(p) = &fields.admission {
+        boot_steps.push(format!("{aq}.applyAdmission {p}"));
+    }
+    let server_config_binding = if config_task.is_none() && boot_steps.is_empty() {
+        String::new()
+    } else {
+        let mut b = format!(
+            "spaServerConfig_ =\n    {}",
+            config_task.unwrap_or_else(|| "Task.succeed ()".to_string())
+        );
+        for step in &boot_steps {
+            b.push_str(&format!("\n        |> Task.andThen (\\_ -> {step})"));
+        }
+        b.push_str("\n\n\n");
+        b
     };
     let (persist_exclude_binding, persist_exclude_line) = match &fields.persist_exclude {
         Some(f) => (
@@ -19400,6 +19423,24 @@ mod tests {
         assert!(
             both.contains("App.applyServerConfig [ cfg ] App.baseDefaults\n        |> Task.andThen (\\_ -> App.applySessionLifetime (60))"),
             "the lifetime must follow the config task:\n{both}"
+        );
+    }
+
+    // v0.29.14: `App.withAdmission` joins the backend's boot task after the
+    // configuration, and never reaches the client config.
+    #[test]
+    fn std_app_admission_is_carried_into_the_backend_boot_task() {
+        let out = synth_ok(&sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withSessionLifetime 60\n        |> App.withAdmission admission\n\n\n\
+             main =\n    App.run appDef\n",
+        ));
+        assert!(
+            out.contains("spaServerConfig_ =\n    Task.succeed ()\n        |> Task.andThen (\\_ -> App.applySessionLifetime (60))\n        |> Task.andThen (\\_ -> App.applyAdmission admission)"),
+            "withAdmission must reach the boot task:\n{out}"
+        );
+        assert!(
+            !out.contains("withAdmission"),
+            "the admission policy is server-only and must not reach the client config:\n{out}"
         );
     }
 

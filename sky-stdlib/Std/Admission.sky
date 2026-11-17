@@ -1,0 +1,242 @@
+-- | Std.Admission — a bound on the requests a server runs at the same time.
+--
+-- Without a policy a burst of requests queues inside the process: every
+-- request starts its handler at once, and every one waits for the slowest. A
+-- policy gives each route class a limit. A request over the limit is answered
+-- at once with `503 Service Unavailable` and a `Retry-After`, before its body
+-- is read and before any of your code runs. The Sky.Spa client re-sends such a
+-- request by itself, after the `Retry-After`.
+--
+--     admission : Admission.Policy
+--     admission =
+--         Admission.policy
+--             |> Admission.withLimit Admission.Rpc 64
+--             |> Admission.withLimit Admission.Api 16
+--             |> Admission.withRetryAfter 2000
+--
+--     app =
+--         App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+--             |> App.withNotFound NotFound
+--             |> App.withAdmission admission
+--
+-- The route classes: `Rpc` is every Sky.Spa `/_rpc/<Msg>` call (and every
+-- `Server.rpc` route); `Api` is every `App.api` route on Sky.Live and Sky.Spa
+-- (and every `Server.api` route). Pages, static files, the Sky.Live event
+-- endpoint and the runtime's own `/_sky/` routes are not gated.
+--
+-- A hook (`withHook`) runs next, with the request and the current load. It
+-- reads what it needs (the session cookie, a header, the route) and answers
+-- `Admit`, `Throttle ms` (`429 Too Many Requests`) or `Shed ms` (`503`). A
+-- hook that fails sheds the request.
+--
+-- The default is no limit and no hook: nothing changes until you install a
+-- policy. One policy holds for the whole process. The operator variables
+-- `SKY_ADMISSION_RPC_LIMIT` and `SKY_ADMISSION_API_LIMIT` (a whole number,
+-- `0` for no limit) win over the limits in code. The limits are fixed: an
+-- adaptive limit that follows latency is not provided. Every refusal is
+-- counted in the `sky_admission_refused_total` metric.
+module Std.Admission exposing
+    ( RouteClass(..)
+    , Load
+    , Decision(..)
+    , Policy
+    , policy
+    , withLimit
+    , withRetryAfter
+    , withHook
+    , limitOf
+    , retryAfterOf
+    , install
+    )
+
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Ffi as Ffi
+import Sky.Http.Server exposing (Request)
+
+-- | The class of a gated route. `Rpc`: the Sky.Spa `/_rpc/<Msg>` calls
+-- (`Server.rpc`). `Api`: `App.api` and `Server.api` routes.
+type RouteClass
+    = Rpc
+    | Api
+
+-- | What the hook sees about the server's load when a request arrives:
+-- its route class, its route as declared (`"/_rpc/Save"`,
+-- `"/api/items/:id"`), the number of requests of that class running now
+-- (this one included), and the class's limit (`0`: none).
+type alias Load =
+    { routeClass : RouteClass
+    , route : String
+    , inFlight : Int
+    , limit : Int
+    }
+
+-- | The hook's answer. `Admit` runs the handler. `Throttle ms` answers
+-- `429 Too Many Requests`, `Shed ms` answers `503 Service Unavailable`;
+-- both carry `Retry-After` (`ms` rounded up to whole seconds).
+type Decision
+    = Admit
+    | Throttle Int
+    | Shed Int
+
+-- | An admission policy. Build it from [`policy`] with the `with…` builders.
+type Policy
+    = Policy { rpcLimit : Int
+, apiLimit : Int
+, retryAfterMs : Int
+, hook : Maybe (Request -> Load -> Task Error Decision)
+}
+
+
+-- | No limit, no hook, a `Retry-After` of 1000 ms for a refusal.
+policy : Policy
+policy =
+    Policy { rpcLimit = 0, apiLimit = 0, retryAfterMs = 1000, hook = Nothing }
+
+
+-- | `withLimit routeClass n` — at most `n` requests of the class run at the
+-- same time; the next one is answered `503` at once. `0` or less: no limit.
+withLimit : RouteClass -> Int -> Policy -> Policy
+withLimit routeClass n (Policy p) =
+    let
+        bounded =
+            if n < 0 then
+                0
+
+            else
+                n
+    in
+        case routeClass of
+
+            Rpc ->
+                Policy { p | rpcLimit = bounded }
+
+            Api ->
+                Policy { p | apiLimit = bounded }
+
+
+-- | `withRetryAfter ms` — the `Retry-After` of a request refused for the
+-- limit (and of one a failing hook sheds). The default is 1000 ms.
+withRetryAfter : Int -> Policy -> Policy
+withRetryAfter ms (Policy p) =
+    if ms < 0 then
+        Policy { p | retryAfterMs = 0 }
+
+    else
+        Policy { p | retryAfterMs = ms }
+
+
+-- | `withHook decide` — run `decide` for each admitted request, after the
+-- limit check and before the handler. It gets the request (headers, cookies,
+-- query; the body too) and the [`Load`]. Keep it quick: it runs on every
+-- gated request.
+--
+--     decide : Request -> Admission.Load -> Task Error Admission.Decision
+--     decide req load =
+--         if load.inFlight > load.limit // 2 && Server.getCookie "sky_spa" req == Nothing then
+--             Task.succeed (Admission.Throttle 2000)
+--
+--         else
+--             Task.succeed Admission.Admit
+withHook : (Request -> Load -> Task Error Decision) -> Policy -> Policy
+withHook decide (Policy p) =
+    Policy { p | hook = Just decide }
+
+
+-- | The limit a policy sets for a class (`0`: none).
+limitOf : RouteClass -> Policy -> Int
+limitOf routeClass (Policy p) =
+    case routeClass of
+
+        Rpc ->
+            p.rpcLimit
+
+        Api ->
+            p.apiLimit
+
+
+-- | The `Retry-After` of a refusal for the limit, in milliseconds.
+retryAfterOf : Policy -> Int
+retryAfterOf (Policy p) =
+    p.retryAfterMs
+
+
+-- | Make the policy the process's policy. `App.withAdmission` does this for
+-- you at boot (Sky.Live and the Sky.Spa backend); call it yourself before
+-- `Server.listen` in a program built on `Sky.Http.Server`, where it gates the
+-- `Server.rpc` and `Server.api` routes.
+install : Policy -> Task Error ()
+install (Policy p) =
+    case p.hook of
+
+        Just decide ->
+            installKernel
+                p.rpcLimit
+                p.apiLimit
+                p.retryAfterMs
+                True
+                (hookAdapter decide)
+
+        Nothing ->
+            installKernel
+                p.rpcLimit
+                p.apiLimit
+                p.retryAfterMs
+                False
+                (hookAdapter admitAll)
+
+
+admitAll : Request -> Load -> Task Error Decision
+admitAll _ _ =
+    Task.succeed Admit
+
+
+-- The runtime calls the hook with plain values and reads one Int back:
+-- -1 Admit, 2 * ms Throttle, 2 * ms + 1 Shed.
+hookAdapter : (Request -> Load -> Task Error Decision) -> Request -> String -> String -> Int -> Int -> Task Error Int
+hookAdapter decide req routeClass route inFlight limit =
+    decide
+        req
+        { routeClass = classOf routeClass
+        , route = route
+        , inFlight = inFlight
+        , limit = limit
+        }
+        |> Task.map decisionCode
+
+
+classOf : String -> RouteClass
+classOf name =
+    if name == "api" then
+        Api
+
+    else
+        Rpc
+
+
+decisionCode : Decision -> Int
+decisionCode decision =
+    case decision of
+
+        Admit ->
+            -1
+
+        Throttle ms ->
+            2 * nonNegative ms
+
+        Shed ms ->
+            2 * nonNegative ms + 1
+
+
+nonNegative : Int -> Int
+nonNegative n =
+    if n < 0 then
+        0
+
+    else
+        n
+
+
+installKernel : Int -> Int -> Int -> Bool -> (Request -> String -> String -> Int -> Int -> Task Error Int) -> Task Error ()
+installKernel =
+    Ffi.kernel "Admission_install"

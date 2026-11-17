@@ -363,6 +363,32 @@ Set it to keep console sessions valid across replicas.
 With `SKY_CONSOLE_AUTH=app` and no `withConsoleAuth`, every console request
 gets 403. Use `SKY_CONSOLE_AUTH=token` in that case.
 
+## Bounding a burst of requests — `App.withAdmission`
+
+By default the server runs every `App.api` request and every Sky.Spa
+`/_rpc/<Msg>` call at once, so a burst queues inside the process.
+`App.withAdmission` installs a `Std.Admission` policy at boot: a limit per
+route class (`Rpc`, `Api`) on the requests that run at the same time, and an
+optional hook that decides each request with the request and the load.
+
+```elm
+appDef
+    |> App.withAdmission
+           (Admission.policy
+               |> Admission.withLimit Admission.Rpc 64
+               |> Admission.withLimit Admission.Api 16)
+```
+
+A request over the limit gets `503` with `Retry-After` at once, before its
+body is read; the hook can answer `Throttle ms` (`429`) or `Shed ms` (`503`).
+The Sky.Spa client re-sends both after the `Retry-After`. It runs on Sky.Live
+(`web`, `desktop`) and on the backend of a `web:app` split, where the build
+carries the policy into the backend's boot, so the argument must be a value
+the backend can compute (a literal or a top-level value). Terminal targets
+ignore it. The operator variables `SKY_ADMISSION_RPC_LIMIT` /
+`SKY_ADMISSION_API_LIMIT` win over the code. The default is no limit, and an
+adaptive limit is not provided. See `sky doc Std.Admission`.
+
 ## Surviving a restart — `App.withDurable`
 
 Add durability to any `App.app` app with **one line** and NO change to `model` /

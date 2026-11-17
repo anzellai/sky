@@ -128,6 +128,13 @@ const EXPECTED_COLLISIONS: &[&str] = &[
 /// qualifies it. Listed so the set is reviewed, and so a rename that would
 /// avoid a clash is considered before the release rather than after.
 const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
+    // v0.29.14: Std.Admission names its hook's answer `Decision` (as
+    // Std.Ai.Policy does for its firewall) and its refusal delay builder
+    // `withRetryAfter` (as Sky.Core.Error does for an error's delay). It is a
+    // new module, so no existing program changes; a program reads it
+    // qualified (`import Std.Admission as Admission`).
+    "type Decision",
+    "value withRetryAfter",
     // v0.29.0: Sky.Core.Array has Elm's Array API, which shares its names
     // with List, String, Dict, Set, Bytes and the Std.Sync / Std.Cache
     // accessors, as in Elm. It is a new module, so no existing program

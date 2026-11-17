@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 203 |
+| surfaces | 204 |
 | covered by the new corpus (>= Asserted) | 193 |
 | verdict `stronger` | 188 |
-| verdict `equal` | 15 |
+| verdict `equal` | 16 |
 | verdict `weaker` | 0 |
 | corpus units | 157 |
-| stdlib modules (denominator) | 135 |
-| stdlib entries (denominator) | 3254 |
+| stdlib modules (denominator) | 136 |
+| stdlib entries (denominator) | 3267 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 8 | 5.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 979 | 30.1% |
-| symbols unreferenced under the generous rule | 868 | 26.7% |
+| stdlib modules imported by nothing | 9 | 6.6% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 990 | 30.3% |
+| symbols unreferenced under the generous rule | 879 | 26.9% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 0 | — |
 
 ### Surfaces with zero new cover
@@ -45,6 +45,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `cli.spa-partition`
 - `cli.upgrade-claude`
 - `stdlib.Sky.Core.Io`
+- `stdlib.Std.Admission`
 - `stdlib.Std.Cli`
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Tui`
@@ -187,6 +188,7 @@ None.
 | `stdlib.Sky.Http.Server.Stream` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Http.Server.WebSocket` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Admission` | stdlib | None | None | equal |
 | `stdlib.Std.Ai.Agent` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Cloud.Google` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Ai.Dataset` | stdlib | Asserted | Falsified | stronger |

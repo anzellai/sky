@@ -2948,6 +2948,79 @@ batch.
 `Task.lazy : (() -> a) -> Task err a` — defer a pure computation
 so it can be sequenced with other tasks.
 
+### `Std.Admission` — a bound on the requests a server runs at once (v0.29.14)
+
+Without a policy a burst of requests queues inside the process: every request
+starts its handler at once. A policy gives each route class a limit on the
+requests that run at the same time. A request over the limit is answered at
+once with `503 Service Unavailable` and `Retry-After`, before its body is read
+and before any app code runs. An optional hook runs next, with the request
+and the load, and answers `Admit`, `Throttle ms` (`429`) or `Shed ms` (`503`).
+
+The route classes: `Rpc` is every Sky.Spa `/_rpc/<Msg>` call (`Server.rpc`);
+`Api` is every `App.api` route on Sky.Live and Sky.Spa, and every
+`Server.api` route. Pages, static files, the Sky.Live event endpoint and the
+runtime's `/_sky/` routes are not gated. The origin check of an RPC runs
+first, so a foreign origin is still a `403`, never a `429` / `503`.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Http.Server as Server exposing (Request, Response)
+import Std.Admission as Admission
+
+
+decide : Request -> Admission.Load -> Task Error Admission.Decision
+decide req load =
+    if load.inFlight * 2 > load.limit && Server.header "X-Priority" req /= Just "high" then
+        Task.succeed (Admission.Throttle 2000)
+
+    else
+        Task.succeed Admission.Admit
+
+
+admission : Admission.Policy
+admission =
+    Admission.policy
+        |> Admission.withLimit Admission.Api 16
+        |> Admission.withRetryAfter 2000
+        |> Admission.withHook decide
+
+
+items : Request -> Task Error Response
+items _ =
+    Task.succeed (Server.text "[]")
+
+
+main =
+    Admission.install admission
+        |> Task.andThen (\_ -> Server.listen 8000 [ Server.api "GET /api/items" items ])
+```
+
+A `Std.App` app passes the policy to `App.withAdmission`; the runtime installs
+it at boot on Sky.Live and on the Sky.Spa backend.
+
+| Function | Type | Notes |
+|---|---|---|
+| `Admission.policy` | `Policy` | No limit, no hook, `Retry-After` 1000 ms |
+| `Admission.withLimit` | `RouteClass -> Int -> Policy -> Policy` | At most `n` requests of the class at the same time; `0` or less is no limit |
+| `Admission.withRetryAfter` | `Int -> Policy -> Policy` | The `Retry-After` (ms, sent rounded up to whole seconds) of a refusal for the limit |
+| `Admission.withHook` | `(Request -> Load -> Task Error Decision) -> Policy -> Policy` | Decide each admitted request; a hook that fails sheds it (`503`) |
+| `Admission.limitOf` | `RouteClass -> Policy -> Int` | The limit a policy sets for a class |
+| `Admission.retryAfterOf` | `Policy -> Int` | The policy's `Retry-After` in ms |
+| `Admission.install` | `Policy -> Task Error ()` | Make it the process's policy (one per process; the last one wins) |
+
+`Load` is `{ routeClass, route, inFlight, limit }`: the class, the route as
+declared (`"/_rpc/Save"`, `"/api/items/:id"`), the requests of the class
+running now (this one included) and the limit (`0`: none). The operator
+variables `SKY_ADMISSION_RPC_LIMIT` and `SKY_ADMISSION_API_LIMIT` (a whole
+number, `0` for no limit) win over the code. Each refusal is counted in the
+`sky_admission_refused_total` metric (labels `class`, `route`, `status`). The
+Sky.Spa client re-sends a `429` / `503` by itself after the `Retry-After`.
+The limits are fixed: an adaptive limit that follows latency is not provided.
+
 ### `Std.Sync` — shared state between concurrent Tasks (v0.27.0)
 
 Pure code needs none of this: a Sky value never changes, so two

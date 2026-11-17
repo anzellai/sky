@@ -234,6 +234,15 @@ Connection-status banner config is env-only (not in sky.toml):
 `<PREFIX>_LIVE_RETRY_MAX_ATTEMPTS` (default `10`),
 `<PREFIX>_LIVE_QUEUE_MAX` (default `50`).
 
+**Admission limits.** `<PREFIX>_ADMISSION_RPC_LIMIT` and
+`<PREFIX>_ADMISSION_API_LIMIT` (env only, a whole number) bound the requests
+that run at the same time: the Sky.Spa `/_rpc/<Msg>` calls (`Rpc`) and the
+`App.api` / `Server.api` routes (`Api`). A request over the limit gets `503`
+with `Retry-After` at once, before its body is read. `0` is no limit. Unset,
+the limit is the one the code installs with `App.withAdmission` /
+`Admission.install` (`Std.Admission`), else none: operator env > code >
+default. A value that is not a whole number of 0 or more is ignored.
+
 **Cross-instance pub/sub broker.** `<PREFIX>_LIVE_BROKER_URL` (unset →
 in-process) points `Cmd.publish` at a shared **Redis** broker so a publish on
 replica A reaches subscribers on replica B — required for multi-replica

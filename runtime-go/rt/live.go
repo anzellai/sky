@@ -1522,6 +1522,13 @@ func collectLiveRoutes(cfg any) ([]liveRoute, []apiRoute) {
 // serveAPI calls the Sky handler with a Request-like map and renders
 // the returned Response.
 func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter, r *http.Request) {
+	// The admission gate's Api class (admission_http.go): over the limit,
+	// 503 before the body is read; the slot is released when this returns.
+	ticket, admitted := admissionEnter(w, admissionApi, ar.pattern)
+	if !admitted {
+		return
+	}
+	defer ticket.release()
 	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, serverMaxBodyBytes))
 	// Build the SAME canonical SkyRequest the Sky.Http.Server listener passes
 	// to handlers (rt.go), so every Server.* accessor works identically on the
@@ -1572,6 +1579,9 @@ func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter
 				}
 			}
 		}
+	}
+	if !admissionAdmit(w, ticket, skyReq) {
+		return
 	}
 	// The handler is `Request -> Task Error Response`. Invoke via `SkyCall`
 	// (NOT `sky_call`): `SkyCall` maps the `SkyRequest` onto the handler's

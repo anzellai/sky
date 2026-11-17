@@ -15,6 +15,23 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **`Std.Admission` and `App.withAdmission`: a bound on the requests a
+  server runs at the same time.** Before, a burst of Sky.Spa `/_rpc/<Msg>`
+  calls or `App.api` requests queued inside the process. A policy gives each
+  route class (`Rpc`, `Api`) a limit: a request over it gets `503` with
+  `Retry-After` at once, before its body is read and before any app code
+  runs. An optional hook (`Admission.withHook`) reads the request and the
+  load (`{ routeClass, route, inFlight, limit }`) and answers `Admit`,
+  `Throttle ms` (`429`) or `Shed ms` (`503`); a hook that fails sheds. The
+  origin check of an RPC runs first, so a foreign origin is still `403`. The
+  slot is given back when the handler returns, also after a panic. Sky.Live
+  installs the policy at boot, the `web:app` build carries it into the
+  backend's boot, and a `Sky.Http.Server` program calls `Admission.install`
+  before `Server.listen` (it gates `Server.rpc` and `Server.api` routes). The
+  operator variables `SKY_ADMISSION_RPC_LIMIT` / `SKY_ADMISSION_API_LIMIT`
+  win over the code. Refusals are counted in `sky_admission_refused_total`.
+  The default is no limit, so nothing changes without a policy. An adaptive
+  limit is not provided.
 - **`Sub.onBreakpoint` and `Sub.onQuery`.** `Sub.onBreakpoint [ 600, 900 ]
   toMsg` gives the largest listed width the viewport is at least (0 below all
   of them), at load and only when a resize crosses one of the widths, so a
