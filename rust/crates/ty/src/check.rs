@@ -894,6 +894,48 @@ fn annotation_type_spans(parse: &syntax::Parse, file: base::FileId) -> HashMap<S
     out
 }
 
+/// Every unqualified type reference in a module of `to_check` that names no
+/// type in the program: not in scope there (the resolver's
+/// `lenient_types`), declared by no module, and used by no module outside
+/// `to_check` (the stdlib's and dependencies' own lenient names are the
+/// kernel-backed types such as `Dict`, which have no `.sky` declaration).
+/// An un-imported type that some module declares stays accepted, as before.
+pub fn undefined_types(
+    sky: &dyn hir::SkyDb,
+    to_check: &[ModuleId],
+) -> Vec<(ModuleId, base::Name, base::Span)> {
+    let checked: std::collections::HashSet<ModuleId> = to_check.iter().copied().collect();
+    if !to_check
+        .iter()
+        .any(|m| !sky.resolve(*m).lenient_types.is_empty())
+    {
+        return Vec::new();
+    }
+    let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in sky.module_ids() {
+        let resolved = sky.resolve(m);
+        for k in resolved.type_refs.keys() {
+            known.insert(crate::nominal::base(k).to_string());
+        }
+        if !checked.contains(&m) {
+            for (n, _) in &resolved.lenient_types {
+                known.insert(n.as_str().to_string());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen: std::collections::HashSet<(ModuleId, base::Span)> =
+        std::collections::HashSet::new();
+    for &m in to_check {
+        for (n, sp) in &sky.resolve(m).lenient_types {
+            if !known.contains(n.as_str()) && seen.insert((m, *sp)) {
+                out.push((m, n.clone(), *sp));
+            }
+        }
+    }
+    out
+}
+
 /// Typecheck `to_check` module ids against the world built from every module in
 /// `db` (stdlib + deps + entry). Never panics; partial results + diagnostics (L7).
 pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
@@ -983,6 +1025,19 @@ fn check_modules_with_world_reporting(
             labels,
             suggestion: None,
         });
+    }
+
+    // `[E1001]` for an unqualified type name that names no type anywhere in
+    // the program (see `undefined_types`). The resolver accepts such a name
+    // leniently and the checker used to treat it as an opaque nominal, so
+    // `type alias R = { card : CardView }` with no `CardView` was reported as
+    // `type mismatch: CardView vs record` at a use site, never at the name.
+    for (_, name, span) in undefined_types(sky, to_check) {
+        out.name_errors += 1;
+        out.diagnostics.push(
+            Diagnostic::error("E1001", format!("Undefined name: {}", name.as_str()))
+                .with_label(span, "not defined"),
+        );
     }
 
     // `[E2011]` sites from every module under check, with the source text of

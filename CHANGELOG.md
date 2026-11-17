@@ -47,6 +47,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   above the backend's real error. A backend that has already exited is now
   not reported as a separate handoff failure. The build shows only the
   backend's own error.
+- An unqualified type name that no module declares was accepted. In
+  `type alias R = { card : CardView }` with no `CardView` anywhere, the name
+  became an opaque type: an unused alias compiled, and a used one failed with
+  `type mismatch: CardView vs record` at a use site. `sky check` now reports
+  `[E1001] Undefined name: CardView` at the name. A type that some module
+  declares, or a kernel type such as `Dict`, is accepted as before.
 
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 

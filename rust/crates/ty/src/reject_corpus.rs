@@ -152,7 +152,9 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// pin `[E1018]` (a value defined in terms of itself).
 /// **96 since v0.29.0**: `regex_invalid_literal.sky` (`[E2014]`) and
 /// `regex_pattern_string_form.sky` (`[E2001]`, the pre-v0.29 Regex form).
-pub const EXPECTED_CORPUS_FILES: usize = 97;
+/// **98 since v0.29.14**: `undefined_type_in_record_alias.sky` pins `[E1001]`
+/// for an unqualified type name that no module declares.
+pub const EXPECTED_CORPUS_FILES: usize = 98;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -183,7 +185,8 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// **46 at the merge of v0.27.18 into the v0.28.0 branch** (both of the above).
 /// **48 since v0.29.0** (the two `value_cycle_*.sky` files, `[E1018]`).
 /// **50 since v0.29.0** (the two `regex_*.sky` files).
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 50;
+/// **51 since v0.29.14** (`undefined_type_in_record_alias.sky`).
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 51;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

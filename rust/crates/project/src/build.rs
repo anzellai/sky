@@ -818,6 +818,12 @@ fn assemble_and_emit_loaded(
                 })
                 .collect::<Vec<_>>()
         })
+        .chain(
+            // An unqualified type name declared nowhere (`ty::undefined_types`).
+            ty::undefined_types(&db, &check_ids)
+                .into_iter()
+                .map(|(_, n, _)| n.as_str().to_string()),
+        )
         .collect();
     if !unresolved_types.is_empty() {
         let ds: Vec<diagnostics::Diagnostic> = checked
