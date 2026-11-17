@@ -208,21 +208,24 @@ func hydrateVNode(scope js.Value, el VNode) {
 	}
 }
 
-// spaInjectBaseCSS appends a <style id="sky-base-reset"> carrying liveBaseCSS
-// (the shared server/client reset) into the document <head>, once. Idempotent —
-// a page that already ships the reset (or a hot reload) is a no-op.
+// spaInjectBaseCSS puts a <style id="sky-base-reset"> carrying liveBaseCSS
+// (the shared server/client reset) at the START of the document <head>, once.
+// It must come before every app stylesheet: the first layer the browser sees
+// ranks lowest, so `sky-reset` stays below the app's own layers (issue #328).
+// Idempotent — a page that already ships the reset (the SSR page writes the
+// same id) or a hot reload is a no-op.
 func spaInjectBaseCSS(doc js.Value) {
 	head := doc.Get("head")
 	if !head.Truthy() {
 		return
 	}
-	if doc.Call("getElementById", "sky-base-reset").Truthy() {
+	if doc.Call("getElementById", liveBaseResetID).Truthy() {
 		return
 	}
 	style := doc.Call("createElement", "style")
-	style.Call("setAttribute", "id", "sky-base-reset")
+	style.Call("setAttribute", "id", liveBaseResetID)
 	style.Set("textContent", liveBaseCSS)
-	head.Call("appendChild", style)
+	head.Call("insertBefore", style, head.Get("firstChild"))
 }
 
 // buildDOM interprets a VNode into a real DOM node, attaching real event

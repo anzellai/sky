@@ -1075,7 +1075,7 @@ type liveApp struct {
 	// head : Model -> List (Html msg) — optional. When set, the
 	// returned list is rendered to HTML and spliced into <head> on
 	// the initial full-page response, after the baseline meta tags
-	// and before <style>. Use for per-page <title>, SEO meta tags,
+	// and the base-reset <style>. Use for per-page <title>, SEO meta tags,
 	// canonical URLs, Open Graph, Twitter Card, JSON-LD structured
 	// data, theme-color, RSS, favicons, etc. nil → no extra head
 	// content (default). Helpers live in Std.Live.Head.
@@ -2680,14 +2680,14 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// Privacy: no Google Fonts request. Accessibility: no !important
 	// override fighting app-level type choices.
 	//
-	// Minimal CSS reset (`liveBaseCSS` below) zeroes out the worst
-	// browser-default offenders that interact badly with Std.Ui's
+	// Minimal CSS reset (`liveBaseCSS`, live_core.go) zeroes out the
+	// worst browser-default offenders that interact badly with Std.Ui's
 	// flex-based layout: <p>/<h1>-<h6>/<button>/<input>/<a> default
 	// margins + font sizes that would push everything out of position
-	// otherwise. The reset is deliberately minimal — it does NOT
-	// impose font choice, line-height, or colour scheme. Apps that
-	// need a "designed" look still attach their own typography via
-	// view-level style attrs or a styleNode at the top of view.
+	// otherwise. It sets a system font stack and line-height on <html>
+	// only as a default, and no colour scheme. The whole visual reset
+	// sits in the lowest cascade layer (`sky-reset`), so any app CSS,
+	// layered or not, overrides it (issue #328).
 	// Per-app CSRF token: a sub-app (basePath != "") must embed its OWN
 	// token, which lives under a per-app cookie name (__sky_csrf_<basePath>),
 	// not the host's __sky_csrf — otherwise the sub-app page would echo the
@@ -2729,13 +2729,12 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// prefix" (the historical default).
 	baseMeta := fmt.Sprintf(`<meta name="sky-base" content=%q>`, app.basePath)
 	// App-supplied head content (Live.app cfg.head : Model -> List
-	// (Html msg)). Sits AFTER baseMeta + the runtime's required
-	// charset / viewport tags, BEFORE the inline <style> reset, so
-	// app overrides (custom favicon, canonical URL, JSON-LD,
-	// per-page title) win against the defaults and the runtime's
-	// own reset still wins against any clashing inline-style
-	// override in the app's head. Empty string when app didn't
-	// supply `head` — byte-identical to pre-v0.15.58 output.
+	// (Html msg)). Sits AFTER the runtime's charset / viewport tags,
+	// the base-reset <style> and baseMeta, so app overrides (custom
+	// favicon, canonical URL, JSON-LD, per-page title, stylesheets)
+	// win against the defaults. The reset comes first so its
+	// `sky-reset` cascade layer is declared first and ranks lowest:
+	// app CSS here wins over it at any specificity (issue #328).
 	headExtra := renderAppHead(app.head, model)
 	// An unknown path renders the app's NotFound page with 404, not 200 (a
 	// "soft 404" is indexed as a real page and reads as healthy to a probe).
@@ -2746,7 +2745,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	if !routed && app.notFound != nil {
 		w.WriteHeader(http.StatusNotFound)
 	}
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", baseMeta, headExtra, liveBaseCSS, body, livePageScriptsWithScrolls(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken, initialScrolls), devBanner)
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s%s</head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", liveBaseStyleTag, baseMeta, headExtra, body, livePageScriptsWithScrolls(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken, initialScrolls), devBanner)
 }
 
 // renderAppHead invokes the optional `head : Model -> List (Html
@@ -2799,12 +2798,13 @@ func renderAppHead(head any, model any) string {
 //     width/height in cells; border-box keeps that math correct.
 //  4. min-height: 100vh on body so a dark-themed view fills the
 //     viewport instead of leaving a white strip below the content.
-//  5. Sensible default font-family (system stack, no web fetch) so
-//     apps that don't set their own typography don't get Times New
-//     Roman.
+//  5. Sensible default font-family (system stack, no web fetch) on
+//     <html> so apps that don't set their own typography don't get
+//     Times New Roman, and a design's own <html> font still inherits.
 //
-// The reset is ~600 bytes — negligible compared to the typical page
-// body. NO !important is used; user view styles always win.
+// NO !important is used. The visual part sits in the `sky-reset`
+// cascade layer, written first in <head>, so every app style wins
+// (issue #328).
 // liveBaseCSS moved to live_core.go (shared, no build tag) so the Sky.Spa wasm
 // client (live_wasm.go, //go:build js) injects the SAME base reset the server
 // splices into <head> here — box-sizing, the flex-fill root, form/heading

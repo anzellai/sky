@@ -269,6 +269,36 @@ worse UX than the page just keeping working through a flaky connection.
 That's why the SSE banner + retry queue exist: the durable Model is the
 whole point.
 
+## The base CSS reset and your own stylesheets
+
+Every Sky.Live, Sky.Spa and desktop page starts with a small CSS reset. It
+zeroes the browser's default margins on headings, paragraphs and lists, makes
+headings inherit their size, removes button chrome and link underlines, sets
+`box-sizing: border-box`, and sets a system font stack and `line-height: 1.4`
+on `<html>`.
+
+The visual reset is in a cascade layer named `sky-reset`, and it is the first
+stylesheet in `<head>`. The first layer the browser sees has the lowest
+priority, so your own CSS always wins over it. This holds for an unlayered
+sheet and for your own layers, from `App.withHead`, a `<link>` or a style node
+in the view, at any specificity. A design system that styles plain `h2`,
+`p` or `button` needs no extra selectors.
+
+The default font is on `<html>`, not `<body>`. A design that sets its
+typography on `html` reaches the whole page by inheritance.
+
+To place the reset in your own layer order, name it in your first layer
+statement:
+
+```css
+@layer sky-reset, theme, base, components, utilities;
+```
+
+A few rules stay outside the layer because the runtime needs them: the flex
+column on `<body>`, the `#sky-root` / `#app` mount that makes
+`Ui.height Ui.fill` work, and the Sky.Spa loading overlay. `Std.Ui` elements
+carry inline styles, so the reset never changes how they look.
+
 ## Connection status banner
 
 Sky.Live's runtime injects a bottom-pinned banner the user's `view` doesn't have to manage. Three states:

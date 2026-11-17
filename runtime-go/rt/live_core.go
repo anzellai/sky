@@ -1362,15 +1362,38 @@ func pseudoSelectorForTag(tag string) (selector string, hoverGated bool, known b
 // `#sky-root` (Sky.Live / Sky.Webview) and `#app` (Sky.Spa) — otherwise a
 // `Ui.height Ui.fill` root has no resolvable parent height and collapses to
 // content height (issue #63).
-const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
-	`html,body{margin:0;padding:0;min-height:100%}` +
-	`body{min-height:100vh;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;line-height:1.4}` +
-	`#sky-root,#app{display:flex;flex-direction:column;flex:1 0 auto;min-height:0}` +
+//
+// It has two parts (issue #328):
+//
+//   - The VISUAL reset (margins, heading sizes, button chrome, link colour, the
+//     default font) sits in the cascade layer `sky-reset`. Every page writes
+//     this style FIRST in <head> (liveBaseStyleTag), so `sky-reset` is the
+//     first layer the browser sees and therefore the LOWEST-priority layer. Any
+//     app CSS — unlayered, or in the app's own layers, from a <link>, the head
+//     config or the view — wins over it, whatever its order or specificity. An
+//     external design system that uses `@layer` can style plain `h2` / `button`
+//     / `p` without fighting Sky.
+//   - The default font and line-height are set on `html`, not `body`, so a
+//     design that sets its typography on `html` reaches the whole page by
+//     inheritance. An explicit `body` declaration, even in a low layer, would
+//     stop that inheritance.
+//   - The RUNTIME rules stay outside the layer: the flex column on `body` and
+//     the `#sky-root` / `#app` mount (what makes `Ui.height Ui.fill` resolve),
+//     and the Sky.Spa hydration overlay. They are layout and behaviour, not
+//     style, and an app layer must not silently remove them.
+const liveBaseCSS = `@layer sky-reset{` +
+	`*,*::before,*::after{box-sizing:border-box}` +
+	`html,body{margin:0;padding:0}` +
+	`html{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;line-height:1.4}` +
 	`h1,h2,h3,h4,h5,h6,p,ul,ol,li,figure,blockquote,pre,dl,dd{margin:0;padding:0;font-weight:inherit;font-size:inherit}` +
 	`button,input,select,textarea{font:inherit;color:inherit}` +
 	`button{background:none;border:0;padding:0;cursor:pointer;text-align:inherit}` +
 	`a{color:inherit;text-decoration:none}` +
 	`img,video,canvas,svg{display:block;max-width:100%}` +
+	`}` +
+	`html,body{min-height:100%}` +
+	`body{min-height:100vh;display:flex;flex-direction:column}` +
+	`#sky-root,#app{display:flex;flex-direction:column;flex:1 0 auto;min-height:0}` +
 	// Sky.Spa hydration affordance. A wasm client attaches its click handlers
 	// only after it boots + hydrates; on the heavy web target that download is
 	// not instant, so a click on the server-rendered DOM before boot is silently
@@ -1391,6 +1414,17 @@ const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 	// safety timeout in the boot shell so a failed wasm load never locks the page.
 	`html[data-sky-hydrating]::after{content:"Loading\2026";position:fixed;inset:0;z-index:2147483646;display:grid;place-items:center;background:rgba(127,127,127,.15);color:currentColor;font:600 15px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;letter-spacing:.02em;cursor:progress;pointer-events:auto;-webkit-backdrop-filter:blur(1px);backdrop-filter:blur(1px)}` +
 	`@keyframes sky-spa-hydrating{0%{left:-35%}100%{left:100%}}`
+
+// liveBaseResetID names the base-reset <style>. The Sky.Spa client looks for it
+// so a server-rendered page that already carries the reset is not given a
+// second copy at boot.
+const liveBaseResetID = "sky-base-reset"
+
+// liveBaseStyleTag is the <style> element carrying liveBaseCSS. Every page
+// shell writes it as the FIRST stylesheet in <head>, before any app head
+// content, so the `sky-reset` layer is declared first and ranks lowest
+// (issue #328).
+const liveBaseStyleTag = `<style id="` + liveBaseResetID + `">` + liveBaseCSS + `</style>`
 
 func applyStyleInjections(n *VNode) {
 	applyRadioGroupNames(n, "")

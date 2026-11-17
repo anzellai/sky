@@ -11,6 +11,26 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
+
+### Fixed
+
+- The base CSS reset that every Sky.Live, Sky.Spa and desktop page carries
+  overrode an app's own stylesheet (#328). It was unlayered and came after the
+  app's `<head>` content, so it beat any CSS in a cascade layer and any
+  unlayered rule of equal specificity in the head. A shared design system
+  that styles plain `h2`, `p` or `button` lost its sizes and spacing. The
+  visual reset is now in the cascade layer `sky-reset` and is the first
+  stylesheet in `<head>`, so any app CSS wins over it, layered or not. Name it
+  in your layer order with `@layer sky-reset, …;` to place it explicitly.
+- The reset set `font-family` and `line-height` on `<body>`, which stopped a
+  design that sets its typography on `<html>` from reaching the page. Those
+  defaults are now on `<html>`. A page that sets no font looks the same.
+- The runtime layout rules (the flex column on `<body>`, the `#sky-root` /
+  `#app` mount, the Sky.Spa loading overlay) stay outside the layer. `Std.Ui`
+  views are unchanged, as they use inline styles. An app that patched the
+  reset with JavaScript can remove that code.
+
 ## v0.29.12 — a pseudo-class rule on a textarea no longer shows as its text (2026-11-16)
 
 ### Fixed
