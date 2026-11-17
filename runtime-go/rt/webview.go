@@ -578,8 +578,8 @@ func webviewBuildTree(node any) *VNode {
 // guard so double-injection (during hot reload) is a no-op.
 func webviewPageWrap(body string) string {
 	return fmt.Sprintf(
-		`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>%s</style></head><body><div id="sky-root">%s</div></body></html>`,
-		liveBaseCSS, body)
+		`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">%s</head><body><div id="sky-root">%s</div></body></html>`,
+		liveBaseStyleTag, body)
 }
 
 // webviewStaticDir reads the configured static-asset directory for

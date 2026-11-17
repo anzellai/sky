@@ -119,10 +119,11 @@ func SpaSSRPageSeeded(headHTML, bodyHTML, wasmName, modelJSON, settled string, s
 	b.WriteString(`<head>`)
 	b.WriteString(`<meta charset="utf-8">`)
 	b.WriteString(`<meta name="viewport" content="width=device-width, initial-scale=1">`)
+	// The base reset goes first, before the app's head, so its `sky-reset`
+	// layer ranks lowest and app CSS wins over it (issue #328). Its id tells
+	// the client not to inject a second copy at boot.
+	b.WriteString(liveBaseStyleTag)
 	b.WriteString(headHTML)
-	b.WriteString(`<style>`)
-	b.WriteString(liveBaseCSS)
-	b.WriteString(`</style>`)
 	b.WriteString(spaSSRNoScriptCSS)
 	b.WriteString(`</head>` + "\n")
 	b.WriteString(`<body>`)

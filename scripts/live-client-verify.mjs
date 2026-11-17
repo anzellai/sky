@@ -106,6 +106,30 @@ async function run(browser) {
     check(before === "" && (await page.locator("#draft style").count()) === 0,
       "#326 a pseudo-class rule on Input.multiline keeps the textarea empty",
       `value=${JSON.stringify(before)}`);
+    // #328: the base reset ranks below the app's own CSS. A layered design
+    // sheet and an unlayered element rule in <head> both win over it, the
+    // design's <html> font reaches the page, and the reset still applies
+    // where the app sets nothing.
+    const css = await page.evaluate(() => {
+      const g = (sel) => getComputedStyle(document.querySelector(sel));
+      const h2 = g("#design h2"), p = g("#design p"), b = g("#design button");
+      return {
+        h2Size: h2.fontSize, h2Bottom: h2.marginBottom, h2Top: h2.marginTop,
+        pBottom: p.marginBottom, pFont: p.fontFamily,
+        btnPad: b.paddingLeft,
+        quotePad: g("#design blockquote").paddingLeft,
+        bodyDisplay: g("body").display,
+        firstStyle: document.head.querySelector("style")?.id || "",
+      };
+    });
+    check(css.h2Size === "24px" && css.h2Bottom === "16px" && css.pBottom === "10px" && css.btnPad === "16px",
+      "#328 a layered design sheet wins over the base reset", JSON.stringify(css));
+    check(css.quotePad === "7px",
+      "#328 an unlayered head rule wins over the base reset at equal specificity", JSON.stringify(css));
+    check(css.pFont.includes("Courier New"),
+      "#328 a font set on html reaches body text (body sets no font)", JSON.stringify(css));
+    check(css.h2Top === "0px" && css.bodyDisplay === "flex" && css.firstStyle === "sky-base-reset",
+      "#328 the reset still applies where the app sets nothing and is the first head style", JSON.stringify(css));
     await page.locator("#draft").click();
     await page.keyboard.type("hello", { delay: 20 });
     await page.keyboard.press("Enter"); // inside the 150 ms debounce

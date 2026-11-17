@@ -359,7 +359,36 @@ mainView model =
                       ++ "|num="
                       ++ model.num))
         , logView model
+        , designView
         ]
+
+
+{-| #328: markup styled only by the external design CSS in `designHead`.
+The base reset must lose to it, layered or not.
+-}
+designView : Element Msg
+designView =
+    Ui.html
+        (Html.div
+            [ HA.id "design" ]
+            [ Html.h2 [] [ Html.text "Design heading" ]
+            , Html.p [] [ Html.text "Design paragraph" ]
+            , Html.button [ HA.type_ "button" ] [ Html.text "Design button" ]
+            , Html.node "blockquote" [] [ Html.text "Design quote" ]
+            ])
+
+
+{-| #328: an external design system's CSS in the document head. The first
+sheet is in a cascade layer, the second is unlayered with plain element
+selectors. Both come before nothing of Sky's: the reset must rank below them.
+-}
+designHead : Model -> List (Html.Html Msg)
+designHead _ =
+    [ Html.styleNode
+          []
+          "@layer design{html{font-family:\"Courier New\",monospace}#design h2{font-size:24px;margin-bottom:16px}#design button{padding:12px 16px}#design p{margin-bottom:10px}}"
+    , Html.styleNode [] "blockquote{padding-left:7px}"
+    ]
 
 
 subscriptions : Model -> Sub Msg
@@ -377,6 +406,7 @@ app =
         |> App.withRoutes [ App.route "/" Main, App.route "/other" Other ]
         |> App.withNotFound Main
         |> App.withOnNavigate Navigated
+        |> App.withHead designHead
 
 
 main =

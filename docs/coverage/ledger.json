@@ -21814,7 +21814,7 @@
           ]
         },
         "Std.Html": {
-          "count": 63,
+          "count": 62,
           "symbols": [
             "a",
             "area",
@@ -21865,7 +21865,6 @@
             "section",
             "small",
             "source",
-            "styleNode",
             "table",
             "tbody",
             "td",
@@ -22421,8 +22420,8 @@
           ]
         }
       },
-      "count": 978,
-      "pct_of_denominator": 30.1
+      "count": 977,
+      "pct_of_denominator": 30.0
     }
   },
   "units": [
@@ -22623,8 +22622,8 @@
       "id": "e2e:scripts/live-client-e2e.sh",
       "modules_imported": 12,
       "path": "scripts/live-client-e2e.sh",
-      "refs_generous": 48,
-      "refs_qualified": 46,
+      "refs_generous": 56,
+      "refs_qualified": 54,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []

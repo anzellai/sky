@@ -166,9 +166,11 @@ func Spa_ssrPageSeededScrolls(head, body, wasmName, modelJSON, initDone, navDone
 	}
 	at := index + len(root)
 	page = page[:at] + `data-sky-scrolls="` + html.EscapeString(AsString(scrollWire)) + `" ` + page[at:]
-	viewport := `<meta name="viewport" content="width=device-width, initial-scale=1">`
-	if !strings.Contains(page, viewport) {
+	// The app head goes where Spa_ssrPageSeeded puts it: after the base reset,
+	// so the reset's `sky-reset` layer is declared first and ranks lowest
+	// (issue #328).
+	if !strings.Contains(page, liveBaseStyleTag) {
 		panic("Codec.auto: cannot encode SSR scroll head")
 	}
-	return strings.Replace(page, viewport, viewport+AsString(head), 1)
+	return strings.Replace(page, liveBaseStyleTag, liveBaseStyleTag+AsString(head), 1)
 }
