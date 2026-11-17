@@ -20,6 +20,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   where the HTML parser drops table tags, so a table whose rows changed when
   a tab switched lost its rows, cells and roles. The patch now parses in a
   `template` element, as the `kids` patch does.
+- Sky.Spa: a request without `X-Sky-Wire` lost the follow-up writes. The
+  backend ran the follow-up Msgs of the server arm on the server and answered
+  `spaFollow_ = "[]"`, but the answer held only the first arm's write-set. The
+  answer now carries the merged write-set of the arm and all its follow-ups,
+  and the request carries what the follow-ups read.
 
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 

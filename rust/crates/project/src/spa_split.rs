@@ -1862,6 +1862,12 @@ pub(crate) struct FollowCtx {
     /// The `Std.Native` import alias of each module that declares a follow-up
     /// arm (the residual extraction looks for `<alias>.` in a command leaf).
     native_alias: HashMap<ModuleId, String>,
+    /// D6: per follow-up branch, the model fields its follow-ups write that the
+    /// branch itself does not. A legacy request (no `X-Sky-Wire`) settles the
+    /// follow-ups on the server (`spaLegacySettle_`), so its answer carries
+    /// these too. A current client ignores them (it applies only the branch's
+    /// own write-set, then runs the follow-ups itself).
+    legacy_writes: HashMap<String, Vec<String>>,
 }
 
 impl FollowCtx {
@@ -1879,6 +1885,61 @@ impl FollowCtx {
     fn import_for_q(&self, q: &str) -> Option<String> {
         (!q.is_empty()).then(|| format!("import {} as SpaMsgMod_", self.msg_module_name))
     }
+}
+
+/// D6: what the follow-ups of server branch `branch` read and write when a
+/// legacy request settles them on the server (`spaLegacySettle_`). The union
+/// over the arms of every follow-up Msg, transitively through follow-ups that
+/// have follow-ups of their own. A command that cannot be read stands for
+/// every Msg, and an arm whose sets are unknown stands for the whole model.
+#[derive(Default)]
+struct LegacyFollowSets {
+    reads_whole: bool,
+    reads: BTreeSet<String>,
+    writes_whole: bool,
+    writes: BTreeSet<String>,
+}
+
+fn legacy_follow_sets(
+    branch: &str,
+    follow_up: &[spa_partition::FollowUpBranch],
+    branches: &[spa_partition::BranchVerdict],
+) -> LegacyFollowSets {
+    let mut out = LegacyFollowSets::default();
+    let every: Vec<String> = branches
+        .iter()
+        .map(|b| ctor_name(&b.msg).to_string())
+        .collect();
+    let next = |b: &str| -> Vec<String> {
+        follow_up
+            .iter()
+            .filter(|f| f.branch == b)
+            .flat_map(|f| f.ctors.clone().unwrap_or_else(|| every.clone()))
+            .collect()
+    };
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut queue: Vec<String> = next(branch);
+    while let Some(c) = queue.pop() {
+        if !seen.insert(c.clone()) {
+            continue;
+        }
+        for v in branches.iter().filter(|v| ctor_name(&v.msg) == c) {
+            match v.io.as_ref().or(v.client_io.as_ref()) {
+                Some(io) => {
+                    out.reads_whole |= io.reads_whole_model;
+                    out.reads.extend(io.read_fields.iter().cloned());
+                    out.writes_whole |= io.writes_whole_model;
+                    out.writes.extend(io.write_fields.iter().cloned());
+                }
+                None => {
+                    out.reads_whole = true;
+                    out.writes_whole = true;
+                }
+            }
+        }
+        queue.extend(next(&c));
+    }
+    out
 }
 
 /// Build the [`FollowCtx`] for the follow-up branches that are wire (`server`)
@@ -1901,6 +1962,10 @@ fn build_follow_ctx(
     // only an unreadable command might return is kept off the wire (below).
     server_internal: &HashSet<String>,
     warnings: &mut Vec<String>,
+    // D6: every branch verdict and the Model's fields, for the legacy answer's
+    // merged write-set.
+    verdicts: &[spa_partition::BranchVerdict],
+    model_fields: &[ModelFieldTy],
 ) -> Result<Option<FollowCtx>, String> {
     let wire_names: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
     let fu: Vec<&spa_partition::FollowUpBranch> = follow_up
@@ -2015,8 +2080,58 @@ fn build_follow_ctx(
             req_embedded_model: 0,
         });
     }
+    let mut legacy_writes: HashMap<String, Vec<String>> = HashMap::new();
     for w in wires.iter_mut() {
         if fu.iter().any(|f| f.branch == w.name) {
+            // D6: the legacy answer carries the follow-ups' writes as well.
+            let sets = legacy_follow_sets(&w.name, follow_up, verdicts);
+            let extra: Vec<String> = model_fields
+                .iter()
+                .map(|f| f.name.clone())
+                .filter(|n| sets.writes_whole || sets.writes.contains(n))
+                .filter(|n| !w.resp_fields.iter().any(|f| &f.name == n))
+                .collect();
+            let mut carried: Vec<String> = Vec::new();
+            for name in &extra {
+                let mut f = lookup_field(model_fields, name);
+                // A device key never crosses a wire (`App.withClientCrypto`):
+                // the legacy answer leaves it out, as the current one does.
+                if resolver.device_keys
+                    && f.ty
+                        .as_ref()
+                        .and_then(|t| device_key_in(t, &resolver.unions))
+                        .is_some()
+                {
+                    continue;
+                }
+                if f.codec.is_none() {
+                    let Some(t) = f.ty.clone() else {
+                        warnings.push(format!(
+                            "server branch `{}`: model field `{name}`, which its follow-ups write, has no recoverable type, so a page from before v0.27.0 (no `X-Sky-Wire`) does not receive it in the answer",
+                            w.name
+                        ));
+                        continue;
+                    };
+                    match resolver.resolve(&t) {
+                        Ok(r) => {
+                            f.codec = Some(r.codec);
+                            f.ty_name = r.surface;
+                        }
+                        Err(e) => {
+                            warnings.push(format!(
+                                "server branch `{}`: model field `{name}`, which its follow-ups write, has no wire codec ({e}), so a page from before v0.27.0 (no `X-Sky-Wire`) does not receive it in the answer",
+                                w.name
+                            ));
+                            continue;
+                        }
+                    }
+                }
+                w.resp_fields.push(f);
+                carried.push(name.clone());
+            }
+            if !carried.is_empty() {
+                legacy_writes.insert(w.name.clone(), carried);
+            }
             w.resp_fields.push(ModelFieldTy {
                 name: "spaFollow_".to_string(),
                 ty_name: "String".to_string(),
@@ -2066,6 +2181,7 @@ fn build_follow_ctx(
         msg_module,
         msg_module_name: db.module_name(msg_module).to_string(),
         native_alias,
+        legacy_writes,
     }))
 }
 
@@ -4322,6 +4438,44 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             }
         }
     }
+    // D6: a legacy request (no `X-Sky-Wire`) settles a branch's follow-ups on
+    // the server, so the request carries what those follow-ups read. Else a
+    // follow-up would compute from `init ()`'s default, and the merged answer
+    // would hold a value the client never had.
+    // A device key never rides a request (`App.withClientCrypto`), so a
+    // follow-up's read of one is left out, as for any other request.
+    {
+        let key_unions = if report.client_crypto {
+            Some(union_payloads(&db))
+        } else {
+            None
+        };
+        let is_key = |f: &str| -> bool {
+            key_unions.as_ref().is_some_and(|u| {
+                report
+                    .model_fields
+                    .iter()
+                    .find(|m| m.name == f)
+                    .and_then(|m| m.ty.as_ref())
+                    .and_then(|t| device_key_in(t, u))
+                    .is_some()
+            })
+        };
+        for (name, io) in server.iter_mut() {
+            if io.reads_whole_model || !report.follow_up.iter().any(|f| &f.branch == name) {
+                continue;
+            }
+            let sets = legacy_follow_sets(name, &report.follow_up, &report.branches);
+            let mut all: BTreeSet<String> = io.read_fields.iter().cloned().collect();
+            if sets.reads_whole {
+                all.extend(report.model_fields.iter().map(|m| m.name.clone()));
+            } else {
+                all.extend(sets.reads);
+            }
+            all.retain(|f| io.read_fields.contains(f) || !is_key(f));
+            io.read_fields = all.into_iter().collect();
+        }
+    }
 
     // ---- `init`'s command on the server (INIT_RPC) ----
     // Resolve the module that declares `init`, decide the GET-safe strip (GAP-2,
@@ -4617,6 +4771,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             .cloned()
             .collect::<HashSet<String>>(),
         &mut warnings,
+        &report.branches,
+        &report.model_fields,
     )?;
     if returned_scrolls {
         for wire in wires
@@ -10014,11 +10170,17 @@ fn gen_backend(
         let resp_codec = format!("{}RespCodec", lower_first(name));
         // Response field NAMES = the write-set (or the whole model). Codecs live
         // in Shared; the backend only needs the names to read `m2.<field>`.
-        let resp_field_names: Vec<String> = if io.writes_whole_model {
+        let mut resp_field_names: Vec<String> = if io.writes_whole_model {
             model_fields.iter().map(|f| f.name.clone()).collect()
         } else {
             io.write_fields.clone()
         };
+        // D6: a follow-up branch answers its follow-ups' writes too (a legacy
+        // request settles them here). The wire carries them after the branch's
+        // own write-set (`build_follow_ctx`).
+        if let Some(extra) = follow.and_then(|(fc, _)| fc.legacy_writes.get(name)) {
+            resp_field_names.extend(extra.iter().cloned());
+        }
 
         // The model the branch runs against — the shared server-leg reconstruct
         // (also emitted by the phase-2 differential fuzzer). Session / withRequest
@@ -14241,6 +14403,7 @@ mod follow_codec_parse_tests {
             msg_module: ModuleId(0),
             msg_module_name: "Main".to_string(),
             native_alias: HashMap::new(),
+            legacy_writes: HashMap::new(),
         }
     }
 

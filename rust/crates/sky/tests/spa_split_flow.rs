@@ -10367,6 +10367,48 @@ fn the_wire_hash_and_legacy_follow_ups_are_generated() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// D6: a legacy request (no `X-Sky-Wire`) runs the follow-ups on the server,
+/// so its answer must carry what they wrote. `AskServer` writes only `draft`
+/// and its follow-up `Submitted` writes `notice`: the answer used to hold the
+/// first arm's write-set alone, so the follow-up's `notice` was lost.
+#[test]
+#[cfg(unix)]
+fn a_legacy_follow_up_answer_carries_the_follow_up_writes() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build(
+        "spa-whole-model-follow",
+        &[(
+            "src/Main.sky",
+            "        AskServer ->\n            submit { model | draft = serverDraft }\n",
+            "        AskServer ->\n            ( { model | draft = serverDraft }, Cmd.perform (submitS serverDraft) Submitted )\n",
+        )],
+    );
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    let held = frontend_arm(&front, "AppliedAskServer (Ok resp)");
+    assert!(
+        !held.contains("resp.notice"),
+        "a current client applies only the first arm's write-set:\n{front}"
+    );
+    let (_child, port) = start_split_backend(&proj);
+    let body = r#"{"draft":"","notice":""}"#;
+    let (code, _, legacy) = curl_post_with_headers(port, "/_rpc/AskServer", body, &[]);
+    assert_eq!(code, 200, "{legacy}");
+    let v: serde_json::Value = serde_json::from_str(&legacy).expect("json");
+    assert_eq!(v["spaFollow_"].as_str(), Some("[]"), "{legacy}");
+    assert_eq!(v["draft"].as_str(), Some("from the server"), "{legacy}");
+    assert!(
+        v["notice"]
+            .as_str()
+            .is_some_and(|n| n.ends_with("from the server")),
+        "the legacy answer carries the follow-up's write: {legacy}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// A server arm whose navigation a helper returns builds: the server evaluates
 /// the actual command (the helper included) and returns the navigation as
 /// data. It used to be refused, because the split copied navigation source
