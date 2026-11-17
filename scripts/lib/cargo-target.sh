@@ -88,6 +88,11 @@ install_binary() { # install_binary <src> <dest>
         return 1
     fi
     mkdir -p "$(dirname "$dest")"
-    cp -f "$src" "$dest"
+    # Remove first, then copy to a NEW inode. On macOS, `cp -f` over a binary
+    # that has already run rewrites the same inode, and the kernel's cached
+    # code signature no longer matches: the new binary is killed (SIGKILL,
+    # exit 137) the moment it starts.
+    rm -f "$dest"
+    cp "$src" "$dest"
     chmod +x "$dest"
 }
