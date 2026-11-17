@@ -243,3 +243,136 @@ fn a_sibling_codec_copied_into_shared_keeps_its_own_aliases() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// D1 (v0.29.14): a project whose second entry `src/Other.sky` holds the app,
+/// next to an unrelated `src/Main.sky` program. The split wrote the generated
+/// entry as `module Main` at `src/Main.sky` in both trees, then copied the
+/// project's own `Main` over it, so the build silently produced the project
+/// `Main` program. The generated entry now keeps the app entry's module name
+/// and path, and the project `Main` is an ordinary sibling.
+#[test]
+fn a_second_entry_splits_beside_a_project_main() {
+    let dir = std::env::temp_dir().join(format!("sky-spa-second-entry-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    write(
+        &dir,
+        "sky.toml",
+        "name = \"second\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    );
+    write(
+        &dir,
+        "src/Main.sky",
+        "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Std.Log exposing (println)\n\n\nmain =\n    println \"I AM THE PROJECT MAIN\"\n",
+    );
+    write(
+        &dir,
+        "src/Other.sky",
+        r#"module Other exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as T
+import Std.Cmd as Cmd
+import Std.Log as Log
+import Std.Spa as Spa
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { status : String }
+
+
+type Msg
+    = Save
+    | Saved (Result Error ())
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "other" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Save ->
+            ( model, Cmd.perform (Log.println "saved") Saved )
+
+        Saved _ ->
+            ( { model | status = "OTHER APP" }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout [] (Ui.text model.status)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : T.Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init, update = update, view = view, subscriptions = subscriptions }
+        )
+"#,
+    );
+    let out = dir.join("generated");
+    spa_split::generate(&root(), &dir, Some("Other"), &out, None, None)
+        .unwrap_or_else(|e| panic!("the second entry must split: {e}"));
+    for half in ["backend", "frontend"] {
+        let toml = std::fs::read_to_string(out.join(half).join("sky.toml")).unwrap();
+        assert!(
+            toml.contains("entry = \"src/Other.sky\""),
+            "the generated {half} names the app entry's path:\n{toml}"
+        );
+        assert_eq!(spa_split::generated_entry(&out.join(half)), "src/Other.sky");
+        let entry = std::fs::read_to_string(out.join(half).join("src/Other.sky")).unwrap();
+        assert!(
+            entry.starts_with("module Other exposing (main)"),
+            "the generated {half} entry keeps the module name `Other`:\n{entry}"
+        );
+        // The project `Main` is copied only as an ordinary sibling (when the
+        // loader includes it), never in place of the generated entry.
+        if let Ok(project_main) = std::fs::read_to_string(out.join(half).join("src/Main.sky")) {
+            assert!(
+                project_main.contains("I AM THE PROJECT MAIN"),
+                "src/Main.sky may only be the project `Main`:\n{project_main}"
+            );
+        }
+        let errors = front_half_errors(&root(), &out.join(half), Some("Other"));
+        assert!(
+            errors.is_empty(),
+            "the generated {half} must type-check: {errors:?}\n{}",
+            tree_text(&out.join(half).join("src"))
+        );
+    }
+    let back = std::fs::read_to_string(out.join("backend/src/Other.sky")).unwrap();
+    assert!(back.contains("/_rpc/Save"), "{back}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// D1 (v0.29.14): a project module named `Shared` would be replaced by the
+/// split's generated wire contract `Shared.sky`. It is refused by name.
+#[test]
+fn a_project_module_named_shared_is_refused() {
+    let dir = fixture("shared", "import Shared\n");
+    write(
+        &dir,
+        "src/Shared.sky",
+        "module Shared exposing (tag)\n\nimport Sky.Core.Prelude exposing (..)\n\n\ntag : String\ntag =\n    \"t\"\n",
+    );
+    let out = dir.join("generated");
+    let Err(err) = spa_split::generate(&root(), &dir, None, &out, None, None) else {
+        panic!("a project module named Shared must be refused");
+    };
+    assert!(
+        err.contains("`Shared`") && err.contains("Rename the module"),
+        "the refusal names the module: {err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

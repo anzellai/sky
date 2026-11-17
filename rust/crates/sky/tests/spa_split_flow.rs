@@ -3678,6 +3678,101 @@ fn web_app_sibling_update_with_rpc_error_builds() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// D1 (v0.29.14): a project with an unrelated `src/Main.sky` program and the
+/// app in a second entry `src/Other.sky`. `sky build src/Other.sky --target
+/// web:app` wrote the generated entry as `module Main` at `src/Main.sky`, then
+/// copied the project's own `Main` over it, so the backend silently became the
+/// `println` program. The generated entry now keeps `module Other` at
+/// `src/Other.sky`, and the backend serves Other's app.
+#[test]
+#[cfg(unix)]
+fn web_app_second_entry_builds_the_named_entry_not_the_project_main() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-second-entry"),
+        &proj,
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Other.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app src/Other.sky");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+    for half in ["backend", "frontend"] {
+        let toml = std::fs::read_to_string(split.join(half).join("sky.toml"))
+            .unwrap_or_else(|e| panic!("{half}/sky.toml: {e}\n{log}"));
+        assert!(
+            toml.contains("entry = \"src/Other.sky\""),
+            "the generated {half} is built from the named entry:\n{toml}"
+        );
+        let entry = std::fs::read_to_string(split.join(half).join("src/Other.sky"))
+            .unwrap_or_else(|e| panic!("{half}/src/Other.sky: {e}\n{log}"));
+        assert!(
+            entry.starts_with("module Other exposing"),
+            "{half}:\n{entry}"
+        );
+        if let Ok(main) = std::fs::read_to_string(split.join(half).join("src/Main.sky")) {
+            assert!(
+                main.contains("I AM THE PROJECT MAIN"),
+                "{half}/src/Main.sky may only be the project's own Main:\n{main}"
+            );
+        }
+    }
+    let front = std::fs::read_to_string(split.join("frontend/src/Other.sky")).unwrap();
+    assert!(
+        front.contains("OTHER APP"),
+        "the client is Other's app:\n{front}"
+    );
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "the second entry must build:\n{log}"
+    );
+    let backend_dir = split.join("backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the second-entry backend");
+    let ready = wait_for_spa_backend(&log_path, 120);
+    let home = curl_body_p(port, "/");
+    child.kill();
+    let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        !server_log.contains("I AM THE PROJECT MAIN"),
+        "the backend must not be the project's Main program:\n{server_log}"
+    );
+    assert!(
+        ready,
+        "the backend of Other's app must listen:\n{server_log}"
+    );
+    let home = home.expect("GET / must answer");
+    assert!(
+        home.contains(".wasm") || home.contains("OTHER APP"),
+        "GET / must serve Other's client:\n{home}"
+    );
+}
+
 /// A sibling module's own `update` that the app does NOT configure is an
 /// ordinary binding. `Area.update` performs `fetchText ()`, a `File` read.
 ///

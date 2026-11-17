@@ -3902,10 +3902,61 @@ fn module_relpath(name: &str) -> String {
 /// recursion guard: the generated frontend is itself a `Spa.app` (it imports
 /// `Std.Spa`), so without this marker a plain `sky build frontend/src/Main.sky`
 /// would re-split forever.
-fn sky_toml(name: &str, role: &str) -> String {
+///
+/// `entry` is the generated entry's path under the project (`src/Main.sky`, or
+/// `src/Other.sky` for an app whose entry module is `Other`).
+fn sky_toml(name: &str, role: &str, entry: &str) -> String {
     format!(
-        "name = \"{name}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n\n[spa]\ngenerated = true\nrole = \"{role}\"\n"
+        "name = \"{name}\"\nversion = \"0.1.0\"\nentry = \"{entry}\"\n\n[source]\nroot = \"src\"\n\n[spa]\ngenerated = true\nrole = \"{role}\"\n"
     )
+}
+
+/// The entry file of a project the split generated (`backend/` or
+/// `frontend/`), relative to that project: its `sky.toml` `entry`, else
+/// `src/Main.sky`. The generated entry keeps the app entry's own module name
+/// and path, so an app built from `src/Other.sky` has `src/Other.sky` here.
+pub fn generated_entry(project: &Path) -> String {
+    std::fs::read_to_string(project.join("sky.toml"))
+        .ok()
+        .and_then(|t| {
+            t.lines().find_map(|l| {
+                let (k, v) = l.split_once('=')?;
+                (k.trim() == "entry").then(|| v.trim().trim_matches('"').to_string())
+            })
+        })
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| "src/Main.sky".to_string())
+}
+
+/// The generated backend and frontend entries are written as `module Main`.
+/// For an app whose entry module has another name, they keep that name
+/// instead, so a project module named `Main` stays an ordinary sibling.
+fn rename_generated_entry(src: &str, module: &str) -> String {
+    match src.strip_prefix("module Main exposing") {
+        Some(rest) if module != "Main" => format!("module {module} exposing{rest}"),
+        _ => src.to_string(),
+    }
+}
+
+/// The module names the split generates in each tree besides the entry. A
+/// project module with one of these names would be replaced by the
+/// generated file, so it is refused.
+const GENERATED_MODULES: &[&str] = &["Shared"];
+
+/// Refuse a project module whose name the split generates
+/// ([`GENERATED_MODULES`]).
+fn refuse_generated_module_names(db: &SkyDatabase, modules: &[ModuleId]) -> Result<(), String> {
+    for m in modules {
+        let mname = db.module_name(*m);
+        if GENERATED_MODULES.contains(&mname) {
+            return Err(format!(
+                "cannot auto-split: the project module `{mname}` has the name of a module the \
+                 Sky.Spa split generates (`{mname}.sky`, the typed wire contract between the \
+                 client and the server). Rename the module."
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The migration anchor of the v0.27.0 split refusals (two wire records with
@@ -4143,6 +4194,7 @@ fn generate_inner(
     // The generated code owns the `Spa…_` qualifiers; an app that uses one
     // itself is refused before anything is written.
     refuse_reserved_alias_use(&db, &check_ids)?;
+    refuse_generated_module_names(&db, &check_ids)?;
     let (report, chain_notes) =
         analyze_for_split(&db, entry, &check_ids, proj_name.clone(), checked)?;
 
@@ -5816,6 +5868,16 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         } else {
             content
         };
+        // Never replace a file this split already wrote: two sources for one
+        // path (a project module with the name of a generated one) would
+        // otherwise build whichever was written last, silently.
+        if files.iter().any(|f| f == rel) {
+            return Err(format!(
+                "cannot auto-split: two sources would both write `{rel}` (the split generates \
+                 it, and a project module has the same name). This is a defect in the split \
+                 generator; please report it."
+            ));
+        }
         let full = out_dir.join(rel);
         if let Some(p) = full.parent() {
             std::fs::create_dir_all(p).map_err(|e| format!("mkdir {}: {e}", p.display()))?;
@@ -5830,7 +5892,12 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     write("shared/Shared.sky", &shared_src, &mut files)?;
     write("backend/src/Shared.sky", &shared_src, &mut files)?;
     write("frontend/src/Shared.sky", &shared_src, &mut files)?;
-    write("backend/src/Main.sky", &backend_src, &mut files)?;
+    // The generated entry keeps the app entry's module name and path
+    // (`src/Main.sky`, or `src/Other.sky` for `module Other`), so a project
+    // module named `Main` is an ordinary sibling, never replaced.
+    let entry_rel = format!("src/{}", module_relpath(&entry_name));
+    let backend_src = rename_generated_entry(&backend_src, &entry_name);
+    write(&format!("backend/{entry_rel}"), &backend_src, &mut files)?;
     // `init`'s server command: the client `init` sends the RPC instead.
     let frontend_src = match &init_plan {
         Some(p) if init_in_entry => apply_init_rpc(&frontend_src, p, &no_frontend_names, None)?,
@@ -5846,7 +5913,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // still uses a name they bind.
     let frontend_src =
         drop_dangling_sibling_imports(&frontend_src, &no_frontend_names, Some(&exposed_names));
-    write("frontend/src/Main.sky", &frontend_src, &mut files)?;
+    let frontend_src = rename_generated_entry(&frontend_src, &entry_name);
+    write(&format!("frontend/{entry_rel}"), &frontend_src, &mut files)?;
     // The generated projects must be able to REBUILD any third-party imports the
     // app uses: carry the `[dependencies]` (Sky packages) + `["go.dependencies"]`
     // (Go FFI) sections into each manifest, and copy the fetched `.skydeps/` /
@@ -5866,7 +5934,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         "backend/sky.toml",
         &format!(
             "{}{dep_sections}{live_store}{runtime_sections}",
-            sky_toml(&format!("{proj_name}-backend"), "backend")
+            sky_toml(&format!("{proj_name}-backend"), "backend", &entry_rel)
         ),
         &mut files,
     )?;
@@ -5874,7 +5942,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         "frontend/sky.toml",
         &format!(
             "{}wire = \"{wire_hash}\"\n{dep_sections}",
-            sky_toml(&format!("{proj_name}-frontend"), "frontend")
+            sky_toml(&format!("{proj_name}-frontend"), "frontend", &entry_rel)
         ),
         &mut files,
     )?;

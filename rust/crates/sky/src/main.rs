@@ -4414,7 +4414,11 @@ fn spa_split_and_build(
     // linked into the backend's small `skybuildinfo` package when the
     // frontend has built (project::spa_wasm_handoff): beside the frontend
     // when memory allows, else after it.
-    let backend_main = backend_dir.join("src").join("Main.sky");
+    // The generated entries keep the app entry's path (`src/Main.sky`, or
+    // `src/Other.sky` for an app built from `src/Other.sky`).
+    let backend_entry = project::spa_split::generated_entry(&backend_dir);
+    let frontend_entry = project::spa_split::generated_entry(&frontend_dir);
+    let backend_main = backend_dir.join(&backend_entry);
     // A web bundle (no native shell) is compressed here, in the parent, all
     // assets at once, and alongside the backend leg when that is still
     // building; a native shell's frontend child compresses its own bundle.
@@ -4474,7 +4478,7 @@ fn spa_split_and_build(
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
         }
         let t = project::timings::phase("backend leg (child sky build, native)");
-        c.arg("src/Main.sky").current_dir(&backend_dir);
+        c.arg(&backend_entry).current_dir(&backend_dir);
         let out = match tx {
             Some(tx) => run_with_handoff(c, tx),
             None => leg_output(&mut c),
@@ -4486,7 +4490,7 @@ fn spa_split_and_build(
     let build_frontend = || {
         let t = project::timings::phase("frontend leg (child sky build, wasm)");
         let mut c = Command::new(sky_ref);
-        c.args(["build", "--target", target, "src/Main.sky"]);
+        c.args(["build", "--target", target, frontend_entry.as_str()]);
         if json_leg {
             c.args(["--format", "json"]);
         }

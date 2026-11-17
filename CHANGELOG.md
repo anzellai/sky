@@ -53,6 +53,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `type mismatch: CardView vs record` at a use site. `sky check` now reports
   `[E1001] Undefined name: CardView` at the name. A type that some module
   declares, or a kernel type such as `Dict`, is accepted as before.
+- Sky.Spa: a second entry built the wrong backend, silently. `sky build
+  src/Other.sky --target web:app` in a project that also has `src/Main.sky`
+  wrote the generated entry as `module Main` at `src/Main.sky`, and then the
+  copy of the project's own `Main` replaced it. The generated entry now keeps
+  the entry's module name and path (`module Other`, `src/Other.sky`), the
+  split never writes one file twice, and a project module named `Shared` (the
+  name of the generated wire contract) is refused with a message.
 
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 
