@@ -61,7 +61,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   route class (`Rpc`, `Api`) a limit: a request over it gets `503` with
   `Retry-After` at once, before its body is read and before any app code
   runs. An optional hook (`Admission.withHook`) reads the request and the
-  load (`{ routeClass, route, inFlight, limit }`) and answers `Admit`,
+  load (`{ routeClass, route, inFlight, limit, session }`, where `session`
+  is the request's verified session id: the id the Sky.Live store holds, or
+  the id inside a verified `sky_spa` token on a `web:app` backend, `Nothing`
+  for a cookie that does not verify) and answers `Admit`,
   `Throttle ms` (`429`) or `Shed ms` (`503`); a hook that fails sheds. The
   origin check of an RPC runs first, so a foreign origin is still `403`. The
   slot is given back when the handler returns, also after a panic. Sky.Live

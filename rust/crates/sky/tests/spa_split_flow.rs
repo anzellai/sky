@@ -10459,7 +10459,11 @@ fn a_wrong_init_seed_is_reported_at_init_for_every_target() {
 /// app's own hook, written in Sky, decides each `App.api` request with the
 /// request and the load: `Throttle` is a 429, `Shed` a 503, both with
 /// `Retry-After` in whole seconds, and the `Load` it reads names the route
-/// class, the route, the in-flight count and the limit.
+/// class, the route, the in-flight count, the limit and the VERIFIED session:
+/// a forged `sky_spa` cookie (or a made-up Sky.Live id) is `Nothing`, so a
+/// client cannot dodge a per-session rule by editing its cookie
+/// (`TestAdmission_HookSees*` in runtime-go/rt/admission_test.go pin the
+/// verified case).
 #[test]
 fn an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -10474,10 +10478,14 @@ fn an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend() {
         return;
     }
     assert!(out.status.success(), "the web:app build failed:\n{log}");
-    let probe = |port: u16, mode: &str| -> (String, String) {
-        let out = Command::new("curl")
-            .args(["-s", "--max-time", "30", "-o", "/dev/null", "-D", "-"])
-            .args(["-H", &format!("X-Load-Test: {mode}")])
+    let probe_with = |port: u16, mode: &str, cookie: &str| -> (String, String) {
+        let mut cmd = Command::new("curl");
+        cmd.args(["-s", "--max-time", "30", "-o", "/dev/null", "-D", "-"])
+            .args(["-H", &format!("X-Load-Test: {mode}")]);
+        if !cookie.is_empty() {
+            cmd.args(["-H", &format!("Cookie: {cookie}")]);
+        }
+        let out = cmd
             .arg(format!("http://127.0.0.1:{port}/api/ping"))
             .output()
             .expect("curl GET /api/ping");
@@ -10498,6 +10506,7 @@ fn an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend() {
             .unwrap_or_default();
         (status, retry)
     };
+    let probe = |port: u16, mode: &str| probe_with(port, mode, "");
     let check = |port: u16, what: &str| {
         assert_eq!(
             probe(port, "none"),
@@ -10518,6 +10527,15 @@ fn an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend() {
             probe(port, "load"),
             ("429".into(), "5".into()),
             "{what}: the load the hook reads"
+        );
+        assert_eq!(
+            probe_with(
+                port,
+                "session",
+                "sky_spa=eyJhbGciOiJIUzI1NiJ9.eyJzaWQiOiJmb3JnZWQifQ.Zm9yZ2Vk; sky_sid=0123456789abcdef0123456789abcdef"
+            ),
+            ("429".into(), "4".into()),
+            "{what}: a forged session cookie is no session"
         );
     };
     let (live, port) = start_live_app(&proj);

@@ -1585,7 +1585,7 @@ func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter
 			}
 		}
 	}
-	if !admissionAdmit(w, ticket, skyReq) {
+	if !admissionAdmit(w, ticket, skyReq, func() string { return app.liveAdmissionSession(r) }) {
 		return
 	}
 	// The handler is `Request -> Task Error Response`. Invoke via `SkyCall`

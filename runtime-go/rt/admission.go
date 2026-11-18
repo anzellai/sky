@@ -142,6 +142,24 @@ func Admission_install(rpcLimit, apiLimit, retryAfterMs, hasHook, hook any) any 
 	}
 }
 
+// admissionSpaSessions is set by a Sky.Spa split backend at boot
+// (App.applyAdmission calls Admission_useSpaSessions before it installs the
+// policy). Only then does the hook get the session of a verified `sky_spa`
+// token; a plain Sky.Http.Server program has no runtime session.
+var admissionSpaSessions atomic.Bool
+
+// Admission_useSpaSessions : () -> Task Error ()
+//
+// Marks this process as a Sky.Spa split backend, so the admission hook gets
+// the verified session id of the request's `sky_spa` token. Called by the
+// generated backend's boot through App.applyAdmission.
+func Admission_useSpaSessions(_ any) any {
+	return func() any {
+		admissionSpaSessions.Store(true)
+		return Ok[any, any](struct{}{})
+	}
+}
+
 // admissionDecision is a decoded hook answer. The Sky adapter encodes a
 // Decision as one Int: -1 Admit, 2*ms Throttle ms, 2*ms+1 Shed ms.
 type admissionDecision struct {

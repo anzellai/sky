@@ -560,7 +560,7 @@ Each session has a `sync.Mutex`. Events and command-callback dispatches both loc
 
 Commands (`Cmd.perform`) run their `Task` outside the session lock, then re-acquire it to dispatch the result. This means long-running HTTP requests don't block other events.
 
-`Live.api` / `App.api` routes run outside any session lock, each on its own request goroutine, with no bound by default. `App.withAdmission` (`Std.Admission`) bounds the api requests that run at the same time: a request over the limit gets `503` with `Retry-After` before its body is read, and an optional hook can answer `429` or `503` per request with the request and the load. `SKY_ADMISSION_API_LIMIT` overrides the limit. The `/_sky/event` endpoint and the pages are not gated.
+`Live.api` / `App.api` routes run outside any session lock, each on its own request goroutine, with no bound by default. `App.withAdmission` (`Std.Admission`) bounds the api requests that run at the same time: a request over the limit gets `503` with `Retry-After` before its body is read, and an optional hook can answer `429` or `503` per request with the request and the load. The load's `session` is the request's session id only when the session store holds it (`Nothing` for a made-up id); finding it loads no model. `SKY_ADMISSION_API_LIMIT` overrides the limit. The `/_sky/event` endpoint and the pages are not gated.
 
 ## Security defaults
 

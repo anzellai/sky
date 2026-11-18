@@ -981,7 +981,14 @@ withAdmission p (App a) =
 -- backend; app code does not need it.
 applyAdmission : Admission.Policy -> Task Error ()
 applyAdmission p =
-    Admission.install p
+    Task.andThen (\_ -> Admission.install p) (useSpaSessions_ ())
+
+
+-- The generated backend is a Sky.Spa backend: the admission hook gets the
+-- verified `sky_spa` session (runtime-go/rt/admission.go). Private.
+useSpaSessions_ : () -> Task Error ()
+useSpaSessions_ =
+    Ffi.kernel "Admission_useSpaSessions"
 
 
 -- | Install an app's admission policy, if it has one, then run `boot`.

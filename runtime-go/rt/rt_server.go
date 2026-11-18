@@ -172,7 +172,7 @@ func dispatchSkyHandlerAdmitted(w http.ResponseWriter, req *http.Request, handle
 	for _, pn := range paramNames {
 		skyReq.Params[pn] = req.PathValue(pn)
 	}
-	if !admissionAdmit(w, ticket, skyReq) {
+	if !admissionAdmit(w, ticket, skyReq, func() string { return admissionSpaSession(skyReq.Cookies) }) {
 		return
 	}
 

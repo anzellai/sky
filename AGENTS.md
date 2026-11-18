@@ -493,7 +493,8 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
 - Bursts: by default a burst of `/_rpc/<Msg>` or `App.api` requests queues
   inside the process. Bound them with `App.withAdmission (Admission.policy |>
   Admission.withLimit Admission.Rpc 64)` (`Std.Admission`; a hook can also
-  answer 429 / 503 per request) or `SKY_ADMISSION_RPC_LIMIT` /
+  answer 429 / 503 per request, keyed on the verified `load.session`, never
+  a raw cookie) or `SKY_ADMISSION_RPC_LIMIT` /
   `SKY_ADMISSION_API_LIMIT`. A request over the limit gets 503 with
   `Retry-After` at once, and the Sky.Spa client re-sends it by itself.
 - Health checks: probe **`/_sky/healthz`** (liveness, always 200) or

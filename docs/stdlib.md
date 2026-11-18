@@ -3058,9 +3058,16 @@ it at boot on Sky.Live and on the Sky.Spa backend.
 | `Admission.retryAfterOf` | `Policy -> Int` | The policy's `Retry-After` in ms |
 | `Admission.install` | `Policy -> Task Error ()` | Make it the process's policy (one per process; the last one wins) |
 
-`Load` is `{ routeClass, route, inFlight, limit }`: the class, the route as
-declared (`"/_rpc/Save"`, `"/api/items/:id"`), the requests of the class
-running now (this one included) and the limit (`0`: none). The operator
+`Load` is `{ routeClass, route, inFlight, limit, session }`: the class, the
+route as declared (`"/_rpc/Save"`, `"/api/items/:id"`), the requests of the
+class running now (this one included), the limit (`0`: none) and the
+request's verified session id. `session` is `Just` the id only after the
+runtime verified it: on Sky.Live the id the session store holds for the
+request, on a `web:app` backend the id inside a `sky_spa` token whose
+signature, expiry and sign-out check pass. It is `Nothing` for no session,
+for a cookie that does not verify, and in a `Sky.Http.Server` program. Key a
+per-session rule on `load.session`, never on a raw cookie: a client can
+change its cookie to get a new quota. The operator
 variables `SKY_ADMISSION_RPC_LIMIT` and `SKY_ADMISSION_API_LIMIT` (a whole
 number, `0` for no limit) win over the code. Each refusal is counted in the
 `sky_admission_refused_total` metric (labels `class`, `route`, `status`). The

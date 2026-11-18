@@ -13,7 +13,11 @@ package rt
 //     request is answered 503 with Retry-After at once: its body is not read
 //     and the handler never runs;
 //  3. the request is built once (body read once) and the policy's hook, if
-//     any, decides: Admit, Throttle (429) or Shed (503);
+//     any, decides: Admit, Throttle (429) or Shed (503). The hook gets the
+//     request's VERIFIED session id ("" for none): on Sky.Live the id the
+//     store holds (liveAdmissionSession), on a Sky.Spa backend the `sid` of
+//     a verified `sky_spa` token (admissionSpaSession). It is resolved only
+//     when a hook is installed, and never loads a model;
 //  4. the handler.
 //
 // The slot is released when the handler returns, also when it panics.
@@ -71,7 +75,10 @@ func admissionEnter(w http.ResponseWriter, c admissionClass, route string) (*adm
 // A hook that fails (an Err, a panic, an answer of the wrong shape) sheds
 // the request with the policy's Retry-After: under load, a broken hook must
 // not let everything through.
-func admissionAdmit(w http.ResponseWriter, t *admissionTicket, req SkyRequest) (admitted bool) {
+//
+// session resolves the request's verified session id ("" for none); it is
+// called only when a hook runs.
+func admissionAdmit(w http.ResponseWriter, t *admissionTicket, req SkyRequest, session func() string) (admitted bool) {
 	if t == nil {
 		return true
 	}
@@ -90,7 +97,11 @@ func admissionAdmit(w http.ResponseWriter, t *admissionTicket, req SkyRequest) (
 			admitted = false
 		}
 	}()
-	res := anyTaskInvoke(SkyCall(h.fn, req, t.class.String(), t.route, int(t.inFlight), int(t.limit)))
+	sid := ""
+	if session != nil {
+		sid = session()
+	}
+	res := anyTaskInvoke(SkyCall(h.fn, req, sid, t.class.String(), t.route, int(t.inFlight), int(t.limit)))
 	if res.Tag != 0 {
 		msg, _ := renderSkyError(res.ErrValue)
 		admissionRefuse(w, t.class, t.route, http.StatusServiceUnavailable, admission.retryAfterMs.Load(),
@@ -129,4 +140,38 @@ func admissionRefuse(w http.ResponseWriter, c admissionClass, route string, stat
 		"route":  route,
 		"status": strconv.Itoa(status),
 	})
+}
+
+// liveAdmissionSession is the session id a Sky.Live request presents (its
+// cookie, or its X-Sky-Session token in header mode), only when the session
+// store holds it. A made-up id of the right shape is "".
+func (app *liveApp) liveAdmissionSession(r *http.Request) string {
+	sid := app.presentedSID(r)
+	if sid == "" || app.store == nil || !storeHasSession(app.store, sid) {
+		return ""
+	}
+	return sid
+}
+
+// admissionSpaSecret is the key a `sky_spa` token is verified with. A
+// variable so tests can give their own key.
+var admissionSpaSecret = func() any { return Spa_sessionSecret(nil) }
+
+// admissionSpaSession is the session id of the request's `sky_spa` token
+// after the signature, expiry and sign-out checks (Spa_verifySession), or ""
+// when the process is not a Sky.Spa backend or the token does not verify.
+// The cookie itself is never handed to the hook: a client can change it.
+func admissionSpaSession(cookies map[string]string) string {
+	if !admissionSpaSessions.Load() {
+		return ""
+	}
+	tok := cookies[spaSessionCookieName]
+	if tok == "" {
+		return ""
+	}
+	claims, ok := okClaims(Spa_verifySession(admissionSpaSecret(), tok))
+	if !ok {
+		return ""
+	}
+	return claimString(claims, "sid")
 }

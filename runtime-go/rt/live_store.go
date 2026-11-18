@@ -602,6 +602,28 @@ func (s *memoryStore) Broker() Broker { return s.broker }
 // Ping — the in-memory store is always healthy.
 func (s *memoryStore) Ping() error { return nil }
 
+// sessionPresence is the optional "is this id a session" check of a store.
+// A durable store answers it from its memory cache or with a one-row query,
+// without decoding the session (no model load). The admission hook uses it
+// (liveAdmissionSession).
+type sessionPresence interface {
+	Has(sid string) bool
+}
+
+// storeHasSession reports whether the store holds sid: through Has when the
+// store implements it, else through Get (the memory store, whose Get is a
+// map read).
+func storeHasSession(st SessionStore, sid string) bool {
+	if sid == "" || st == nil {
+		return false
+	}
+	if p, ok := st.(sessionPresence); ok {
+		return p.Has(sid)
+	}
+	_, ok := st.Get(sid)
+	return ok
+}
+
 func (s *memoryStore) Get(sid string) (*liveSession, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -796,6 +818,18 @@ func newSQLiteStore(path string, ttl, idleEvict time.Duration) (*sqliteStore, er
 	}
 	go s.cleanupLoop()
 	return s, nil
+}
+
+// Has reports whether the store holds sid, without decoding it.
+func (s *sqliteStore) Has(sid string) bool {
+	s.memMu.RLock()
+	_, ok := s.memCache[sid]
+	s.memMu.RUnlock()
+	if ok {
+		return true
+	}
+	var one int
+	return s.db.QueryRow(`SELECT 1 FROM sky_sessions WHERE sid = ?`, sid).Scan(&one) == nil
 }
 
 func (s *sqliteStore) Get(sid string) (*liveSession, bool) {
@@ -1301,6 +1335,18 @@ func newPostgresStore(connStr string, ttl, idleEvict time.Duration) (*postgresSt
 	return s, nil
 }
 
+// Has reports whether the store holds sid, without decoding it.
+func (s *postgresStore) Has(sid string) bool {
+	s.memMu.RLock()
+	_, ok := s.memCache[sid]
+	s.memMu.RUnlock()
+	if ok {
+		return true
+	}
+	var one int
+	return s.db.QueryRow(`SELECT 1 FROM sky_sessions WHERE sid = $1`, sid).Scan(&one) == nil
+}
+
 func (s *postgresStore) Get(sid string) (*liveSession, bool) {
 	// fix #4: touch lastSeen INSIDE the RLock (mutually exclusive with the
 	// idle-evict re-check). See sqliteStore.Get.
@@ -1549,6 +1595,18 @@ func newRedisStore(addr string, ttl, idleEvict time.Duration) (*redisStore, erro
 		go s.idleEvictLoop()
 	}
 	return s, nil
+}
+
+// Has reports whether the store holds sid, without reading its blob.
+func (s *redisStore) Has(sid string) bool {
+	s.memMu.RLock()
+	_, ok := s.memCache[sid]
+	s.memMu.RUnlock()
+	if ok {
+		return true
+	}
+	n, err := s.client.Exists(s.ctx, redisKey(sid)).Result()
+	return err == nil && n > 0
 }
 
 func (s *redisStore) Get(sid string) (*liveSession, bool) {

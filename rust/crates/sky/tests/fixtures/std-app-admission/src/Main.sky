@@ -52,6 +52,15 @@ decide req load =
         Just "shed" ->
             Task.succeed (Admission.Shed 1000)
 
+        Just "session" ->
+            case load.session of
+
+                Nothing ->
+                    Task.succeed (Admission.Throttle 4000)
+
+                Just _ ->
+                    Task.succeed Admission.Admit
+
         Just "load" ->
             if load.routeClass == Admission.Api && load.route == "/api/ping"
                 && load.inFlight == 1 then

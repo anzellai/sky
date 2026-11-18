@@ -139,7 +139,7 @@ func TestAdmission_SlotIsReleasedAfterAHandlerPanic(t *testing.T) {
 // counted in sky_admission_refused_total.
 func TestAdmission_HookDecisionsMapToStatuses(t *testing.T) {
 	var seen []string
-	hook := func(req, cls, route, inFlight, limit any) any {
+	hook := func(req, session, cls, route, inFlight, limit any) any {
 		r := req.(SkyRequest)
 		seen = append(seen, AsString(cls)+"|"+AsString(route)+"|"+itoa(AsInt(inFlight))+"|"+itoa(AsInt(limit)))
 		code := -1 // Admit
@@ -185,7 +185,7 @@ func TestAdmission_HookDecisionsMapToStatuses(t *testing.T) {
 
 // A hook that fails sheds the request (503), it does not let it through.
 func TestAdmission_FailingHookSheds(t *testing.T) {
-	useAdmission(t, 0, 0, 1000, func(req, cls, route, inFlight, limit any) any {
+	useAdmission(t, 0, 0, 1000, func(req, session, cls, route, inFlight, limit any) any {
 		return func() any { return Err[any, any]("no") }
 	})
 	runs := 0
@@ -291,4 +291,109 @@ func refusedCount(class, status string) float64 {
 		}
 	}
 	return 0
+}
+
+// sessionHook records the session the hook is given ("" is Nothing) and
+// admits every request.
+func sessionHook(seen *[]string) any {
+	return func(req, session, cls, route, inFlight, limit any) any {
+		*seen = append(*seen, AsString(session))
+		return func() any { return Ok[any, any](-1) }
+	}
+}
+
+// On a Sky.Spa split backend the hook gets the session id of a VERIFIED
+// `sky_spa` token: a forged token, a token signed with another key, a
+// signed-out token and no cookie all give Nothing (""). A client cannot dodge
+// a per-session throttle by editing its cookie.
+func TestAdmission_HookSeesTheVerifiedSpaSession(t *testing.T) {
+	withMemoryRevocations(t)
+	prevSecret := admissionSpaSecret
+	admissionSpaSecret = func() any { return spaTestSecret }
+	t.Cleanup(func() { admissionSpaSecret = prevSecret })
+	admissionSpaSessions.Store(true)
+	t.Cleanup(func() { admissionSpaSessions.Store(false) })
+	var seen []string
+	useAdmission(t, 0, 0, 1000, sessionHook(&seen))
+	route := Server_api("GET /x", func(req SkyRequest) any {
+		return func() any { return SkyResponse{Status: 200, Body: "ok"} }
+	})
+	mux, _ := serverRouteMux([]any{route})
+	get := func(cookie string) {
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		if cookie != "" {
+			req.Header.Set("Cookie", "sky_spa="+cookie)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("status %d", rec.Code)
+		}
+	}
+	tok := spaSign(t, "", spaSignedIn())
+	claims, _ := spaVerifyClaims(tok)
+	sid := claimString(claims, "sid")
+	other, _ := Spa_signSession(Secret{v: "another-key-another-key-another-key-0000"}, "", spaSignedIn()).(SkyResult[any, any])
+	ended := spaSign(t, "", map[string]any{"p0": "someone else"})
+	spaEnd(t, ended)
+	get("")
+	get(tok)
+	get(tok[:len(tok)-2] + "xx")
+	get(other.OkValue.(string))
+	get(ended)
+	if want := []string{"", sid, "", "", ""}; strings.Join(seen, "|") != strings.Join(want, "|") {
+		t.Fatalf("the hook saw sessions %q, want %q", seen, want)
+	}
+	// A plain Sky.Http.Server program has no runtime session.
+	admissionSpaSessions.Store(false)
+	seen = nil
+	get(tok)
+	if len(seen) != 1 || seen[0] != "" {
+		t.Fatalf("a program that is not a Sky.Spa backend has no session, the hook saw %q", seen)
+	}
+}
+
+// On Sky.Live the hook gets the session id the runtime resolves, only when
+// the session store holds it: a made-up id of the right shape gives Nothing.
+func TestAdmission_HookSeesTheLiveSession(t *testing.T) {
+	var seen []string
+	useAdmission(t, 0, 0, 1000, sessionHook(&seen))
+	app := newMirrorTestApp()
+	known := app.store.NewID()
+	app.store.Set(known, &liveSession{model: "m", handlers: map[string]any{}})
+	forged := app.store.NewID()
+	ar := apiRoute{method: "GET", pattern: "/api/x", handler: func(req SkyRequest) any {
+		return func() any { return Ok[any, any](SkyResponse{Status: 200, Body: "ok"}) }
+	}}
+	call := func(sid string) {
+		req := httptest.NewRequest(http.MethodGet, "/api/x", nil)
+		if sid != "" {
+			req.Header.Set("Cookie", app.cookieNameOrDefault()+"="+sid)
+		}
+		rec := httptest.NewRecorder()
+		app.serveAPI(ar, nil, rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("status %d", rec.Code)
+		}
+	}
+	call("")
+	call(known)
+	call(forged)
+	if want := []string{"", known, ""}; strings.Join(seen, "|") != strings.Join(want, "|") {
+		t.Fatalf("the hook saw sessions %q, want %q", seen, want)
+	}
+}
+
+// The store answers "does this session exist" without loading a model: the
+// durable stores implement sessionPresence.
+func TestSessionPresenceIsImplementedByTheDurableStores(t *testing.T) {
+	var _ sessionPresence = (*sqliteStore)(nil)
+	var _ sessionPresence = (*postgresStore)(nil)
+	var _ sessionPresence = (*redisStore)(nil)
+	st := newMemoryStore(time.Minute)
+	defer st.Close()
+	st.Set("a", &liveSession{})
+	if !storeHasSession(st, "a") || storeHasSession(st, "b") || storeHasSession(st, "") {
+		t.Fatal("storeHasSession must report only a stored id")
+	}
 }

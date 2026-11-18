@@ -24,8 +24,10 @@
 -- (and every `Server.api` route). Pages, static files, the Sky.Live event
 -- endpoint and the runtime's own `/_sky/` routes are not gated.
 --
--- A hook (`withHook`) runs next, with the request and the current load. It
--- reads what it needs (the session cookie, a header, the route) and answers
+-- A hook (`withHook`) runs next, with the request and the current load. The
+-- load carries the request's verified session id (`load.session`), so a hook
+-- can throttle per session. It reads what it needs (the session, a header,
+-- the route) and answers
 -- `Admit`, `Throttle ms` (`429 Too Many Requests`) or `Shed ms` (`503`). A
 -- hook that fails sheds the request.
 --
@@ -63,12 +65,23 @@ type RouteClass
 -- | What the hook sees about the server's load when a request arrives:
 -- its route class, its route as declared (`"/_rpc/Save"`,
 -- `"/api/items/:id"`), the number of requests of that class running now
--- (this one included), and the class's limit (`0`: none).
+-- (this one included), the class's limit (`0`: none), and the request's
+-- verified session id.
+--
+-- `session` is `Just` the session id only after the runtime has verified it.
+-- On Sky.Live it is the id the session store holds for the request's session
+-- cookie (or `X-Sky-Session` token). On a `web:app` backend it is the
+-- session id inside the signed `sky_spa` token, after the signature, expiry
+-- and sign-out checks. It is `Nothing` for a request with no session, with a
+-- cookie that does not verify (a client cannot make one up to get a new
+-- quota), and in a `Sky.Http.Server` program, which has no runtime session.
+-- Finding it reads no body and loads no model.
 type alias Load =
     { routeClass : RouteClass
     , route : String
     , inFlight : Int
     , limit : Int
+    , session : Maybe String
     }
 
 -- | The hook's answer. `Admit` runs the handler. `Throttle ms` answers
@@ -129,15 +142,23 @@ withRetryAfter ms (Policy p) =
 -- | `withHook decide` — run `decide` for each admitted request, after the
 -- limit check and before the handler. It gets the request (headers, cookies,
 -- query; the body too) and the [`Load`]. Keep it quick: it runs on every
--- gated request.
+-- gated request. Key a per-session rule on `load.session`, never on a raw
+-- cookie, which the client can change.
 --
 --     decide : Request -> Admission.Load -> Task Error Admission.Decision
 --     decide req load =
---         if load.inFlight > load.limit // 2 && Server.getCookie "sky_spa" req == Nothing then
---             Task.succeed (Admission.Throttle 2000)
+--         case load.session of
 --
---         else
---             Task.succeed Admission.Admit
+--             Nothing ->
+--                 if load.inFlight > load.limit // 2 then
+--                     Task.succeed (Admission.Throttle 2000)
+--
+--                 else
+--                     Task.succeed Admission.Admit
+--
+--             Just sid ->
+--                 -- e.g. a Std.Sync.Ref counter per sid
+--                 Task.succeed Admission.Admit
 withHook : (Request -> Load -> Task Error Decision) -> Policy -> Policy
 withHook decide (Policy p) =
     Policy { p | hook = Just decide }
@@ -191,16 +212,23 @@ admitAll _ _ =
     Task.succeed Admit
 
 
--- The runtime calls the hook with plain values and reads one Int back:
--- -1 Admit, 2 * ms Throttle, 2 * ms + 1 Shed.
-hookAdapter : (Request -> Load -> Task Error Decision) -> Request -> String -> String -> Int -> Int -> Task Error Int
-hookAdapter decide req routeClass route inFlight limit =
+-- The runtime calls the hook with plain values (the verified session id,
+-- "" for none) and reads one Int back: -1 Admit, 2 * ms Throttle,
+-- 2 * ms + 1 Shed.
+hookAdapter : (Request -> Load -> Task Error Decision) -> Request -> String -> String -> String -> Int -> Int -> Task Error Int
+hookAdapter decide req session routeClass route inFlight limit =
     decide
         req
         { routeClass = classOf routeClass
         , route = route
         , inFlight = inFlight
         , limit = limit
+        , session =
+            if session == "" then
+                Nothing
+
+            else
+                Just session
         }
         |> Task.map decisionCode
 
@@ -237,6 +265,6 @@ nonNegative n =
         n
 
 
-installKernel : Int -> Int -> Int -> Bool -> (Request -> String -> String -> Int -> Int -> Task Error Int) -> Task Error ()
+installKernel : Int -> Int -> Int -> Bool -> (Request -> String -> String -> String -> Int -> Int -> Task Error Int) -> Task Error ()
 installKernel =
     Ffi.kernel "Admission_install"
