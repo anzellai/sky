@@ -115,7 +115,8 @@ and `Std.Ai.Memory.Pg`. Training and evaluation: `Std.Ai.Dataset`,
 * [`tooling/cli.md`](tooling/cli.md): every `sky <command>`.
 * [`tooling/lsp.md`](tooling/lsp.md): the language server.
 * [`tooling/testing.md`](tooling/testing.md): `sky test`, test mode and
-  mocks, `sky fuzz`, and the compiler's own gates.
+  mocks, coverage (`sky test --coverage`, `sky coverage report`), `sky fuzz`,
+  and the compiler's own gates.
 * [`tooling/gate-harness.md`](tooling/gate-harness.md): `xtask harness`, gate
   states, falsifying mutations and budgets.
 
