@@ -93,6 +93,7 @@ const FIXED_NAME_READS: &[(&str, &str)] = &[
     ("SKY_TEST_CLOCK_MS", "auto-testing: pins Time.now; set by the test runner"),
     ("SKY_TEST_LOG_CAPTURE", "auto-testing: log-capture file a scenario reads back; set by the test runner"),
     ("SKY_TEST_MOCKS_DIR", "auto-testing: outbound-HTTP fixture dir; set by the test runner"),
+    ("SKY_FUZZ_COV_OUT", "coverage-guided fuzzing: the file the fuzz harness writes the reached arm ids to; set by `sky fuzz` on the program it runs, not the app"),
     ("SKY_GC_QUIET", "startup-report verbosity; set by the launcher"),
     (
         "SKY_HOME",
