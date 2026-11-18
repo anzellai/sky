@@ -82,7 +82,17 @@ func readBoundedBody(body io.ReadCloser) (string, error) {
 // P8/Http typed companion — Task-shaped string in, HttpResponse out.
 func Http_getT(url string) func() SkyResult[string, HttpResponse] {
 	return func() SkyResult[string, HttpResponse] {
-		resp, err := skyHTTPClient().Get(url)
+		// Bounded by a Task.timeout deadline, as Http.get is.
+		if left, ok := skyRemaining(); ok && left <= 0 {
+			return Err[string, HttpResponse]("http.get: the deadline passed before the request was sent")
+		}
+		ctx, cancel := httpOutboundContext()
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return Err[string, HttpResponse]("http.get: " + redactURLError(err, url))
+		}
+		resp, err := skyHTTPClient().Do(req)
 		if err != nil {
 			return Err[string, HttpResponse]("http.get: " + redactURLError(err, url))
 		}

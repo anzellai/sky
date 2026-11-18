@@ -116,6 +116,9 @@ func aiLocalPost(idArg, pathArg, bodyArg any, token string) any {
 	id := int64(AsInt(idArg))
 	path, body := AsString(pathArg), AsString(bodyArg)
 	return func() any {
+		if r := skyDeadlineRefusal("Ai.call"); r != nil {
+			return r
+		}
 		e, err := aiEngineByID(id)
 		if err != nil {
 			return aiTaskErr(err)
@@ -126,7 +129,9 @@ func aiLocalPost(idArg, pathArg, bodyArg any, token string) any {
 		placed := time.Now()
 		body := aiPatchModel(body, "local")
 		f.setAdapter(aiLocalRequestAdapter(body))
-		ctx, cancel := context.WithTimeout(context.Background(), aiLocalCallTimeout)
+		// The call's timeout, or less when a Task.timeout deadline is nearer.
+		// The engine start below is shared, so it is not bound by it.
+		ctx, cancel := skyCallContext(aiLocalCallTimeout)
 		defer cancel()
 		if testModeActive() {
 			c := &aiSlotConfig{slot: "local", timeout: aiLocalCallTimeout}
@@ -135,7 +140,7 @@ func aiLocalPost(idArg, pathArg, bodyArg any, token string) any {
 			f.answered()
 			f.timingsFrom(out)
 			if err != nil {
-				return aiTaskErr(err)
+				return aiDeadlineTaskErr("Ai.call", err)
 			}
 			return Ok[any, any](out)
 		}
@@ -158,7 +163,7 @@ func aiLocalPost(idArg, pathArg, bodyArg any, token string) any {
 		}
 		aiRecordCall(rec)
 		if err != nil {
-			return aiTaskErr(err)
+			return aiDeadlineTaskErr("Ai.call", err)
 		}
 		return Ok[any, any](out)
 	}

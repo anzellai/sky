@@ -51,18 +51,33 @@ func Email_send(providerArg, msgArg any) any {
 
 		// Provider is a Sky ADT — Resend/Ses/SendGrid/Smtp.
 		tag, args := readEmailProvider(providerArg)
-		switch tag {
-		case "Resend":
-			return sendResend(strOf(args, 0), msg)
-		case "SendGrid":
-			return sendSendGrid(strOf(args, 0), msg)
-		case "Ses":
-			return sendSes(args[0], msg)
-		case "Smtp":
-			return sendSmtp(args[0], msg)
-		default:
+		if tag != "Resend" && tag != "SendGrid" && tag != "Ses" && tag != "Smtp" {
 			return Err[any, any](ErrInvalidInput("email.send: unknown provider tag " + tag))
 		}
+		// A Task.timeout deadline refuses the send once it has passed, and
+		// stops an HTTP provider's request at the deadline (emailDoJSONRaw
+		// sends it with skyCallContext). SMTP has no request context: it is
+		// refused here and otherwise runs to its own end.
+		if r := skyDeadlineRefusal("Email.send"); r != nil {
+			return r
+		}
+		var r any
+		switch tag {
+		case "Resend":
+			r = sendResend(strOf(args, 0), msg)
+		case "SendGrid":
+			r = sendSendGrid(strOf(args, 0), msg)
+		case "Ses":
+			r = sendSes(args[0], msg)
+		default:
+			r = sendSmtp(args[0], msg)
+		}
+		if res, ok := r.(SkyResult[any, any]); ok && res.Tag != 0 {
+			if d := skyDeadlinePassed("Email.send"); d != nil {
+				return d
+			}
+		}
+		return r
 	}
 }
 
@@ -558,15 +573,17 @@ func emailDoJSON(method, url string, headers map[string]string, body any) (map[s
 }
 
 func emailDoJSONRaw(method, url string, headers map[string]string, payload []byte) (map[string]any, error) {
-	req, err := http.NewRequest(method, url, bytes.NewReader(payload))
+	// 30 s, or less when a Task.timeout deadline is nearer.
+	ctx, cancel := skyCallContext(30 * time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

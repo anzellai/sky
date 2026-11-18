@@ -237,12 +237,14 @@ func (r aiStoreRequest) build(ctx context.Context, body io.Reader, size int64) (
 	return req, nil
 }
 
+// context is the request's timeout, or less when a Task.timeout deadline is
+// nearer (task_deadline_outbound.go).
 func (r aiStoreRequest) context() (context.Context, context.CancelFunc) {
 	d := aiStoreDefaultTimeout
 	if r.timeoutMs > 0 {
 		d = time.Duration(r.timeoutMs) * time.Millisecond
 	}
-	return context.WithTimeout(context.Background(), d)
+	return skyCallContext(d)
 }
 
 // aiStoreHTTPErr classifies a store answer that is not a success.
@@ -288,6 +290,9 @@ func Ai_storeHttpPut(reqArg, srcArg any) any {
 		if err != nil {
 			return aiTaskErr(aiStoreLocalErr("cannot read %s: %v", src, err))
 		}
+		if r := skyDeadlineRefusal("Ai.Store.put"); r != nil {
+			return r
+		}
 		ctx, cancel := r.context()
 		defer cancel()
 		req, err := r.build(ctx, bufio.NewReaderSize(f, 1<<20), st.Size())
@@ -296,7 +301,7 @@ func Ai_storeHttpPut(reqArg, srcArg any) any {
 		}
 		resp, err := aiStoreClient.Do(req)
 		if err != nil {
-			return aiTaskErr(aiStoreTransportErr(r, ctx, err))
+			return aiDeadlineTaskErr("Ai.Store.put", aiStoreTransportErr(r, ctx, err))
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -321,6 +326,9 @@ func Ai_storeHttpGet(reqArg, digestArg any) any {
 		if aiVerifiedBlob(dest, sum) {
 			return Ok[any, any](dest)
 		}
+		if r := skyDeadlineRefusal("Ai.Store.get"); r != nil {
+			return r
+		}
 		ctx, cancel := r.context()
 		defer cancel()
 		req, err := r.build(ctx, nil, 0)
@@ -329,7 +337,7 @@ func Ai_storeHttpGet(reqArg, digestArg any) any {
 		}
 		resp, err := aiStoreClient.Do(req)
 		if err != nil {
-			return aiTaskErr(aiStoreTransportErr(r, ctx, err))
+			return aiDeadlineTaskErr("Ai.Store.get", aiStoreTransportErr(r, ctx, err))
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -338,9 +346,9 @@ func Ai_storeHttpGet(reqArg, digestArg any) any {
 		}
 		if _, err := aiCopyVerified(resp.Body, dest, sum); err != nil {
 			if fe, ok := err.(*aiFailure); ok {
-				return aiTaskErr(fe)
+				return aiDeadlineTaskErr("Ai.Store.get", fe)
 			}
-			return aiTaskErr(aiStoreTransportErr(r, ctx, err))
+			return aiDeadlineTaskErr("Ai.Store.get", aiStoreTransportErr(r, ctx, err))
 		}
 		return Ok[any, any](dest)
 	}

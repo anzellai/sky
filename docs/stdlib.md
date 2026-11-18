@@ -788,7 +788,9 @@ countStep limit n =
 The deadline travels with the work:
 
 - A task started inside it (`Task.parallel`, `parallelN`, `spawn`, a nested `Task.timeout`) sees the EARLIEST deadline in force. An inner `Task.timeout 5000` inside an outer `Task.timeout 1000` ends at the outer deadline.
-- `Http.get`, `Http.post` and `Http.request` send the request with the deadline, so the call stops at it, and they refuse to start once it has passed. `Http.withMinRemaining ms` asks for more time before a request is sent.
+- Every outbound network call sends its request with the deadline, so the call stops at it, and refuses to start once it has passed: `Http.get`, `Http.post`, `Http.request`, `Http.Stream.open`, `WebSocket.connect` / `connectWith` (and `WebSocket.send` / `sendBinary` refuse), `Email.send`, the `Std.Ai` slot, provider and local engine calls (`Std.Ai.Provider` over `Sky.Core.Http` included) and stream opens, and `Std.Ai.Store` transfers. `Http.withMinRemaining ms` asks for more time before a request or a stream open is sent.
+- A stream or a socket outlives the task that opened it: the deadline bounds the wait for it to open, not its life. Each read stops at the deadline of the task that reads: `Http.Stream.forEachChunk` (which then closes the stream), `WebSocket.receive` / `receiveWithin` (the socket stays open and no frame is lost), `WebSocket.forEachMessage` (which then closes the socket), and a `Std.Ai` stream read (`Provider.chatStream`, `readStream`).
+- The start of a shared local AI engine (`Std.Ai.Local`, a slot with `withLocal`) and the downloads that provision it are not cut by one caller's deadline, because other callers share them. The caller still stops waiting at its deadline.
 - `Sync.pop` and `Sync.popWithin` stop waiting at the deadline, with the deadline's error. A shorter `popWithin` limit still ends with its own `Timeout`.
 - `Task.remaining` reads the time left, so a task can skip optional work near the deadline.
 
@@ -946,7 +948,10 @@ retryable and carries the attributes `minRemainingMs` and `remainingMs`. The
 default (`minRemaining = 0` in `defaultRequest`) refuses only once the
 deadline has passed. Outside a `Task.timeout` it has no effect. `HttpRequest`
 gained the `minRemaining : Int` field in v0.29.14, so a request written as a
-full record literal adds `minRemaining = 0`.
+full record literal adds `minRemaining = 0`. `Http.Stream.open` reads the
+deadline and `minRemaining` the same way for its open; the stream it returns
+is not bound by the deadline, and `Http.Stream.forEachChunk` stops at the
+deadline of the task that reads it.
 
 Pair with `Task.retryWith` for flaky upstreams:
 

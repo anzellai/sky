@@ -129,9 +129,12 @@ func Ai_trainBasePin(snapArg any) any {
 		if err := json.Unmarshal([]byte(raw), &s); err != nil {
 			return aiTaskErr(aiFailf(aiInvalidSetting, "the base snapshot is not {repo, revision, files}").with("setting", "base"))
 		}
+		if r := skyDeadlineRefusal("Ai.Train.pin"); r != nil {
+			return r
+		}
 		pinned, err := aiPinBaseSnapshot(s)
 		if err != nil {
-			return aiTaskErr(err)
+			return aiDeadlineTaskErr("Ai.Train.pin", err)
 		}
 		out, _ := json.Marshal(pinned)
 		return Ok[any, any](string(out))
@@ -265,7 +268,8 @@ func aiPinHubBase(s aiBaseSnapshot) (aiBaseSnapshot, error) {
 			s.Repo, s.Revision[:12], filepath.Dir(cache), skyEnvName("AI_FETCH"), s.Repo, s.Revision).
 			with("what", s.Repo+"@"+s.Revision[:12]).with("command", "sky ai provision --train mlx --base hf:"+s.Repo+"@"+s.Revision)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// 10 minutes, or less when a Task.timeout deadline is nearer.
+	ctx, cancel := skyCallContext(10 * time.Minute)
 	defer cancel()
 	entries, err := aiHubTree(ctx, s.Repo, s.Revision)
 	if err != nil {

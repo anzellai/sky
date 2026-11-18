@@ -232,10 +232,14 @@ forever =
 -- The deadline travels with the work. A task started inside it
 -- (`parallel`, `parallelN`, `spawn`, a nested `timeout`) sees the EARLIEST
 -- deadline in force, so an inner `timeout 5000` inside an outer
--- `timeout 1000` ends at the outer deadline. `Http.get`, `Http.post` and
--- `Http.request` stop at it and refuse to start once it has passed
--- (`Http.withMinRemaining` asks for more), `Sync.pop` and `Sync.popWithin`
--- stop waiting at it, and `remaining` reads it.
+-- `timeout 1000` ends at the outer deadline. Every outbound network call
+-- stops at it and refuses to start once it has passed: `Http.get`, `post`
+-- and `request`, `Http.Stream.open`, `WebSocket.connect`, `Email.send`, the
+-- `Std.Ai` calls and `Std.Ai.Store` transfers (`Http.withMinRemaining` asks
+-- for more). A stream or a socket outlives the task that opened it; each
+-- read (`Http.Stream.forEachChunk`, `WebSocket.receive`, a `Std.Ai` stream
+-- read) stops at the deadline of the task that reads. `Sync.pop` and
+-- `Sync.popWithin` stop waiting at it, and `remaining` reads it.
 --
 -- A timed-out task is ABANDONED, not stopped: its result is discarded and
 -- a later panic in it is logged. An `Http` call or a `Sync` wait in it ends

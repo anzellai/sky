@@ -438,8 +438,16 @@ func WebSocket_connectWith(cfgArg any) any {
 
 // doWebSocketConnect runs the actual dial + handle registration.
 // Shared by both connect and connectWith. Returns Ok[int64] / Err Error.
+//
+// A Task.timeout deadline refuses the dial once it has passed and bounds the
+// dial and the handshake (task_deadline_outbound.go). The open socket
+// outlives the deadline: each Task read stops at its own reader's deadline
+// (websocket_task.go).
 func doWebSocketConnect(url string, headers http.Header, tlsCfg *tls.Config, dialTimeout, pingInterval time.Duration) any {
-	dialCtx, cancelDial := context.WithTimeout(context.Background(), dialTimeout)
+	if r := skyDeadlineRefusal("WebSocket.connect"); r != nil {
+		return r
+	}
+	dialCtx, cancelDial := skyCallContext(dialTimeout)
 	defer cancelDial()
 	opts := &websocket.DialOptions{
 		HTTPHeader: headers,
@@ -451,6 +459,9 @@ func doWebSocketConnect(url string, headers http.Header, tlsCfg *tls.Config, dia
 	}
 	conn, _, err := websocket.Dial(dialCtx, url, opts)
 	if err != nil {
+		if r := skyDeadlinePassed("WebSocket.connect"); r != nil {
+			return r
+		}
 		return Err[any, any](ErrNetwork("websocket.connect: " + err.Error()))
 	}
 	conn.SetReadLimit(int64(wsDefaultMaxMessageBytes))
@@ -606,6 +617,12 @@ func WebSocket_send(sidArg any, msgArg any) any {
 		if sh.IsClosed() {
 			return Err[any, any](ErrUnavailable("websocket.send: socket closed"))
 		}
+		// Refused once a Task.timeout deadline has passed. A write in
+		// progress is not cut at the deadline: cutting a frame closes the
+		// socket.
+		if r := skyDeadlineRefusal("WebSocket.send"); r != nil {
+			return r
+		}
 		sh.writeMu.Lock()
 		defer sh.writeMu.Unlock()
 		writeCtx, cancel := context.WithTimeout(sh.ctx, wsConsumerTimeout)
@@ -634,6 +651,9 @@ func WebSocket_sendBinary(sidArg any, msgArg any) any {
 		}
 		if sh.IsClosed() {
 			return Err[any, any](ErrUnavailable("websocket.sendBinary: socket closed"))
+		}
+		if r := skyDeadlineRefusal("WebSocket.sendBinary"); r != nil {
+			return r
 		}
 		sh.writeMu.Lock()
 		defer sh.writeMu.Unlock()

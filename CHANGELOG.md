@@ -87,15 +87,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   finished in time fails with a `Timeout` error whose domain failure is
   `"task"` / `"DeadlineExceeded"` (retryable). The deadline travels: tasks
   started inside it (`Task.parallel`, `parallelN`, `spawn`, a nested
-  `Task.timeout`) see the earliest deadline, `Http.get` / `post` / `request`
-  stop at it and refuse to start once it has passed, and `Sync.pop` /
-  `popWithin` stop waiting at it. A timed-out task is abandoned, not stopped:
+  `Task.timeout`) see the earliest deadline, and every outbound network call
+  stops at it and refuses to start once it has passed: `Http.get` / `post` /
+  `request`, the open of an `Http.Stream`, `WebSocket.connect` /
+  `connectWith` (and `send` refuses), `Email.send`, the `Std.Ai` slot,
+  provider and local engine calls and stream opens, and the `Std.Ai.Store`
+  transfers. A stream or a socket outlives the task that opened it: each read
+  (`Http.Stream.forEachChunk`, `WebSocket.receive` / `receiveWithin` /
+  `forEachMessage`, a `Std.Ai` stream read) stops at its own reader's
+  deadline. `Sync.pop` / `popWithin` stop waiting at it. The start of a
+  shared local AI engine and its downloads are not cut by one caller's
+  deadline. A timed-out task is abandoned, not stopped:
   an effect that is already running finishes in the background. In a Sky.Spa
   client each timeout has its own timer and a nested task does not see an
   outer deadline.
 - `Task.remaining : Task e (Maybe Int)` gives the milliseconds left before
   the current deadline, or `Nothing` outside a `Task.timeout`.
-- `Http.withMinRemaining ms` refuses a request before it is sent when less
+- `Http.withMinRemaining ms` refuses a request (or the open of an
+  `Http.Stream`) before it is sent when less
   than `ms` milliseconds are left before the deadline (`Timeout`, domain
   `"http"`, code `"DeadlineTooShort"`, not retryable). `HttpRequest` has the
   new field `minRemaining : Int` (`0` in `defaultRequest`), so a request
@@ -135,6 +144,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   deadline ran on until the client timeout. It now carries the trace context
   and stops at a `Task.timeout` deadline. The end of the HTTP request that
   started the work still does not cancel it.
+- `Http.Stream.open` sent its request with the calling Task's own context,
+  so a stream opened inside a `Task.timeout` was cut the moment the open
+  returned. The stream now keeps the trace context without that
+  cancellation, and only `Http.Stream.close` (or the end of the stream)
+  ends it.
 - Sky.Live: an `html` patch on a `table`, `thead`, `tbody`, `tfoot` or `tr`
   kept no rows or cells. The client parsed the new markup inside a `div`,
   where the HTML parser drops table tags, so a table whose rows changed when

@@ -74,6 +74,11 @@ openRaw =
 -- The `req` shape is identical to `Http.request`'s — a method,
 -- URL, body, and headers — so an existing Http.request call site
 -- can switch to streaming by changing only the function name.
+--
+-- Under a `Task.timeout` deadline (v0.29.14) the open stops at the deadline
+-- and is refused once it has passed (`Http.withMinRemaining` asks for more).
+-- The stream itself outlives the task that opened it: `forEachChunk` stops
+-- at the deadline of the task that reads it.
 open : HttpRequest -> Task Error StreamId
 open req =
     Task.map StreamId (openRaw req)

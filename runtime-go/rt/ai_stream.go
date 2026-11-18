@@ -123,6 +123,15 @@ func (st *aiStream) close(err error) {
 	}
 }
 
+// interrupt ends a read in progress from another goroutine (the reader's
+// Task.timeout deadline in Ai_streamNext): closing the response body unblocks
+// the read, which then fails. It takes no lock, because the read holds st.mu.
+func (st *aiStream) interrupt() {
+	if st.resp != nil {
+		_ = st.resp.Body.Close()
+	}
+}
+
 // aiStreamFrom reads a response's status: a 2xx starts a stream, anything
 // else is the classified failure aiPostOnce gives the same answer.
 func aiStreamFrom(ctx context.Context, resp *http.Response, target string) (*aiStream, time.Duration, error) {
@@ -394,6 +403,10 @@ func (s *aiSlot) openStreamWith(path, body string, f *aiCallFacts) (string, erro
 	}
 	start := t0
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.timeout)
+	// A Task.timeout deadline bounds the open, not the stream: the stream
+	// outlives the task that opened it, and each Ai_streamNext stops at its
+	// own reader's deadline (task_deadline_outbound.go).
+	disarm := skyCancelAtDeadline(cancel)
 	var st *aiStream
 	var engineDone func()
 	if s.cfg.mode == "remote" || testModeActive() {
@@ -410,6 +423,7 @@ func (s *aiSlot) openStreamWith(path, body string, f *aiCallFacts) (string, erro
 		e, eerr := s.ensureEngine(startCtx, ad)
 		cancelStart()
 		if eerr != nil {
+			disarm()
 			cancel()
 			startFailed()
 			return "", eerr
@@ -418,6 +432,12 @@ func (s *aiSlot) openStreamWith(path, body string, f *aiCallFacts) (string, erro
 			f.sent(placed)
 		}
 		st, engineDone, err = e.openStream(ctx, path, body)
+	}
+	disarm()
+	if err == nil && ctx.Err() != nil {
+		// The deadline fired as the answer started: the body is gone.
+		st.close(nil)
+		st, err = nil, ctx.Err()
 	}
 	if err != nil {
 		cancel()
@@ -515,13 +535,16 @@ func Ai_endpointStreamOpen(cfgArg, pathArg, bodyArg any) any {
 	b := parseAiEndpointBuilder(cfgArg)
 	path, body := AsString(pathArg), AsString(bodyArg)
 	return func() any {
+		if r := skyDeadlineRefusal("Ai.stream"); r != nil {
+			return r
+		}
 		s, err := aiSlotFor(b)
 		if err != nil {
 			return aiTaskErr(err)
 		}
 		id, err := s.openStream(path, body)
 		if err != nil {
-			return aiTaskErr(err)
+			return aiDeadlineTaskErr("Ai.stream", err)
 		}
 		return Ok[any, any](id)
 	}
@@ -539,6 +562,9 @@ func aiLocalStreamOpen(idArg, pathArg, bodyArg any, token string) any {
 	id := int64(AsInt(idArg))
 	path, body := AsString(pathArg), AsString(bodyArg)
 	return func() any {
+		if r := skyDeadlineRefusal("Ai.stream"); r != nil {
+			return r
+		}
 		e, err := aiEngineByID(id)
 		if err != nil {
 			return aiTaskErr(err)
@@ -555,6 +581,7 @@ func aiLocalStreamOpen(idArg, pathArg, bodyArg any, token string) any {
 			f.setAdapter(aiLocalRequestAdapter(body))
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), aiLocalCallTimeout)
+		disarm := skyCancelAtDeadline(cancel) // the open only, as openStreamWith
 		var st *aiStream
 		var done func()
 		if testModeActive() {
@@ -576,6 +603,11 @@ func aiLocalStreamOpen(idArg, pathArg, bodyArg any, token string) any {
 				f.startFailed(placed)
 			}
 		}
+		disarm()
+		if err == nil && ctx.Err() != nil {
+			st.close(nil)
+			st, err = nil, ctx.Err()
+		}
 		if err != nil {
 			if f != nil {
 				f.answered()
@@ -584,7 +616,7 @@ func aiLocalStreamOpen(idArg, pathArg, bodyArg any, token string) any {
 			if done != nil {
 				done()
 			}
-			return aiTaskErr(err)
+			return aiDeadlineTaskErr("Ai.stream", err)
 		}
 		st.facts = f
 		// The console record's latency is the whole wall time, engine start
@@ -613,10 +645,21 @@ func Ai_streamNext(idArg any) any {
 		if err != nil {
 			return aiTaskErr(err)
 		}
+		// The reader's Task.timeout deadline ends the read. A read in
+		// progress holds st.mu, so the deadline closes the response body
+		// (interrupt), the read fails, and the stream is dropped below.
+		if r := skyDeadlineRefusal("Ai.streamNext"); r != nil {
+			aiStreamDrop(id, aiFailf(aiTimedOut, "the deadline passed before the stream was read to its end"))
+			return r
+		}
+		if left, ok := skyRemaining(); ok {
+			t := time.AfterFunc(left, st.interrupt)
+			defer t.Stop()
+		}
 		ev, done, err := st.next()
 		if err != nil {
 			aiStreamDrop(id, err)
-			return aiTaskErr(err)
+			return aiDeadlineTaskErr("Ai.streamNext", err)
 		}
 		if done {
 			aiStreamDrop(id, nil)
@@ -642,12 +685,21 @@ func Ai_streamOpenUrl(urlArg, keyArg, bodyArg any) any {
 	url, body := AsString(urlArg), AsString(bodyArg)
 	key := secretReveal(keyArg)
 	return func() any {
+		if r := skyDeadlineRefusal("Ai.stream"); r != nil {
+			return r
+		}
 		c := &aiSlotConfig{slot: "provider", key: key, hasKey: key != "", retries: 2, timeout: aiProviderStreamTimeout}
 		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+		disarm := skyCancelAtDeadline(cancel) // the open only, as openStreamWith
 		st, err := aiRemoteStream(ctx, c, url, aiStreamBody(body))
+		disarm()
+		if err == nil && ctx.Err() != nil {
+			st.close(nil)
+			st, err = nil, ctx.Err()
+		}
 		if err != nil {
 			cancel()
-			return aiTaskErr(err)
+			return aiDeadlineTaskErr("Ai.stream", err)
 		}
 		st.onClose = append(st.onClose, func(error) { cancel() })
 		return Ok[any, any](aiStreamRegister(st, c.timeout))
