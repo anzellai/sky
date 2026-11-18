@@ -37,9 +37,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   emitted `main.go` is byte-identical to an ordinary build: the build records
   where each function body and arm starts in `main.go`, builds with
   `go build -cover -coverpkg=sky-app` (the Go runtime is not instrumented),
-  and joins the Go profile to that map. There are no `//line` directives,
-  because `go build -cover` ignores them and they would break the mapping of
-  `go build` errors.
+  and joins the Go profile to that map. There are no `//line` directives.
+  The cover tool cannot carry Sky line numbers through them (a relative file
+  name keeps the Go line numbers, an absolute path reports `main.go`), and
+  they would remap `go build` errors and panic traces, which the build maps
+  back by `main.go` line.
 - **`sky fuzz` is coverage-guided.** The model net's harness counts each
   `case` arm in process (the coverage markers, compiled as `rt.CovHit`).
   After each Msg sequence the loop keeps the prefixes that reached a new arm

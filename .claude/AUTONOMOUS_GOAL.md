@@ -55,8 +55,11 @@ tag v0.29.14.
 
 ## Decisions
 
-- B5: a spike (2026-11-17, go1.27.3) shows `go build -cover` ignores `//line`
-  directives (the profile keeps main.go lines). B5 maps coverage through a
+- B5: a spike (2026-11-17, go1.27.3) shows the cover tool cannot carry Sky
+  line numbers through `//line` directives: a relative file name keeps the Go
+  line numbers (main.go line 8 shows as `Shape.sky:8`), an absolute path
+  reports main.go. `//line` would also remap `go build` errors and panic
+  traces, which the build maps back by main.go line. B5 maps coverage through a
   side map from main.go line ranges to Sky module, function and case arm.
 - B1 ships with no default limit. The adaptive limit is cut.
 - F5. `scripts/build.sh` installed the compiler with `cp -f`, and macOS
@@ -82,4 +85,4 @@ the milestone gates, the Judge, the release workflow, the tag.
   Task deadline. Std.Breaker had no Sky.Spa split test.
 - F11. `Http.Stream.open` inside a `Task.timeout` was cut as soon as the
   open returned (it used the deadline context for the whole stream). Fixed
-  with F10 in 2b4dc3238.
+  with F10 in 4fe2d84d6.

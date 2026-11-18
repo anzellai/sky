@@ -230,9 +230,12 @@ and not the Go runtime, and each suite binary writes its counters to its own
 `GOCOVERDIR` (`.sky-coverage/runs/<n>-<suite>/covdata/`). `sky coverage
 report` turns the counters into a profile with `go tool covdata textfmt` and
 joins its blocks to the map by `main.go` line and column. Sky does not write
-`//line file.sky:N` directives into `main.go`: `go build -cover` ignores them
-(its profile keeps the `main.go` positions), and the build maps `go build`
-errors back to Sky by their `main.go` position, which `//line` would break.
+`//line file.sky:N` directives into `main.go`. The cover tool cannot carry Sky
+line numbers through them: with a relative file name it takes the file name
+but keeps the Go line numbers (a block at `main.go` line 8 shows as
+`Shape.sky:8`), and with an absolute path it reports `main.go`. A `//line`
+directive would also remap `go build` errors and panic traces, which the build
+maps back to Sky by their `main.go` line.
 
 A suite binary that is killed before it exits writes no counters, and its run
 counts as nothing ran. `sky test --coverage --format json` takes one suite per

@@ -16,9 +16,11 @@
 //! merged by Sky identity (module, definition, arm index), never by `main.go`
 //! position: two suites emit two different `main.go` files.
 //!
-//! There are no `//line file.sky:N` directives. `go build -cover` ignores
-//! them (the profile keeps the real `main.go` positions), and the build maps
-//! `go build` errors back by `main.go:LINE:COL`, which `//line` would break.
+//! There are no `//line file.sky:N` directives. The cover tool cannot carry
+//! Sky line numbers through them: with a relative file name it takes the file
+//! name but keeps the Go line numbers, and with an absolute path it reports
+//! `main.go`. A `//line` directive would also remap `go build` errors and
+//! panic traces, which the build maps back by `main.go` line.
 
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
