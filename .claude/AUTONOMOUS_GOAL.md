@@ -86,3 +86,12 @@ the milestone gates, the Judge, the release workflow, the tag.
 - F11. `Http.Stream.open` inside a `Task.timeout` was cut as soon as the
   open returned (it used the deadline context for the whole stream). Fixed
   with F10 in 4fe2d84d6.
+
+## The user's words (2026-11-18, later)
+
+- "be aware of CPU+memory usage"
+- "please go ahead, but don't merge yet, until all are completed + tested"
+
+So: one heavy job at a time on this host, at low priority. No merge to `main`
+and no tag until the Judge passes and the full release workflow is green on
+`fix/v0.29.14`.
