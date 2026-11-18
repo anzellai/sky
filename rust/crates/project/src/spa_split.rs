@@ -6464,6 +6464,11 @@ pub struct DiffFuzzReport {
     pub checked: Vec<String>,
     /// Loud skips (fenced-out branches, withheld generators, …).
     pub notes: Vec<String>,
+    /// The harness's own top-level definitions in the entry module, which a
+    /// fuzz coverage report leaves out. Empty for the differential harness.
+    pub generated: Vec<String>,
+    /// The entry module's name (where the generated definitions live).
+    pub entry_module: String,
 }
 
 /// Generate the differential split-fuzzer harness project for an auto-split app
@@ -6795,6 +6800,8 @@ pub fn generate_diff_fuzz(
         entry_rel: format!("src/{entry_rel}"),
         checked: out.checked,
         notes,
+        generated: Vec::new(),
+        entry_module: String::new(),
     })
 }
 
@@ -6812,6 +6819,7 @@ pub fn generate_model_fuzz(
     out_dir: &Path,
     iters: usize,
     seed: i64,
+    guided: bool,
 ) -> Result<DiffFuzzReport, String> {
     let (db, entry, check_ids) =
         crate::build::load_source_db(repo_root, project_dir, entry_module)?;
@@ -6853,7 +6861,9 @@ pub fn generate_model_fuzz(
 
     let resolver =
         crate::spa_diff_harness::MapTypeResolver::new(tymap, db.module_name(entry).to_string());
-    let out = crate::spa_diff_harness::emit_model_fuzz(&model_ty, &msg_ty, &resolver, iters, seed);
+    let out = crate::spa_diff_harness::emit_model_fuzz(
+        &model_ty, &msg_ty, &resolver, iters, seed, guided,
+    );
     if out.covered.is_empty() {
         return Err(format!(
             "no runnable model fuzzer for `{proj_name}` — no Msg ctor was generatable. Notes: {}",
@@ -6897,6 +6907,8 @@ pub fn generate_model_fuzz(
         entry_rel: format!("src/{entry_rel}"),
         checked: out.covered,
         notes: out.notes,
+        generated: out.generated,
+        entry_module: db.module_name(entry).to_string(),
     })
 }
 

@@ -659,7 +659,7 @@ sky verify                   # one-shot project gate: fmt + check + build + stor
 sky test tests/MyTest.sky    # Sky.Test runner (SKY_TEST_JSON=<path> also writes a per-case JSON report)
 sky test tests/A.sky tests/B.sky --coverage   # + which functions and case arms ran → .sky-coverage/
 sky coverage report [--by-module] [--format json] [--all]   # the coverage per Sky module, function, case arm
-sky fuzz src/Main.sky [--target web:app]   # no-panic model fuzz of update; a Sky.Spa target adds the differential split oracle
+sky fuzz src/Main.sky [--target web:app]   # coverage-guided no-panic model fuzz of update; a Sky.Spa target adds the differential split oracle
 sky fmt src/Main.sky         # format (always run after editing .sky)
 sky doc <Module> | --list    # API docs (the source of truth for signatures)
 sky doc --diagram <kind>     # architecture diagram from the typed IR: components (C4) | wire (DFD) | journey | telemetry; --format puml|md|svg

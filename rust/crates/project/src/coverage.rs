@@ -33,6 +33,25 @@ pub const DEFAULT_DIR: &str = ".sky-coverage";
 /// The version of [`MAP_FILE`] and of the report JSON.
 pub const SCHEMA_VERSION: u64 = 1;
 
+/// What a coverage build adds (`build::build_project_instrumented`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CoverageBuild {
+    /// `go build -cover` (`sky test --coverage`, `sky fuzz --coverage`).
+    pub go_cover: bool,
+    /// Each marker also counts in the runtime's in-process bitmap
+    /// (`rt.CovHit`), which the guided `sky fuzz` loop reads.
+    pub hits: bool,
+}
+
+/// Whether the map at `path` asks `go build` for `-cover` (its `goCover`).
+/// No map, or one without the field: no.
+pub fn map_wants_go_cover(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .is_some_and(|v| v["goCover"] == true)
+}
+
 /// Where a module's source comes from. A report shows `App` modules only,
 /// unless asked for all.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -97,12 +116,16 @@ pub struct MapPoint {
     /// Where the point's marker stands in `main.go`: `(line, column)`.
     /// `None` for a definition the program never lowered.
     pub go: Option<(u32, u32)>,
+    /// The marker id (`rt.CovHit(<id>)` in a hits build). `None` with `go`.
+    pub mark: Option<usize>,
 }
 
 /// The coverage map of one build.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct CoverageMap {
     pub points: Vec<MapPoint>,
+    /// The build asked for `go build -cover` ([`CoverageBuild::go_cover`]).
+    pub go_cover: bool,
 }
 
 /// Build a coverage map from a coverage build's points and marker positions.
@@ -159,9 +182,13 @@ pub fn build_map(
             line: loc.line,
             index,
             go: p.mark.and_then(|m| pos.get(&m).copied()),
+            mark: p.mark.filter(|m| pos.contains_key(m)),
         });
     }
-    CoverageMap { points: out }
+    CoverageMap {
+        points: out,
+        go_cover: false,
+    }
 }
 
 impl CoverageMap {
@@ -179,10 +206,16 @@ impl CoverageMap {
                     "line": p.line,
                     "index": p.index,
                     "go": p.go.map(|(l, c)| json!({ "line": l, "col": c })),
+                    "mark": p.mark,
                 })
             })
             .collect();
-        let v = json!({ "version": SCHEMA_VERSION, "goFile": "main.go", "points": points });
+        let v = json!({
+            "version": SCHEMA_VERSION,
+            "goFile": "main.go",
+            "goCover": self.go_cover,
+            "points": points,
+        });
         serde_json::to_string(&v).unwrap_or_default()
     }
 
@@ -205,6 +238,7 @@ impl CoverageMap {
                 function: s("function"),
                 line: p["line"].as_u64().unwrap_or(0) as u32,
                 index: p["index"].as_u64().map(|i| i as u32),
+                mark: p["mark"].as_u64().map(|m| m as usize),
                 go: p["go"].as_object().map(|g| {
                     (
                         g["line"].as_u64().unwrap_or(0) as u32,
@@ -213,7 +247,10 @@ impl CoverageMap {
                 }),
             });
         }
-        Ok(CoverageMap { points })
+        Ok(CoverageMap {
+            points,
+            go_cover: v["goCover"] == true,
+        })
     }
 }
 
@@ -528,6 +565,32 @@ fn percent(hit: usize, total: usize) -> String {
     } else {
         format!("{:.1}%", hit as f64 * 100.0 / total as f64)
     }
+}
+
+/// Arms reached by a guided `sky fuzz` run: `(reached, total)` over the
+/// map's `App` arms, leaving out the definitions in `skip` (the harness's own
+/// generated functions). `seen` is the marker ids the run counted. An arm a
+/// definition carries twice (a view-memo copy) counts once, reached when any
+/// copy was.
+pub fn arms_reached(
+    map: &CoverageMap,
+    seen: &std::collections::BTreeSet<usize>,
+    skip: &dyn Fn(&str, &str) -> bool,
+) -> (usize, usize) {
+    let mut arms: BTreeMap<(&str, &str, u32), bool> = BTreeMap::new();
+    for p in &map.points {
+        let (true, Some(i)) = (p.source == SourceKind::App, p.index) else {
+            continue;
+        };
+        if skip(&p.module, &p.function) {
+            continue;
+        }
+        let hit = p.mark.is_some_and(|m| seen.contains(&m));
+        *arms
+            .entry((p.module.as_str(), p.function.as_str(), i))
+            .or_insert(false) |= hit;
+    }
+    (arms.values().filter(|h| **h).count(), arms.len())
 }
 
 // ---- the coverage directory ---------------------------------------------------

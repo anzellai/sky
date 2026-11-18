@@ -606,7 +606,11 @@ pub fn compute_go_program(
     // reports `errors`/`entry_ok` and never writes/`go build`s (unchanged from
     // the eager path).
     let (source, coverage_marks) = if out.entry_ok && out.errors.is_empty() {
-        let (src, marks) = codegen::emit_program_marked(&out.items, out.console_needed);
+        let (src, marks) = codegen::emit_program_instrumented(
+            &out.items,
+            out.console_needed,
+            cfg.coverage && cfg.coverage_hits,
+        );
         (Some(src), marks)
     } else {
         (None, Vec::new())

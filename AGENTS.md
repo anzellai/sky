@@ -551,7 +551,7 @@ sky fmt src/Main.sky             # opinionated formatter (idempotent)
 sky test tests/MyTest.sky        # Sky.Test runner (SKY_TEST_JSON=<path> → per-case JSON report)
 sky test tests/A.sky tests/B.sky --coverage[=dir]   # + function and case-arm coverage → .sky-coverage/
 sky coverage report [dir] [--by-module] [--format json|text] [--all]   # per Sky module, function, case arm
-sky fuzz src/Main.sky [--target web:app]   # no-panic model fuzz of update (any TEA app); a Sky.Spa target adds the differential split oracle
+sky fuzz src/Main.sky [--target web:app]   # coverage-guided no-panic model fuzz of update (any TEA app; --unguided, --coverage[=dir]); a Sky.Spa target adds the differential split oracle
 sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --export <dir>)
 sky doc --diagram <kind>         # audit-grade diagram: journey (behaviour+DFD) | components (C4) | wire (API & call-paths) | telemetry | audit (whole SOC2/ISO pack → --out <dir>); --format puml|md|svg
 sky doc --api openapi            # OpenAPI 3.1 spec of the app's HTTP API, generated from the typed source; --format yaml|json, --no-rpc for declared routes only (proto/grpc/asyncapi planned)

@@ -991,7 +991,19 @@ unclassified panic. Runs offline under test mode.
 ```bash
 sky fuzz src/Main.sky --iters 500 --seed 42          # model no-panic net
 sky fuzz src/Main.sky --target web:app --iters 500   # + the differential split oracle
+sky fuzz src/Main.sky --unguided                     # fresh random sequences only
+sky fuzz src/Main.sky --coverage[=dir]               # + a run for `sky coverage report`
 ```
+
+The model net is coverage-guided by default: it counts the `case` arms each
+sequence reaches, keeps the Msg prefixes that reach a new arm and mutates
+them, and prints `case arms reached R/T`. A panicking sequence is shrunk and
+printed (`panicking sequence (3 Msg(s) from init): Open, Turn, Fire`).
+`--unguided` folds fresh random sequences only. `--iters` is the Msg budget.
+`--coverage` (data in `.sky-coverage/`) or `--coverage=<dir>` also builds the
+harness with `go build -cover`, so
+[`sky coverage report`](#sky-coverage-report) shows what the fuzz reached. See
+[`testing.md`](testing.md#the-model-no-panic-net-always-any-tea-app).
 
 `--target` (default: the project's `sky.toml [app] target`) selects the app
 shape. When it is a Sky.Spa client target (`web:app`, `mobile*`, `desktop:<os>`,

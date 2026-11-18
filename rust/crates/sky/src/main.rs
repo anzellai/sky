@@ -4880,6 +4880,20 @@ fn build_and_run_fuzz_harness(
     app_project_dir: &Path,
     seed: i64,
 ) -> Result<(), String> {
+    build_and_run_fuzz_harness_with(repo_root, harness_dir, app_project_dir, seed, None, &[])
+}
+
+/// [`build_and_run_fuzz_harness`] with coverage instrumentation (the guided
+/// model net's in-process counters, `sky fuzz --coverage`'s `go build -cover`)
+/// and extra environment for the harness run.
+fn build_and_run_fuzz_harness_with(
+    repo_root: &Path,
+    harness_dir: &Path,
+    app_project_dir: &Path,
+    seed: i64,
+    coverage: Option<project::coverage::CoverageBuild>,
+    env: &[(&str, PathBuf)],
+) -> Result<(), String> {
     let opts = BuildOptions {
         repo_root: repo_root.to_path_buf(),
         example_dir: harness_dir.to_path_buf(),
@@ -4892,7 +4906,8 @@ fn build_and_run_fuzz_harness(
         embed_bundle: None,
         wasm: false,
     };
-    let built = build_example(&opts);
+    let built =
+        project::build_project_instrumented(&opts, &[], None, project::AppScope::All, coverage);
     if !built.emitted {
         return Err(format!("harness build failed: {}", built.note));
     }
@@ -4908,6 +4923,9 @@ fn build_and_run_fuzz_harness(
     cmd.env("SKY_TEST_MODE", "1");
     cmd.env("SKY_TEST_SEED", seed.to_string());
     cmd.env("SKY_TEST_CLOCK_MS", "1704067200000");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     // The runtime does not load `.env` in test mode, so a DSN there never
     // reaches the run.
     for name in testrunner::dot_env_dsns(app_project_dir) {
@@ -4962,8 +4980,8 @@ fn build_and_run_fuzz_harness(
 fn cmd_fuzz(args: &[String]) -> ExitCode {
     if wants_help(args) {
         println!(
-            "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S]  \
-             (or run inside a Sky app project)"
+            "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S] \
+             [--unguided] [--coverage[=dir]]  (or run inside a Sky app project)"
         );
         return ExitCode::SUCCESS;
     }
@@ -4989,13 +5007,14 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
             "--target" | "--iters" | "--seed" => {
                 it.next();
             }
+            // `--coverage` takes its directory only as `--coverage=<dir>`.
             s if s.starts_with("--") => {}
             s => positional.push(s.to_string()),
         }
     }
     let file = match resolve_entry_arg(
         &positional,
-        "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S]  (or run inside a Sky app project)",
+        "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S] [--unguided] [--coverage[=dir]]  (or run inside a Sky app project)",
     ) {
         Ok(f) => f,
         Err(code) => return code,
@@ -5010,6 +5029,16 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     let target = flag_value(args, "--target").or_else(|| sky_toml_app_target(&project_dir));
 
     // --- 1. Model no-panic net (always) ---
+    // Guided by default: the harness counts each `case` arm it reaches in
+    // process (rt.CovHit) and the loop keeps and mutates the Msg sequences
+    // that reach a new one. `--unguided` folds fresh random sequences only.
+    // `--coverage[=dir]` also builds with `go build -cover` and records one
+    // run that `sky coverage report` reads.
+    let guided = !args.iter().any(|a| a == "--unguided");
+    let coverage_dir = coverage_flag(args).map(|dir| {
+        dir.map(PathBuf::from)
+            .unwrap_or_else(|| project_dir.join(project::coverage::DEFAULT_DIR))
+    });
     let model_out = project_dir.join(".modelfuzz");
     let report = match project::spa_split::generate_model_fuzz(
         &repo_root,
@@ -5018,6 +5047,7 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
         &model_out,
         iters,
         seed,
+        guided,
     ) {
         Ok(r) => r,
         Err(e) => {
@@ -5033,10 +5063,72 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     for n in &report.notes {
         println!("  note: {n}");
     }
-    match build_and_run_fuzz_harness(&repo_root, &model_out, &project_dir, seed) {
+    let instrument =
+        (guided || coverage_dir.is_some()).then_some(project::coverage::CoverageBuild {
+            go_cover: coverage_dir.is_some(),
+            hits: guided,
+        });
+    let seen_file = model_out.join("fuzz-coverage-ids.txt");
+    let _ = std::fs::remove_file(&seen_file);
+    let mut env: Vec<(&str, PathBuf)> = vec![("SKY_FUZZ_COV_OUT", seen_file.clone())];
+    let run_dir = match &coverage_dir {
+        Some(dir) => match project::coverage::reset(dir)
+            .and_then(|()| project::coverage::new_run(dir, "fuzz"))
+        {
+            Ok(run) => {
+                env.push(("GOCOVERDIR", project::coverage::run_counters(&run)));
+                Some(run)
+            }
+            Err(e) => {
+                eprintln!("sky fuzz: cannot prepare {}: {e}", dir.display());
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+    let outcome = build_and_run_fuzz_harness_with(
+        &repo_root,
+        &model_out,
+        &project_dir,
+        seed,
+        instrument,
+        &env,
+    );
+    let map = std::fs::read_to_string(model_out.join("sky-out").join(project::coverage::MAP_FILE))
+        .ok()
+        .and_then(|t| project::coverage::CoverageMap::from_json(&t).ok())
+        .map(|mut m| {
+            // The harness's own definitions are not the app's code.
+            m.points.retain(|p| {
+                !(p.module == report.entry_module && report.generated.contains(&p.function))
+            });
+            m
+        });
+    if let (Some(run), Some(map)) = (&run_dir, &map) {
+        if let Err(e) = std::fs::write(project::coverage::run_map(run), map.to_json()) {
+            eprintln!("sky fuzz: coverage map not saved: {e}");
+        }
+    }
+    if let (true, Some(map)) = (guided, &map) {
+        let seen: std::collections::BTreeSet<usize> = std::fs::read_to_string(&seen_file)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.trim().parse().ok())
+            .collect();
+        let (reached, total) = project::coverage::arms_reached(map, &seen, &|_, _| false);
+        println!("sky fuzz: case arms reached {reached}/{total}");
+    }
+    if let Some(dir) = &coverage_dir {
+        println!(
+            "sky fuzz: coverage data in {}; `sky coverage report {}` for detail",
+            dir.display(),
+            dir.display()
+        );
+    }
+    match outcome {
         Ok(()) => {
             println!(
-                "sky fuzz: model net PASS — {iters} random Msg sequences, no unclassified panic"
+                "sky fuzz: model net PASS — {iters} Msgs in random sequences, no unclassified panic"
             );
         }
         Err(e) => {
@@ -19050,7 +19142,7 @@ fn print_help() {
          \x20 verify [target]      build + run each example / the project\n\
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
          \x20 spa-split <file> --out <dir> [--build|--target <t>] [--broker <url>]  auto-split: generate (+build) the wasm frontend + native backend\n\
-         \x20 fuzz  <file> [--target <t>]  no-panic model fuzz of update; --target web:app etc. adds the differential split oracle\n\
+         \x20 fuzz  <file> [--target <t>] [--unguided] [--coverage[=dir]]  coverage-guided no-panic model fuzz of update; --target web:app etc. adds the differential split oracle\n\
          \x20 doc   --diagram <kind> [--format puml|md|svg] [--out <path>]  architecture diagram (journey|components|wire|telemetry|audit)\n\
          \x20 doc   --api <format> [--format yaml|json] [--out <path>]  machine-readable API contract (openapi; proto/grpc/asyncapi planned)\n\
          \x20 version          print the version\n\n\

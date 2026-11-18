@@ -653,6 +653,8 @@ pub struct ModelFuzzOutput {
     pub covered: Vec<String>,
     /// Imports the snippet needs (merged by the caller, deduped).
     pub required_imports: Vec<String>,
+    /// The snippet's own top-level definitions (left out of coverage).
+    pub generated: Vec<String>,
 }
 
 /// Emit the MODEL FUZZER harness: a `genMsg` over the app's whole Msg union plus
@@ -669,6 +671,7 @@ pub fn emit_model_fuzz(
     resolver: &dyn TypeResolver,
     iters: usize,
     seed0: i64,
+    guided: bool,
 ) -> ModelFuzzOutput {
     let mut out = ModelFuzzOutput::default();
     let mut gen = GenModule::new(resolver);
@@ -708,49 +711,50 @@ pub fn emit_model_fuzz(
     let mut s = gout.source;
     s.push('\n');
     s.push_str(&format!(
-        "-- Model fuzzer: from `init ()`, fold random Msgs through the REAL `update`,\n\
-         -- asserting no unclassified panic. Reachable by construction (any Msg is a\n\
-         -- valid client input). Applies to ANY TEA app — no Sky.Spa split needed.\n\
-         spaFuzzStep : Seed -> {model_type} -> ( {model_type}, Seed )\n\
-         spaFuzzStep s0 model =\n\
-         \x20   let\n\
-         \x20       ( msg, s1 ) =\n\
-         \x20           genMsg s0\n\n\
-         \x20       ( m2, _ ) =\n\
-         \x20           update msg model\n\
-         \x20   in\n\
-         \x20   ( m2, s1 )\n\n\n\
-         spaFuzzLoop : Int -> Seed -> {model_type} -> Int -> Int\n\
-         spaFuzzLoop remaining s model count =\n\
-         \x20   if remaining <= 0 then\n\
-         \x20       count\n\n\
-         \x20   else\n\
-         \x20       let\n\
-         \x20           ( m2, s2 ) =\n\
-         \x20               spaFuzzStep s model\n\
-         \x20       in\n\
-         \x20       spaFuzzLoop (remaining - 1) s2 m2 (count + 1)\n\n\n\
+        "-- Model fuzzer: from `init ()`, fold random Msg sequences through the REAL\n\
+         -- `update`, asserting no unclassified panic. Reachable by construction (any\n\
+         -- Msg is a valid client input). Applies to ANY TEA app — no Sky.Spa split\n\
+         -- needed. The loop is the runtime's (runtime-go/rt/spa_fuzz.go): guided,\n\
+         -- it keeps the sequences that reach a new `case` arm and mutates them.\n\
+         spaFuzzGreybox : Int -> Seed -> model -> (Seed -> ( msg, Seed )) -> (msg -> model -> result) -> Bool -> String\n\
+         spaFuzzGreybox =\n\
+         \x20   SpaFfi_.kernel \"Spa_fuzzGreybox\"\n\n\n\
          spaFuzzIters : Int\n\
          spaFuzzIters =\n\
          \x20   {iters}\n\n\n\
          spaFuzzSeed0 : Seed\n\
          spaFuzzSeed0 =\n\
          \x20   {seed0}\n\n\n\
+         spaFuzzGuided : Bool\n\
+         spaFuzzGuided =\n\
+         \x20   {guided_sky}\n\n\n\
          main : Task Error ()\n\
          main =\n\
          \x20   let\n\
          \x20       ( m0, _ ) =\n\
          \x20           init ()\n\n\
-         \x20       count =\n\
-         \x20           spaFuzzLoop spaFuzzIters spaFuzzSeed0 m0 0\n\
+         \x20       summary =\n\
+         \x20           spaFuzzGreybox spaFuzzIters spaFuzzSeed0 m0 genMsg update spaFuzzGuided\n\
          \x20   in\n\
-         \x20   SpaDiffLog.println (\"model-fuzz ok: \" ++ SpaString_.fromInt count ++ \" steps, no unclassified panic\")\n"
+         \x20   SpaDiffLog.println (\"model-fuzz ok: \" ++ summary)\n",
+        guided_sky = if guided { "True" } else { "False" },
     ));
+    let _ = model_type;
+    // The harness's own top-level definitions: a coverage report leaves them
+    // out (they are not the app's code).
+    out.generated = s
+        .lines()
+        .filter_map(|l| l.split_once(" :").map(|(n, _)| n))
+        .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|n| n.starts_with(|c: char| c.is_ascii_lowercase()))
+        .map(str::to_string)
+        .collect();
 
     out.snippet = s;
     out.required_imports = vec![
         "import Sky.Core.String as SpaString_".to_string(),
         "import Std.Log as SpaDiffLog".to_string(),
+        "import Sky.Ffi as SpaFfi_".to_string(),
     ];
     out
 }

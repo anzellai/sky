@@ -331,7 +331,7 @@ fn assemble_and_emit(repo_root: &Path, example_dir: &Path) -> Result<Emitted, Bu
         None,
         false,
         AppScope::All,
-        false,
+        None,
     )
 }
 
@@ -348,7 +348,7 @@ fn assemble_and_emit_with(
     entry_module: Option<&str>,
     progress: bool,
     scope: AppScope,
-    coverage: bool,
+    coverage: Option<crate::coverage::CoverageBuild>,
 ) -> Result<Emitted, BuildFailure> {
     assemble_and_emit_loaded(
         repo_root,
@@ -423,7 +423,7 @@ fn assemble_and_emit_loaded(
     entry_module: Option<&str>,
     progress: bool,
     scope: AppScope,
-    coverage: bool,
+    coverage: Option<crate::coverage::CoverageBuild>,
 ) -> Result<(Emitted, LoadedProgram), BuildFailure> {
     timing_role(example_dir);
     // ---- assemble the source db (stdlib + example src) ----
@@ -1156,7 +1156,8 @@ fn assemble_and_emit_loaded(
             }
         }
     }
-    cfg.coverage = coverage;
+    cfg.coverage = coverage.is_some();
+    cfg.coverage_hits = coverage.is_some_and(|c| c.hits);
     let mut prog = single_use_go_program(&db, entry, cfg);
     if !prog.entry_ok {
         return Err("lowering found no entry `main`".into());
@@ -1229,13 +1230,14 @@ fn assemble_and_emit_loaded(
     // that regenerates it.
     warnings.extend(outdated_surface_warnings(example_dir));
     warnings.extend(undeclared_surface_warnings(example_dir));
-    let coverage_map = coverage.then(|| {
+    let coverage_map = coverage.map(|c| {
         coverage_map_json(
             &db,
             &prog.coverage_points,
             &prog.coverage_marks,
             &path_map,
             &source_kinds,
+            c.go_cover,
         )
     });
     let emitted = Emitted {
@@ -1290,6 +1292,7 @@ fn coverage_map_json(
     marks: &[skydb::MarkPos],
     path_map: &std::collections::HashMap<base::FileId, String>,
     source_kinds: &std::collections::HashMap<base::FileId, crate::coverage::SourceKind>,
+    go_cover: bool,
 ) -> String {
     let modules: std::collections::HashMap<u32, base::ModuleId> = hir::SkyDb::module_ids(db)
         .into_iter()
@@ -1326,7 +1329,9 @@ fn coverage_map_json(
             source,
         })
     };
-    crate::coverage::build_map(points, marks, &locate).to_json()
+    let mut map = crate::coverage::build_map(points, marks, &locate);
+    map.go_cover = go_cover;
+    map.to_json()
 }
 
 /// Resolve a lowering diagnostic against the build's sources. A leading
@@ -1414,7 +1419,7 @@ pub fn front_half_errors(
         entry_module,
         false,
         AppScope::All,
-        false,
+        None,
     ) {
         Ok(_) => Vec::new(),
         Err(f) => f.diagnostics,
@@ -1437,7 +1442,7 @@ pub fn front_half_loaded(
         entry_module,
         false,
         AppScope::All,
-        false,
+        None,
     ) {
         Ok((emitted, loaded)) => {
             drop(emitted);
@@ -1503,13 +1508,7 @@ fn cap_parse_errors(mut diags: Vec<diagnostics::Diagnostic>) -> Vec<diagnostics:
 
 /// Build one example directory, returning a structured report (never panics).
 pub fn build_example(opts: &BuildOptions) -> BuildReport {
-    build_inner(
-        opts,
-        &[],
-        opts.entry_module.as_deref(),
-        AppScope::All,
-        false,
-    )
+    build_inner(opts, &[], opts.entry_module.as_deref(), AppScope::All, None)
 }
 
 /// Like [`build_example`], but with extra source roots (e.g. the project's
@@ -1520,7 +1519,7 @@ pub fn build_project(
     extra_dirs: &[PathBuf],
     entry_module: Option<&str>,
 ) -> BuildReport {
-    build_inner(opts, extra_dirs, entry_module, AppScope::All, false)
+    build_inner(opts, extra_dirs, entry_module, AppScope::All, None)
 }
 
 /// Which of the project's own modules a build loads and checks.
@@ -1542,7 +1541,7 @@ pub fn build_project_scoped(
     entry_module: Option<&str>,
     scope: AppScope,
 ) -> BuildReport {
-    build_inner(opts, extra_dirs, entry_module, scope, false)
+    build_inner(opts, extra_dirs, entry_module, scope, None)
 }
 
 /// [`build_project_scoped`] as a coverage build (`sky test --coverage`): the
@@ -1556,7 +1555,30 @@ pub fn build_project_coverage(
     entry_module: Option<&str>,
     scope: AppScope,
 ) -> BuildReport {
-    build_inner(opts, extra_dirs, entry_module, scope, true)
+    build_inner(
+        opts,
+        extra_dirs,
+        entry_module,
+        scope,
+        Some(crate::coverage::CoverageBuild {
+            go_cover: true,
+            hits: false,
+        }),
+    )
+}
+
+/// A build with the coverage instrumentation `coverage` asks for: the map
+/// always, `go build -cover` when `go_cover`, and in-process counters
+/// (`rt.CovHit`) when `hits` (the guided `sky fuzz` harness). `None` is
+/// [`build_project_scoped`].
+pub fn build_project_instrumented(
+    opts: &BuildOptions,
+    extra_dirs: &[PathBuf],
+    entry_module: Option<&str>,
+    scope: AppScope,
+    coverage: Option<crate::coverage::CoverageBuild>,
+) -> BuildReport {
+    build_inner(opts, extra_dirs, entry_module, scope, coverage)
 }
 
 /// The project modules `entry` reaches through `import`, itself included. An
@@ -1604,7 +1626,7 @@ fn build_inner(
     extra_dirs: &[PathBuf],
     entry_module: Option<&str>,
     scope: AppScope,
-    coverage: bool,
+    coverage: Option<crate::coverage::CoverageBuild>,
 ) -> BuildReport {
     let mut report = BuildReport::default();
 
@@ -2076,10 +2098,10 @@ fn run_go_build_once(
     // `-debug-actiongraph` tells `go_jobs::record_peaks` which packages
     // compiled; it is not part of any cache key.
     let graph = crate::go_jobs::action_graph_flag(out_dir);
-    // A coverage build (its map sits beside main.go) instruments the program's
-    // own package only (`go_cmd::COVER_FLAGS`).
+    // A coverage build whose map asks for `go build -cover` instruments the
+    // program's own package only (`go_cmd::COVER_FLAGS`).
     let mut extra: Vec<&str> = vec![graph.as_str()];
-    if out_dir.join(crate::coverage::MAP_FILE).is_file() {
+    if crate::coverage::map_wants_go_cover(&out_dir.join(crate::coverage::MAP_FILE)) {
         extra.extend(crate::go_cmd::COVER_FLAGS);
     }
     let cmd = crate::go_cmd::GoBuild {
@@ -6426,6 +6448,10 @@ mod coverage_build_tests {
     }
 
     fn emit(dir: &Path, coverage: bool) -> Emitted {
+        let coverage = coverage.then_some(crate::coverage::CoverageBuild {
+            go_cover: true,
+            hits: false,
+        });
         match assemble_and_emit_with(&repo_root(), dir, &[], None, false, AppScope::All, coverage) {
             Ok(e) => e,
             Err(f) => panic!("{} did not emit:\n{}", dir.display(), f.render()),

@@ -325,6 +325,10 @@ pub struct LowerConfig {
     /// as nothing (`crate::coverage`). False for every other build, whose
     /// Go-IR then holds no marker and whose output is byte-identical.
     pub coverage: bool,
+    /// `sky fuzz`'s guided harness: codegen renders each coverage marker as
+    /// `rt.CovHit(<id>)`, an in-process counter the fuzz loop reads
+    /// (`codegen::emit_program_instrumented`). Only with `coverage`.
+    pub coverage_hits: bool,
 }
 
 pub fn lower_program(db: &dyn TyDb, entry: ModuleId) -> LowerOutput {

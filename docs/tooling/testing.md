@@ -520,6 +520,42 @@ offline database above, so a DB-backed app fuzzes offline. It exits `0` on PASS
 and non-zero on the first sequence that panics, reproducible with the same
 `--seed`.
 
+The net is **coverage-guided** by default. The harness is built with an
+in-process counter for each `case` arm and each top-level function (the
+markers of [Coverage](#coverage--sky-test---coverage), each compiled as
+`rt.CovHit(<id>)`). Every sequence starts from `init ()`. After each one, the
+loop reads which arms it reached for the first time. For each step that
+reached a new arm it keeps the Msg prefix that ends at that step. Seven of
+eight later sequences change a kept prefix: they append one or two fresh Msgs,
+replace one Msg, or join the start of one kept prefix to the end of another.
+A prefix whose new arms are rarely reached is picked most often, so a state
+that needs a particular order of Msgs (`Open`, then `Turn`, then `Fire`) is
+reached step by step instead of by chance. One seed drives every choice, so a
+run is reproducible. `--iters N` is the budget of Msgs folded through
+`update`, as before.
+
+```bash
+sky fuzz src/Main.sky --iters 1000 --seed 1              # guided (the default)
+sky fuzz src/Main.sky --iters 1000 --seed 1 --unguided   # fresh random sequences only
+sky fuzz src/Main.sky --coverage                         # + a run `sky coverage report` reads
+```
+
+A guided run prints `case arms reached R/T`: the arms of your modules (not the
+harness's own code) that the run reached. The harness writes the ids it
+reached to the file `SKY_FUZZ_COV_OUT` names, which `sky fuzz` sets for it
+(an internal handoff, not a setting). When a sequence panics, the net
+shrinks it to the fewest Msgs from `init ()` that still panic and prints them
+before the panic report:
+
+```
+sky fuzz: panicking sequence (3 Msg(s) from init): Open, Turn, Fire
+```
+
+`--coverage` (data in `.sky-coverage/`) or `--coverage=<dir>` also builds the
+harness with `go build -cover` and records one run, so `sky coverage report`
+shows which functions and arms the fuzz reached, in the same JSON shape as
+`sky test --coverage`. The harness's generated definitions are left out.
+
 ### The differential split oracle (Sky.Spa client targets)
 
 When `--target` selects a client/server split (a Sky.Spa wasm client: `web:app`,

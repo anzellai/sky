@@ -1,0 +1,94 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+type alias Model =
+    { stage : Int
+    , r : Float
+    }
+
+type Msg
+    = Open
+    | Turn
+    | Fire
+    | NoteA
+    | NoteB
+    | NoteC
+    | NoteD
+    | NoteE
+    | NoteF
+    | NoteG
+    | NoteH
+    | NoteI
+    | NoteJ
+    | NoteK
+    | NoteL
+    | NoteM
+    | NoteN
+    | NoteO
+    | NoteP
+    | NoteQ
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { stage = 0, r = 0.0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case model.stage of
+
+        0 ->
+            case msg of
+
+                Open ->
+                    ( { model | stage = 1 }, Cmd.none )
+
+                _ ->
+                    ( { model | stage = 0 }, Cmd.none )
+
+        1 ->
+            case msg of
+
+                Turn ->
+                    ( { model | stage = 2 }, Cmd.none )
+
+                _ ->
+                    ( { model | stage = 0 }, Cmd.none )
+
+        _ ->
+            case msg of
+
+                Fire ->
+                    ( { model | r = 1.0 / (model.r - model.r) }, Cmd.none )
+
+                _ ->
+                    ( { model | stage = 0 }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout [] (Ui.column [] [ Ui.text (String.fromInt model.stage) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

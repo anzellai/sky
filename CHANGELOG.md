@@ -40,6 +40,18 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   and joins the Go profile to that map. There are no `//line` directives,
   because `go build -cover` ignores them and they would break the mapping of
   `go build` errors.
+- **`sky fuzz` is coverage-guided.** The model net's harness counts each
+  `case` arm in process (the coverage markers, compiled as `rt.CovHit`).
+  After each Msg sequence the loop keeps the prefixes that reached a new arm
+  and builds most later sequences by changing them (append, replace, join),
+  favouring the ones that reached rare arms. A panic that needs a particular
+  order of Msgs is now found where random sequences miss it. One seed drives
+  every choice, so a run is reproducible, and `--iters` is still the Msg
+  budget. A panicking sequence is shrunk and printed
+  (`panicking sequence (3 Msg(s) from init): Open, Turn, Fire`), and the run
+  prints `case arms reached R/T`. `--unguided` folds fresh random sequences
+  only. `sky fuzz --coverage[=dir]` records a run that `sky coverage report`
+  reads.
 
 - **`Std.Admission` and `App.withAdmission`: a bound on the requests a
   server runs at the same time.** Before, a burst of Sky.Spa `/_rpc/<Msg>`
