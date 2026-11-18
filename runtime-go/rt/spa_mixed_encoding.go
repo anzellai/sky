@@ -302,7 +302,7 @@ func spaEncodeMixed(e SpaPreparedModelEncoder, previous *spaMixedModelCache, mod
 			out.Work.EncodedBytes = spaSizeAdd(out.Work.EncodedBytes, field.size)
 		}
 		if field.marshalErr != nil {
-			panic("rt.JsonEnc_encode: cannot encode the value as JSON: " + field.marshalErr.Error())
+			panic("rt.JsonEnc_encode: cannot encode the value as JSON: " + jsonEncodeFailureReason(field.marshalErr))
 		}
 		if selected[i] {
 			if selectedCount > 0 {

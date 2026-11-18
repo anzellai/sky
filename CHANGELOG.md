@@ -197,6 +197,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   generated alias (`import Store as SpaTy_Store_`) and every generated
   reference to a type, constructor or codec of another module is qualified.
   A cycle the copy set cannot avoid is refused with the import path.
+- `Json.Encode.encode` of a value JSON cannot hold (a NaN or infinite
+  `Float`) failed with Go's own text, which named a Go runtime type and
+  changed with the Go release (`json: error calling MarshalJSON for type
+  rt.jsonOrderedObject: json: unsupported value: NaN` on Go 1.26,
+  `*rt.jsonOrderedObject` on Go 1.27). The `JsonEncodeFailure` now says
+  `the Float NaN has no JSON form` (or `+Inf`, `-Inf`, or `the value refers
+  to itself (a cycle)`) on every Go release. The class is unchanged.
 
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 

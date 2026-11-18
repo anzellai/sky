@@ -33,13 +33,70 @@ package rt
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
-var jsonOrderedObjectType = reflect.TypeOf(jsonOrderedObject{})
+// jsonOrderedObjectType is the Type encoding/json puts in the MarshalerError
+// it wraps around jsonOrderedObject.MarshalJSON. Which type that is depends on
+// the Go release: up to Go 1.26 it is the value type (rt.jsonOrderedObject),
+// from Go 1.27 the pointer type (*rt.jsonOrderedObject), for a value-receiver
+// MarshalJSON held in an interface. The writer asks the running encoding/json
+// once, so its errors stay those of json.Marshal on every Go release. The text
+// users see never carries it (jsonEncodeFailureReason).
+var jsonOrderedObjectType = jsonMarshalerErrorType(reflect.TypeOf(jsonOrderedObject{}))
+
+type jsonMarshalerTypeProbe struct{}
+
+var errJSONMarshalerTypeProbe = errors.New("probe")
+
+func (jsonMarshalerTypeProbe) MarshalJSON() ([]byte, error) {
+	return nil, errJSONMarshalerTypeProbe
+}
+
+func jsonMarshalerErrorType(t reflect.Type) reflect.Type {
+	_, err := json.Marshal([]any{jsonMarshalerTypeProbe{}})
+	var me *json.MarshalerError
+	if errors.As(err, &me) && me.Type != nil && me.Type.Kind() == reflect.Pointer {
+		return reflect.PointerTo(t)
+	}
+	return t
+}
+
+// jsonEncodeFailureReason is the text Json.Encode.encode reports for a value
+// JSON cannot represent. It is Sky's own wording: encoding/json's text names
+// Go runtime types (rt.jsonOrderedObject, []interface {}) and changes between
+// Go releases, so it never reaches a user. A failure that is not
+// encoding/json's own (an FFI Marshaler's error) keeps its own text.
+func jsonEncodeFailureReason(err error) string {
+	for {
+		me, ok := err.(*json.MarshalerError)
+		if !ok || me.Err == nil {
+			break
+		}
+		err = me.Err
+	}
+	switch e := err.(type) {
+	case *json.UnsupportedValueError:
+		switch e.Str {
+		case "NaN", "+Inf", "-Inf":
+			return "the Float " + e.Str + " has no JSON form"
+		}
+		if strings.HasPrefix(e.Str, "encountered a cycle") {
+			return "the value refers to itself (a cycle)"
+		}
+		return "the value has no JSON form"
+	case *json.UnsupportedTypeError:
+		return "a value of kind " + e.Type.Kind().String() + " has no JSON form"
+	case *json.SyntaxError:
+		return "embedded JSON text is not valid JSON"
+	}
+	return err.Error()
+}
 
 // jsonSliceCycleDepth matches encoding/json's startDetectingCyclesAfter. A run
 // of []any nested deeper than this is handed to json.Marshal, which then keeps

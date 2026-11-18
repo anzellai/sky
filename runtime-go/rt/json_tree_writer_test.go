@@ -309,18 +309,40 @@ func TestJsonTreeWriterKeepsErrorsAndTheirWrapping(t *testing.T) {
 	}
 }
 
+// The failure text is Sky's own and the same on every Go release: it never
+// carries encoding/json's wording, which names Go runtime types and changed
+// between Go 1.26 and Go 1.27 (rt.jsonOrderedObject became
+// *rt.jsonOrderedObject).
 func TestJsonTreeWriterEncodeKeepsClassifiedNaNFailure(t *testing.T) {
-	tree := JsonValue{raw: jsonOrderedObject{keys: []string{"x"}, vals: []any{math.NaN()}}}
-	defer func() {
-		p := recover()
-		msg := fmt.Sprint(p)
-		_, wantErr := jsonTreeReference(tree.raw, 0)
-		if msg != "rt.JsonEnc_encode: cannot encode the value as JSON: "+wantErr {
-			t.Fatalf("panic changed: %q", msg)
+	cyc := make([]any, 1)
+	cyc[0] = cyc
+	cases := []struct {
+		name string
+		tree any
+		want string
+	}{
+		{"nan in object", jsonOrderedObject{keys: []string{"x"}, vals: []any{math.NaN()}}, "the Float NaN has no JSON form"},
+		{"nan at root", math.NaN(), "the Float NaN has no JSON form"},
+		{"inf two deep", []any{jsonOrderedObject{keys: []string{"a"}, vals: []any{jsonOrderedObject{keys: []string{"b"}, vals: []any{math.Inf(1)}}}}}, "the Float +Inf has no JSON form"},
+		{"minus inf", jsonOrderedObject{keys: []string{"x"}, vals: []any{math.Inf(-1)}}, "the Float -Inf has no JSON form"},
+		{"cycle", jsonOrderedObject{keys: []string{"c"}, vals: []any{cyc}}, "the value refers to itself (a cycle)"},
+		{"marshaler error", jsonOrderedObject{keys: []string{"m"}, vals: []any{codecObjectPreallocFX{err: errors.New("synthetic failure")}}}, "synthetic failure"},
+	}
+	for _, c := range cases {
+		for _, indent := range []int{0, 2} {
+			msg, panicked := recoverMsg(func() { JsonEnc_encode(indent, JsonValue{raw: c.tree}) })
+			want := "rt.JsonEnc_encode: cannot encode the value as JSON: " + c.want
+			if !panicked || msg != want {
+				t.Fatalf("%s indent=%d: panic %q (panicked=%v), want %q", c.name, indent, msg, panicked, want)
+			}
+			if strings.Contains(msg, "rt.json") || strings.Contains(msg, "interface {}") || strings.Contains(msg, "MarshalJSON") {
+				t.Fatalf("%s: the failure text names Go internals: %q", c.name, msg)
+			}
+			if kind, _ := classifyPanic(msg); kind != "JsonEncodeFailure" {
+				t.Fatalf("%s: classified as %q", c.name, kind)
+			}
 		}
-	}()
-	JsonEnc_encode(0, tree)
-	t.Fatal("NaN encoded")
+	}
 }
 
 // TestJsonTreeWriterSeededDifferential compares the writer with the old phase
