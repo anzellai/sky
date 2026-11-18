@@ -3081,9 +3081,16 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
         "the build must link the dist's {wasm} into the backend:\n{stamp_pkg}\n{log}"
     );
     // The SSR route must be registered BEFORE the static fallthrough so asset
-    // GETs (main.<hash>.wasm, wasm_exec.js) still reach the file server.
+    // GETs (main.<hash>.wasm, wasm_exec.js) still reach the file server. This
+    // app has no routes, so (F8) the catch-all answers an unknown path with the
+    // server render of `/`, sent with 404.
     let ssr_at = backend.find("spaPageRoute_ \"/{$}\" ssrHandler");
-    let static_at = backend.find("SpaServer_.static \"/\"");
+    let static_at =
+        backend.find("SpaServer_.staticNotFound \"/\" \"../frontend/dist\" spaRoutelessNotFound_");
+    assert!(
+        backend.contains("spaRoutelessNotFound_ req =\n    ssrHandler req\n        |> SpaTask_.map (SpaServer_.withStatus 404)"),
+        "F8: a route-less app's unknown path is the server render with 404:\n{backend}"
+    );
     assert!(
         ssr_at.is_some() && static_at.is_some() && ssr_at < static_at,
         "SSR-P1: the SSR route must precede the static route:\n{backend}"
@@ -10257,7 +10264,8 @@ fn the_viewport_breakpoint_and_query_reach_update_on_live_and_build_for_every_ta
 /// runtime owns no page type, so it now writes the field only for an app with
 /// routes. An unknown path still answers 404, with the app's view. A
 /// route-less `web:app` build has no server render: its backend serves the
-/// client shell, and the wasm client writes the page field only
+/// client shell, for `/` and (F8, v0.29.14) with 404 for an unknown path, while
+/// a missing dist asset stays a plain 404. The wasm client writes the page field only
 /// for an app with routes (`spaApplyURL`; the server-render resolver is covered
 /// by `TestSpaSsrResolveModel_RoutelessAppKeepsUserPageField`).
 #[test]
@@ -10292,10 +10300,50 @@ fn a_routeless_app_keeps_its_own_page_field_on_live_and_web_app() {
     );
     let (split, port) = start_split_backend(&proj);
     let page = curl_get_jar(port, "/", &proj.join("jar-split.txt"));
+    // F8: an unknown path of a route-less app is the client shell with 404,
+    // as Sky.Live answers it with the app's view and 404. A missing dist
+    // asset stays a plain 404, never the shell's HTML.
+    let unknown = curl_get_jar(port, "/zz", &proj.join("jar-split.txt"));
+    let unknown_status = curl_status_ctype(port, "/zz");
+    let deep_status = curl_status_ctype(port, "/no/such/page").map(|(c, _)| c);
+    let wasm = curl_status_ctype(port, "/main.0123456789abcdef.wasm");
+    let wasm_body = curl_get_jar(port, "/main.0123456789abcdef.wasm", &proj.join("jar-w.txt"));
+    let boot = curl_status_ctype(port, "/spa-boot.0123456789abcdef.js");
     drop(split);
     assert!(
         page.contains("spa-boot.") && !page.contains("PAGE={}"),
         "web:app backend GET /: the client shell is served:\n{page}"
+    );
+    assert!(
+        unknown.contains("spa-boot."),
+        "web:app backend GET /zz: the client shell boots the app's view:\n{unknown}"
+    );
+    assert_eq!(
+        unknown_status.as_ref().map(|(c, _)| *c),
+        Some(404),
+        "web:app backend GET /zz: an unknown path is a 404, as on Sky.Live"
+    );
+    assert!(
+        unknown_status
+            .as_ref()
+            .is_some_and(|(_, t)| t.starts_with("text/html")),
+        "web:app backend GET /zz: the shell is HTML: {unknown_status:?}"
+    );
+    assert_eq!(deep_status, Some(404), "web:app backend GET /no/such/page");
+    assert_eq!(
+        wasm.as_ref().map(|(c, _)| *c),
+        Some(404),
+        "a missing wasm stays a 404"
+    );
+    assert!(
+        !wasm_body.contains("spa-boot.") && !wasm.is_some_and(|(_, t)| t.starts_with("text/html")),
+        "a missing wasm is never the shell's HTML:\n{wasm_body}"
+    );
+    assert!(
+        !boot
+            .as_ref()
+            .is_some_and(|(_, t)| t.starts_with("text/html")),
+        "a missing boot loader is never HTML: {boot:?}"
     );
     let _ = std::fs::remove_dir_all(&proj);
 }

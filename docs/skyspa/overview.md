@@ -517,7 +517,10 @@ The names read exactly like the web target:
   intercepted internal-link click, and on Back/Forward, setting `model.page`.
 - `App.withNotFound page` — the page shown when nothing matches. The backend's
   server-rendered first paint of such a path is sent with HTTP 404 (the full
-  page, which boots the client); a path that matches a route is 200. A
+  page, which boots the client); a path that matches a route is 200. An app
+  with no `App.withRoutes` shows its view for every path, as on Sky.Live: an
+  unknown path gets the page `/` serves, with 404. A missing asset (a stale
+  `main.<hash>.wasm`) is a plain 404 in both cases, never a page. A
   client-side navigation to an unknown route renders the page in the browser
   and sends no request.
 - `App.withOnNavigate (page -> msg)` — fired after the route is applied, so the

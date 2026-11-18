@@ -3625,6 +3625,7 @@ pub(crate) const RESERVED_ALIASES: &[(&str, &str)] = &[
     ("SpaError_", "Sky.Core.Error"),
     ("SpaFfi_", "Sky.Ffi"),
     ("SpaTask_", "Sky.Core.Task"),
+    ("SpaFile_", "Sky.Core.File"),
     ("SpaList_", "Sky.Core.List"),
     ("SpaDict_", "Sky.Core.Dict"),
     ("SpaMaybe_", "Sky.Core.Maybe"),
@@ -9585,6 +9586,29 @@ fn strip_sky_comments(src: &str) -> String {
     out
 }
 
+/// The NotFound fallback of a route-less Std.App backend (F8): the page `/`
+/// serves, sent with 404. With a server render that is `ssrHandler`; without
+/// one it is the dist shell (`index.html`), and a dist the backend cannot read
+/// stays a plain 404.
+fn routeless_not_found_handler(emit_ssr: bool) -> String {
+    let (param, page) = if emit_ssr {
+        ("req", "ssrHandler req")
+    } else {
+        ("_", 
+        "SpaFile_.readFile \"../frontend/dist/index.html\"\n\
+         \x20       |> SpaTask_.map SpaServer_.html\n\
+         \x20       |> SpaTask_.onError (\\_ -> SpaTask_.succeed (SpaServer_.text \"404 page not found\"))")
+    };
+    format!(
+        "-- A route-less app shows its view for every path (as on Sky.Live): an\n\
+         -- unknown path is the page `/` serves, with 404.\n\
+         spaRoutelessNotFound_ : SpaServer_.Handler\n\
+         spaRoutelessNotFound_ {param} =\n\
+         \x20   {page}\n\
+         \x20       |> SpaTask_.map (SpaServer_.withStatus 404)\n\n\n"
+    )
+}
+
 fn gen_backend(
     file: &SourceFile,
     src: &str,
@@ -10968,6 +10992,17 @@ fn gen_backend(
     if emit_ssr && has_synth_routes {
         routes.push(
             "        , SpaServer_.staticNotFound \"/\" \"../frontend/dist\" ssrHandler".to_string(),
+        );
+    } else if !has_synth_routes && has_synth_view && has_synth_head {
+        // F8 (v0.29.14): a route-less Std.App app shows its view for every
+        // path, as Sky.Live does, so an unknown path is the page `/` serves
+        // (the server render, else the dist shell) with 404, never the file
+        // server's plain 404. A missing asset stays a plain 404: Sky-owned
+        // names never reach this fallback (runtime_assets.go skyAssetGuard).
+        handlers.push_str(&routeless_not_found_handler(emit_ssr));
+        routes.push(
+            "        , SpaServer_.staticNotFound \"/\" \"../frontend/dist\" spaRoutelessNotFound_"
+                .to_string(),
         );
     } else {
         routes.push("        , SpaServer_.static \"/\" \"../frontend/dist\"".to_string());

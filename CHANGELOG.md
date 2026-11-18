@@ -48,6 +48,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- Sky.Spa: a route-less `Std.App` app (`App.app` or `App.web` with no
+  `App.withRoutes`) built for `web:app` answered an unknown path such as
+  `/zz` with the file server's plain `404 page not found`, so the client
+  never started. On Sky.Live the same path shows the app's view with 404. The
+  backend's `/` catch-all now falls back to the page `/` serves (the server
+  render, else the dist shell) with status 404. A missing asset, such as a
+  stale `main.<hash>.wasm`, is still a plain 404, never HTML.
 - Sky.Live: an app with no routes and a NotFound page (`App.withNotFound`
   and no `App.withRoutes`) had the NotFound page written into its model's
   `page` field on every request, whatever the field's type. A `page :

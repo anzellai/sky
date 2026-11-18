@@ -115,7 +115,9 @@ does. Everything else (`routes`, `window`, `input`) stays optional.
 `tablet`, `desktop` through Sky.Live, and the server-rendered first paint of
 `web:app`). It is the full page, so the client boots and the user can navigate
 away. A path that matches a declared route is 200, even when the page
-constructor then shows "not found" for an id it rejects. Point health checks at
+constructor then shows "not found" for an id it rejects. An app with no
+`App.withRoutes` shows its view for every path: `/` is 200 and any other path
+is the same page with 404, on Sky.Live and on `web:app`. Point health checks at
 `/_sky/healthz` or `/_sky/readyz`, not at a path the app does not declare.
 
 ## Configuration — `withBase` (shared) + `withConfig` (per-target)
