@@ -2255,17 +2255,25 @@ pub fn analyze_checked(
 
     // ---- server-tainted top-level bindings (app modules only) ----
     // The structural TEA entry points the app is CONFIGURED with (its `update`,
-    // `init`, `view`, `subscriptions`) and the entry's `main` are server only by
+    // `init`, `subscriptions`) and the entry's `main` are server only by
     // virtue of *containing* a server branch, and are not standalone helpers
     // that leak to the client build. They are skipped by DefId, never by bare
     // name: a sibling module's own `update` that the app does not configure is
     // an ordinary binding, tainted by the normal rule, so the client copy of its
     // module drops it together with the server helpers it reaches.
+    //
+    // The configured `view` is NOT skipped. A view has no server branch to
+    // split out: one that reaches a server effect cannot run in the wasm
+    // client at all. It must stay tainted so the client entry drops it and
+    // `enforce_client_builder_invariant` refuses the build with its
+    // diagnostic (for a `Std.App` app the configured view is the generated
+    // `spaView_` wrapper; skipping it left `spaView_` in the client calling a
+    // dropped `View.view`, `[E1001]` in generated code).
     let mut entry_points: HashSet<DefId> = HashSet::new();
     if let UpdateField::Def(d) = &update_field {
         entry_points.insert(*d);
     }
-    for field in ["init", "view", "subscriptions"] {
+    for field in ["init", "subscriptions"] {
         if let Some(d) = find_config_field_def(db, &check_ids, entry, field) {
             entry_points.insert(d);
         }
@@ -8722,6 +8730,24 @@ mod configured_entry_point_tests {
             assert!(
                 !names.iter().any(|n| n == "Main.update" || n == "Main.main"),
                 "{fixture}: the configured update and the entry main stay skipped; got {names:?}"
+            );
+        }
+    }
+
+    /// The configured view is never skipped: a view that reaches a server
+    /// effect (`View.view`, configured as `view = View.view`, reads
+    /// `Config.siteUrl`, an environment read) is tainted. In the split the
+    /// configured view is the `spaView_` wrapper the `Std.App` synthesis
+    /// writes, tainted by the same rule, so the split refuses it with the
+    /// server-tainted-view diagnostic (`spa_split_flow`
+    /// `web_app_rejects_server_tainted_view_with_a_clear_diagnostic`).
+    #[test]
+    fn a_server_tainted_configured_view_stays_tainted() {
+        let names = tainted_names("spa-web-view-server");
+        for want in ["View.view", "Config.siteUrl"] {
+            assert!(
+                names.iter().any(|n| n == want),
+                "{want} must be tainted; got {names:?}"
             );
         }
     }
