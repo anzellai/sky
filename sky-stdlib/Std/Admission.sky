@@ -71,8 +71,9 @@ type RouteClass
 -- `session` is `Just` the session id only after the runtime has verified it.
 -- On Sky.Live it is the id the session store holds for the request's session
 -- cookie (or `X-Sky-Session` token). On a `web:app` backend it is the
--- session id inside the signed `sky_spa` token, after the signature, expiry
--- and sign-out checks. It is `Nothing` for a request with no session, with a
+-- session id inside the signed session token (`sky_spa`, or a Spa token
+-- still in the legacy `sky_sid`, converted as every RPC converts it), after
+-- the signature, expiry and sign-out checks. It is `Nothing` for a request with no session, with a
 -- cookie that does not verify (a client cannot make one up to get a new
 -- quota), and in a `Sky.Http.Server` program, which has no runtime session.
 -- Finding it reads no body and loads no model.

@@ -397,3 +397,62 @@ func TestSessionPresenceIsImplementedByTheDurableStores(t *testing.T) {
 		t.Fatal("storeHasSession must report only a stored id")
 	}
 }
+
+// A visitor who still holds a Sky.Spa token in the legacy `sky_sid` cookie
+// gets the same verified session as one with `sky_spa`: a v0.27.0 token under
+// the old name, and a pre-v0.27.0 token (no sid) converted the way every RPC
+// converts it (spaEffectiveToken). A forged legacy cookie, and a Sky.Live
+// session id in `sky_sid`, give Nothing.
+func TestAdmission_HookSeesTheLegacySpaSession(t *testing.T) {
+	withMemoryRevocations(t)
+	resetSpaLegacyCache(t)
+	prevSecret := admissionSpaSecret
+	admissionSpaSecret = func() any { return spaTestSecret }
+	t.Cleanup(func() { admissionSpaSecret = prevSecret })
+	admissionSpaSessions.Store(true)
+	t.Cleanup(func() { admissionSpaSessions.Store(false) })
+	var seen []string
+	useAdmission(t, 0, 0, 1000, sessionHook(&seen))
+	route := Server_api("GET /x", func(req SkyRequest) any {
+		return func() any { return SkyResponse{Status: 200, Body: "ok"} }
+	})
+	mux, _ := serverRouteMux([]any{route})
+	get := func(cookie string) string {
+		seen = nil
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.Header.Set("Cookie", "sky_sid="+cookie)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != 200 || len(seen) != 1 {
+			t.Fatalf("status %d, hook calls %d", rec.Code, len(seen))
+		}
+		return seen[0]
+	}
+	// A v0.27.0 token (with a sid) still under the legacy name.
+	tok := spaSign(t, "", spaSignedIn())
+	claims, _ := spaVerifyClaims(tok)
+	if got := get(tok); got == "" || got != claimString(claims, "sid") {
+		t.Fatalf("a v0.27.0 token in sky_sid gave session %q, want %q", got, claimString(claims, "sid"))
+	}
+	// A pre-v0.27.0 token: converted once, to the sid the RPC path also uses.
+	legacy := legacySpaToken(t, spaTestSecret, 3600)
+	converted := Spa_sessionToken(spaTestSecret, spaRequestWith(map[string]string{"sky_sid": legacy})).(string)
+	cc, ok := spaVerifyClaims(converted)
+	if !ok {
+		t.Fatal("precondition: the legacy token converts")
+	}
+	if got := get(legacy); got == "" || got != claimString(cc, "sid") {
+		t.Fatalf("a pre-v0.27.0 token gave session %q, want the converted sid %q", got, claimString(cc, "sid"))
+	}
+	// Forged: a legacy token signed with another key, and a damaged one.
+	forged := legacySpaToken(t, Secret{v: "another-key-another-key-another-key-0000"}, 3600)
+	if got := get(forged); got != "" {
+		t.Fatalf("a forged legacy token gave session %q", got)
+	}
+	if got := get(legacy[:len(legacy)-2] + "xx"); got != "" {
+		t.Fatalf("a damaged legacy token gave session %q", got)
+	}
+	if got := get("0123456789abcdef0123456789abcdef"); got != "" {
+		t.Fatalf("a Sky.Live id in sky_sid gave session %q", got)
+	}
+}

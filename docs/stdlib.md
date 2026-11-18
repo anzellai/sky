@@ -3063,8 +3063,9 @@ route as declared (`"/_rpc/Save"`, `"/api/items/:id"`), the requests of the
 class running now (this one included), the limit (`0`: none) and the
 request's verified session id. `session` is `Just` the id only after the
 runtime verified it: on Sky.Live the id the session store holds for the
-request, on a `web:app` backend the id inside a `sky_spa` token whose
-signature, expiry and sign-out check pass. It is `Nothing` for no session,
+request, on a `web:app` backend the id inside a session token (`sky_spa`,
+or a Spa token still in the legacy `sky_sid`) whose signature, expiry and
+sign-out check pass. It is `Nothing` for no session,
 for a cookie that does not verify, and in a `Sky.Http.Server` program. Key a
 per-session rule on `load.session`, never on a raw cookie: a client can
 change its cookie to get a new quota. The operator

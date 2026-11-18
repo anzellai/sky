@@ -157,19 +157,22 @@ func (app *liveApp) liveAdmissionSession(r *http.Request) string {
 // variable so tests can give their own key.
 var admissionSpaSecret = func() any { return Spa_sessionSecret(nil) }
 
-// admissionSpaSession is the session id of the request's `sky_spa` token
+// admissionSpaSession is the session id of the request's Sky.Spa token
 // after the signature, expiry and sign-out checks (Spa_verifySession), or ""
 // when the process is not a Sky.Spa backend or the token does not verify.
+// The token is the one every RPC uses (spaEffectiveToken): `sky_spa`, else a
+// Spa token in the legacy `sky_sid` cookie, a pre-v0.27.0 one converted once.
 // The cookie itself is never handed to the hook: a client can change it.
 func admissionSpaSession(cookies map[string]string) string {
 	if !admissionSpaSessions.Load() {
 		return ""
 	}
-	tok := cookies[spaSessionCookieName]
+	secret := admissionSpaSecret()
+	tok, _ := spaEffectiveToken(secret, cookies)
 	if tok == "" {
 		return ""
 	}
-	claims, ok := okClaims(Spa_verifySession(admissionSpaSecret(), tok))
+	claims, ok := okClaims(Spa_verifySession(secret, tok))
 	if !ok {
 		return ""
 	}

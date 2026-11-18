@@ -430,8 +430,10 @@ retry code and no network banner (v0.27.3, `runtime-go/rt/spa_retry.go`).
   `/_rpc/<Msg>` call at once. `App.withAdmission` (`Std.Admission`) gives the
   RPC calls and the `App.api` routes a limit on the requests that run at the
   same time, and an optional hook that can answer 429 or 503 per request. The
-  hook's `load.session` is the session id inside the request's `sky_spa`
-  token after the backend verified it (`Nothing` for a forged, expired or
+  hook's `load.session` is the session id inside the request's session
+  token (`sky_spa`, or a Spa token still in the legacy `sky_sid`, converted
+  as an RPC converts it) after the backend verified it (`Nothing` for a
+  forged, expired or
   signed-out cookie), so a per-session throttle cannot be dodged by editing
   the cookie. A
   call over the limit gets 503 with `Retry-After` before its body is read; the
