@@ -95,3 +95,8 @@ the milestone gates, the Judge, the release workflow, the tag.
 So: one heavy job at a time on this host, at low priority. No merge to `main`
 and no tag until the Judge passes and the full release workflow is green on
 `fix/v0.29.14`.
+- 2026-11-18: the user waived the one-commit-per-item rule for D2, D3 and
+  D4 ("Keep one commit"): one root cause, one code change, commit 4b0d32a7f.
+- Second Judge (bc635f481): NOT ACHIEVED, 2 gaps. The stale coverage ledger
+  is fixed in c879e912f, and the D2-D4 commit is waived. The release workflow
+  full suite is still to run (needs the user: PR and dispatch).
