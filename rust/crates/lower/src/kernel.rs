@@ -736,6 +736,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Sub", "subscribeTopic", "rt.Sub_subscribeTopic"),
     ("Sub", "onFragment", "rt.Sub_onFragment"),
     ("Sub", "onBreakpoint", "rt.Sub_onBreakpoint"),
+    ("Sub", "viewport", "rt.Sub_viewport"),
     ("Sub", "onQuery", "rt.Sub_onQuery"),
     ("Sub", "subscribeStream", "rt.Sub_subscribeStream"),
     ("HttpStream", "open", "rt.HttpStream_open"),

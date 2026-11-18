@@ -810,7 +810,9 @@ These are real, current scope boundaries — not roadmap optimism:
   `hashchange`), `Sub.onQuery` (the client reads `location.search` at load
   and after every navigation and Back / Forward), `Sub.onBreakpoint` (the
   client reads `innerWidth` at load and on `resize`, and dispatches only when
-  the breakpoint changes; no request to the server), `Std.Nav` (`pushUrl` / `replaceUrl` / `clearFragment`: the
+  the breakpoint changes; no request to the server), `Sub.viewport` (the
+  client reads `innerWidth` at load and 150 ms after the last `resize`, and
+  dispatches only a changed width; no request to the server), `Std.Nav` (`pushUrl` / `replaceUrl` / `clearFragment`: the
   History API, then the route like a link click; a server branch's navigation
   is returned with its answer and runs after it renders; `scrollToTop` /
   `scrollIntoView` / `scrollIntoViewIfNeeded` run after the corresponding DOM

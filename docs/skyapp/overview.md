@@ -201,7 +201,10 @@ on `web`, `web:app`, desktop and mobile. `Sub.onQuery QueryChanged` delivers
 the query string (a `Dict String String`, at load and on every change; it is
 user input), and `Sub.onBreakpoint [ 600, 900 ] LayoutChanged` the viewport
 width as one of your breakpoints (at load and when a resize crosses one), so
-one `view` can show a table on a wide screen and cards on a phone. Terminal
+one `view` can show a table on a wide screen and cards on a phone.
+`Sub.viewport WidthChanged` gives the width itself in CSS pixels (at load and
+after a resize settles); on `web` each settled resize is one server request,
+so prefer `onBreakpoint` for a few fixed widths. Terminal
 targets have no URL or viewport: these subscriptions never fire there.
 
 To move the address bar from `update` (go to a page after a save, drop a

@@ -55,3 +55,27 @@ func TestQueryDictParsesTheQueryString(t *testing.T) {
 		t.Fatal("an empty query is an empty Dict")
 	}
 }
+
+// The viewport leaf is found through Sub.batch, the last leaf wins, and a
+// tree without one yields nil.
+func TestViewportLeafIsFound(t *testing.T) {
+	if viewportToMsg(Sub_onBreakpoint([]any{600}, func(any) any { return 0 })) != nil {
+		t.Fatal("Sub.onBreakpoint is not a viewport leaf")
+	}
+	first := func(any) any { return "first" }
+	last := func(any) any { return "last" }
+	tree := Sub_batch([]any{Sub_viewport(first), Sub_batch([]any{Sub_every(1000, "Tick"), Sub_viewport(last)})})
+	if v := viewportToMsg(tree); v == nil || v.(func(any) any)(nil) != "last" {
+		t.Fatal("the last viewport leaf must win")
+	}
+}
+
+// A reported width is clamped to 0 .. maxViewportWidth: the report is
+// client data.
+func TestViewportWidthIsClamped(t *testing.T) {
+	for in, want := range map[float64]int{-3: 0, 0: 0, 700.9: 700, 1e18: maxViewportWidth} {
+		if got := viewportWidthOf(in); got != want {
+			t.Errorf("viewportWidthOf(%v) = %d, want %d", in, got, want)
+		}
+	}
+}

@@ -70,6 +70,14 @@ var (
 	spaBreakpointWidths []int
 	spaBreakpointLast   int
 	spaBreakpointSent   bool
+	// Sub.viewport: the width last delivered, and the 150 ms settle timer the
+	// shared `resize` listener restarts on every resize event.
+	spaViewportToMsg    any
+	spaViewportLast     int
+	spaViewportSent     bool
+	spaViewportTimer    js.Value
+	spaViewportSettle   js.Func
+	spaViewportSettleOK bool
 	spaQueryToMsg       any
 	spaLastQuery        string
 	spaResizeListens    bool
@@ -339,6 +347,7 @@ func spaRun(cfg any) any {
 	spaDeliverFragment(true)
 	// Sub.onBreakpoint / Sub.onQuery: the width and the query at load.
 	spaDeliverBreakpoint()
+	spaDeliverViewport()
 	spaDeliverQuery()
 	spaBooted = true
 
@@ -1361,20 +1370,25 @@ func reconcileSubs() {
 	}
 }
 
-// spaReconcileWindowSubs records the app's Sub.onBreakpoint and Sub.onQuery
-// leaves (sub_viewport.go) and installs the `resize` / `popstate` listener the
-// first time a leaf appears. A leaf that appears, or whose widths change,
+// spaReconcileWindowSubs records the app's Sub.onBreakpoint, Sub.viewport
+// and Sub.onQuery leaves (sub_viewport.go) and installs the `resize` /
+// `popstate` listener the first time a leaf appears. One `resize` listener
+// serves both window leaves: the breakpoint is checked at once, the width
+// after the resize settles. A leaf that appears, or whose widths change,
 // after load gets its first value from a check run after the current step.
 func spaReconcileWindowSubs(root subT) {
 	prevWidths := breakpointsHeader(spaBreakpointWidths)
 	hadQuery := spaQueryToMsg != nil
+	hadViewport := spaViewportToMsg != nil
 	toMsg, widths, _ := breakpointLeaf(root)
 	spaBreakpointToMsg, spaBreakpointWidths = toMsg, widths
+	spaViewportToMsg = viewportToMsg(root)
 	spaQueryToMsg = queryToMsg(root)
-	if spaBreakpointToMsg != nil && !spaResizeListens {
+	if (spaBreakpointToMsg != nil || spaViewportToMsg != nil) && !spaResizeListens {
 		spaResizeListens = true
 		js.Global().Call("addEventListener", "resize", js.FuncOf(func(this js.Value, args []js.Value) any {
 			spaDeliverBreakpoint()
+			spaScheduleViewport()
 			return nil
 		}))
 	}
@@ -1387,14 +1401,19 @@ func spaReconcileWindowSubs(root subT) {
 	}
 	widthsChanged := spaBreakpointToMsg != nil && breakpointsHeader(widths) != prevWidths
 	queryAppeared := spaQueryToMsg != nil && !hadQuery
-	if (widthsChanged || queryAppeared) && spaBooted {
+	viewportAppeared := spaViewportToMsg != nil && !hadViewport
+	if (widthsChanged || queryAppeared || viewportAppeared) && spaBooted {
 		if widthsChanged {
 			spaBreakpointSent = false
+		}
+		if viewportAppeared {
+			spaViewportSent = false
 		}
 		if !spaWindowCheckSet {
 			spaWindowCheckSet = true
 			spaWindowCheck = js.FuncOf(func(this js.Value, args []js.Value) any {
 				spaDeliverBreakpoint()
+				spaDeliverViewport()
 				spaDeliverQuery()
 				return nil
 			})
@@ -1420,6 +1439,44 @@ func spaDeliverBreakpoint() {
 	}
 	spaBreakpointSent, spaBreakpointLast = true, b
 	spaDispatch(sky_call(toMsg, b))
+}
+
+// spaScheduleViewport restarts the 150 ms settle timer of the Sub.viewport
+// leaf: a burst of resize events delivers one width, after the last event.
+func spaScheduleViewport() {
+	if spaViewportToMsg == nil {
+		return
+	}
+	if !spaViewportSettleOK {
+		spaViewportSettleOK = true
+		spaViewportSettle = js.FuncOf(func(this js.Value, args []js.Value) any {
+			spaViewportTimer = js.Undefined()
+			spaDeliverViewport()
+			return nil
+		})
+	}
+	if spaViewportTimer.Type() == js.TypeNumber {
+		js.Global().Call("clearTimeout", spaViewportTimer)
+	}
+	spaViewportTimer = js.Global().Call("setTimeout", spaViewportSettle, 150)
+}
+
+// spaDeliverViewport dispatches the viewport width (CSS pixels) to the app's
+// Sub.viewport leaf when it differs from the width last delivered.
+func spaDeliverViewport() {
+	toMsg := spaViewportToMsg
+	if toMsg == nil {
+		return
+	}
+	w := 0
+	if v := js.Global().Get("innerWidth"); v.Type() == js.TypeNumber {
+		w = viewportWidthOf(v.Float())
+	}
+	if spaViewportSent && w == spaViewportLast {
+		return
+	}
+	spaViewportSent, spaViewportLast = true, w
+	spaDispatch(sky_call(toMsg, w))
 }
 
 // spaDeliverQuery dispatches the parsed query string to the app's Sub.onQuery

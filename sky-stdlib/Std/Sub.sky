@@ -12,6 +12,7 @@ module Std.Sub exposing
     , subscribeTopic
     , onFragment
     , onBreakpoint
+    , viewport
     , onQuery
     , ConnectionState(..)
     , connection
@@ -119,6 +120,28 @@ onFragment =
 onBreakpoint : List Int -> (Int -> msg) -> Sub msg
 onBreakpoint =
     Ffi.kernel "Sub_onBreakpoint"
+
+
+-- | `viewport toMsg` — receive the viewport width in CSS pixels, so a view
+-- can switch between a table and cards at any width it computes. It arrives
+-- when the page loads, and again after a resize settles (150 ms with no
+-- resize event), never the same width twice. On Sky.Live each settled resize
+-- is one request to the server; when the view only switches at a few fixed
+-- widths, `onBreakpoint` sends far fewer. Sky.Spa and the `Std.App` client
+-- targets read the width in the client. The width comes from the browser:
+-- it is a whole number from 0 to 100000. The server never knows the width at
+-- `init`, so keep a default in the model. A terminal app has no viewport;
+-- there it never fires. With `onBreakpoint` as well, a resize that crosses a
+-- breakpoint delivers the breakpoint Msg first, then the width Msg.
+--
+--     subscriptions _ =
+--         Sub.viewport WidthChanged
+--
+--     view model =
+--         if model.width < 700 then cards model.rows else table model.rows
+viewport : (Int -> msg) -> Sub msg
+viewport =
+    Ffi.kernel "Sub_viewport"
 
 
 -- | `onQuery toMsg` — receive the URL query string (`?page=2&sort=name`),

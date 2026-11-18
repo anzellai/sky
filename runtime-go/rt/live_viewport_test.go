@@ -217,3 +217,166 @@ const resize = (w) => { sandbox.innerWidth = w; (winListeners["resize"] || []).f
 		t.Fatalf("the client must report at load and on each crossing only, and stop when the leaf is gone: %s", got)
 	}
 }
+
+// Sub.viewport on Sky.Live: the reported width reaches update in CSS pixels;
+// the same width again dispatches nothing (204), a new width dispatches.
+func TestLiveViewportReportReachesTheViewportSub(t *testing.T) {
+	app := fragmentTestApp(func(model any) any {
+		return Sub_batch([]any{Sub_every(60000, "Tick"), Sub_viewport(func(w any) any { return "w:" + strconv.Itoa(AsInt(w)) })})
+	})
+	rr := postViewport(t, app, "sid-vpw", 700, true)
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "FRAG=w:700") {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("X-Sky-Viewport"); got != "1" {
+		t.Fatalf("X-Sky-Viewport = %q, want 1", got)
+	}
+	rr = postViewport(t, app, "sid-vpw", 700, false)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("the same width again must be a no-op, got %d", rr.Code)
+	}
+	rr = postViewport(t, app, "sid-vpw", 701, false)
+	sess, _ := app.store.Get("sid-vpw")
+	if rr.Code != 200 || sess.model != "w:701" {
+		t.Fatalf("a new width must reach update: %d model=%v", rr.Code, sess.model)
+	}
+}
+
+// With both leaves, one report dispatches the breakpoint and then the width,
+// in that order, and the answer shows the view after both.
+func TestLiveViewportReportFeedsBothLeaves(t *testing.T) {
+	var seen []string
+	app := fragmentTestApp(func(model any) any {
+		return Sub_batch([]any{
+			Sub_onBreakpoint([]any{600}, func(b any) any { return "bp:" + strconv.Itoa(AsInt(b)) }),
+			Sub_viewport(func(w any) any { return "w:" + strconv.Itoa(AsInt(w)) }),
+		})
+	})
+	app.update = func(msg, model any) any {
+		seen = append(seen, msg.(string))
+		return SkyTuple2{V0: model.(string) + "|" + msg.(string), V1: cmdT{kind: "none"}}
+	}
+	rr := postViewport(t, app, "sid-both", 650, true)
+	if rr.Code != 200 || strings.Join(seen, ",") != "bp:600,w:650" {
+		t.Fatalf("status %d, update saw %v", rr.Code, seen)
+	}
+	if !strings.Contains(rr.Body.String(), "FRAG=|bp:600|w:650") {
+		t.Fatalf("the answer must show the view after both Msgs: %s", rr.Body.String())
+	}
+	seen = nil
+	rr = postViewport(t, app, "sid-both", 660, false)
+	if rr.Code != 200 || strings.Join(seen, ",") != "w:660" {
+		t.Fatalf("same breakpoint, new width: only the width Msg, saw %v", seen)
+	}
+}
+
+// Without a Sub.viewport leaf a report says so (X-Sky-Viewport: 0), so the
+// client stops reporting widths for it.
+func TestLiveViewportReportWithoutTheLeafSaysSo(t *testing.T) {
+	app := fragmentTestApp(func(model any) any { return Sub_none() })
+	rr := postViewport(t, app, "sid-novpw", 1000, true)
+	if rr.Code != http.StatusNoContent || rr.Header().Get("X-Sky-Viewport") != "0" {
+		t.Fatalf("status %d, X-Sky-Viewport %q", rr.Code, rr.Header().Get("X-Sky-Viewport"))
+	}
+}
+
+// The page tells the client the app wants the width: in the boot config of a
+// full load and in the X-Sky-Viewport header a sky-nav fetch reads.
+func TestLivePageCarriesTheViewportFlag(t *testing.T) {
+	app := newMirrorTestApp()
+	app.subscriptions = func(model any) any { return Sub_viewport(func(w any) any { return w }) }
+	rr := httptest.NewRecorder()
+	app.handleInitial(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rr.Header().Get("X-Sky-Viewport") != "1" {
+		t.Fatalf("page header = %q", rr.Header().Get("X-Sky-Viewport"))
+	}
+	if !strings.Contains(rr.Body.String(), `"vp":true`) {
+		t.Fatalf("the boot config must carry the flag:\n%s", rr.Body.String())
+	}
+	plain := newMirrorTestApp()
+	rr = httptest.NewRecorder()
+	plain.handleInitial(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	if strings.Contains(rr.Body.String(), `"vp":`) || rr.Header().Get("X-Sky-Viewport") != "" {
+		t.Fatal("an app without the leaf carries no flag")
+	}
+}
+
+// The browser half of Sub.viewport: the client reports its width at load,
+// then once per settled resize (a burst of resize events is one report),
+// never the same width twice, and stops when an answer says X-Sky-Viewport: 0.
+// The same resize listener and report message serve Sub.onBreakpoint.
+func TestLiveJS_ReportsTheViewportWidthAfterAResizeSettles(t *testing.T) {
+	node := requireNode(t)
+	harness := `
+const vm = require("vm");
+const fs = require("fs");
+const src = fs.readFileSync(process.argv[2], "utf8");
+const winListeners = {};
+const posts = [];
+let nextVp = "1";
+let timers = [];
+let nextId = 1;
+function Headers(h) { this.h = h || {}; }
+Headers.prototype.get = function (k) { return this.h[k] === undefined ? null : this.h[k]; };
+const sandbox = {
+  console: { warn() {}, log() {}, error() {} },
+  setTimeout: (fn, ms) => { const id = nextId++; if (ms === 150) timers.push({ id, fn }); return id; },
+  clearTimeout: (id) => { timers = timers.filter((t) => t.id !== id); },
+  setInterval: () => 0, clearInterval() {},
+  requestAnimationFrame: (fn) => { fn(); return 1; },
+  sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  location: { pathname: "/", href: "http://x/", hash: "", reload() {} },
+  navigator: {},
+  innerWidth: 700,
+  document: {
+    readyState: "loading",
+    getElementById: (id) => id === "sky-live-cfg" ? { textContent: JSON.stringify({ sid: "S", tab: "tab-A", csrf: "tok", vp: true }) } : null,
+    addEventListener() {}, querySelector: () => null, querySelectorAll: () => [],
+    body: null, activeElement: null, visibilityState: "visible",
+  },
+  EventSource: function (url) { this.url = url; this.readyState = 1; this.addEventListener = () => {}; this.close = () => {}; },
+  fetch: (url, opts) => {
+    if (String(url).endsWith("/_sky/event")) posts.push(JSON.parse(opts.body));
+    return Promise.resolve({ ok: true, status: 204, headers: new Headers({ "X-Sky-Live": "1", "X-Sky-Viewport": nextVp }), json: async () => ({ seq: 1 }), text: async () => "" });
+  },
+  Uint8Array, JSON, Math, Date, Promise, Object, Array, String, Number, parseInt, encodeURIComponent,
+};
+sandbox.window = sandbox;
+sandbox.window.addEventListener = (ev, fn) => { (winListeners[ev] = winListeners[ev] || []).push(fn); };
+sandbox.window.crypto = { getRandomValues: (b) => { for (let i = 0; i < b.length; i++) b[i] = i; return b; } };
+vm.createContext(sandbox);
+vm.runInContext(src, sandbox);
+const resize = (w) => { sandbox.innerWidth = w; (winListeners["resize"] || []).forEach((fn) => fn({})); };
+const fire = () => { const due = timers; timers = []; due.forEach((t) => t.fn()); };
+(async () => {
+  const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
+  await settle();
+  for (const w of [710, 750, 899]) { resize(w); await settle(); }
+  fire(); await settle();
+  resize(950); resize(899); await settle();
+  fire(); await settle();
+  resize(400); await settle(); fire(); await settle();
+  nextVp = "0";
+  resize(500); await settle(); fire(); await settle();
+  resize(1000); await settle(); fire(); await settle();
+  const widths = posts.filter((p) => p.msg === "__skyViewport").map((p) => p.args[0]);
+  process.stdout.write(JSON.stringify({ widths }));
+})().catch((e) => { process.stdout.write("HARNESS-ERROR " + e.stack); process.exit(1); });
+`
+	dir := t.TempDir()
+	jsPath := dir + "/client.js"
+	harnessPath := dir + "/harness.js"
+	if err := os.WriteFile(jsPath, []byte(liveClientJS), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(harnessPath, []byte(harness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, harnessPath, jsPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node harness failed: %v\n%s", err, out)
+	}
+	if got := string(out); !strings.Contains(got, `"widths":[700,899,400,500]`) {
+		t.Fatalf("the client must report at load and once per settled resize, and stop when the leaf is gone: %s", got)
+	}
+}

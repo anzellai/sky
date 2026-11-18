@@ -838,6 +838,7 @@ update msg model =
 | `Sub.onFragment` | `(String -> msg) -> Sub msg` | Receive the URL fragment (after `#`) at load and on every change, on Sky.Live, Sky.Spa and the `Std.App` web targets |
 | `Sub.onQuery` | `(Dict String String -> msg) -> Sub msg` | Receive the URL query string, parsed as `Http.parseQuery` does, at load (when not empty) and on every change (a `sky-nav` link, `Nav.pushUrl` / `replaceUrl`, Back / Forward); untrusted input |
 | `Sub.onBreakpoint` | `List Int -> (Int -> msg) -> Sub msg` | Receive the largest listed width the viewport is at least (0 below all), at load and only when a resize crosses one of the widths (never one Msg per pixel) |
+| `Sub.viewport` | `(Int -> msg) -> Sub msg` | Receive the viewport width in CSS pixels (0 to 100000), at load and after a resize settles (150 ms), never the same width twice; on Sky.Live one server request per settled resize, so prefer `onBreakpoint` for a few fixed widths |
 | `Sub.connection` | `(ConnectionState -> msg) -> Sub msg` | The Sky.Spa client's connection state on every change: `Online \| Reconnecting \| Offline { pending : Int }` (never fires on Sky.Live or a terminal) — see [Network resilience](skyspa/overview.md#network-resilience--offline-sleep-and-overload-are-the-runtimes-job) |
 | `Sub.batch` | `List (Sub msg) -> Sub msg` | Combine timer + topic + others |
 

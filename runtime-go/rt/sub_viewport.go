@@ -7,7 +7,8 @@ import (
 	"strings"
 )
 
-// Sub.onBreakpoint and Sub.onQuery — two URL / window facts as subscriptions.
+// Sub.onBreakpoint, Sub.viewport and Sub.onQuery — URL and window facts as
+// subscriptions.
 //
 // Sub.onBreakpoint: the viewport width, reduced to the app's own breakpoints.
 // The app lists widths (`[ 600, 900 ]`); it receives the largest listed width
@@ -19,6 +20,16 @@ import (
 // bucket again from the reported width (the report is untrusted) and dispatches
 // only a changed bucket (live.go handleEvent). The Sky.Spa wasm client reads
 // `innerWidth` itself (live_wasm.go).
+//
+// Sub.viewport: the viewport width in CSS pixels, at load and again after a
+// resize settles (no resize event for 150 ms), never the same width twice.
+// It shares the breakpoint path: one `resize` listener and one `__skyViewport`
+// report. Sky.Live's client learns that the app wants the width from the page
+// config (`vp`) and the `X-Sky-Viewport` header (`1` / `0`); the server
+// clamps the reported width (viewportWidthOf) and dispatches only a changed
+// width. A report that changes both the breakpoint and the width dispatches
+// the breakpoint Msg first, then the width Msg. Each settled resize is one
+// round trip to the server on Sky.Live; Sub.onBreakpoint sends far fewer.
 //
 // Sub.onQuery: the URL query string, parsed (first value of a repeated key,
 // percent-decoded, as `Http.parseQuery`). Sky.Live's server sees the query of
@@ -34,6 +45,51 @@ import (
 //	Std.Sub.onBreakpoint : List Int -> (Int -> msg) -> Sub msg
 func Sub_onBreakpoint(widths any, toMsg any) SkySub {
 	return subT{kind: "breakpoint", breakpoints: normaliseBreakpoints(asList(widths)), toMsg: toMsg}
+}
+
+// Sub_viewport builds the "viewport" Sub. Sky-side surface:
+//
+//	Std.Sub.viewport : (Int -> msg) -> Sub msg
+func Sub_viewport(toMsg any) SkySub {
+	return subT{kind: "viewport", toMsg: toMsg}
+}
+
+// maxViewportWidth bounds a reported width. No screen is this wide; a larger
+// report is client data that is wrong, not a width.
+const maxViewportWidth = 100000
+
+// viewportWidthOf turns a reported width (client data, a JSON number) into
+// whole CSS pixels in 0 .. maxViewportWidth.
+func viewportWidthOf(reported float64) int {
+	if !(reported > 0) {
+		return 0
+	}
+	if reported >= maxViewportWidth {
+		return maxViewportWidth
+	}
+	return int(reported)
+}
+
+// viewportToMsg is the `toMsg` of the "viewport" leaf of a Sub tree, or nil
+// when the tree has none. Several leaves: the last one wins.
+func viewportToMsg(sub any) any {
+	s, ok := sub.(subT)
+	if !ok {
+		return nil
+	}
+	switch s.kind {
+	case "viewport":
+		return s.toMsg
+	case "batch":
+		var found any
+		for _, c := range s.batch {
+			if f := viewportToMsg(c); f != nil {
+				found = f
+			}
+		}
+		return found
+	}
+	return nil
 }
 
 // Sub_onQuery builds the "query" Sub. Sky-side surface:
@@ -122,6 +178,15 @@ func breakpointsHeader(widths []int) string {
 		parts[i] = strconv.Itoa(w)
 	}
 	return strings.Join(parts, ",")
+}
+
+// viewportFlag renders whether the app has a Sub.viewport leaf as the
+// `X-Sky-Viewport` value the Sky.Live client reads.
+func viewportFlag(wants bool) string {
+	if wants {
+		return "1"
+	}
+	return "0"
 }
 
 // queryDict parses a raw query string (with or without the leading `?`) into

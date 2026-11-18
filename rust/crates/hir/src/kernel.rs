@@ -831,6 +831,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "subscribeWebSocket",
             "onFragment",
             "onBreakpoint",
+            "viewport",
             "onQuery",
         ],
     ),
