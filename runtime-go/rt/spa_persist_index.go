@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+	"unsafe"
 )
 
 // spaTopObject is the top level of a JSON document that
@@ -35,10 +36,23 @@ type spaTopObject struct {
 	vals []string // the exact source text of each value
 }
 
+// jsonValidString is json.Valid(s) without copying s. []byte(s) copied the
+// whole document on Go 1.27 (1 MB per call for a 1 MB model), where
+// encoding/json runs on encoding/json/v2 and the compiler can no longer prove
+// that Valid leaves the bytes alone, so it stops eliding the copy. Valid only
+// reads its argument and keeps no reference to it, so a read-only view of
+// the string's bytes is safe.
+func jsonValidString(s string) bool {
+	if s == "" {
+		return false
+	}
+	return json.Valid(unsafe.Slice(unsafe.StringData(s), len(s)))
+}
+
 // spaIndexTop indexes s. ok is false exactly when json.Unmarshal into a
 // map[string]json.RawMessage fails.
 func spaIndexTop(s string) (x spaTopObject, ok bool) {
-	if !json.Valid([]byte(s)) {
+	if !jsonValidString(s) {
 		return x, false
 	}
 	x.src = s
