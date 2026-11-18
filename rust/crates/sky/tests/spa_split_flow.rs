@@ -10250,6 +10250,56 @@ fn the_viewport_breakpoint_and_query_reach_update_on_live_and_build_for_every_ta
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// An app with no routes and a NotFound page (`App.withNotFound ()`, no
+/// `App.withRoutes`) keeps its own `page : String` model field on every web
+/// target. Before v0.29.14 Sky.Live wrote the NotFound page (`()`) into that
+/// field on every request and the view rendered `{}`: with no routes the
+/// runtime owns no page type, so it now writes the field only for an app with
+/// routes. An unknown path still answers 404, with the app's view. A
+/// route-less `web:app` build has no server render: its backend serves the
+/// client shell, and the wasm client writes the page field only
+/// for an app with routes (`spaApplyURL`; the server-render resolver is covered
+/// by `TestSpaSsrResolveModel_RoutelessAppKeepsUserPageField`).
+#[test]
+#[cfg(unix)]
+fn a_routeless_app_keeps_its_own_page_field_on_live_and_web_app() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("std-app-routeless-page", &[]);
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let want = "PAGE=user-page-value COUNT=0";
+    let check = |port: u16, what: &str| {
+        let jar = proj.join(format!("jar-{port}.txt"));
+        for path in ["/", "/no/such/page"] {
+            let page = curl_get_jar(port, path, &jar);
+            assert!(
+                page.contains(want) && !page.contains("PAGE={}"),
+                "{what} GET {path}: the view must see the model's own page field:\n{page}"
+            );
+        }
+    };
+    let (live, port) = start_live_app(&proj);
+    check(port, "Sky.Live");
+    let status = curl_status_ctype(port, "/no/such/page").map(|(c, _)| c);
+    drop(live);
+    assert_eq!(
+        status,
+        Some(404),
+        "Sky.Live: an unknown path is still a 404"
+    );
+    let (split, port) = start_split_backend(&proj);
+    let page = curl_get_jar(port, "/", &proj.join("jar-split.txt"));
+    drop(split);
+    assert!(
+        page.contains("spa-boot.") && !page.contains("PAGE={}"),
+        "web:app backend GET /: the client shell is served:\n{page}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// `Sub.onFragment`: the Sky.Live app receives the fragment its browser
 /// client reports (the `__skyFragment` event, the path the client JS takes at
 /// load and on hashchange) and renders it; the same source builds as a

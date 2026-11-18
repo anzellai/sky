@@ -48,6 +48,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- Sky.Live: an app with no routes and a NotFound page (`App.withNotFound`
+  and no `App.withRoutes`) had the NotFound page written into its model's
+  `page` field on every request, whatever the field's type. A `page :
+  String` field then held `()` and the view showed `{}`. With no routes the
+  runtime owns no page type, so it now writes the `page` field only for an
+  app with routes. An unknown path on a route-less app still answers 404
+  with the app's view. The Sky.Spa client and its server render already
+  wrote the field only for an app with routes.
 - Sky.Live: an `html` patch on a `table`, `thead`, `tbody`, `tfoot` or `tr`
   kept no rows or cells. The client parsed the new markup inside a `div`,
   where the HTML parser drops table tags, so a table whose rows changed when

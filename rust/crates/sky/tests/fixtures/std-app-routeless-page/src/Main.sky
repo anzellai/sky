@@ -1,0 +1,59 @@
+module Main exposing (main)
+
+-- An app with no routes and a NotFound page keeps its own `page` field: the
+-- runtime writes a page field only for an app with routes (v0.29.14).
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Sub exposing (Sub)
+import Std.Ui as Ui
+
+type alias Model =
+    { page : String
+    , count : Int
+    }
+
+type Msg
+    = Bump
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = "user-page-value", count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Bump ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> Ui.Element Msg
+view m =
+    Ui.column
+        []
+        [ Ui.el
+              [ Ui.htmlAttribute "id" "state" ]
+              (Ui.text ("PAGE=" ++ m.page ++ " COUNT=" ++ String.fromInt m.count))
+        , Ui.button [] { onPress = Just Bump, label = Ui.text "bump" }
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> App.withNotFound ())

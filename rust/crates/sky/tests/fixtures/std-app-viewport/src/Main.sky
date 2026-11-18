@@ -1,8 +1,7 @@
 module Main exposing (main)
 
 -- Sub.onBreakpoint and Sub.onQuery: the viewport's breakpoint and the URL
--- query reach `update` on every web target. The model field is not named
--- `page`: Sky.Live's routing writes the fallback page into a `page` field.
+-- query reach `update` on every web target.
 -- The buttons move the query with Std.Nav (scripts/viewport-e2e.sh).
 
 import Sky.Core.Prelude exposing (..)
