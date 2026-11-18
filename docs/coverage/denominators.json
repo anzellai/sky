@@ -13,7 +13,7 @@
     "explicit_exposing": {
       "entries": 3104,
       "modules": 134,
-      "unfiltered_entries": 5045
+      "unfiltered_entries": 5046
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
@@ -29,10 +29,10 @@
     "types": 436,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 5223,
-      "hidden_by_exposing": 1941,
+      "entries": 5224,
+      "hidden_by_exposing": 1942,
       "types": 605,
-      "values": 4618
+      "values": 4619
     },
     "values": 2846
   },
