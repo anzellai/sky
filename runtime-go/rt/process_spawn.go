@@ -143,10 +143,11 @@ type procHandle struct {
 	subActive   bool
 	closed      bool
 	sess        *liveSession
-	// treeCookie / treeStart identify the child's tree for close (D-1,
-	// process_tree.go).
+	// treeCookie / treeStart / treeMarks identify the child's tree for close
+	// (D-1, process_tree.go).
 	treeCookie string
 	treeStart  uint64
+	treeMarks  procFdMarks
 	closeOnce  sync.Once
 
 	// D-3: a process no Sky.Live session owns is released after it exits,
@@ -412,6 +413,14 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 	closeAll(childSide)
 	h.pid = cmd.Process.Pid
 	h.treeStart = procStartTime(h.pid)
+	// The child-side descriptors its tree inherits (a witness where the
+	// cookie cannot be read). Our read ends and the master stay open until
+	// shutdown has swept, so the marks name this child's pipes and terminal.
+	if s.pty {
+		h.treeMarks = procFdMarksOf(nil, h.ptySlave)
+	} else {
+		h.treeMarks = procFdMarksOf(sources[:], nil)
+	}
 	h.id = newHandleID()
 	// The owner is recorded before the handle is published, so no caller
 	// can see it unowned.
@@ -574,7 +583,7 @@ func (h *procHandle) shutdown() {
 		// End the child's whole tree first, while its parent links are
 		// intact: a shell's background jobs are in groups of their own and
 		// outlive a kill of the child's group (D-1, process_tree.go).
-		procSweep(procTreeRoot{pid: h.pid, start: h.treeStart, cookie: h.treeCookie})
+		procSweep(procTreeRoot{pid: h.pid, start: h.treeStart, cookie: h.treeCookie, marks: h.treeMarks})
 		select {
 		case <-h.exited:
 		default:

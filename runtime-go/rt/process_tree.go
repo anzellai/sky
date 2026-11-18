@@ -22,7 +22,10 @@ package rt
 //  3. an environment cookie (procTreeCookieEnv): every child started without
 //     withClearEnv carries a random value in its environment, which its
 //     descendants inherit, so a descendant that left the session and was
-//     re-parented is still found.
+//     re-parented is still found. Where the environment cannot be read
+//     (macOS 27 hides it for Apple platform binaries), a descendant that
+//     still holds the child's stdout / stderr pipe or its PTY slave is found
+//     by that descriptor (procFdMarks, process_tree_darwin.go).
 //
 // Later rounds (a process may fork while the first round kills) match only by
 // session and cookie, never by parent link: once the child is dead its pid
@@ -39,7 +42,10 @@ package rt
 //
 // Residual, stated in AGENTS.md: a descendant that clears its environment,
 // leaves the session and double-forks (a deliberate daemon) cannot be told
-// apart from any other process of the same user, and is not killed.
+// apart from any other process of the same user, and is not killed. On macOS
+// the environment of an Apple platform binary cannot be read, so there the
+// descriptor witness decides: such a descendant is found while it holds the
+// child's stdout, stderr or PTY.
 //
 // Sweeps are batched (procSweep): the shutdowns that App.stop, a session's
 // end and the exit drain start concurrently share one snapshot.
@@ -73,6 +79,16 @@ type procTreeRoot struct {
 	pid    int
 	start  uint64 // the child's start time, recorded at spawn
 	cookie string // "" for a withClearEnv child
+	marks  procFdMarks
+}
+
+// procFdMarks are descriptors that only a child's tree holds (the child-side
+// pipe ends, the PTY slave), by the kernel's handle of each. They are the
+// witness where the cookie cannot be read: macOS hides the environment of an
+// Apple platform binary (process_tree_darwin.go). Empty on other platforms.
+type procFdMarks struct {
+	pipes []uint64 // pipe-end handles (macOS proc_info pipe_handle)
+	ttys  []uint64 // terminal device numbers
 }
 
 // procEnvState is the outcome of reading one variable from a process.
@@ -160,13 +176,10 @@ func procTreeSweepNow(roots []procTreeRoot) {
 		return // cannot list processes: fail closed
 	}
 	rootPid := map[int]procTreeRoot{}
-	cookies := map[string]bool{}
 	for _, r := range roots {
 		rootPid[r.pid] = r
-		if r.cookie != "" {
-			cookies[r.cookie] = true
-		}
 	}
+	witness := newProcTreeWitness(roots)
 	children := map[int][]procInfo{}
 	for _, p := range snap {
 		children[p.ppid] = append(children[p.ppid], p)
@@ -199,7 +212,7 @@ func procTreeSweepNow(roots []procTreeRoot) {
 		if _, done := targets[p.pid]; done || p.pid <= 1 || p.pid == self {
 			continue
 		}
-		if member, _ := procTreeMember(p, rootPid, snap, cookies); member {
+		if member, _ := procTreeMember(p, rootPid, snap, witness); member {
 			add(p)
 		}
 	}
@@ -217,7 +230,7 @@ func procTreeSweepNow(roots []procTreeRoot) {
 			if p.pid <= 1 || p.pid == self {
 				continue
 			}
-			member, maybe := procTreeMember(p, rootPid, snap, cookies)
+			member, maybe := procTreeMember(p, rootPid, snap, witness)
 			if member {
 				procKillVerified(p)
 				found++
@@ -238,7 +251,7 @@ func procTreeSweepNow(roots []procTreeRoot) {
 // process holds the root's pid (if one does, the pid was reused and the
 // session with that id is not the child's). unsure is true when p is not
 // known to be a member because its environment read may be torn.
-func procTreeMember(p procInfo, roots map[int]procTreeRoot, snap []procInfo, cookies map[string]bool) (member, unsure bool) {
+func procTreeMember(p procInfo, roots map[int]procTreeRoot, snap []procInfo, w procTreeWitness) (member, unsure bool) {
 	for _, id := range [2]int{p.sid, p.pgid} {
 		r, ok := roots[id]
 		if !ok {
@@ -249,7 +262,7 @@ func procTreeMember(p procInfo, roots map[int]procTreeRoot, snap []procInfo, coo
 		}
 		return true, false
 	}
-	if len(cookies) == 0 {
+	if len(w.cookies) == 0 && len(w.pipes) == 0 && len(w.ttys) == 0 {
 		return false, false
 	}
 	// A process that started before every root cannot descend from one:
@@ -257,11 +270,44 @@ func procTreeMember(p procInfo, roots map[int]procTreeRoot, snap []procInfo, coo
 	if p.start != 0 && procRootsMinStart(roots) != 0 && p.start < procRootsMinStart(roots) {
 		return false, false
 	}
-	c, st := procCookieOf(p.pid)
-	if st == procEnvUnsure {
-		return false, true
+	if len(w.cookies) > 0 {
+		c, st := procCookieOf(p.pid)
+		if st == procEnvFound && w.cookies[c] {
+			return true, false
+		}
+		if st == procEnvUnsure {
+			unsure = true
+		}
 	}
-	return st == procEnvFound && cookies[c], false
+	// The descriptor witness: a process whose environment cannot be read
+	// (or that cleared it) but still holds the child's output or terminal.
+	if procHoldsFdMark(p.pid, w.pipes, w.ttys) {
+		return true, false
+	}
+	return false, unsure
+}
+
+// procTreeWitness is what a sweep matches a process against, over all its
+// roots: the cookies, and the descriptor marks (procFdMarks).
+type procTreeWitness struct {
+	cookies     map[string]bool
+	pipes, ttys map[uint64]bool
+}
+
+func newProcTreeWitness(roots []procTreeRoot) procTreeWitness {
+	w := procTreeWitness{cookies: map[string]bool{}, pipes: map[uint64]bool{}, ttys: map[uint64]bool{}}
+	for _, r := range roots {
+		if r.cookie != "" {
+			w.cookies[r.cookie] = true
+		}
+		for _, h := range r.marks.pipes {
+			w.pipes[h] = true
+		}
+		for _, d := range r.marks.ttys {
+			w.ttys[d] = true
+		}
+	}
+	return w
 }
 
 // procRootsMinStart is the earliest known start time among the roots (0 when

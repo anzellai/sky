@@ -2,7 +2,10 @@
 
 package rt
 
-import "errors"
+import (
+	"errors"
+	"os"
+)
 
 // process_tree_other.go — a Unix without a process listing the runtime knows
 // (the BSDs, illumos): the sweep fails closed and kills nothing beyond the
@@ -17,3 +20,7 @@ func procKillVerified(p procInfo)                              {}
 
 // procIsZombie: no process listing here, so a zombie cannot be told apart.
 func procIsZombie(pid int) bool { return false }
+
+func procFdMarksOf(readEnds []*os.File, ptySlave *os.File) procFdMarks { return procFdMarks{} }
+
+func procHoldsFdMark(pid int, pipes, ttys map[uint64]bool) bool { return false }

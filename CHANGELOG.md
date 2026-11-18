@@ -204,6 +204,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `*rt.jsonOrderedObject` on Go 1.27). The `JsonEncodeFailure` now says
   `the Float NaN has no JSON form` (or `+Inf`, `-Inf`, or `the value refers
   to itself (a cycle)`) on every Go release. The class is unchanged.
+- `Process.close` on macOS 27 left a descendant running when it had left
+  the child's session, double-forked and run an Apple program (`sleep`,
+  `sh`, `perl`, …). macOS 27 no longer shows the environment of an Apple
+  program to another process, so the tree cookie could not be read. Close
+  now also finds a descendant by the child's stdout or stderr pipe, or its
+  PTY, that the descendant still holds.
 
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 
