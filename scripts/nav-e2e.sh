@@ -30,9 +30,10 @@
 #          first paint (the load-time fragment report is a no-op)
 #
 # Then it builds rust/crates/sky/tests/fixtures/std-app-viewport the same two
-# ways and drives Sub.onBreakpoint and Sub.onQuery (scripts/viewport-verify.mjs):
-# the breakpoint and the query at load, no Msg (and on Sky.Live no request)
-# while a resize stays inside one breakpoint, one per crossing, and the query
+# ways and drives Sub.onBreakpoint, Sub.viewport and Sub.onQuery
+# (scripts/viewport-verify.mjs): the breakpoint, the width and the query at
+# load, no breakpoint Msg and one width (on Sky.Live one request) after a burst
+# of resizes inside one breakpoint, one request per crossing, and the query
 # after Nav.pushUrl and Back.
 #
 # Browsers: SKY_E2E_BROWSERS (default "chromium,webkit"); SKY_E2E_CHANNEL=chrome
@@ -85,9 +86,9 @@ echo "==> building fixture std-app-viewport (--target web:app, --target web)"
 VP_SPA="$TMP/vp/.skyapp/web-app/.split/backend/sky-out/app"
 VP_LIVE="$TMP/vp/.skyapp/web/sky-out/app"
 [ -x "$VP_SPA" ] && [ -x "$VP_LIVE" ] || { echo "nav-e2e: std-app-viewport binaries not built" >&2; exit 1; }
-echo "==> driving Sub.onBreakpoint and Sub.onQuery in a browser"
+echo "==> driving Sub.onBreakpoint, Sub.viewport and Sub.onQuery in a browser"
 SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
   with_timeout 600 node "$ROOT/scripts/viewport-verify.mjs" "$VP_SPA" "$VP_LIVE" --port "$(( ${NAV_E2E_PORT:-9381} + 10 ))"
 
-echo "nav-e2e: PASS — Std.Nav moves the address bar the same way on web:app and Sky.Live; Sub.onBreakpoint and Sub.onQuery match."
+echo "nav-e2e: PASS — Std.Nav moves the address bar the same way on web:app and Sky.Live; Sub.onBreakpoint, Sub.viewport and Sub.onQuery match."
 rm -rf "$TMP"

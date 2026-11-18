@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 // scripts/viewport-verify.mjs
 //
-// Browser e2e for Sub.onBreakpoint and Sub.onQuery (runtime-go/rt/sub_viewport.go).
+// Browser e2e for Sub.onBreakpoint, Sub.viewport and Sub.onQuery
+// (runtime-go/rt/sub_viewport.go).
 // Drives the fixture rust/crates/sky/tests/fixtures/std-app-viewport on BOTH
 // targets (the web:app split and Sky.Live), in each browser, under
 // SKY_CSP=strict. Run by scripts/nav-e2e.sh after the Std.Nav scenarios.
 //
-//   load     a page opened at /?page=7 at width 700: BP=600 PAGE=7, one query
-//   resize   resizes inside one breakpoint deliver nothing (on Sky.Live: no
-//            __skyViewport request); crossing 900 gives 900, below 600 gives 0
+//   load     a page opened at /?page=7 at width 700: BP=600 PAGE=7, one query,
+//            W=700 (on Sky.Live: one __skyViewport request carries both)
+//   resize   a burst of resizes inside one breakpoint delivers no breakpoint
+//            and one width after it settles, W=899 (on Sky.Live: exactly one
+//            request); crossing 900 gives 900 and W=1000, below 600 gives 0
+//            and W=400 (on Sky.Live: one request per crossing, which carries
+//            the width too, so three requests after load in all)
 //   nav      Nav.pushUrl "/?page=8" and "/" deliver the new query (an empty
 //            Dict for "/"); Back delivers the query before
 //
@@ -82,6 +87,16 @@ async function waitState(page, pred, ms) {
   }
   return v;
 }
+const width = async (page) => (await page.locator("#width").innerText()).trim();
+async function waitWidth(page, want, ms) {
+  const deadline = Date.now() + ms;
+  let v = await width(page);
+  while (v !== want && Date.now() < deadline) {
+    await page.waitForTimeout(50);
+    v = await width(page);
+  }
+  return v;
+}
 const path = (page) => page.evaluate(() => location.pathname + location.search);
 
 async function scenario(browserName, target, base) {
@@ -101,23 +116,36 @@ async function scenario(browserName, target, base) {
     await page.goto(`${base}/?page=7`, { waitUntil: "load" });
     const s0 = await waitState(page, (v) => v.startsWith("BP=600 PAGE=7"), 15000);
     check(`${tag} load: breakpoint and query at load`, s0 === "BP=600 PAGE=7 QUERIES=1", s0);
+    const w0 = await waitWidth(page, "W=700", 10000);
+    check(`${tag} load: width at load`, w0 === "W=700", w0);
+    if (target === "live") check(`${tag} load: one request for the breakpoint and the width`, reports.length === 1, `${reports.length} reports`);
 
     const before = reports.length;
+    // A burst: the resizes come faster than the 150 ms settle time, so the
+    // width is delivered once, after the last one.
     for (const w of [720, 780, 850, 899]) {
       await page.setViewportSize({ width: w, height: 800 });
-      await page.waitForTimeout(120);
+      await page.waitForTimeout(30);
     }
     await page.waitForTimeout(400);
     const s1 = await state(page);
-    check(`${tag} resize: no Msg inside one breakpoint`, s1.startsWith("BP=600"), s1);
-    if (target === "live") check(`${tag} resize: no request inside one breakpoint`, reports.length === before, `${reports.length - before} reports`);
+    check(`${tag} resize: no breakpoint Msg inside one breakpoint`, s1.startsWith("BP=600"), s1);
+    const w1 = await waitWidth(page, "W=899", 5000);
+    check(`${tag} resize: one width after the burst settles`, w1 === "W=899", w1);
+    if (target === "live") check(`${tag} resize: one request inside one breakpoint, after it settles`, reports.length === before + 1, `${reports.length - before} reports`);
     await page.setViewportSize({ width: 1000, height: 800 });
     const s2 = await waitState(page, (v) => v.startsWith("BP=900"), 10000);
     check(`${tag} resize: crossing 900`, s2.startsWith("BP=900"), s2);
+    const w2 = await waitWidth(page, "W=1000", 5000);
+    check(`${tag} resize: the width after crossing 900`, w2 === "W=1000", w2);
+    await page.waitForTimeout(400);
     await page.setViewportSize({ width: 400, height: 800 });
     const s3 = await waitState(page, (v) => v.startsWith("BP=0 "), 10000);
     check(`${tag} resize: below every width is 0`, s3.startsWith("BP=0 "), s3);
-    if (target === "live") check(`${tag} resize: one request per crossing`, reports.length === before + 2, `${reports.length - before} reports`);
+    const w3 = await waitWidth(page, "W=400", 5000);
+    check(`${tag} resize: the width below every breakpoint`, w3 === "W=400", w3);
+    await page.waitForTimeout(400);
+    if (target === "live") check(`${tag} resize: one request per crossing, none after it settles`, reports.length === before + 3, `${reports.length - before} reports`);
 
     await page.click("#page8");
     const s4 = await waitState(page, (v) => v.includes("PAGE=8"), 10000);
@@ -145,7 +173,7 @@ try {
     for (const b of BROWSERS) await scenario(b, target, `http://127.0.0.1:${port}`);
     await stopApp(app);
   }
-  console.log(failures.length ? `VERDICT=FAIL ${failures.join("; ")}` : "VERDICT=PASS Sub.onBreakpoint and Sub.onQuery behave the same on web:app and Sky.Live");
+  console.log(failures.length ? `VERDICT=FAIL ${failures.join("; ")}` : "VERDICT=PASS Sub.onBreakpoint, Sub.viewport and Sub.onQuery behave the same on web:app and Sky.Live");
   process.exitCode = failures.length ? 2 : 0;
 } catch (e) {
   console.error("HARNESS ERROR:", e.message);

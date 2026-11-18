@@ -10628,7 +10628,7 @@ fn jwt_claim(token: &str, name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `Sub.onBreakpoint` and `Sub.onQuery`: on Sky.Live the query of each page
+/// `Sub.onBreakpoint`, `Sub.viewport` and `Sub.onQuery`: on Sky.Live the query of each page
 /// request reaches `update` before the page renders (a reload with the same
 /// query keeps it), and the width the browser reports (the `__skyViewport`
 /// event the client sends when it crosses a breakpoint) reaches it as the
@@ -10643,8 +10643,9 @@ fn the_viewport_breakpoint_and_query_reach_update_on_live_and_build_for_every_ta
     let front = split_file(&proj, "frontend/src/Main.sky");
     assert!(
         front.contains("Sub.onBreakpoint [ 600, 900 ] LayoutChanged")
+            && front.contains("Sub.viewport WidthChanged")
             && front.contains("Sub.onQuery QueryChanged"),
-        "the client keeps both subscriptions:\n{log}\n{front}"
+        "the client keeps all three subscriptions:\n{log}\n{front}"
     );
     let tui = Command::new(SKY)
         .args(["check", "--target", "terminal:tui", "src/Main.sky"])
@@ -10666,8 +10667,10 @@ fn the_viewport_breakpoint_and_query_reach_update_on_live_and_build_for_every_ta
     let jar = proj.join("jar.txt");
     let page = curl_get_jar(port, "/?page=7", &jar);
     assert!(
-        page.contains("BP=-1 PAGE=7 QUERIES=1") && page.contains(r#""bp":[600,900]"#),
-        "the first paint shows the query and carries the widths:\n{page}"
+        page.contains("BP=-1 PAGE=7 QUERIES=1")
+            && page.contains(r#""bp":[600,900]"#)
+            && page.contains(r#""vp":true"#),
+        "the first paint shows the query and carries the widths and the width flag:\n{page}"
     );
     let page = curl_get_jar(port, "/?page=7", &jar);
     assert!(
@@ -10713,16 +10716,21 @@ fn the_viewport_breakpoint_and_query_reach_update_on_live_and_build_for_every_ta
     };
     assert_eq!(post(700), "200");
     assert_eq!(
-        post(899),
+        post(700),
         "204",
-        "a report in the same breakpoint is a no-op"
+        "a report with the same breakpoint and the same width is a no-op"
+    );
+    assert_eq!(
+        post(899),
+        "200",
+        "a new width in the same breakpoint reaches update"
     );
     std::thread::sleep(std::time::Duration::from_millis(300));
     let page = curl_get_jar(port, "/?page=8", &jar);
     drop(live);
     assert!(
-        page.contains("BP=600 PAGE=8 QUERIES=2"),
-        "the breakpoint and the changed query reach update:\n{page}"
+        page.contains("BP=600 PAGE=8 QUERIES=2") && page.contains("W=899"),
+        "the breakpoint, the width and the changed query reach update:\n{page}"
     );
     let _ = std::fs::remove_dir_all(&proj);
 }

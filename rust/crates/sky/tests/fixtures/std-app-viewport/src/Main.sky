@@ -1,7 +1,7 @@
 module Main exposing (main)
 
--- Sub.onBreakpoint and Sub.onQuery: the viewport's breakpoint and the URL
--- query reach `update` on every web target.
+-- Sub.onBreakpoint, Sub.viewport and Sub.onQuery: the viewport's
+-- breakpoint, its width and the URL query reach `update` on every web target.
 -- The buttons move the query with Std.Nav (scripts/viewport-e2e.sh).
 
 import Sky.Core.Prelude exposing (..)
@@ -13,12 +13,14 @@ import Std.Ui as Ui
 
 type alias Model =
     { breakpoint : Int
+    , width : Int
     , pageParam : String
     , queries : Int
     }
 
 type Msg
     = LayoutChanged Int
+    | WidthChanged Int
     | QueryChanged (Dict String String)
     | GoPage String
     | GoHome
@@ -26,7 +28,9 @@ type Msg
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { breakpoint = -1, pageParam = "none", queries = 0 }, Cmd.none )
+    ( { breakpoint = -1, width = -1, pageParam = "none", queries = 0 }
+    , Cmd.none
+    )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -35,6 +39,9 @@ update msg model =
 
         LayoutChanged b ->
             ( { model | breakpoint = b }, Cmd.none )
+
+        WidthChanged w ->
+            ( { model | width = w }, Cmd.none )
 
         QueryChanged q ->
             ( { model
@@ -69,6 +76,9 @@ view m =
                       ++ m.pageParam
                       ++ " QUERIES="
                       ++ String.fromInt m.queries))
+        , Ui.el
+              [ Ui.htmlAttribute "id" "width" ]
+              (Ui.text ("W=" ++ String.fromInt m.width))
         , button "page8" (GoPage "8")
         , button "home" GoHome
         ]
@@ -78,6 +88,7 @@ subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.batch
         [ Sub.onBreakpoint [ 600, 900 ] LayoutChanged
+        , Sub.viewport WidthChanged
         , Sub.onQuery QueryChanged
         ]
 
