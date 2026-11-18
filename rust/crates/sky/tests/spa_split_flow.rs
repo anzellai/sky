@@ -10462,8 +10462,8 @@ fn a_wrong_init_seed_is_reported_at_init_for_every_target() {
 /// class, the route, the in-flight count, the limit and the VERIFIED session:
 /// a forged `sky_spa` cookie (or a made-up Sky.Live id) is `Nothing`, so a
 /// client cannot dodge a per-session rule by editing its cookie
-/// (`TestAdmission_HookSees*` in runtime-go/rt/admission_test.go pin the
-/// verified case).
+/// and a real session (the Sky.Live cookie a page load sets, the `sky_spa`
+/// token a server sign-in sets) reaches the hook as `Just` its own id.
 #[test]
 fn an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -10478,12 +10478,15 @@ fn an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend() {
         return;
     }
     assert!(out.status.success(), "the web:app build failed:\n{log}");
-    let probe_with = |port: u16, mode: &str, cookie: &str| -> (String, String) {
+    let probe_session = |port: u16, mode: &str, cookie: &str, expect: &str| -> (String, String) {
         let mut cmd = Command::new("curl");
         cmd.args(["-s", "--max-time", "30", "-o", "/dev/null", "-D", "-"])
             .args(["-H", &format!("X-Load-Test: {mode}")]);
         if !cookie.is_empty() {
             cmd.args(["-H", &format!("Cookie: {cookie}")]);
+        }
+        if !expect.is_empty() {
+            cmd.args(["-H", &format!("X-Expect-Session: {expect}")]);
         }
         let out = cmd
             .arg(format!("http://127.0.0.1:{port}/api/ping"))
@@ -10506,7 +10509,30 @@ fn an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend() {
             .unwrap_or_default();
         (status, retry)
     };
+    let probe_with = |port: u16, mode: &str, cookie: &str| probe_session(port, mode, cookie, "");
     let probe = |port: u16, mode: &str| probe_with(port, mode, "");
+    // The positive case: a request that carries a real session reaches the
+    // hook with `load.session = Just <that id>`. The hook admits it only when
+    // the id equals `X-Expect-Session`, throttles another id (6 s) and
+    // Nothing (4 s).
+    let real_session = |port: u16, what: &str, cookie: &str, sid: &str| {
+        assert!(!sid.is_empty(), "{what}: the client got no session id");
+        assert_eq!(
+            probe_session(port, "session-is", cookie, sid),
+            ("200".into(), String::new()),
+            "{what}: the hook sees the request's own session id"
+        );
+        assert_eq!(
+            probe_session(port, "session-is", cookie, "someone-else"),
+            ("429".into(), "6".into()),
+            "{what}: the hook's session is the real id, not any value"
+        );
+        assert_eq!(
+            probe_session(port, "session-is", "", sid),
+            ("429".into(), "4".into()),
+            "{what}: no cookie is no session"
+        );
+    };
     let check = |port: u16, what: &str| {
         assert_eq!(
             probe(port, "none"),
@@ -10540,11 +10566,66 @@ fn an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend() {
     };
     let (live, port) = start_live_app(&proj);
     check(port, "Sky.Live");
+    // Sky.Live: the page request opens the session and sets its cookie, as
+    // the browser's first load does. Its value is the session id.
+    let jar = proj.join("admission-jar.txt");
+    let _ = curl_get_jar(port, "/", &jar);
+    let (name, sid) = std::fs::read_to_string(&jar)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            (cols.len() >= 7 && cols[5].starts_with("sky_sid"))
+                .then(|| (cols[5].to_string(), cols[6].to_string()))
+        })
+        .last()
+        .unwrap_or_default();
+    real_session(port, "Sky.Live", &format!("{name}={sid}"), &sid);
     drop(live);
     let (split, port) = start_split_backend(&proj);
     check(port, "split backend");
+    // The split backend: SignIn is a server arm that writes the session, so
+    // its answer sets the signed `sky_spa` cookie, as the wasm client's first
+    // sign-in does. The id is the token's `sid` claim.
+    let login = curl_post_full(port, "/_rpc/SignIn", r#"{"session":null,"uid":"u1"}"#, None);
+    let cookie = login
+        .as_ref()
+        .and_then(|(_, _, c)| c.clone())
+        .unwrap_or_else(|| panic!("SignIn set no sky_spa cookie: {login:?}"));
+    let token = cookie.strip_prefix("sky_spa=").unwrap_or_default();
+    let sid = jwt_claim(token, "sid");
+    real_session(port, "split backend", &cookie, &sid);
     drop(split);
     let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// The string claim `name` of a JWT's payload (no signature check: the test
+/// reads the token the server just issued).
+fn jwt_claim(token: &str, name: &str) -> String {
+    let payload = token.split('.').nth(1).unwrap_or_default();
+    let mut bits: u32 = 0;
+    let mut n = 0;
+    let mut bytes = Vec::new();
+    for c in payload.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' | b'+' => 62,
+            b'_' | b'/' => 63,
+            _ => continue,
+        };
+        bits = (bits << 6) | u32::from(v);
+        n += 6;
+        if n >= 8 {
+            n -= 8;
+            bytes.push((bits >> n) as u8);
+        }
+    }
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get(name).and_then(|s| s.as_str()).map(str::to_string))
+        .unwrap_or_default()
 }
 
 /// `Sub.onBreakpoint` and `Sub.onQuery`: on Sky.Live the query of each page
