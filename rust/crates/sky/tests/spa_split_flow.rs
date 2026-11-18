@@ -9443,6 +9443,15 @@ fn web_app_build(
     name: &str,
     edits: &[(&str, &str, &str)],
 ) -> (PathBuf, std::process::Output, String) {
+    web_app_build_entry(name, "src/Main.sky", edits)
+}
+
+/// [`web_app_build`] for the app entry `entry` (`src/Other.sky`).
+fn web_app_build_entry(
+    name: &str,
+    entry: &str,
+    edits: &[(&str, &str, &str)],
+) -> (PathBuf, std::process::Output, String) {
     let proj = scratch();
     let _ = std::fs::remove_dir_all(&proj);
     copy_tree(
@@ -9462,7 +9471,7 @@ fn web_app_build(
         std::fs::write(&p, src.replacen(from, to, 1)).unwrap();
     }
     let out = Command::new(SKY)
-        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .args(["build", "--target", "web:app", entry])
         .current_dir(&proj)
         .output()
         .expect("run sky build --target web:app");
@@ -10091,6 +10100,125 @@ fn shared_imports_no_module_that_imports_shared() {
         }
         let _ = std::fs::remove_dir_all(&proj);
     }
+}
+
+/// D1 with D2-D4 (v0.29.14): the app is a second entry `src/Other.sky`
+/// (`module Other`) beside a project `src/Main.sky` program, and its wire
+/// types live in sibling modules: `P1` and `P2` both export a constructor
+/// `Matched`, and `View.CardView` aliases `Store.CardView` (both modules
+/// with a server function). The generated entry keeps `module Other`,
+/// `Shared` names every project type and constructor through its module's
+/// `SpaTy_` alias (never through the entry or the project `Main`), both legs
+/// build, and the backend answers the server arm.
+#[test]
+#[cfg(unix)]
+fn a_second_entry_with_sibling_wire_types_splits_and_answers() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build_entry("spa-second-entry-wire", "src/Other.sky", &[]);
+    let shared = split_file(&proj, "shared/Shared.sky");
+    for half in ["backend", "frontend"] {
+        let toml = split_file(&proj, &format!("{half}/sky.toml"));
+        assert!(
+            toml.contains("entry = \"src/Other.sky\""),
+            "{half} is built from the named entry:\n{toml}\n{log}"
+        );
+        let entry = split_file(&proj, &format!("{half}/src/Other.sky"));
+        assert!(
+            entry.starts_with("module Other exposing"),
+            "{half}:\n{entry}\n{log}"
+        );
+        let main = split_file(&proj, &format!("{half}/src/Main.sky"));
+        assert!(
+            main.is_empty() || main.contains("I AM THE PROJECT MAIN"),
+            "{half}/src/Main.sky may only be the project's own Main:\n{main}"
+        );
+    }
+    assert!(
+        shared.contains("import P1 as SpaTy_P1_")
+            && shared.contains("import P2 as SpaTy_P2_")
+            && shared.contains("SpaTy_P1_.Matched")
+            && shared.contains("SpaTy_P2_.Matched")
+            && shared.contains("import Store as SpaTy_Store_")
+            && shared.contains("SpaTy_Store_.CardView")
+            && !shared.contains("import Main")
+            && !shared.contains("import Other")
+            && !shared.contains("SpaTy_Main_")
+            && !shared.contains("SpaTy_Other_"),
+        "Shared names sibling types by their module, never the entry or Main:\n{shared}\n{log}"
+    );
+    let store = split_file(&proj, "frontend/src/Store.sky");
+    assert!(
+        store.contains("type alias CardView") && !store.contains("import Shared"),
+        "the client copy of `Store` keeps its own record:\n{store}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "the second entry with sibling wire types must build:\n{log}\n--- Shared.sky ---\n{shared}"
+    );
+    let dir = proj.join(".skyapp/web-app/.split/backend");
+    std::fs::write(dir.join("x.txt"), "from-disk").unwrap();
+    std::fs::write(dir.join("card.txt"), "view-disk").unwrap();
+    let (back, port) = start_split_backend(&proj);
+    let posted = curl_post_status_body(port, "/_rpc/Load", "{}");
+    drop(back);
+    let server_log = std::fs::read_to_string(dir.join("server.log")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        !server_log.contains("I AM THE PROJECT MAIN"),
+        "the backend must not be the project's Main program:\n{server_log}"
+    );
+    let posted = posted.expect("POST /_rpc/Load must answer");
+    assert_eq!(posted.0, 200, "{posted:?}");
+    assert!(
+        posted.1.contains("\"title\":\"from-disk\"")
+            && posted.1.contains("\"label\":\"view-disk\"")
+            && posted.1.contains("\"n\":7"),
+        "the server arm answers every wire record: {posted:?}"
+    );
+}
+
+/// A user codec the entry declares (`badgeCodec`, copied into `Shared`)
+/// names values of another module bare, through `import Codecs exposing
+/// (..)`: a codec (`labelCodec`) and a function (`trimmed`, through the
+/// entry helper `trimmedLength` the codec also copies), and constructors of
+/// `Codecs.Status` in a `case` pattern and an expression (`statusText`,
+/// `statusOf`). `Shared` imports
+/// `Codecs` only under its `SpaTy_` alias, so each bare reference must be
+/// rewritten to `SpaTy_Codecs_.<name>`; both legs build and the server arm
+/// answers through the user codec.
+#[test]
+#[cfg(unix)]
+fn a_copied_entry_codec_naming_an_exposed_value_bare_is_qualified() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, shared, posted) = split_and_post(
+        "spa-entry-codec-exposing",
+        &[],
+        &[("x.txt", "  from-disk  ")],
+        "Load",
+        "{}",
+    );
+    assert!(
+        shared.contains("badgeCodec")
+            && shared.contains("SpaTy_Codecs_.labelCodec")
+            && shared.contains("SpaTy_Codecs_.trimmed")
+            && shared.contains("SpaTy_Codecs_.Matched ->")
+            && shared.contains("SpaTy_Codecs_.Open\n")
+            && shared.contains("import Codecs as SpaTy_Codecs_")
+            && !shared.contains("import Codecs exposing"),
+        "the copied codec names `Codecs`' values through its alias:\n{shared}"
+    );
+    if let Some(posted) = posted {
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(
+            posted.1.contains("from-disk") && posted.1.contains("\"status\":\"matched\""),
+            "the answer goes through the user codec: {posted:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
 }
 
 /// A result Msg that the server arm applies to a captured argument

@@ -1,0 +1,15 @@
+module View exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.Task as Task
+import Store
+
+type alias CardView =
+    Store.CardView
+
+
+loadView : () -> Task Error CardView
+loadView _ =
+    File.readFile "card.txt" |> Task.map (\t -> { label = t })

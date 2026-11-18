@@ -1,0 +1,12 @@
+module P2 exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+type Verdict
+    = Matched
+    | Refused
+
+type alias Row =
+    { n : Int
+    , verdict : Verdict
+    }
