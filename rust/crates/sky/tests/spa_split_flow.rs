@@ -13962,3 +13962,181 @@ fn watch_on_a_spa_entry_splits_and_runs_the_backend() {
         "the backend does not serve the wasm frontend:\n{page}\n{log}"
     );
 }
+
+fn spa_breaker_port_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-breaker-port")
+}
+
+/// Every generated `.sky` / `.go` file under `dir` (the split's own sources and
+/// the Go it emits), skipping the staged browser bundle and the runtime library.
+fn frontend_source_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            // `dist` is the staged browser bundle; `rt` is the embedded Go
+            // runtime library, copied whole into every build (it defines
+            // every kernel, used or not). The app's own emitted Go is what
+            // must not call a Breaker or Sync kernel.
+            if p.file_name().is_some_and(|n| n == "dist" || n == "rt") {
+                continue;
+            }
+            frontend_source_files(&p, out);
+        } else if p.extension().is_some_and(|x| x == "sky" || x == "go") {
+            out.push(p);
+        }
+    }
+}
+
+/// `Std.Breaker` (v0.29.14) is pure Sky on a `Std.Sync.Ref`, which lives on the
+/// server only. An `App.app` update arm that calls a port through
+/// `Breaker.call` must split into a server RPC: the frontend carries no
+/// Breaker or Sync code (a wasm client holding its own breaker would count
+/// failures per browser tab, not per server), both legs build, and the backend
+/// answers the RPC by running the call through the breaker. The port is the
+/// backend's own `/_sky/healthz`, so the round trip proves the breaker let a
+/// real call through.
+#[test]
+#[cfg(unix)]
+fn a_breaker_call_in_update_splits_to_a_server_rpc_and_answers() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_breaker_port_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-breaker-port fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+
+    // ── Always-run split-shape leg. ──
+    let back = std::fs::read_to_string(split.join("backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    assert!(
+        back.contains("SpaServer_.rpc \"POST /_rpc/Check\""),
+        "the Breaker.call arm must become the server RPC /_rpc/Check:\n{back}"
+    );
+    assert!(
+        back.contains("Breaker.call"),
+        "the backend must run the call through the breaker:\n{back}"
+    );
+    let front = std::fs::read_to_string(split.join("frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        front.contains("SpaLib_.rpc") && front.contains("/_rpc/Check"),
+        "the client must reach the breaker through the RPC boundary:\n{front}"
+    );
+
+    // ── Go-gated: both legs build, the client has no breaker, the RPC answers. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "--target web:app must build both legs:\n{log}"
+    );
+    let backend_dir = split.join("backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(
+        app_bin.is_file(),
+        "the backend binary must be built:\n{log}"
+    );
+    assert!(
+        dist_has_wasm(&split.join("frontend/dist")),
+        "the frontend must build to a content-hashed wasm:\n{log}"
+    );
+
+    // The frontend's sources and its emitted Go hold no Breaker or Sync code.
+    let mut files = Vec::new();
+    frontend_source_files(&split.join("frontend"), &mut files);
+    assert!(
+        files
+            .iter()
+            .any(|p| p.extension().is_some_and(|x| x == "go")),
+        "the frontend build must leave its emitted Go to inspect: {files:?}"
+    );
+    // Control: the same walk over the backend finds the breaker in the Go it
+    // emits, so the frontend check below can fail.
+    let mut back_files = Vec::new();
+    frontend_source_files(&backend_dir, &mut back_files);
+    assert!(
+        back_files.iter().any(|p| {
+            p.extension().is_some_and(|x| x == "go")
+                && std::fs::read_to_string(p).is_ok_and(|t| t.contains("Breaker"))
+        }),
+        "the backend's emitted Go must carry the breaker: {back_files:?}"
+    );
+    for f in &files {
+        let text = std::fs::read_to_string(f).unwrap_or_default();
+        if f.extension().is_some_and(|x| x == "go") {
+            // The emitted Go: no breaker and no Sync kernel at all.
+            for needle in ["Breaker", "Sync_newRef", "Sync_update"] {
+                assert!(
+                    !text.contains(needle),
+                    "the client's emitted Go carries server-only `{needle}` in {}",
+                    f.display()
+                );
+            }
+        } else {
+            // The generated Sky: no use of the breaker or a Ref. The copied
+            // header comment and the `import` line (pruned by the build, as
+            // the Go check shows) are not uses.
+            for line in text.lines() {
+                let code = line.trim_start();
+                if code.starts_with("--") || code.starts_with("import ") {
+                    continue;
+                }
+                for needle in ["Breaker.", "Sync."] {
+                    assert!(
+                        !code.contains(needle),
+                        "the client uses server-only `{needle}` in {}: {line}",
+                        f.display()
+                    );
+                }
+            }
+        }
+    }
+
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled spa-breaker-port backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let server = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-breaker-port backend never reported listening on :{port}:\n{server}");
+    }
+    let posted = curl_post_status_body(port, "/_rpc/Check", "{}");
+    child.kill();
+    let server = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let (code, body) = posted.expect("POST /_rpc/Check should return");
+    assert_eq!(
+        code, 200,
+        "/_rpc/Check must answer 200; body {body:?}\n{server}"
+    );
+    assert!(
+        body.contains("port 200"),
+        "the breaker must let the port call through and the answer reach the model, was {body:?}\n{server}"
+    );
+}

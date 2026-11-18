@@ -1,0 +1,96 @@
+module Main exposing (main)
+
+-- Sky.Spa split fixture for Std.Breaker (v0.29.14). A breaker holds its state
+-- in a Std.Sync.Ref, which lives on the server only. An update arm that calls
+-- another service (a port) through `Breaker.call` must therefore split into a
+-- server RPC: the client never holds the breaker, and the frontend carries no
+-- Breaker or Sync code.
+--
+-- The port is this backend's own liveness route, so the e2e test needs no
+-- second service: `Check` asks `/_sky/healthz` through the breaker and writes
+-- the answer's status into the model.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Http as Http
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Breaker as Breaker exposing (Breaker)
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { status : String }
+
+type Msg
+    = Check
+    | Checked (Result Error String)
+
+
+-- One breaker for the port, made once (a top-level binding runs once).
+portBreaker : Result Error Breaker
+portBreaker =
+    Task.run (Breaker.new "health" Breaker.defaults)
+
+
+portUrl : String
+portUrl =
+    "http://127.0.0.1:" ++ System.getenvOr "PORT" "8000" ++ "/_sky/healthz"
+
+
+askPort : Task Error String
+askPort =
+    case portBreaker of
+
+        Ok breaker ->
+            Breaker.call
+                breaker
+                (Http.get portUrl |> Task.timeout 2000
+                    |> Task.map (\resp -> "port " ++ String.fromInt resp.status))
+
+        Err e ->
+            Task.fail e
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { status = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Check ->
+            ( model, Cmd.perform askPort Checked )
+
+        Checked (Ok s) ->
+            ( { model | status = s }, Cmd.none )
+
+        Checked (Err e) ->
+            ( { model | status = "failed: " ++ Error.toString e }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column [] [ Ui.text model.status ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Task Error ()
+main =
+    App.run app
