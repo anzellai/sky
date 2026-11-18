@@ -61,3 +61,9 @@ tag v0.29.14.
 - B1 ships with no default limit. The adaptive limit is cut.
 - F5. `scripts/build.sh` installed the compiler with `cp -f`, and macOS
   killed the new binary (stale code signature). Fixed in 9d3db3af9.
+- F6. Sky.Live wrote `withNotFound` into a model field named `page` of
+  another type in a route-less app (type-unsound write).
+- F7. The gate build cache lost its `SKY_*` key on BSD sed. Fixed in
+  db1538dcd.
+- F8. A route-less `web:app` backend answered an unknown path with a plain Go
+  404 and no client shell (Sky.Live shows the app's view with 404).
