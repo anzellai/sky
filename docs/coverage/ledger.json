@@ -20798,12 +20798,6 @@
             "withRoutes"
           ]
         },
-        "Std.Sub": {
-          "count": 1,
-          "symbols": [
-            "viewport"
-          ]
-        },
         "Std.Sync": {
           "count": 2,
           "symbols": [
@@ -21080,8 +21074,8 @@
           ]
         }
       },
-      "count": 875,
-      "pct_of_denominator": 26.7
+      "count": 874,
+      "pct_of_denominator": 26.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -22348,10 +22342,9 @@
           ]
         },
         "Std.Sub": {
-          "count": 2,
+          "count": 1,
           "symbols": [
-            "ConnectionState",
-            "viewport"
+            "ConnectionState"
           ]
         },
         "Std.Sync": {
@@ -22644,7 +22637,7 @@
           ]
         }
       },
-      "count": 988,
+      "count": 987,
       "pct_of_denominator": 30.1
     }
   },
@@ -22858,8 +22851,8 @@
       "id": "e2e:scripts/nav-e2e.sh",
       "modules_imported": 11,
       "path": "scripts/nav-e2e.sh",
-      "refs_generous": 35,
-      "refs_qualified": 35,
+      "refs_generous": 36,
+      "refs_qualified": 36,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -24594,8 +24587,8 @@
       "id": "flow:spa_split_flow",
       "modules_imported": 45,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 210,
-      "refs_qualified": 196,
+      "refs_generous": 211,
+      "refs_qualified": 197,
       "role": "FlowTest",
       "sky_files": 180,
       "sky_toml_sections": []
