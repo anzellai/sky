@@ -67,3 +67,19 @@ tag v0.29.14.
   db1538dcd.
 - F8. A route-less `web:app` backend answered an unknown path with a plain Go
   404 and no client shell (Sky.Live shows the app's view with 404).
+- F9. Seven Go runtime tests fail on this host (go1.27.3, macOS): four JSON
+  tree writer NaN texts, two macOS process-tree tests, one allocation bound.
+
+## Status (2026-11-18)
+
+All Part A and Part B items, and F1 to F8, are on `fix/v0.29.14`. Next: F9,
+the milestone gates, the Judge, the release workflow, the tag.
+- Decisions on B2 (2026-11-18): keep the name `Task.timeout` (the request
+  names it) although a bare `timeout` with both `Sky.Core.Error` and
+  `Sky.Core.Task` exposed is `[E1012]`; keep `HttpRequest.minRemaining` (a
+  loud, documented change). Both are under "Breaking changes".
+- F10. `Http.Stream.open` (and any other outbound HTTP path) did not read the
+  Task deadline. Std.Breaker had no Sky.Spa split test.
+- F11. `Http.Stream.open` inside a `Task.timeout` was cut as soon as the
+  open returned (it used the deadline context for the whole stream). Fixed
+  with F10 in 2b4dc3238.
