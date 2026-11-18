@@ -917,12 +917,6 @@
           "flow:ai_memory_pg_flow"
         ]
       },
-      "Std.Breaker": {
-        "path": "tests/Std",
-        "units": [
-          "tests/Std"
-        ]
-      },
       "Std.Compression": {
         "path": "tests/conformance",
         "units": [
@@ -12457,6 +12451,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -19646,10 +19645,8 @@
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
-      "count": 1,
-      "modules": [
-        "Std.Breaker"
-      ]
+      "count": 0,
+      "modules": []
     },
     "surfaces_with_zero_new_cover": {
       "count": 9,
@@ -24588,12 +24585,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:spa_split_flow",
-      "modules_imported": 44,
+      "modules_imported": 45,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 204,
-      "refs_qualified": 191,
+      "refs_generous": 210,
+      "refs_qualified": 196,
       "role": "FlowTest",
-      "sky_files": 179,
+      "sky_files": 180,
       "sky_toml_sections": []
     },
     {
