@@ -24,6 +24,7 @@
       "config",
       "console",
       "console-serve",
+      "coverage",
       "db",
       "doc",
       "doctor",
@@ -433,7 +434,7 @@
       "tier": "T1"
     },
     "corpus-1": {
-      "expected_assertions": 182,
+      "expected_assertions": 183,
       "falsifier_mutation": "corpus-1.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 0 of 4: each case built + run; values compared against the generator's own",
@@ -471,7 +472,7 @@
       "tier": "T2"
     },
     "corpus-2": {
-      "expected_assertions": 182,
+      "expected_assertions": 183,
       "falsifier_mutation": "corpus-2.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 1 of 4: each case built + run; values compared against the generator's own",
@@ -509,7 +510,7 @@
       "tier": "T2"
     },
     "corpus-3": {
-      "expected_assertions": 182,
+      "expected_assertions": 183,
       "falsifier_mutation": "corpus-3.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 2 of 4: each case built + run; values compared against the generator's own",
@@ -547,7 +548,7 @@
       "tier": "T2"
     },
     "corpus-4": {
-      "expected_assertions": 182,
+      "expected_assertions": 183,
       "falsifier_mutation": "corpus-4.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 3 of 4: each case built + run; values compared against the generator's own",
@@ -607,7 +608,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 892,
+      "expected_assertions": 896,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -764,7 +765,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 1340,
+      "expected_assertions": 1367,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -805,7 +806,7 @@
       "tier": "T1"
     },
     "stdlib-bodies": {
-      "expected_assertions": 136,
+      "expected_assertions": 137,
       "falsifier_mutation": "stdlib-bodies.record-missing-field",
       "falsifier_proven": true,
       "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
@@ -904,10 +905,22 @@
           "tests/conformance"
         ]
       },
+      "Std.Admission": {
+        "path": "rust/crates/sky/tests/spa_split_flow.rs",
+        "units": [
+          "flow:spa_split_flow"
+        ]
+      },
       "Std.Ai.Memory.Pg": {
         "path": "rust/crates/sky/tests/ai_memory_pg_flow.rs",
         "units": [
           "flow:ai_memory_pg_flow"
+        ]
+      },
+      "Std.Breaker": {
+        "path": "tests/Std",
+        "units": [
+          "tests/Std"
         ]
       },
       "Std.Compression": {
@@ -1010,23 +1023,23 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3267,
-    "stdlib_modules": 136,
-    "surfaces_covered": 193,
-    "surfaces_covered_pct": 94.6,
-    "surfaces_equal": 16,
-    "surfaces_stronger": 188,
-    "surfaces_total": 204,
+    "stdlib_entries": 3281,
+    "stdlib_modules": 137,
+    "surfaces_covered": 196,
+    "surfaces_covered_pct": 95.1,
+    "surfaces_equal": 15,
+    "surfaces_stronger": 191,
+    "surfaces_total": 206,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
       "Example": 71,
-      "FlowTest": 67,
+      "FlowTest": 69,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 157
+    "units_total": 159
   },
   "surfaces": [
     {
@@ -1256,6 +1269,28 @@
       "description": "`sky console-serve`",
       "id": "cli.console-serve",
       "verdict": "equal"
+    },
+    {
+      "category": "cli",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "`sky coverage`",
+      "id": "cli.coverage",
+      "verdict": "stronger"
     },
     {
       "category": "cli",
@@ -4343,6 +4378,11 @@
             "strength": 4
           },
           {
+            "by": "tests/Sky (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -4550,6 +4590,11 @@
           },
           {
             "by": "tests/Db — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          },
+          {
+            "by": "tests/Sky — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
           },
@@ -7590,6 +7635,11 @@
             "strength": 3
           },
           {
+            "by": "flow:coverage_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -7611,6 +7661,11 @@
           },
           {
             "by": "flow:durable_tea_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:fuzz_guided_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -9199,6 +9254,16 @@
             "strength": 3
           },
           {
+            "by": "tests/Sky (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -9258,6 +9323,16 @@
             "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/Sky — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          },
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
           },
           {
             "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
@@ -9944,6 +10019,11 @@
             "strength": 3
           },
           {
+            "by": "flow:coverage_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:numeric_polymorphism_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -10139,9 +10219,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
       },
       "cover_today": {
         "class": "None",
@@ -10150,7 +10236,7 @@
       },
       "description": "the Std.Admission public API",
       "id": "stdlib.Std.Admission",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -12371,6 +12457,34 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "the Std.Breaker public API",
+      "id": "stdlib.Std.Breaker",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "e2e:scripts/ai-device-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -12764,6 +12878,11 @@
           },
           {
             "by": "flow:durable_tea_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:fuzz_guided_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -14779,6 +14898,11 @@
             "strength": 3
           },
           {
+            "by": "flow:fuzz_guided_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -15879,6 +16003,11 @@
             "strength": 3
           },
           {
+            "by": "flow:coverage_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -16579,6 +16708,11 @@
             "strength": 3
           },
           {
+            "by": "flow:fuzz_guided_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -16916,6 +17050,11 @@
             "strength": 3
           },
           {
+            "by": "flow:fuzz_guided_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:fuzz_verb_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -17144,6 +17283,11 @@
             "strength": 3
           },
           {
+            "by": "tests/Sky (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -17159,6 +17303,11 @@
       "cover_today": {
         "class": "Asserted",
         "evidence": [
+          {
+            "by": "tests/Sky — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          },
           {
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
@@ -17569,6 +17718,11 @@
           },
           {
             "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:fuzz_guided_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -19477,34 +19631,34 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 9,
+      "count": 8,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
         "Sky.Core.Path",
-        "Std.Admission",
         "Std.Cli",
         "Std.Db.Migrate",
         "Std.Db.Table",
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 6.6
+      "pct_of_denominator": 5.8
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
-      "count": 0,
-      "modules": []
+      "count": 1,
+      "modules": [
+        "Std.Breaker"
+      ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 10,
+      "count": 9,
       "surfaces": [
         "cli.console",
         "cli.console-serve",
         "cli.spa-partition",
         "cli.upgrade-claude",
         "stdlib.Sky.Core.Io",
-        "stdlib.Std.Admission",
         "stdlib.Std.Cli",
         "stdlib.Std.Db.Table",
         "stdlib.Std.Tui",
@@ -19584,9 +19738,10 @@
           ]
         },
         "Sky.Core.Http": {
-          "count": 2,
+          "count": 3,
           "symbols": [
             "withMaxRedirects",
+            "withMinRemaining",
             "withUrl"
           ]
         },
@@ -19763,18 +19918,12 @@
           ]
         },
         "Std.Admission": {
-          "count": 11,
+          "count": 5,
           "symbols": [
-            "Decision",
-            "Load",
-            "Policy",
             "RouteClass",
             "install",
             "limitOf",
-            "policy",
             "retryAfterOf",
-            "withHook",
-            "withLimit",
             "withRetryAfter"
           ]
         },
@@ -20095,7 +20244,7 @@
           ]
         },
         "Std.App": {
-          "count": 23,
+          "count": 22,
           "symbols": [
             "BaseConfig",
             "DesktopOpts",
@@ -20115,11 +20264,16 @@
             "spaRoute",
             "tabletDefaults",
             "terminalDefaults",
-            "withAdmission",
             "withAppUrl",
             "withBase",
             "withPersistExclude",
             "withSessionLifetime"
+          ]
+        },
+        "Std.Breaker": {
+          "count": 1,
+          "symbols": [
+            "name"
           ]
         },
         "Std.Bundle": {
@@ -20923,8 +21077,8 @@
           ]
         }
       },
-      "count": 879,
-      "pct_of_denominator": 26.9
+      "count": 874,
+      "pct_of_denominator": 26.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21010,9 +21164,10 @@
           ]
         },
         "Sky.Core.Http": {
-          "count": 2,
+          "count": 3,
           "symbols": [
             "withMaxRedirects",
+            "withMinRemaining",
             "withUrl"
           ]
         },
@@ -21219,18 +21374,12 @@
           ]
         },
         "Std.Admission": {
-          "count": 11,
+          "count": 5,
           "symbols": [
-            "Decision",
-            "Load",
-            "Policy",
             "RouteClass",
             "install",
             "limitOf",
-            "policy",
             "retryAfterOf",
-            "withHook",
-            "withLimit",
             "withRetryAfter"
           ]
         },
@@ -21571,7 +21720,7 @@
           ]
         },
         "Std.App": {
-          "count": 26,
+          "count": 25,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -21594,11 +21743,18 @@
             "spaRoute",
             "tabletDefaults",
             "terminalDefaults",
-            "withAdmission",
             "withAppUrl",
             "withBase",
             "withPersistExclude",
             "withSessionLifetime"
+          ]
+        },
+        "Std.Breaker": {
+          "count": 3,
+          "symbols": [
+            "Breaker",
+            "State",
+            "name"
           ]
         },
         "Std.Bundle": {
@@ -22484,8 +22640,8 @@
           ]
         }
       },
-      "count": 990,
-      "pct_of_denominator": 30.3
+      "count": 987,
+      "pct_of_denominator": 30.1
     }
   },
   "units": [
@@ -22614,8 +22770,8 @@
       "id": "corpus:layer1",
       "modules_imported": 10,
       "path": "corpus:layer1",
-      "refs_generous": 59,
-      "refs_qualified": 51,
+      "refs_generous": 61,
+      "refs_qualified": 53,
       "role": "Layer1",
       "sky_files": 12,
       "sky_toml_sections": []
@@ -24215,6 +24371,18 @@
     {
       "db_drivers": [],
       "gate": null,
+      "id": "flow:coverage_flow",
+      "modules_imported": 3,
+      "path": "rust/crates/sky/tests/coverage_flow.rs",
+      "refs_generous": 5,
+      "refs_qualified": 3,
+      "role": "FlowTest",
+      "sky_files": 4,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
       "id": "flow:doc_flow",
       "modules_imported": 11,
       "path": "rust/crates/sky/tests/doc_flow.rs",
@@ -24304,6 +24472,18 @@
       "path": "rust/crates/sky/tests/durable_versioning_flow.rs",
       "refs_generous": 22,
       "refs_qualified": 17,
+      "role": "FlowTest",
+      "sky_files": 1,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "flow:fuzz_guided_flow",
+      "modules_imported": 6,
+      "path": "rust/crates/sky/tests/fuzz_guided_flow.rs",
+      "refs_generous": 9,
+      "refs_qualified": 8,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -24408,12 +24588,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:spa_split_flow",
-      "modules_imported": 43,
+      "modules_imported": 44,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 195,
-      "refs_qualified": 182,
+      "refs_generous": 204,
+      "refs_qualified": 191,
       "role": "FlowTest",
-      "sky_files": 152,
+      "sky_files": 179,
       "sky_toml_sections": []
     },
     {
@@ -24540,24 +24720,24 @@
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Sky",
-      "modules_imported": 7,
+      "modules_imported": 10,
       "path": "tests/Sky",
-      "refs_generous": 26,
-      "refs_qualified": 25,
+      "refs_generous": 47,
+      "refs_qualified": 45,
       "role": "SkySuite",
-      "sky_files": 4,
+      "sky_files": 5,
       "sky_toml_sections": []
     },
     {
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Std",
-      "modules_imported": 53,
+      "modules_imported": 55,
       "path": "tests/Std",
-      "refs_generous": 728,
-      "refs_qualified": 703,
+      "refs_generous": 746,
+      "refs_qualified": 719,
       "role": "SkySuite",
-      "sky_files": 29,
+      "sky_files": 30,
       "sky_toml_sections": []
     },
     {
