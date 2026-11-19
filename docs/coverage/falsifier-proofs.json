@@ -484,14 +484,14 @@
     },
     "coverage-ledger": {
       "inputs_files": 5289,
-      "inputs_hash": "7f07a87adea629841b297783962368da9946e289",
+      "inputs_hash": "c6f96887463558991a46a7568d1ed33ff163c040",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795104001
+      "proven_at_unix": 1795107934
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 1189,
