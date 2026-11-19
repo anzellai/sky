@@ -38,6 +38,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   exports it. A program that imports two of them with `exposing (..)` and
   writes a bare `routeParam` gets `[E1012]`: write `App.routeParam`,
   `Live.routeParam` or `Spa.routeParam`.
+- An unqualified type name that no module declares is now `[E1001]
+  Undefined name` at the name. Before, it was accepted as an opaque type.
+  A common case is a test file with `main : Program`: no module declares
+  `Program`, so write `main : Task Error ()`. Thirty conformance suites in
+  this repository had to change in this way. See the line in "Fixed" and
+  `docs/migration/v0.29.md`.
+- A Sky.Spa app that the build splits (for example `--target web:app`) with
+  a project module named `Shared` is refused (`cannot auto-split`), because
+  the split generates its wire contract as `Shared.sky`.
+  Rename the module (`examples/60-spa-todos` renamed it to `Contract`). See
+  the line in "Fixed" and `docs/migration/v0.29.md`.
 
 ### Added
 
