@@ -165,7 +165,10 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// **113 since v0.29.14**: a routing helper hidden in a user custom type
 /// (annotated, unannotated, in a record field) and a generic helper that
 /// builds and serves the app (the check at the served app).
-pub const EXPECTED_CORPUS_FILES: usize = 113;
+/// **118 since v0.29.14**: a `withOnNavigate` function whose page is not of
+/// the model's `page` field type (three route-less `Std.App` apps, a raw
+/// `Live.withOnNavigate` and a raw `Spa.withOnNavigate`).
+pub const EXPECTED_CORPUS_FILES: usize = 118;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -201,7 +204,8 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// **57 since v0.29.14** (the five other `routed_page_*.sky` files).
 /// **62 since v0.29.14** (the five let-bound `routed_page_*.sky` files).
 /// **66 since v0.29.14** (the four served-app `routed_page_*.sky` files).
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 66;
+/// **71 since v0.29.14** (the five `withOnNavigate` `routed_page_*.sky` files).
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 71;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

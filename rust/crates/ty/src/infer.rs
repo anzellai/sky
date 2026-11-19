@@ -2465,10 +2465,11 @@ impl<'a> Infer<'a> {
                 .is_none_or(|s| crate::obligations::app_page_or_model_is_generic(&s.ty));
             if self.world.routed_page_runners.contains(&d) {
                 // The served app (the guarantee): any helper shape that set
-                // its routes is covered here. A program that never sets
-                // routes serves a route-less app, whose model the runtime
-                // never writes (its `withNotFound` page may be any type).
-                if crate::obligations::program_sets_routes(self.world) {
+                // its routes or its navigation hook is covered here. A
+                // program that sets neither serves an app whose model
+                // `page` field the runtime never reads or writes (its
+                // `withNotFound` page may be any type).
+                if crate::obligations::program_ties_page(self.world) {
                     self.tie_app_nodes(t, true);
                 }
             } else if self.world.routed_page_carriers.contains(&d) && generic {

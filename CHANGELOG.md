@@ -30,6 +30,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   routes, a function that serves an app whose model type it does not know
   (`serve parts = App.app parts |> … |> App.run`) is refused: give it a type
   annotation with the model type (`docs/migration/v0.29.md`).
+- An app with `App.withOnNavigate`, `Live.withOnNavigate` or
+  `Spa.withOnNavigate` whose model has a `page` field must give the
+  navigation function an argument of that field's type, with or without
+  routes. The runtime gives the model's `page` field to the function after
+  each navigation, so a program whose function took another type built and
+  then failed or used a wrong value. It is now `[E2001]` at
+  `withOnNavigate`. In such an app the `App.withNotFound` page must have the
+  field's type too, also with no routes. A program that sets routes or a
+  navigation function must serve its app where the model type is known (see
+  the line above).
 - `Std.Live.Route` and `Std.Spa.Route` take the page type: `Route page`. An
   annotation `List Live.Route` becomes `List (Live.Route Page)`. A `:param`
   route uses the new `Live.routeParam` / `Spa.routeParam` (a constructor
@@ -213,7 +223,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   main.Main_Route`). With a second custom type of the same shape the wrong
   write went unseen until the view's `case` panicked. The checker now ties
   the routes' page type to the model's `page` field at `App.withRoutes`, and
-  a mismatch is `[E2001]`: "The routes give pages of type `String`, but the
+  a mismatch is `[E2001]`: "The app's pages have type `String` (from its
+  routes, its NotFound page or its `withOnNavigate` function), but the
   model's `page` field has type `Route`". A model with no `page` field is
   unchanged. This closes the routed half of the route-less fix above. The
   check follows a routing helper that is generic in the model (each caller
@@ -234,6 +245,18 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   mismatch once, in Sky words (`[E2001] The routes give a page of type …`),
   stop the process, and never write the page. A page of one enum type is no longer converted
   silently into a field of another enum type.
+- An app with a navigation function (`App.withOnNavigate`,
+  `Live.withOnNavigate`, `Spa.withOnNavigate`) passed `sky check` when the
+  function took a page of another type than the model's `page` field. The
+  runtime gives that field to the function after each navigation, on
+  Sky.Live, the Sky.Spa server render and the Sky.Spa client. With a record
+  page every request was a 500 (`rt.Coerce: expected struct { Count int },
+  got main.Main_Route_Detail_V`). With an `Int` or a `String` page the app
+  used a wrong value. A route-less `Std.App` app was not checked at all,
+  and the raw APIs tied only their routes and NotFound page. The checker now
+  ties the function's argument to the model's `page` field at each
+  `withOnNavigate`, and a program that sets a navigation function has its
+  served app checked as a routed one is.
 - A project module under the `Sky.` or `Std.` root (`module Sky.Pages`) was
   checked as if it were the standard library, because the checker decided
   "stdlib" by the module name. A routing helper in such a module escaped the

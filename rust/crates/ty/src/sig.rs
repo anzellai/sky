@@ -130,13 +130,18 @@ pub struct WorldDecls {
     /// `(pseudo-module, func)`.
     pub bound_kernel_sigs: HashMap<(String, String), Scheme>,
     /// The defs whose uses tie a routed page type to the model's `page`
-    /// field (v0.29.14, [`crate::obligations`] `PageTie`): `Std.App.withRoutes`
-    /// and every user def that reaches it. At each use on the check path, every
+    /// field (v0.29.14, [`crate::obligations`] `PageTie`): `Std.App.withRoutes`,
+    /// `Std.App.withOnNavigate` and every user def that reaches one of them. At each use on the check path, every
     /// `App f s page model msg key` in the instance is tied, so a generic
     /// helper is checked at each caller.
     pub routed_page_carriers: HashSet<DefId>,
+    /// A user def is in [`World::routed_page_carriers`]: the program sets
+    /// routes or a navigation hook, so every served app is tied
+    /// ([`crate::obligations::program_ties_page`]).
+    pub routed_page_user_carriers: bool,
     /// The raw route APIs that tie a page type to the model's `page` field at
-    /// their own use (`Live.config`, `Spa.withRoutes`, `Spa.withNotFound`).
+    /// their own use (`Live.config`, `Spa.withRoutes`, `Spa.withNotFound`,
+    /// `Live.withOnNavigate`, `Spa.withOnNavigate`).
     pub routed_page_apis: HashMap<DefId, crate::obligations::RoutedApi>,
     /// The `Std.App` runners that serve an app (`run`, `serve` and the
     /// target runners). Each use ties the served app's page type to its

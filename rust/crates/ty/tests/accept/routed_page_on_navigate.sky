@@ -1,0 +1,114 @@
+-- gate: accept
+-- pairs: reject/corpus/routed_page_routeless_on_navigate_record.sky
+-- pairs: reject/corpus/routed_page_raw_live_on_navigate.sky
+-- pairs: reject/corpus/routed_page_raw_spa_on_navigate.sky
+--
+-- The accept side of the `withOnNavigate` page rule (v0.29.14): the runtime
+-- gives the model's `page` field to the navigation function, so its argument
+-- has the type of that field. A routed and a route-less `Std.App` app, a raw
+-- `Live.withOnNavigate` and a raw `Spa.withOnNavigate` whose function takes a
+-- `Route` are accepted, as is a function that ignores its argument.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Html as Html exposing (Html)
+import Std.Live as Live
+import Std.Spa as Spa
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Navigated Route
+    | Cleared
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Navigated r ->
+            ( { model | page = r }, Cmd.none )
+
+        Cleared ->
+            ( model, Cmd.none )
+
+
+uiView : Model -> Element Msg
+uiView model =
+    Ui.text model.title
+
+
+view : Model -> Html Msg
+view model =
+    Html.text model.title
+
+
+routed =
+    App.app
+        { init = init
+        , update = update
+        , view = uiView
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withRoutes
+               [ App.route "/" Dashboard, App.routeParam "/item/:id" Detail ]
+        |> App.withNotFound Missing
+        |> App.withOnNavigate Navigated
+
+
+routeless =
+    App.app
+        { init = init
+        , update = update
+        , view = uiView
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound Missing
+        |> App.withOnNavigate (\_ -> Cleared)
+
+
+live =
+    Live.config
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        , routes = [ Live.route "/" Dashboard ]
+        , notFound = Missing
+        }
+        |> Live.withOnNavigate Navigated
+
+
+spa =
+    Spa.config
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> Spa.withRoutes [ Spa.route "/" Dashboard ]
+        |> Spa.withNotFound Missing
+        |> Spa.withOnNavigate Navigated
+
+
+main =
+    if True then
+        App.run routed
+
+    else
+        App.run routeless

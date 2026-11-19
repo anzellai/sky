@@ -90,6 +90,10 @@ pub enum RoutedApi {
     SpaRoutes,
     /// `Spa.withNotFound : page -> AppConfig model msg -> …`.
     SpaNotFound,
+    /// `Live.withOnNavigate` and `Spa.withOnNavigate :
+    /// (page -> msg) -> AppConfig model msg -> …`. The runtime gives the
+    /// model's `page` field to the function after each navigation.
+    OnNavigate,
 }
 
 /// Does a scheme type hold an `App f s page model msg key` whose page or
@@ -131,6 +135,8 @@ fn seed_routed_page(world: &mut World, db: &dyn SkyDb) {
         ("Std.Live", "config", RoutedApi::LiveConfig),
         ("Std.Spa", "withRoutes", RoutedApi::SpaRoutes),
         ("Std.Spa", "withNotFound", RoutedApi::SpaNotFound),
+        ("Std.Live", "withOnNavigate", RoutedApi::OnNavigate),
+        ("Std.Spa", "withOnNavigate", RoutedApi::OnNavigate),
     ] {
         if let Some(d) = routing_def(db, module, name).filter(|d| world.value_sigs.contains_key(d))
         {
@@ -156,7 +162,7 @@ pub(crate) const SERVED_MISMATCH_NOTE: &str = "\n\nThis is the app that is serve
 
 /// The opening of every routed page error that a per-use tie raises.
 const PER_USE_PAGE_ERRORS: &[&str] = &[
-    "The routes give pages of type",
+    "The app's pages have type",
     "The routed page type cannot be checked here",
 ];
 
@@ -206,19 +212,28 @@ fn routing_def(db: &dyn SkyDb, module: &str, name: &str) -> Option<base::DefId> 
     Some(db.intern_def(m, &Name::new(name), hir::DefKind::Value))
 }
 
+/// The `Std.App` builders that tie the app's page type to the model's
+/// `page` field: the runtime writes the routed page (and the NotFound page)
+/// into that field for an app with routes, and gives that field to the
+/// `withOnNavigate` function after each navigation, with or without routes.
+const PAGE_CARRIER_SEEDS: &[&str] = &["withRoutes", "withOnNavigate"];
+
 /// Add to the routed page carriers every user def of `db`'s module set whose
 /// body reaches a carrier. Additive, so the shared-world path runs it again
 /// over a case's own modules (a body-derived pass, see
 /// `World::extend_query_bodies`) on top of the base world's carriers; the
 /// whole-program path reaches the same set.
 pub(crate) fn extend_routed_page_carriers(world: &mut World, db: &dyn SkyDb) {
-    let Some(with_routes) =
-        routing_def(db, "Std.App", "withRoutes").filter(|d| world.value_sigs.contains_key(d))
-    else {
+    let seeds: Vec<base::DefId> = PAGE_CARRIER_SEEDS
+        .iter()
+        .filter_map(|name| routing_def(db, "Std.App", name))
+        .filter(|d| world.value_sigs.contains_key(d))
+        .collect();
+    if seeds.is_empty() {
         return;
-    };
+    }
     let mut carriers = std::mem::take(&mut world.routed_page_carriers);
-    carriers.insert(with_routes);
+    carriers.extend(seeds.iter().copied());
     let mut user = Vec::new();
     for m in db.module_ids() {
         if is_stdlib_module(db.module_name(m)) {
@@ -241,18 +256,21 @@ pub(crate) fn extend_routed_page_carriers(world: &mut World, db: &dyn SkyDb) {
             break;
         }
     }
+    world.routed_page_user_carriers |= carriers.iter().any(|d| !seeds.contains(d));
     world.routed_page_carriers = carriers;
 }
 
-/// Does a user def of the program reach `App.withRoutes`? The routed page
-/// carriers are `App.withRoutes` itself and the user defs that reach it
-/// ([`extend_routed_page_carriers`]). The routes of an `App` are set only by
-/// `App.withRoutes` (its constructor is opaque), and the runtime writes the
-/// model's `page` field only for an app with routes. So a program with no
-/// such def serves a route-less app, and its served app is not tied (its
-/// `App.withNotFound` page may have any type).
-pub(crate) fn program_sets_routes(world: &World) -> bool {
-    world.routed_page_carriers.len() > 1
+/// Does a user def of the program reach `App.withRoutes` or
+/// `App.withOnNavigate`? The routed page carriers are those two builders
+/// and the user defs that reach them ([`extend_routed_page_carriers`]). The
+/// routes and the navigation hook of an `App` are set only by these
+/// builders (its constructor is opaque). The runtime writes the model's
+/// `page` field only for an app with routes, and reads it only for an app
+/// with routes or a navigation hook. So a program with no such def serves
+/// an app whose model `page` field the runtime never touches, and its
+/// served app is not tied (its `App.withNotFound` page may have any type).
+pub(crate) fn program_ties_page(world: &World) -> bool {
+    world.routed_page_user_carriers
 }
 
 /// Runtime handles (A-1/A-1b): an id into a table of one running process.
@@ -526,6 +544,11 @@ impl Infer<'_> {
                     let (cfg, _) = self.fun_parts(rest)?;
                     Some((arg, self.first_arg(cfg)?))
                 }
+                RoutedApi::OnNavigate => {
+                    let (page, _) = self.fun_parts(arg)?;
+                    let (cfg, _) = self.fun_parts(rest)?;
+                    Some((page, self.first_arg(cfg)?))
+                }
             }
         })();
         let Some((page, model)) = found else {
@@ -596,13 +619,15 @@ impl Infer<'_> {
             if self.uf.unify(field, tie.page).is_err() {
                 self.errors.push(TypeError {
                     message: format!(
-                        "The routes give pages of type `{routed}`, but the model's `page` field \
+                        "The app's pages have type `{routed}` (from its routes, its NotFound \
+                         page or its `withOnNavigate` function), but the model's `page` field \
                          has type `{held}`.\n\nThe app writes the routed page (and the \
                          `App.withNotFound` page) into the model's `page` field on every \
-                         request, so the two types must be the same. Make every \
-                         `App.route` / `App.routeParam` page and the `App.withNotFound` page a \
-                         `{held}`, or give the model field another name if it is not the \
-                         app's page.{served}"
+                         request, and gives that field to the `withOnNavigate` function after \
+                         each navigation, so the two types must be the same. Make every \
+                         `App.route` / `App.routeParam` page, the `App.withNotFound` page and \
+                         the argument of the `withOnNavigate` function a `{held}`, or give the \
+                         model field another name if it is not the app's page.{served}"
                     ),
                     span: tie.span,
                     code: "E2001",
@@ -636,10 +661,11 @@ impl Infer<'_> {
         } else {
             "The routed page type cannot be checked here: the model type is not known in \
              this function.\n\nThe app writes the routed page into the model's `page` \
-             field on every request, so the checker must see the model type where the \
-             routes are set. Give this function a type annotation with the app's model \
-             type, or use `App.withRoutes`, whose routes the checker follows through \
-             helpers."
+             field on every request and gives it to the `withOnNavigate` function, so the \
+             checker must see the model type where the routes or the navigation function \
+             are set. Give this function a type annotation with the app's model type, or \
+             use `App.withRoutes` and `App.withOnNavigate`, which the checker follows \
+             through helpers."
         };
         self.errors.push(TypeError {
             message: message.to_string(),
