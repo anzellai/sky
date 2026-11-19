@@ -1805,7 +1805,7 @@ Refreshed AGENTS.md (61204 → 67701 bytes)
   previous version saved as AGENTS.md.bak
 Refreshed CLAUDE.md (12918 → 13533 bytes)
   previous version saved as CLAUDE.md.bak
-(from sky v0.29.0 (70969ab3e))
+(from sky v0.30.0 (70969ab3e))
 ```
 
 ## Dev console

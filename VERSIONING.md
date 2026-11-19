@@ -19,7 +19,7 @@ same commit as the newest `## vX.Y.Z` heading in [`CHANGELOG.md`](CHANGELOG.md).
 The release workflow checks that the tag, workspace version and heading agree.
 The README status banner and `AGENTS.md`'s "Current line" are checked against
 the changelog by `rust/crates/xtask/tests/docs_state_the_current_version.rs`.
-Current line: **v0.29.x**.
+Current line: **v0.30.x**.
 
 ## Pre-1.0 (0.x) — the reality today
 

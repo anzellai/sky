@@ -43,7 +43,7 @@ silent corruption* — the property a service actually needs.
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
 Haskell compiler, once its byte-for-byte differential oracle, was removed from
 the tree in v0.29.0 (`docs/history/legacy-compilers.md`; tag `v0.28.1` is the
-last that has it). Current line: **v0.29.x**.
+last that has it). Current line: **v0.30.x**.
 
 Decimal places and computed exponents are bounded to -100000 through 100000.
 Outside this range they fail as `NumericOverflow`. `Money.allocate` requires
