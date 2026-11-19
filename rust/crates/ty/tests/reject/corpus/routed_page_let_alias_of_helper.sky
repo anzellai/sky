@@ -49,16 +49,15 @@ withPages routes missing a =
 
 app =
     let
-        pages =
-            withPages
+        pages = withPages
     in
-    App.app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = \_ -> Sub.none
-        }
-        |> pages [ App.route "/" "home" ] "missing"
+        App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> pages [ App.route "/" "home" ] "missing"
 
 
 main =

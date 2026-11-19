@@ -47,18 +47,17 @@ app =
     let
         withPages routes missing a =
             let
-                routed r b =
-                    b |> App.withRoutes r
+                routed r b = b |> App.withRoutes r
             in
-            routed routes a |> App.withNotFound missing
+                routed routes a |> App.withNotFound missing
     in
-    App.app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = \_ -> Sub.none
-        }
-        |> withPages [ App.route "/" "home" ] "missing"
+        App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> withPages [ App.route "/" "home" ] "missing"
 
 
 main =

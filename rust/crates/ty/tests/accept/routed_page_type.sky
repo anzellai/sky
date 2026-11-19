@@ -73,15 +73,17 @@ appLocal =
         withPages routes missing a =
             a |> App.withRoutes routes |> App.withNotFound missing
     in
-    App.app
-        { init = init
-        , update = update
-        , view = uiView
-        , subscriptions = \_ -> Sub.none
-        }
-        |> withPages
-               [ App.route "/" Dashboard, App.routeParam "/item/:id" Detail ]
-               Missing
+        App.app
+            { init = init
+            , update = update
+            , view = uiView
+            , subscriptions = \_ -> Sub.none
+            }
+            |> withPages
+                   [ App.route "/" Dashboard
+                   , App.routeParam "/item/:id" Detail
+                   ]
+                   Missing
 
 
 live =

@@ -50,13 +50,13 @@ app =
                     a |> App.withRoutes routes |> App.withNotFound missing
             }
     in
-    App.app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = \_ -> Sub.none
-        }
-        |> helpers.pages [ App.route "/" "home" ] "missing"
+        App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> helpers.pages [ App.route "/" "home" ] "missing"
 
 
 main =
