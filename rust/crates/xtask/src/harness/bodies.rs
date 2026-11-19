@@ -3993,7 +3993,11 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// 206 -> 207 in v0.29.0: `stdlib.Std.Image.Canvas`, covered by the ImageCanvas
 /// conformance suite, the `imagecanvas` Family-S surface and
 /// `runtime-go/rt/canvas_kernels_test.go`.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 207;
+/// 207 -> 210 in v0.29.14, measured by the `coverage-ledger` gate
+/// (`surfaces_total` 203 -> 206): `cli.coverage` (`sky test --coverage`,
+/// `sky fuzz --coverage`), `stdlib.Std.Admission` and `stdlib.Std.Breaker`,
+/// each covered by its own tests and recorded in `docs/coverage/ledger.md`.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 210;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
