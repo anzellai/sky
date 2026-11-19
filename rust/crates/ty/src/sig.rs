@@ -329,6 +329,11 @@ impl World {
     /// Intended for a declaration-world fork; existing aggregate maps are not
     /// cleared or otherwise changed by this additive extension.
     pub fn extend_query_bodies(&mut self, db: &dyn SkyDb) {
+        // ---- the routed page carriers (v0.29.14): the user defs of `db`'s
+        // module set that reach `App.withRoutes`. Pass 4 seeds them over the
+        // whole program; a shared-world case adds its own here, because the
+        // base world was seeded before the case's modules existed. ----
+        crate::obligations::extend_routed_page_carriers(self, db);
         // ---- pass 5: precise CHECK-ONLY schemes for UNANNOTATED app defs ----
         // (F1c narrow subset — see `infer_app_check_sigs`.) Runs on top of the
         // decls world so it can consult every declaration channel + its own prior

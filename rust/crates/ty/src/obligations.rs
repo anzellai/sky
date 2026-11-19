@@ -116,51 +116,67 @@ fn is_stdlib_module(name: &str) -> bool {
 
 /// Pass 4 (v0.29.14): the routing defs of [`PageTie`]. The carriers are
 /// `Std.App.withRoutes` and every user def whose body reaches a carrier (a
-/// fixpoint over the call graph), so a generic helper is checked at its
-/// callers. The raw APIs tie at their own use.
+/// fixpoint over the call graph, [`extend_routed_page_carriers`]), so a
+/// generic helper is checked at its callers. The raw APIs tie at their own
+/// use.
 fn seed_routed_page(world: &mut World, db: &dyn SkyDb) {
-    let def_of = |module: &str, name: &str| {
-        let m = db.module_by_name(module)?;
-        Some(db.intern_def(m, &Name::new(name), hir::DefKind::Value))
-    };
     let mut apis = std::collections::HashMap::new();
     for (module, name, api) in [
         ("Std.Live", "config", RoutedApi::LiveConfig),
         ("Std.Spa", "withRoutes", RoutedApi::SpaRoutes),
         ("Std.Spa", "withNotFound", RoutedApi::SpaNotFound),
     ] {
-        if let Some(d) = def_of(module, name).filter(|d| world.value_sigs.contains_key(d)) {
+        if let Some(d) = routing_def(db, module, name).filter(|d| world.value_sigs.contains_key(d))
+        {
             apis.insert(d, api);
         }
     }
-    let mut carriers = std::collections::HashSet::new();
-    if let Some(d) = def_of("Std.App", "withRoutes").filter(|d| world.value_sigs.contains_key(d)) {
-        carriers.insert(d);
-        let mut user = Vec::new();
-        for m in db.module_ids() {
-            if is_stdlib_module(db.module_name(m)) {
-                continue;
-            }
-            let resolved = db.resolve(m);
-            for (def, body) in &resolved.bodies {
-                user.push((*def, callees(body).0));
+    world.routed_page_apis = apis;
+    world.routed_page_carriers = std::collections::HashSet::new();
+    extend_routed_page_carriers(world, db);
+}
+
+fn routing_def(db: &dyn SkyDb, module: &str, name: &str) -> Option<base::DefId> {
+    let m = db.module_by_name(module)?;
+    Some(db.intern_def(m, &Name::new(name), hir::DefKind::Value))
+}
+
+/// Add to the routed page carriers every user def of `db`'s module set whose
+/// body reaches a carrier. Additive, so the shared-world path runs it again
+/// over a case's own modules (a body-derived pass, see
+/// `World::extend_query_bodies`) on top of the base world's carriers; the
+/// whole-program path reaches the same set.
+pub(crate) fn extend_routed_page_carriers(world: &mut World, db: &dyn SkyDb) {
+    let Some(with_routes) =
+        routing_def(db, "Std.App", "withRoutes").filter(|d| world.value_sigs.contains_key(d))
+    else {
+        return;
+    };
+    let mut carriers = std::mem::take(&mut world.routed_page_carriers);
+    carriers.insert(with_routes);
+    let mut user = Vec::new();
+    for m in db.module_ids() {
+        if is_stdlib_module(db.module_name(m)) {
+            continue;
+        }
+        let resolved = db.resolve(m);
+        for (def, body) in &resolved.bodies {
+            user.push((*def, callees(body).0));
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (d, calls) in &user {
+            if !carriers.contains(d) && calls.iter().any(|c| carriers.contains(c)) {
+                carriers.insert(*d);
+                changed = true;
             }
         }
-        loop {
-            let mut changed = false;
-            for (d, calls) in &user {
-                if !carriers.contains(d) && calls.iter().any(|c| carriers.contains(c)) {
-                    carriers.insert(*d);
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
+        if !changed {
+            break;
         }
     }
     world.routed_page_carriers = carriers;
-    world.routed_page_apis = apis;
 }
 
 /// Runtime handles (A-1/A-1b): an id into a table of one running process.
