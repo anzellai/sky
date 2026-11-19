@@ -126,6 +126,14 @@ const ALLOWED: &[(&str, &str)] = &[
         "phantom: strict decoding returns only no-message scroll batches or error commands",
     ),
     (
+        "Std.Live.api",
+        "phantom: an api route answers with its own Response and gives no page (`Live_api` holds only the method, pattern and handler), so no `page` value reaches the model; the variable lets it sit in a `List (Route page)` beside the page routes",
+    ),
+    (
+        "Std.Spa.serverRoute",
+        "phantom: a server route is a full browser navigation and gives no page (`Spa_serverRoute` holds only the method and pattern), so no `page` value reaches the model; the variable lets it sit in a `List (Route page)` beside the client routes",
+    ),
+    (
         "Std.Spa.reportError",
         "phantom: a Cmd/Sub that only performs an effect never delivers a `msg`",
     ),
