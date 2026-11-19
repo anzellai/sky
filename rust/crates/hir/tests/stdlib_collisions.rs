@@ -43,6 +43,12 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     // Sky.Core.Error and Sky.Core.Task with `(..)` and uses the bare name
     // gets `[E1012]`. Breaking line in the v0.29.14 CHANGELOG.
     "value timeout",
+    // v0.29.14: Std.Live.routeParam and Std.Spa.routeParam, the `:param`
+    // route of the typed `Route page` (the name Std.App already uses for the
+    // same job). A program that exposes two of Std.App, Std.Live and
+    // Std.Spa with `(..)` and uses the bare name gets `[E1012]`. Breaking
+    // line in the v0.29.14 CHANGELOG.
+    "value routeParam",
     // v0.29.2: Std.Money.sum replaces sumOf (the user's Money API redesign).
     // Std.Decimal already exports `sum`; a program that exposes both modules
     // with `(..)` and uses the bare name gets `[E1012]`. Breaking line in the

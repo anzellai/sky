@@ -34,6 +34,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Spa.withRoutes` and `Spa.withNotFound` tie the page type to the model's
   `page` field (`[E2001]`), and a raw routing helper whose model type is not
   known is refused: annotate it with the model type.
+- `Std.Live` and `Std.Spa` export `routeParam`, and `Std.App` already
+  exports it. A program that imports two of them with `exposing (..)` and
+  writes a bare `routeParam` gets `[E1012]`: write `App.routeParam`,
+  `Live.routeParam` or `Spa.routeParam`.
 
 ### Added
 
