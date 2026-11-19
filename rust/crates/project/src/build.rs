@@ -5916,9 +5916,38 @@ mod go_build_child_tests {
     /// from `getrusage(RUSAGE_CHILDREN)` after the build, the largest child the
     /// process had ever waited for, so a second, small `go build` reported the
     /// first one's peak.
+    ///
+    /// The measurement runs in a fresh copy of this test binary that runs only
+    /// this test. On Linux a child's `ru_maxrss` starts at the spawning
+    /// process's own peak RSS (the kernel records the old address space's
+    /// high-water mark at `exec`, and a `posix_spawn` child execs from the
+    /// parent's), so a 1 MB `dd` started from the whole test binary, after
+    /// the other tests have run in it, reported more than 100 MB. A fresh
+    /// process keeps that floor small, so the bound tests only the child.
     #[test]
     #[cfg(unix)]
     fn each_bounded_child_reports_its_own_peak() {
+        const INNER: &str = "SKY_TEST_PEAK_PROBE_INNER";
+        if std::env::var_os(INNER).is_none() {
+            let out = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "build::go_build_child_tests::each_bounded_child_reports_its_own_peak",
+                    "--test-threads=1",
+                    "--nocapture",
+                ])
+                .env(INNER, "1")
+                .output()
+                .unwrap();
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(out.status.success(), "the probe failed:\n{text}");
+            assert!(text.contains("1 passed"), "the probe ran no test:\n{text}");
+            return;
+        }
         let dd = |mb: u64| {
             let mut c = Command::new("dd");
             c.args([
