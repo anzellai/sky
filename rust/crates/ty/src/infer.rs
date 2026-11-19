@@ -155,6 +155,9 @@ pub struct Infer<'a> {
     /// custom type or a record), with the span where they arose. Decided by
     /// [`Infer::discharge_bounds`] (`crate::obligations`, v0.27.0).
     pub(crate) obligations: Vec<crate::obligations::Obligation>,
+    /// Routed-page ties waiting for the model's type (v0.29.14,
+    /// [`crate::obligations::PageTie`]). Decided with the obligations.
+    pub(crate) page_ties: Vec<crate::obligations::PageTie>,
     /// Nominal bound checks already made in this run, keyed by the bound, the
     /// type name and its argument roots: stops a recursive type from looping.
     pub(crate) bound_seen: std::collections::HashSet<(SuperType, String, Vec<TyVarId>)>,
@@ -231,6 +234,7 @@ impl<'a> Infer<'a> {
             poly_insts: Vec::new(),
             last_vr: None,
             obligations: Vec::new(),
+            page_ties: Vec::new(),
             bound_seen: std::collections::HashSet::new(),
             inferred_bounds: Vec::new(),
             overlay: None,
@@ -932,21 +936,25 @@ impl<'a> Infer<'a> {
                 .collect(),
         );
         let mut pending = Vec::new();
+        let mut page_ties = Vec::new();
         let mut errors = HashMap::new();
         for &(def, body) in members {
             let mut infer = Infer::new(world, db).with_self_def(Some(def));
             std::mem::swap(&mut infer.uf, &mut solver);
             infer.provisional_defs = provisional.clone();
             infer.obligations = std::mem::take(&mut pending);
+            infer.page_ties = std::mem::take(&mut page_ties);
             infer.cur_span = body.root.and_then(|r| body.expr_span(r));
             infer.infer_def_vars(body);
             pending = std::mem::take(&mut infer.obligations);
+            page_ties = std::mem::take(&mut infer.page_ties);
             errors.insert(def, std::mem::take(&mut infer.errors));
             std::mem::swap(&mut infer.uf, &mut solver);
         }
         let mut finish = Infer::new(world, db);
         std::mem::swap(&mut finish.uf, &mut solver);
         finish.obligations = pending;
+        finish.page_ties = page_ties;
         finish.discharge_bounds(true);
         for error in finish.errors.drain(..) {
             let owner = error
@@ -2375,6 +2383,22 @@ impl<'a> Infer<'a> {
             Res::Def(def) => {
                 if let Some(&shared) = self.provisional_defs.get(&def) {
                     return shared;
+                }
+
+                // v0.29.14 — CHECK-ONLY. `App.withRoutes`: the runtime writes
+                // the routed page into the model's `page` field, so the routes'
+                // page type is tied to that field once the model is known
+                // (`crate::obligations::PageTie`).
+                if !self.use_inferred
+                    && self.self_def != Some(def)
+                    && self.world.routed_page_def == Some(def)
+                {
+                    if let Some(s) = self.world.value_sigs.get(&def) {
+                        let s = s.clone();
+                        let inst = self.instantiate(&s);
+                        self.tie_routed_page(inst);
+                        return inst;
+                    }
                 }
 
                 // v0.27.0 qualified bounds — CHECK-ONLY. A def whose scheme

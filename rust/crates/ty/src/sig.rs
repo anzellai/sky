@@ -129,6 +129,11 @@ pub struct WorldDecls {
     /// The `Res::Kernel` face of [`World::bound_check_sigs`], keyed
     /// `(pseudo-module, func)`.
     pub bound_kernel_sigs: HashMap<(String, String), Scheme>,
+    /// The `DefId` of `Std.App.withRoutes`, when the compile set has it
+    /// (v0.29.14). The runtime writes the routed page into the model's `page`
+    /// field, so the check path ties the two types at each use
+    /// ([`crate::obligations`], `PageTie`).
+    pub routed_page_def: Option<DefId>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates

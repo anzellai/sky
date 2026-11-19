@@ -61,6 +61,20 @@ pub(crate) struct Obligation {
     pub span: Option<Span>,
 }
 
+/// A deferred tie between a routed app's page type and its model's `page`
+/// field (v0.29.14). `Std.App.withRoutes` has the type
+/// `List (Route page) -> App f s page model msg key -> …`, and the runtime
+/// writes the routed page (and the NotFound page) into the model's `page`
+/// field on every request. A model with no `page` field is valid (the runtime
+/// writes nothing), so the tie is not in the signature: it is decided once the
+/// model's type is known ([`Infer::discharge_page_ties`]).
+#[derive(Clone, Debug)]
+pub(crate) struct PageTie {
+    pub page: TyVarId,
+    pub model: TyVarId,
+    pub span: Option<Span>,
+}
+
 /// Runtime handles (A-1/A-1b): an id into a table of one running process.
 /// Never ordered, never encoded (a handle decoded from JSON would be forged,
 /// and a restored one is dead).
@@ -219,6 +233,7 @@ impl Infer<'_> {
         if fin {
             self.uf.default_all_int_literals();
         }
+        self.discharge_page_ties(fin);
         let saved = self.cur_span;
         let mut kept = Vec::new();
         loop {
@@ -236,6 +251,87 @@ impl Infer<'_> {
         }
         self.obligations = kept;
         self.cur_span = saved;
+    }
+
+    /// Record a [`PageTie`] for one use of `Std.App.withRoutes`, whose
+    /// instance is `inst` (`List (Route page) -> App f s page model msg key ->
+    /// …`).
+    pub(crate) fn tie_routed_page(&mut self, inst: TyVarId) {
+        let Content::Structure(FlatTy::Fun(_, rest)) = self.uf.content(inst) else {
+            return;
+        };
+        let Content::Structure(FlatTy::Fun(app, _)) = self.uf.content(rest) else {
+            return;
+        };
+        let Content::Structure(FlatTy::App(_, args)) = self.uf.content(app) else {
+            return;
+        };
+        if let [_, _, page, model, _, _] = args[..] {
+            self.page_ties.push(PageTie {
+                page,
+                model,
+                span: self.cur_span,
+            });
+        }
+    }
+
+    /// Decide each [`PageTie`] whose model type is known: a record with a
+    /// `page` field must hold the routes' page type there. A model that is
+    /// still a variable (or a record whose row may still gain a `page`
+    /// field) waits for the end of the def; then a model with no `page`
+    /// field passes (the runtime writes nothing into it).
+    pub(crate) fn discharge_page_ties(&mut self, fin: bool) {
+        let saved = self.cur_span;
+        let mut kept = Vec::new();
+        for tie in std::mem::take(&mut self.page_ties) {
+            let r = self.uf.find(tie.model);
+            let field = match self.uf.content(r) {
+                Content::Structure(FlatTy::Record(fs, ext)) => {
+                    let (fs, ext) = self.uf.normalize_record(fs, ext);
+                    match fs.get(&Name::new("page")) {
+                        Some(&f) => f,
+                        None => {
+                            let open = ext.is_some_and(|row| {
+                                matches!(
+                                    self.uf.content(row),
+                                    Content::Flex | Content::FlexSuper(_)
+                                )
+                            });
+                            if open && !fin {
+                                kept.push(tie);
+                            }
+                            continue;
+                        }
+                    }
+                }
+                Content::Flex | Content::FlexSuper(_) if !fin => {
+                    kept.push(tie);
+                    continue;
+                }
+                _ => continue,
+            };
+            let routed = self.uf.describe(tie.page);
+            let held = self.uf.describe(field);
+            if self.uf.unify(field, tie.page).is_err() {
+                self.errors.push(TypeError {
+                    message: format!(
+                        "The routes give pages of type `{routed}`, but the model's `page` field \
+                         has type `{held}`.\n\nThe app writes the routed page (and the \
+                         `App.withNotFound` page) into the model's `page` field on every \
+                         request, so the two types must be the same. Make every \
+                         `App.route` / `App.routeParam` page and the `App.withNotFound` page a \
+                         `{held}`, or give the model field another name if it is not the \
+                         app's page."
+                    ),
+                    span: tie.span,
+                    code: "E2001",
+                });
+            }
+            self.cur_span = tie.span;
+            self.drain_pending();
+        }
+        self.cur_span = saved;
+        self.page_ties.extend(kept);
     }
 
     /// Decide one obligation. `false` = keep it for the end of the def.
@@ -451,6 +547,12 @@ fn with_bounds(scheme: &Scheme, bounds: &[(Name, SuperType)]) -> Scheme {
 /// Pass 4 (with the other static seeds): the bounded overrides of
 /// [`ENCODABLE_APIS`].
 pub(crate) fn seed_bound_overrides(world: &mut World, db: &dyn SkyDb) {
+    if let Some(m) = db.module_by_name("Std.App") {
+        let def = db.intern_def(m, &Name::new("withRoutes"), hir::DefKind::Value);
+        if world.value_sigs.contains_key(&def) {
+            world.routed_page_def = Some(def);
+        }
+    }
     for (module, name, var) in ENCODABLE_APIS {
         let Some(m) = db.module_by_name(module) else {
             continue;

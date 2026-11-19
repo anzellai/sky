@@ -22,6 +22,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - `HttpRequest` has the new field `minRemaining`. A request written as a full
   record literal is `[E2001]` until it adds `minRemaining = 0`. A request
   built from `Http.defaultRequest` is unchanged.
+- A routed app (`App.withRoutes`) whose model has a `page` field must use
+  the routes' page type for that field. A program whose routes give another
+  type (a `String` page, another custom type) built before and then failed on
+  every request; it is now `[E2001]` at `App.withRoutes`
+  (`docs/migration/v0.29.md`).
 
 ### Added
 
@@ -176,6 +181,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   module's own `Route` (`Std.App` does not expose `Route`, so the checker fell
   back to the bare name). A qualified name now always names the type of the
   qualifier's module.
+- A routed app whose route pages did not have the type of the model's `page`
+  field passed `sky check` and built. The runtime writes the routed page into
+  `model.page`, so every request on Sky.Live and on the `web:app` backend was
+  a 500 (`reflect.Set: value of type string is not assignable to type
+  main.Main_Route`). With a second custom type of the same shape the wrong
+  write went unseen until the view's `case` panicked. The checker now ties
+  the routes' page type to the model's `page` field at `App.withRoutes`, and
+  a mismatch is `[E2001]`: "The routes give pages of type `String`, but the
+  model's `page` field has type `Route`". A model with no `page` field is
+  unchanged. This closes the routed half of the route-less fix above.
 - Sky.Spa: a routed `web:app` app with no server arm did not serve its deep
   routes. Its backend was static-only, so `GET /about` was the Go file
   server's plain 404 and `GET /` had no first paint. The backend now

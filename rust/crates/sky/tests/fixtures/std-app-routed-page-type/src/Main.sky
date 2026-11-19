@@ -1,0 +1,105 @@
+module Main exposing (main)
+
+-- A routed app: every route page and the NotFound page have the type of the
+-- model's `page` field, because the runtime writes the routed page into that
+-- field. A route page of another type is a compile error (v0.29.14). The
+-- test edits the routes to give a `String` page or a `Screen` page.
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Sub exposing (Sub)
+import Std.Ui as Ui
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type Screen
+    = Home
+    | About
+    | Gone
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Rename
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Rename ->
+            ( { model | title = model.title ++ "!" }, Cmd.none )
+
+
+pageText : Route -> String
+pageText page =
+    case page of
+
+        Dashboard ->
+            "dashboard"
+
+        Detail id ->
+            "detail " ++ id
+
+        Missing ->
+            "missing"
+
+
+screenText : Screen -> String
+screenText screen =
+    case screen of
+
+        Home ->
+            "home"
+
+        About ->
+            "about"
+
+        Gone ->
+            "gone"
+
+
+view : Model -> Ui.Element Msg
+view m =
+    Ui.column
+        []
+        [ Ui.el
+              [ Ui.htmlAttribute "id" "state" ]
+              (Ui.text ("PAGE=" ++ pageText m.page ++ " TITLE=" ++ m.title))
+        , Ui.button
+              []
+              { onPress = Just Rename, label = Ui.text (screenText Home) }
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> App.withRoutes
+                   [ App.route "/" Dashboard
+                   , App.routeParam "/item/:id" Detail
+                   ]
+            |> App.withNotFound Missing)

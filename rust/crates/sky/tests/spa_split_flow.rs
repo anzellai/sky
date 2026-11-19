@@ -10826,6 +10826,124 @@ fn a_routeless_app_keeps_its_own_page_field_on_live_and_web_app() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// A routed app's page type is the type of the model's `page` field (D7
+/// follow-up, v0.29.14). The runtime writes the routed page (and the NotFound
+/// page) into `model.page` on every request, but `App.withRoutes` never tied
+/// the App's `page` parameter to that field. A program whose routes give a
+/// `String` page while the model holds `page : Route` passed `sky check`,
+/// built, and then every request was a 500 (`reflect.Set: value of type string
+/// is not assignable to type main.Main_Route`) on Sky.Live and on the
+/// `web:app` backend. With a second enum of the same arity the wrong write
+/// passed unseen until the view's `case` panicked. Both shapes are now a
+/// compile error on every target; the correct program builds and serves.
+#[test]
+#[cfg(unix)]
+fn a_routed_page_must_have_the_model_page_type_on_live_and_web_app() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = "App.route \"/\" Dashboard";
+    let detail = "App.routeParam \"/item/:id\" Detail";
+    let not_found = "App.withNotFound Missing";
+    let main = "src/Main.sky";
+    let mismatches: [(&str, [(&str, &str, &str); 3]); 2] = [
+        (
+            "String pages",
+            [
+                (main, home, "App.route \"/\" \"home\""),
+                (
+                    main,
+                    detail,
+                    "App.routeParam \"/item/:id\" (\\s -> \"item:\" ++ s)",
+                ),
+                (main, not_found, "App.withNotFound \"missing\""),
+            ],
+        ),
+        (
+            "an enum of the same arity",
+            [
+                (main, home, "App.route \"/\" Home"),
+                (main, detail, "App.route \"/about\" About"),
+                (main, not_found, "App.withNotFound Gone"),
+            ],
+        ),
+    ];
+    for (what, edits) in mismatches {
+        let (proj, out, log) = web_app_build("std-app-routed-page-type", &edits);
+        let refused = |out: &std::process::Output, log: &str, how: &str| {
+            assert!(
+                !out.status.success(),
+                "{what}, {how}: a route page that is not the model's page type must not build:\n{log}"
+            );
+            assert!(
+                log.contains("E2001") && log.contains("model's `page` field"),
+                "{what}, {how}: the error names the model's page field:\n{log}"
+            );
+        };
+        refused(&out, &log, "sky build --target web:app");
+        for args in [["check", "src/Main.sky"], ["build", "src/Main.sky"]] {
+            let out = Command::new(SKY)
+                .args(args)
+                .current_dir(&proj)
+                .output()
+                .expect("run sky");
+            let log = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            refused(&out, &log, &format!("sky {}", args[0]));
+        }
+        let _ = std::fs::remove_dir_all(&proj);
+    }
+    let (proj, out, log) = web_app_build("std-app-routed-page-type", &[]);
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (live, port) = start_live_app(&proj);
+    let jar = proj.join("jar-live.txt");
+    let home = curl_get_jar(port, "/", &jar);
+    let detail = curl_get_jar(port, "/item/42", &jar);
+    let missing = curl_get_jar(port, "/no/such/page", &jar);
+    let missing_status = curl_status_ctype(port, "/no/such/page").map(|(c, _)| c);
+    drop(live);
+    assert!(
+        home.contains("PAGE=dashboard TITLE=t"),
+        "Sky.Live GET /:\n{home}"
+    );
+    assert!(
+        detail.contains("PAGE=detail 42 TITLE=t"),
+        "Sky.Live GET /item/42:\n{detail}"
+    );
+    assert!(
+        missing.contains("PAGE=missing TITLE=t"),
+        "Sky.Live GET /no/such/page:\n{missing}"
+    );
+    assert_eq!(
+        missing_status,
+        Some(404),
+        "Sky.Live: an unknown path is a 404"
+    );
+    let (split, port) = start_split_backend(&proj);
+    let jar = proj.join("jar-split.txt");
+    let pages: Vec<(&str, Option<u32>, String)> = ["/", "/item/42"]
+        .into_iter()
+        .map(|p| {
+            let status = curl_status_ctype(port, p).map(|(c, _)| c);
+            (p, status, curl_get_jar(port, p, &jar))
+        })
+        .collect();
+    drop(split);
+    for (path, status, page) in pages {
+        assert_eq!(status, Some(200), "web:app backend GET {path}:\n{page}");
+        assert!(
+            page.contains("spa-boot."),
+            "web:app backend GET {path}: the client shell is served:\n{page}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// `Sub.onFragment`: the Sky.Live app receives the fragment its browser
 /// client reports (the `__skyFragment` event, the path the client JS takes at
 /// load and on hashchange) and renders it; the same source builds as a
