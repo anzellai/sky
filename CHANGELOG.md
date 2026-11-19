@@ -40,6 +40,15 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   field's type too, also with no routes. A program that sets routes or a
   navigation function must serve its app where the model type is known (see
   the line above).
+- `Std.Admission` and `Std.Breaker` are new stdlib modules, and a stdlib
+  module name is reserved. A project module with one of these names
+  (`module Std.Breaker`), which v0.29.13 accepted, is now refused. Rename the
+  module.
+- A qualified type name now always names the type of the qualifier's
+  module (see "Fixed"). A program that wrote a qualified name for its own
+  type, such as `List App.Route` for a list of the module's own `Route`
+  values, was accepted and is now `[E2001]` (`Std.App.Route` vs
+  `Main.Route`). Write the bare name, `List Route`.
 - `Std.Live.Route` and `Std.Spa.Route` take the page type: `Route page`. An
   annotation `List Live.Route` becomes `List (Live.Route Page)`. A `:param`
   route uses the new `Live.routeParam` / `Spa.routeParam` (a constructor
@@ -265,7 +274,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `coerce : Int -> any` in such a module also stayed an unchecked cast. The
   checker now decides it by origin: a module is the stdlib only when it is a
   file of `sky-stdlib/`. A project module is app code whatever its name, and
-  it is checked like any other. No module name is newly refused.
+  it is checked like any other. This fix refuses no module name (the new
+  `Std.Admission` and `Std.Breaker` names are in "Breaking changes").
 - Sky.Spa: a routed `web:app` app with no server arm did not serve its deep
   routes. Its backend was static-only, so `GET /about` was the Go file
   server's plain 404 and `GET /` had no first paint. The backend now
