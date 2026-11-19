@@ -4,6 +4,7 @@ package rt
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -137,11 +138,30 @@ func TestProcKillVerified_RefusesAReusedPid(t *testing.T) {
 	}
 }
 
+// TestProcTreeHelperSleep is not a test on its own: the cookie test below
+// runs this test binary as its child's program, so that the child is a
+// program whose environment every platform shows. macOS 27 hides the
+// environment of an Apple platform binary such as /bin/sleep from
+// kern.procargs2; that case is process_tree_darwin_test.go's.
+func TestProcTreeHelperSleep(t *testing.T) {
+	if os.Getenv("SKY_PROC_TREE_HELPER") != "sleep" {
+		return
+	}
+	time.Sleep(30 * time.Second)
+	os.Exit(0)
+}
+
 // TestProcessTreeCookie_IsInTheChildEnvironment: the cookie reaches the
 // child (and so its descendants), and the platform reader finds it in a
 // running process (/proc/<pid>/environ on Linux, kern.procargs2 on macOS).
 func TestProcessTreeCookie_IsInTheChildEnvironment(t *testing.T) {
-	id := spawnT(t, shCmd(`printf '%s' "$`+procTreeCookieEnv+`"; exec sleep 30`))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("the test binary: %v", err)
+	}
+	id := spawnT(t, procCmd{program: "/bin/sh", args: []string{"-c",
+		`printf '%s' "$` + procTreeCookieEnv + `"; SKY_PROC_TREE_HELPER=sleep exec "$1" -test.run='^TestProcTreeHelperSleep$'`,
+		"sh", exe}})
 	h := handleOf(t, id)
 	c := readChunk(t, id, procStreamStdout, 0)
 	if len(c.data) != 32 || c.data != h.treeCookie {

@@ -124,3 +124,10 @@ func procIsZombie(pid int) bool {
 	f := strings.Fields(string(b[i+2:]))
 	return len(f) > 0 && (f[0] == "Z" || f[0] == "X")
 }
+
+// procFdMarksOf: Linux reads the cookie of every process of this user from
+// /proc/<pid>/environ, so the sweep needs no descriptor witness here (see
+// process_tree_darwin.go for the macOS one).
+func procFdMarksOf(readEnds []*os.File, ptySlave *os.File) procFdMarks { return procFdMarks{} }
+
+func procHoldsFdMark(pid int, pipes, ttys map[uint64]bool) bool { return false }

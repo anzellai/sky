@@ -1084,8 +1084,9 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
         "Shared must import the sibling Domain module for the codec/type:\n{shared}"
     );
     assert!(
-        shared.contains("SpaCodec_.field \"todos\" .todos todoListCodec"),
-        "the todos field must wire to the sibling `todoListCodec`:\n{shared}"
+        shared.contains("import Domain as SpaTy_Domain_")
+            && shared.contains("SpaCodec_.field \"todos\" .todos SpaTy_Domain_.todoListCodec"),
+        "the todos field must wire to the sibling `todoListCodec`, qualified:\n{shared}"
     );
     assert!(
         !shared.contains("type alias Todo ="),
@@ -1456,14 +1457,19 @@ fn splits_a_module_whose_wire_rides_a_nominal_union_by_owning_it_in_shared() {
 }
 
 /// A `Codec <T>` binding that lives in a MIXED module (one that ALSO owns a
-/// server effect) is itself PURE, and the wire needs it. The generator must
-/// COPY that codec + its type into `Shared` — NEVER import the tainted module
-/// into `Shared` (that would drag the File effect into the wasm frontend, which
-/// `Shared` compiles into). Before this fix the codec registry scanned only the
-/// entry + PURE sibling modules, so a `List Item` field whose `itemCodec` lived
-/// beside a `File` effect fell through to `no codec for a field of type any`.
+/// server effect) is itself PURE, and the wire needs it. Before this fix the
+/// codec registry scanned only the entry + PURE sibling modules, so a `List
+/// Item` field whose `itemCodec` lived beside a `File` effect fell through to
+/// `no codec for a field of type any`.
+///
+/// Until v0.30.0 the split COPIED the codec and its type into `Shared`. Now
+/// `Shared` imports the module under a generated alias and names the codec in
+/// place (`SpaTy_Data_.itemCodec`): the wasm client gets the module's client
+/// SUBSET (§23), which keeps `Item` and `itemCodec` and drops every server
+/// def, and the backend gets the whole module. The security property is
+/// unchanged: no server effect reaches the client.
 #[test]
-fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
+fn splits_a_mixed_module_codec_by_naming_it_in_place() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let out = scratch();
     let _ = std::fs::remove_dir_all(&out);
@@ -1479,7 +1485,7 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
         .expect("run sky spa-split");
     assert!(
         status.success(),
-        "sky spa-split should succeed by COPYING the mixed-module codec into Shared (was: `no codec for a field of type any`)"
+        "sky spa-split should succeed with the mixed-module codec (was: `no codec for a field of type any`)"
     );
 
     let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
@@ -1487,18 +1493,16 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
     let front_shared = std::fs::read_to_string(out.join("frontend/src/Shared.sky")).unwrap();
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
 
-    // --- Shared COPIES the mixed-module codec + its type (never imports Data). ---
+    // --- Shared names the mixed-module codec in place, through its alias. ---
     assert!(
-        shared.contains("itemCodec") && shared.contains("type alias Item ="),
-        "Shared must COPY the pure `itemCodec` + `Item` type from the mixed module:\n{shared}"
+        shared.contains("import Data as SpaTy_Data_")
+            && !shared.contains("type alias Item =")
+            && !shared.contains("itemCodec ="),
+        "Shared must import `Data` qualified and copy nothing from it:\n{shared}"
     );
     assert!(
-        !shared.contains("import Data"),
-        "SECURITY LEAK: Shared must NOT import the server-tainted `Data` module:\n{shared}"
-    );
-    assert!(
-        shared.contains("SpaCodec_.field \"items\" .items (SpaCodec_.list itemCodec)"),
-        "the items field must wire to `Codec.list itemCodec`:\n{shared}"
+        shared.contains("SpaCodec_.field \"items\" .items (SpaCodec_.list SpaTy_Data_.itemCodec)"),
+        "the items field must wire to `Codec.list SpaTy_Data_.itemCodec`:\n{shared}"
     );
 
     // --- The server File effect must be routed backend-only; Data stays backend. ---
@@ -1518,14 +1522,27 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
             "SECURITY LEAK: frontend/src/Shared.sky contains `{needle}`:\n{front_shared}"
         );
     }
+    // The client copy of `Data` is its subset: the type and the pure codec,
+    // no server def and no server-only import.
+    let front_data = std::fs::read_to_string(out.join("frontend/src/Data.sky")).unwrap();
     assert!(
-        !front.contains("import Data"),
-        "SECURITY LEAK: frontend/src/Main.sky imports the backend-only `Data` module:\n{front}"
+        front_data.contains("type alias Item")
+            && front_data.contains("itemCodec =")
+            && !front_data.contains("import Shared"),
+        "the client subset of `Data` keeps its type and pure codec:\n{front_data}"
     );
-    assert!(
-        !out.join("frontend/src/Data.sky").exists(),
-        "SECURITY LEAK: the server-tainted `Data` module must NOT be in the frontend"
-    );
+    // The module's header comment names the server functions; the code may not.
+    let front_data_code: String = front_data
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for needle in ["File.", "loadItems", "saveItems", "import Sky.Core.File"] {
+        assert!(
+            !front_data_code.contains(needle),
+            "SECURITY LEAK: frontend/src/Data.sky contains `{needle}`:\n{front_data}"
+        );
+    }
 
     // --- The backend keeps the effect + carries the codec via Shared (no clash). ---
     assert!(
@@ -1535,10 +1552,8 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
         "backend Data must keep the File effect (it runs it server-side)"
     );
     assert!(
-        back.contains("import Shared exposing (")
-            && back.contains("Item")
-            && back.contains("itemCodec"),
-        "backend Main imports Shared for the copied codec/type (explicit exposing list):\n{back}"
+        back.contains("import Shared exposing (") && back.contains("saveRespCodec"),
+        "backend Main imports Shared for the wire codecs (explicit exposing list):\n{back}"
     );
 
     // --- Both build (Go-gated). Backend native, frontend wasm. ---
@@ -1903,11 +1918,15 @@ fn generated_wire_types_name_every_type_they_hold() {
         "names : Paged String",
         "type alias Item =",
         "products : List Product",
-        "hits : List Preset",
-        "pick : Maybe Preset",
-        "slots : List (Maybe Preset)",
-        "groups : Maybe (List Preset)",
-        "byCode : Dict String Preset",
+        // `Preset` is declared in `Types`, which `Shared` imports under a
+        // generated alias (v0.30.0): a type of another module is named
+        // qualified, never through an `exposing (..)` import.
+        "hits : List SpaTy_Types_.Preset",
+        "pick : Maybe SpaTy_Types_.Preset",
+        "slots : List (Maybe SpaTy_Types_.Preset)",
+        "groups : Maybe (List SpaTy_Types_.Preset)",
+        "byCode : Dict String SpaTy_Types_.Preset",
+        "SpaTy_Data_.presetCodec",
     ] {
         assert!(
             shared.contains(want),
@@ -3081,9 +3100,16 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
         "the build must link the dist's {wasm} into the backend:\n{stamp_pkg}\n{log}"
     );
     // The SSR route must be registered BEFORE the static fallthrough so asset
-    // GETs (main.<hash>.wasm, wasm_exec.js) still reach the file server.
+    // GETs (main.<hash>.wasm, wasm_exec.js) still reach the file server. This
+    // app has no routes, so (F8) the catch-all answers an unknown path with the
+    // server render of `/`, sent with 404.
     let ssr_at = backend.find("spaPageRoute_ \"/{$}\" ssrHandler");
-    let static_at = backend.find("SpaServer_.static \"/\"");
+    let static_at =
+        backend.find("SpaServer_.staticNotFound \"/\" \"../frontend/dist\" spaRoutelessNotFound_");
+    assert!(
+        backend.contains("spaRoutelessNotFound_ req =\n    ssrHandler req\n        |> SpaTask_.map (SpaServer_.withStatus 404)"),
+        "F8: a route-less app's unknown path is the server render with 404:\n{backend}"
+    );
     assert!(
         ssr_at.is_some() && static_at.is_some() && ssr_at < static_at,
         "SSR-P1: the SSR route must precede the static route:\n{backend}"
@@ -3676,6 +3702,173 @@ fn web_app_sibling_update_with_rpc_error_builds() {
     let app_bin = proj.join(".skyapp/web-app/.split/backend/sky-out/app");
     assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
     let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// D1 (v0.30.0): a project with an unrelated `src/Main.sky` program and the
+/// app in a second entry `src/Other.sky`. `sky build src/Other.sky --target
+/// web:app` wrote the generated entry as `module Main` at `src/Main.sky`, then
+/// copied the project's own `Main` over it, so the backend silently became the
+/// `println` program. The generated entry now keeps `module Other` at
+/// `src/Other.sky`, and the backend serves Other's app.
+#[test]
+#[cfg(unix)]
+fn web_app_second_entry_builds_the_named_entry_not_the_project_main() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-second-entry"),
+        &proj,
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Other.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app src/Other.sky");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+    for half in ["backend", "frontend"] {
+        let toml = std::fs::read_to_string(split.join(half).join("sky.toml"))
+            .unwrap_or_else(|e| panic!("{half}/sky.toml: {e}\n{log}"));
+        assert!(
+            toml.contains("entry = \"src/Other.sky\""),
+            "the generated {half} is built from the named entry:\n{toml}"
+        );
+        let entry = std::fs::read_to_string(split.join(half).join("src/Other.sky"))
+            .unwrap_or_else(|e| panic!("{half}/src/Other.sky: {e}\n{log}"));
+        assert!(
+            entry.starts_with("module Other exposing"),
+            "{half}:\n{entry}"
+        );
+        if let Ok(main) = std::fs::read_to_string(split.join(half).join("src/Main.sky")) {
+            assert!(
+                main.contains("I AM THE PROJECT MAIN"),
+                "{half}/src/Main.sky may only be the project's own Main:\n{main}"
+            );
+        }
+    }
+    let front = std::fs::read_to_string(split.join("frontend/src/Other.sky")).unwrap();
+    assert!(
+        front.contains("OTHER APP"),
+        "the client is Other's app:\n{front}"
+    );
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "the second entry must build:\n{log}"
+    );
+    let backend_dir = split.join("backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the second-entry backend");
+    let ready = wait_for_spa_backend(&log_path, 120);
+    let home = curl_body_p(port, "/");
+    child.kill();
+    let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        !server_log.contains("I AM THE PROJECT MAIN"),
+        "the backend must not be the project's Main program:\n{server_log}"
+    );
+    assert!(
+        ready,
+        "the backend of Other's app must listen:\n{server_log}"
+    );
+    let home = home.expect("GET / must answer");
+    assert!(
+        home.contains(".wasm") || home.contains("OTHER APP"),
+        "GET / must serve Other's client:\n{home}"
+    );
+}
+
+/// A sibling module's own `update` that the app does NOT configure is an
+/// ordinary binding. `Area.update` performs `fetchText ()`, a `File` read.
+///
+///   * `spa-sibling-area-update`: `Main` imports `Area` only for the type
+///     `AreaMsg`. Before the fix the split skipped every def NAMED `update` in
+///     every module, so the client copy of `Area` kept `update` but dropped its
+///     server helper `fetchText`, and the frontend failed with `Undefined name:
+///     fetchText`.
+///   * `spa-sibling-area-update-delegate`: the entry's `ForArea sub` arm
+///     delegates to `Area.update`; the arm becomes a server arm.
+///
+/// Both must build, and neither client copy may carry the server helper.
+#[test]
+fn web_app_unconfigured_sibling_update_is_tainted() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    for fixture in [
+        "spa-sibling-area-update",
+        "spa-sibling-area-update-delegate",
+    ] {
+        let proj = scratch();
+        let _ = std::fs::remove_dir_all(&proj);
+        copy_tree(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(fixture),
+            &proj,
+        );
+        let output = Command::new(SKY)
+            .args(["build", "--target", "web:app", "src/Main.sky"])
+            .current_dir(&proj)
+            .output()
+            .expect("run sky build --target web:app");
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !log.contains("Undefined name"),
+            "{fixture}: the client copy of Area must not keep `update` without its helper:\n{log}"
+        );
+        let front_tree = concat_sky_tree(&proj.join(".skyapp/web-app/.split/frontend"));
+        for needle in ["fetchText", "File."] {
+            assert!(
+                !front_tree.contains(needle),
+                "{fixture}: SECURITY: `{needle}` must not reach the wasm frontend:\n{front_tree}"
+            );
+        }
+        if fixture.ends_with("-delegate") {
+            let front_main =
+                std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+                    .expect("the frontend Main module must exist");
+            assert!(
+                front_main.contains("/_rpc/ForArea"),
+                "{fixture}: the delegating `ForArea` arm must become an RPC:\n{front_main}"
+            );
+        }
+        if required(Need::Go, have_go()) {
+            assert!(
+                output.status.success(),
+                "{fixture}: --target web:app must build end to end:\n{log}"
+            );
+            assert!(
+                proj.join(".skyapp/web-app/.split/backend/sky-out/app")
+                    .is_file(),
+                "{fixture}: backend binary must be built:\n{log}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&proj);
+    }
 }
 
 /// Soundness regression for Sky.Spa auto-split bug #1 — the RPC request must
@@ -9250,6 +9443,15 @@ fn web_app_build(
     name: &str,
     edits: &[(&str, &str, &str)],
 ) -> (PathBuf, std::process::Output, String) {
+    web_app_build_entry(name, "src/Main.sky", edits)
+}
+
+/// [`web_app_build`] for the app entry `entry` (`src/Other.sky`).
+fn web_app_build_entry(
+    name: &str,
+    entry: &str,
+    edits: &[(&str, &str, &str)],
+) -> (PathBuf, std::process::Output, String) {
     let proj = scratch();
     let _ = std::fs::remove_dir_all(&proj);
     copy_tree(
@@ -9269,7 +9471,7 @@ fn web_app_build(
         std::fs::write(&p, src.replacen(from, to, 1)).unwrap();
     }
     let out = Command::new(SKY)
-        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .args(["build", "--target", "web:app", entry])
         .current_dir(&proj)
         .output()
         .expect("run sky build --target web:app");
@@ -9589,10 +9791,17 @@ fn a_server_only_module_keeps_its_types_in_the_client() {
 }
 
 /// A wire record copied into `Shared` that names another module's type gets
-/// what that type needs: an import of a pure module (under the alias the
-/// source uses), or a copy of a type from a server-only module. Before, the
-/// copy lost it (`Undefined name: Chan.Batch`; in this fixture a type
-/// mismatch). The client-result RPC answers the nested record.
+/// what that type needs. Before, the copy lost it (`Undefined name:
+/// Chan.Batch`; in this fixture a type mismatch). The client-result RPC
+/// answers the nested record.
+///
+/// Since v0.30.0 `Shared` names every type of another module through a
+/// generated alias and imports that module once under it (`import Shape as
+/// SpaTy_Shape_`, `at : SpaTy_Shape_.Point`), whatever alias the source wrote
+/// and whether or not the module has a server function. Before, it imported a
+/// pure module `exposing (..)` under the source's alias (two modules that
+/// export one name then made a bare use ambiguous, `[E1012]`) and copied the
+/// type of a server module (its client copy then lost the type, `[E2001]`).
 #[test]
 #[cfg(unix)]
 fn a_copied_wire_record_brings_the_types_it_names() {
@@ -9601,8 +9810,10 @@ fn a_copied_wire_record_brings_the_types_it_names() {
     let (proj, out, log) = web_app_build("spa-shared-foreign-type", &[]);
     let shared = split_file(&proj, "shared/Shared.sky");
     assert!(
-        shared.contains("import Shape exposing (..)") && shared.contains("at : Shape.Point"),
-        "Shared imports the pure module the copied record names:\n{shared}"
+        shared.contains("import Shape as SpaTy_Shape_")
+            && shared.contains("at : SpaTy_Shape_.Point")
+            && !shared.contains("import Shape exposing"),
+        "Shared imports the pure module the copied record names, qualified:\n{shared}"
     );
     if go {
         assert!(out.status.success(), "the web:app build failed:\n{log}");
@@ -9638,8 +9849,10 @@ fn a_copied_wire_record_brings_the_types_it_names() {
     );
     let shared = split_file(&proj, "shared/Shared.sky");
     assert!(
-        shared.contains("import Shape as S exposing (..)"),
-        "Shared imports the module under the alias the copied record uses:\n{shared}"
+        shared.contains("import Shape as SpaTy_Shape_")
+            && shared.contains("at : SpaTy_Shape_.Point")
+            && !shared.contains("import Shape as S "),
+        "Shared names the type through its generated alias, not the source's:\n{shared}"
     );
     if go {
         assert!(
@@ -9649,7 +9862,8 @@ fn a_copied_wire_record_brings_the_types_it_names() {
     }
     let _ = std::fs::remove_dir_all(&proj);
 
-    // The named type lives in a module with a server function: it is copied.
+    // The named type lives in a module with a server function: `Shared`
+    // imports that module too (its client copy keeps the type).
     let (proj, out, log) = web_app_build(
         "spa-shared-foreign-type",
         &[
@@ -9662,15 +9876,346 @@ fn a_copied_wire_record_brings_the_types_it_names() {
     );
     let shared = split_file(&proj, "shared/Shared.sky");
     assert!(
-        shared.contains("type alias Point")
-            && shared.contains("at : Point")
-            && !shared.contains("import Shape"),
-        "a server module's type is copied into Shared, its references made bare:\n{shared}"
+        !shared.contains("type alias Point")
+            && shared.contains("at : SpaTy_Shape_.Point")
+            && shared.contains("import Shape as SpaTy_Shape_"),
+        "a server module's type is named in place, not copied into Shared:\n{shared}"
     );
     if go {
         assert!(
             out.status.success(),
             "the web:app build with a server module failed:\n{log}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// Build `fixture` as web:app (with `edits`), write `data` files into the
+/// split backend's working directory, start the backend and POST `body` to
+/// `/_rpc/<msg>`. Returns the Shared source and the answer. Without Go only
+/// the generated sources are returned (answer `None`).
+#[cfg(unix)]
+fn split_and_post(
+    fixture: &str,
+    edits: &[(&str, &str, &str)],
+    data: &[(&str, &str)],
+    msg: &str,
+    body: &str,
+) -> (PathBuf, String, Option<(u32, String)>) {
+    let (proj, out, log) = web_app_build(fixture, edits);
+    let shared = split_file(&proj, "shared/Shared.sky");
+    if !required(Need::Go, have_go()) {
+        return (proj, shared, None);
+    }
+    assert!(
+        out.status.success(),
+        "the web:app build of `{fixture}` failed:\n{log}\n--- Shared.sky ---\n{shared}"
+    );
+    let dir = proj.join(".skyapp/web-app/.split/backend");
+    for (name, text) in data {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let (back, port) = start_split_backend(&proj);
+    let posted = curl_post_status_body(port, &format!("/_rpc/{msg}"), body);
+    drop(back);
+    (proj, shared, posted)
+}
+
+/// D2: a record alias that names another module's record alias
+/// (`View.CardView = Store.CardView`, both modules with a server function)
+/// crosses the wire. Before, `Shared` copied `Store`'s record and `Store`'s
+/// client copy dropped its own declaration and imported it from `Shared`,
+/// which `exposing (..)` does not re-export, so `View.CardView` named a
+/// missing type (`[E2001] type mismatch: record vs CardView`). Now `Shared`
+/// copies no type of another module: it imports `Store` under a generated
+/// alias and names `SpaTy_Store_.CardView`, and every client copy keeps its
+/// own declarations.
+#[test]
+#[cfg(unix)]
+fn a_record_alias_chain_through_server_modules_crosses_the_split() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, shared, posted) = split_and_post(
+        "spa-alias-chain",
+        &[],
+        &[("card.txt", "from-disk")],
+        "Load",
+        "{}",
+    );
+    assert!(
+        shared.contains("import Store as SpaTy_Store_")
+            && shared.contains("SpaTy_Store_.CardView")
+            && !shared.contains("type alias CardView"),
+        "Shared imports the declaring module qualified and copies no type:\n{shared}"
+    );
+    let store = split_file(&proj, "frontend/src/Store.sky");
+    assert!(
+        store.contains("type alias CardView") && !store.contains("import Shared"),
+        "the client copy of `Store` keeps its own record and needs no Shared:\n{store}"
+    );
+    if let Some(posted) = posted {
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(
+            posted.1.contains("\"title\":\"from-disk\""),
+            "the server arm answers the record it read: {posted:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// D2 through the `Msg` module: a pure module holds `Model` and `Msg` and
+/// aliases a record of a module with a server function, which also declares
+/// the record's codec. Before, `Shared` copied the record and the codec and
+/// the server module's client copy lost them (`[E2001] type mismatch:
+/// CardView vs record`). Now `Shared` imports that module qualified and uses
+/// its codec in place.
+#[test]
+#[cfg(unix)]
+fn a_record_alias_chain_through_the_msg_module_crosses_the_split() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, shared, posted) = split_and_post(
+        "spa-alias-chain-msg",
+        &[],
+        &[("card.txt", "from-disk")],
+        "Load",
+        "{}",
+    );
+    assert!(
+        shared.contains("import Cards as SpaTy_Cards_")
+            && shared.contains("SpaTy_Cards_.cardViewCodec")
+            && !shared.contains("cardViewCodec =")
+            && !shared.contains("type alias CardView =\n    { title"),
+        "Shared uses the server module's codec in place, qualified:\n{shared}"
+    );
+    let cards = split_file(&proj, "frontend/src/Cards.sky");
+    assert!(
+        cards.contains("type alias CardView")
+            && cards.contains("cardViewCodec =")
+            && !cards.contains("loadCard _ ="),
+        "the client copy of `Cards` keeps its record and pure codec, not its server function:\n{cards}"
+    );
+    if let Some(posted) = posted {
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(posted.1.contains("\"title\":\"from-disk\""), "{posted:?}");
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+
+    // The same program without a user codec: the record is auto-derived.
+    let (proj, shared, posted) = split_and_post(
+        "spa-alias-chain-msg",
+        &[(
+            "src/Cards.sky",
+            "\n\ncardViewCodec : Codec CardView\ncardViewCodec =\n    Codec.object CardView |> Codec.field \"title\" .title Codec.string\n        |> Codec.buildObject\n",
+            "\n",
+        )],
+        &[("card.txt", "from-disk")],
+        "Load",
+        "{}",
+    );
+    assert!(
+        shared.contains("SpaTy_Cards_.CardView")
+            && !shared.contains("type alias CardView =\n    { title"),
+        "the auto-derived codec names the record qualified:\n{shared}"
+    );
+    if let Some(posted) = posted {
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(posted.1.contains("\"title\":\"from-disk\""), "{posted:?}");
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// D3: two pure modules export a constructor of the same name (`P1.Matched`,
+/// `P2.Matched`) and a record of the same name (`P1.Refusal`,
+/// `P2.Refusal`). Before, `Shared` imported both `exposing (..)` and the
+/// generated blanks wrote `Matched` bare (`[E1012]`), and the split refused
+/// the two `Refusal` records. Now every generated reference is qualified
+/// (`SpaTy_P1_.Matched`) and each record gets its own codec.
+#[test]
+#[cfg(unix)]
+fn generated_shared_code_names_user_types_and_constructors_qualified() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, shared, posted) = split_and_post(
+        "spa-shared-ctor-clash",
+        &[],
+        &[("x.txt", "from-disk")],
+        "Load",
+        "{}",
+    );
+    assert!(
+        !shared.contains("import P1 exposing") && !shared.contains("import P2 exposing"),
+        "Shared imports no project module exposing everything:\n{shared}"
+    );
+    assert!(
+        shared.contains("import P1 as SpaTy_P1_")
+            && shared.contains("import P2 as SpaTy_P2_")
+            && shared.contains("SpaTy_P1_.Matched")
+            && shared.contains("SpaTy_P2_.Refusal")
+            && shared.contains("SpaTy_P1_.Refusal"),
+        "generated code names each project type and constructor by its module:\n{shared}"
+    );
+    if let Some(posted) = posted {
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(
+            posted.1.contains("\"title\":\"from-disk\"")
+                && posted.1.contains("\"code\":7")
+                && posted.1.contains("\"why\":\"from-disk\""),
+            "the answer carries both records: {posted:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// D4: a pure module (`Wire`) names a record of a module with a server
+/// function (`Tags.Tag`), and the model holds both. Before, `Shared` copied
+/// `Tag`, `Tags`' client copy imported it back from `Shared`, and `Shared`
+/// imported `Wire`: the cycle `Wire -> Tags -> Shared -> Wire` (`[E1010]`).
+/// The same holds through a chain of pure modules (`Wire -> Extra -> Inner
+/// -> Tags`). Now `Shared` imports `Wire` and `Tags` qualified and no module
+/// it imports imports `Shared`.
+#[test]
+#[cfg(unix)]
+fn shared_imports_no_module_that_imports_shared() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    for fixture in ["spa-shared-cycle", "spa-shared-cycle-chain"] {
+        let (proj, shared, posted) =
+            split_and_post(fixture, &[], &[("tag.txt", "from-disk")], "Load", "{}");
+        assert!(
+            shared.contains("import Wire as SpaTy_Wire_")
+                && shared.contains("import Tags as SpaTy_Tags_")
+                && !shared.contains("type alias Tag"),
+            "`{fixture}`: Shared imports the declaring modules and copies no type:\n{shared}"
+        );
+        for m in ["Tags", "Wire", "Extra", "Inner"] {
+            let text = split_file(&proj, &format!("frontend/src/{m}.sky"));
+            assert!(
+                !text.contains("import Shared"),
+                "`{fixture}`: the client copy of `{m}` must not import Shared:\n{text}"
+            );
+        }
+        if let Some(posted) = posted {
+            assert_eq!(posted.0, 200, "`{fixture}`: {posted:?}");
+            assert!(
+                posted.1.contains("\"label\":\"from-disk\""),
+                "`{fixture}`: {posted:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&proj);
+    }
+}
+
+/// D1 with D2-D4 (v0.30.0): the app is a second entry `src/Other.sky`
+/// (`module Other`) beside a project `src/Main.sky` program, and its wire
+/// types live in sibling modules: `P1` and `P2` both export a constructor
+/// `Matched`, and `View.CardView` aliases `Store.CardView` (both modules
+/// with a server function). The generated entry keeps `module Other`,
+/// `Shared` names every project type and constructor through its module's
+/// `SpaTy_` alias (never through the entry or the project `Main`), both legs
+/// build, and the backend answers the server arm.
+#[test]
+#[cfg(unix)]
+fn a_second_entry_with_sibling_wire_types_splits_and_answers() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build_entry("spa-second-entry-wire", "src/Other.sky", &[]);
+    let shared = split_file(&proj, "shared/Shared.sky");
+    for half in ["backend", "frontend"] {
+        let toml = split_file(&proj, &format!("{half}/sky.toml"));
+        assert!(
+            toml.contains("entry = \"src/Other.sky\""),
+            "{half} is built from the named entry:\n{toml}\n{log}"
+        );
+        let entry = split_file(&proj, &format!("{half}/src/Other.sky"));
+        assert!(
+            entry.starts_with("module Other exposing"),
+            "{half}:\n{entry}\n{log}"
+        );
+        let main = split_file(&proj, &format!("{half}/src/Main.sky"));
+        assert!(
+            main.is_empty() || main.contains("I AM THE PROJECT MAIN"),
+            "{half}/src/Main.sky may only be the project's own Main:\n{main}"
+        );
+    }
+    assert!(
+        shared.contains("import P1 as SpaTy_P1_")
+            && shared.contains("import P2 as SpaTy_P2_")
+            && shared.contains("SpaTy_P1_.Matched")
+            && shared.contains("SpaTy_P2_.Matched")
+            && shared.contains("import Store as SpaTy_Store_")
+            && shared.contains("SpaTy_Store_.CardView")
+            && !shared.contains("import Main")
+            && !shared.contains("import Other")
+            && !shared.contains("SpaTy_Main_")
+            && !shared.contains("SpaTy_Other_"),
+        "Shared names sibling types by their module, never the entry or Main:\n{shared}\n{log}"
+    );
+    let store = split_file(&proj, "frontend/src/Store.sky");
+    assert!(
+        store.contains("type alias CardView") && !store.contains("import Shared"),
+        "the client copy of `Store` keeps its own record:\n{store}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "the second entry with sibling wire types must build:\n{log}\n--- Shared.sky ---\n{shared}"
+    );
+    let dir = proj.join(".skyapp/web-app/.split/backend");
+    std::fs::write(dir.join("x.txt"), "from-disk").unwrap();
+    std::fs::write(dir.join("card.txt"), "view-disk").unwrap();
+    let (back, port) = start_split_backend(&proj);
+    let posted = curl_post_status_body(port, "/_rpc/Load", "{}");
+    drop(back);
+    let server_log = std::fs::read_to_string(dir.join("server.log")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        !server_log.contains("I AM THE PROJECT MAIN"),
+        "the backend must not be the project's Main program:\n{server_log}"
+    );
+    let posted = posted.expect("POST /_rpc/Load must answer");
+    assert_eq!(posted.0, 200, "{posted:?}");
+    assert!(
+        posted.1.contains("\"title\":\"from-disk\"")
+            && posted.1.contains("\"label\":\"view-disk\"")
+            && posted.1.contains("\"n\":7"),
+        "the server arm answers every wire record: {posted:?}"
+    );
+}
+
+/// A user codec the entry declares (`badgeCodec`, copied into `Shared`)
+/// names values of another module bare, through `import Codecs exposing
+/// (..)`: a codec (`labelCodec`) and a function (`trimmed`, through the
+/// entry helper `trimmedLength` the codec also copies), and constructors of
+/// `Codecs.Status` in a `case` pattern and an expression (`statusText`,
+/// `statusOf`). `Shared` imports
+/// `Codecs` only under its `SpaTy_` alias, so each bare reference must be
+/// rewritten to `SpaTy_Codecs_.<name>`; both legs build and the server arm
+/// answers through the user codec.
+#[test]
+#[cfg(unix)]
+fn a_copied_entry_codec_naming_an_exposed_value_bare_is_qualified() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, shared, posted) = split_and_post(
+        "spa-entry-codec-exposing",
+        &[],
+        &[("x.txt", "  from-disk  ")],
+        "Load",
+        "{}",
+    );
+    assert!(
+        shared.contains("badgeCodec")
+            && shared.contains("SpaTy_Codecs_.labelCodec")
+            && shared.contains("SpaTy_Codecs_.trimmed")
+            && shared.contains("SpaTy_Codecs_.Matched ->")
+            && shared.contains("SpaTy_Codecs_.Open\n")
+            && shared.contains("import Codecs as SpaTy_Codecs_")
+            && !shared.contains("import Codecs exposing"),
+        "the copied codec names `Codecs`' values through its alias:\n{shared}"
+    );
+    if let Some(posted) = posted {
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(
+            posted.1.contains("from-disk") && posted.1.contains("\"status\":\"matched\""),
+            "the answer goes through the user codec: {posted:?}"
         );
     }
     let _ = std::fs::remove_dir_all(&proj);
@@ -9904,6 +10449,513 @@ fn a_wrong_init_seed_is_reported_at_init_for_every_target() {
                 "{args:?}: `{bad}` must not appear:\n{log}"
             );
         }
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// `App.withAdmission`: the policy reaches the server on both web targets.
+/// On Sky.Live it is installed before the app starts; on the Sky.Spa split the
+/// build carries it into the backend's boot task (never into the client). The
+/// app's own hook, written in Sky, decides each `App.api` request with the
+/// request and the load: `Throttle` is a 429, `Shed` a 503, both with
+/// `Retry-After` in whole seconds, and the `Load` it reads names the route
+/// class, the route, the in-flight count, the limit and the VERIFIED session:
+/// a forged `sky_spa` cookie (or a made-up Sky.Live id) is `Nothing`, so a
+/// client cannot dodge a per-session rule by editing its cookie
+/// and a real session (the Sky.Live cookie a page load sets, the `sky_spa`
+/// token a server sign-in sets) reaches the hook as `Just` its own id.
+#[test]
+fn an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("std-app-admission", &[]);
+    let backend = split_file(&proj, "backend/src/Main.sky");
+    assert!(
+        backend.contains("App.applyAdmission admission"),
+        "the backend installs the policy at boot:\n{log}\n{backend}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let probe_session = |port: u16, mode: &str, cookie: &str, expect: &str| -> (String, String) {
+        let mut cmd = Command::new("curl");
+        cmd.args(["-s", "--max-time", "30", "-o", "/dev/null", "-D", "-"])
+            .args(["-H", &format!("X-Load-Test: {mode}")]);
+        if !cookie.is_empty() {
+            cmd.args(["-H", &format!("Cookie: {cookie}")]);
+        }
+        if !expect.is_empty() {
+            cmd.args(["-H", &format!("X-Expect-Session: {expect}")]);
+        }
+        let out = cmd
+            .arg(format!("http://127.0.0.1:{port}/api/ping"))
+            .output()
+            .expect("curl GET /api/ping");
+        let head = String::from_utf8_lossy(&out.stdout).into_owned();
+        let status = head
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .unwrap_or("")
+            .to_string();
+        let retry = head
+            .lines()
+            .find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.eq_ignore_ascii_case("retry-after")
+                    .then(|| v.trim().to_string())
+            })
+            .unwrap_or_default();
+        (status, retry)
+    };
+    let probe_with = |port: u16, mode: &str, cookie: &str| probe_session(port, mode, cookie, "");
+    let probe = |port: u16, mode: &str| probe_with(port, mode, "");
+    // The positive case: a request that carries a real session reaches the
+    // hook with `load.session = Just <that id>`. The hook admits it only when
+    // the id equals `X-Expect-Session`, throttles another id (6 s) and
+    // Nothing (4 s).
+    let real_session = |port: u16, what: &str, cookie: &str, sid: &str| {
+        assert!(!sid.is_empty(), "{what}: the client got no session id");
+        assert_eq!(
+            probe_session(port, "session-is", cookie, sid),
+            ("200".into(), String::new()),
+            "{what}: the hook sees the request's own session id"
+        );
+        assert_eq!(
+            probe_session(port, "session-is", cookie, "someone-else"),
+            ("429".into(), "6".into()),
+            "{what}: the hook's session is the real id, not any value"
+        );
+        assert_eq!(
+            probe_session(port, "session-is", "", sid),
+            ("429".into(), "4".into()),
+            "{what}: no cookie is no session"
+        );
+    };
+    let check = |port: u16, what: &str| {
+        assert_eq!(
+            probe(port, "none"),
+            ("200".into(), String::new()),
+            "{what}: admit"
+        );
+        assert_eq!(
+            probe(port, "throttle"),
+            ("429".into(), "3".into()),
+            "{what}: throttle"
+        );
+        assert_eq!(
+            probe(port, "shed"),
+            ("503".into(), "1".into()),
+            "{what}: shed"
+        );
+        assert_eq!(
+            probe(port, "load"),
+            ("429".into(), "5".into()),
+            "{what}: the load the hook reads"
+        );
+        assert_eq!(
+            probe_with(
+                port,
+                "session",
+                "sky_spa=eyJhbGciOiJIUzI1NiJ9.eyJzaWQiOiJmb3JnZWQifQ.Zm9yZ2Vk; sky_sid=0123456789abcdef0123456789abcdef"
+            ),
+            ("429".into(), "4".into()),
+            "{what}: a forged session cookie is no session"
+        );
+    };
+    let (live, port) = start_live_app(&proj);
+    check(port, "Sky.Live");
+    // Sky.Live: the page request opens the session and sets its cookie, as
+    // the browser's first load does. Its value is the session id.
+    let jar = proj.join("admission-jar.txt");
+    let _ = curl_get_jar(port, "/", &jar);
+    let (name, sid) = std::fs::read_to_string(&jar)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            (cols.len() >= 7 && cols[5].starts_with("sky_sid"))
+                .then(|| (cols[5].to_string(), cols[6].to_string()))
+        })
+        .last()
+        .unwrap_or_default();
+    real_session(port, "Sky.Live", &format!("{name}={sid}"), &sid);
+    drop(live);
+    let (split, port) = start_split_backend(&proj);
+    check(port, "split backend");
+    // The split backend: SignIn is a server arm that writes the session, so
+    // its answer sets the signed `sky_spa` cookie, as the wasm client's first
+    // sign-in does. The id is the token's `sid` claim.
+    let login = curl_post_full(port, "/_rpc/SignIn", r#"{"session":null,"uid":"u1"}"#, None);
+    let cookie = login
+        .as_ref()
+        .and_then(|(_, _, c)| c.clone())
+        .unwrap_or_else(|| panic!("SignIn set no sky_spa cookie: {login:?}"));
+    let token = cookie.strip_prefix("sky_spa=").unwrap_or_default();
+    let sid = jwt_claim(token, "sid");
+    real_session(port, "split backend", &cookie, &sid);
+    drop(split);
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// The string claim `name` of a JWT's payload (no signature check: the test
+/// reads the token the server just issued).
+fn jwt_claim(token: &str, name: &str) -> String {
+    let payload = token.split('.').nth(1).unwrap_or_default();
+    let mut bits: u32 = 0;
+    let mut n = 0;
+    let mut bytes = Vec::new();
+    for c in payload.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' | b'+' => 62,
+            b'_' | b'/' => 63,
+            _ => continue,
+        };
+        bits = (bits << 6) | u32::from(v);
+        n += 6;
+        if n >= 8 {
+            n -= 8;
+            bytes.push((bits >> n) as u8);
+        }
+    }
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get(name).and_then(|s| s.as_str()).map(str::to_string))
+        .unwrap_or_default()
+}
+
+/// `Sub.onBreakpoint`, `Sub.viewport` and `Sub.onQuery`: on Sky.Live the query of each page
+/// request reaches `update` before the page renders (a reload with the same
+/// query keeps it), and the width the browser reports (the `__skyViewport`
+/// event the client sends when it crosses a breakpoint) reaches it as the
+/// breakpoint the server computes; the page hands the client the widths. The
+/// same source builds as a Sky.Spa client whose subscriptions keep both leaves
+/// (the wasm client reads `innerWidth` and `location.search`), and checks for a
+/// terminal target, where they are inert.
+#[test]
+fn the_viewport_breakpoint_and_query_reach_update_on_live_and_build_for_every_target() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("std-app-viewport", &[]);
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        front.contains("Sub.onBreakpoint [ 600, 900 ] LayoutChanged")
+            && front.contains("Sub.viewport WidthChanged")
+            && front.contains("Sub.onQuery QueryChanged"),
+        "the client keeps all three subscriptions:\n{log}\n{front}"
+    );
+    let tui = Command::new(SKY)
+        .args(["check", "--target", "terminal:tui", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky check --target terminal:tui");
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    assert!(
+        tui.status.success(),
+        "the terminal check failed:\n{}{}",
+        String::from_utf8_lossy(&tui.stdout),
+        String::from_utf8_lossy(&tui.stderr)
+    );
+    let (live, port) = start_live_app(&proj);
+    let jar = proj.join("jar.txt");
+    let page = curl_get_jar(port, "/?page=7", &jar);
+    assert!(
+        page.contains("BP=-1 PAGE=7 QUERIES=1")
+            && page.contains(r#""bp":[600,900]"#)
+            && page.contains(r#""vp":true"#),
+        "the first paint shows the query and carries the widths and the width flag:\n{page}"
+    );
+    let page = curl_get_jar(port, "/?page=7", &jar);
+    assert!(
+        page.contains("PAGE=7 QUERIES=1"),
+        "an unchanged query is not delivered again:\n{page}"
+    );
+    let jar_text = std::fs::read_to_string(&jar).unwrap_or_default();
+    let csrf = jar_text
+        .lines()
+        .filter_map(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            (cols.len() >= 7 && cols[5] == "__sky_csrf").then(|| cols[6].to_string())
+        })
+        .last()
+        .unwrap_or_default();
+    let post = |width: u32| {
+        let out = Command::new("curl")
+            .args([
+                "-s",
+                "--max-time",
+                "30",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "-H",
+                "Content-Type: application/json",
+                "-H",
+                &format!("X-Sky-Csrf: {csrf}"),
+                "-X",
+                "POST",
+                "-d",
+                &format!(
+                    r#"{{"sessionId":"","msg":"__skyViewport","args":[{width}],"handlerId":""}}"#
+                ),
+                "-b",
+            ])
+            .arg(&jar)
+            .arg(format!("http://127.0.0.1:{port}/_sky/event"))
+            .output()
+            .expect("curl POST __skyViewport");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    assert_eq!(post(700), "200");
+    assert_eq!(
+        post(700),
+        "204",
+        "a report with the same breakpoint and the same width is a no-op"
+    );
+    assert_eq!(
+        post(899),
+        "200",
+        "a new width in the same breakpoint reaches update"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let page = curl_get_jar(port, "/?page=8", &jar);
+    drop(live);
+    assert!(
+        page.contains("BP=600 PAGE=8 QUERIES=2") && page.contains("W=899"),
+        "the breakpoint, the width and the changed query reach update:\n{page}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// An app with no routes and a NotFound page (`App.withNotFound ()`, no
+/// `App.withRoutes`) keeps its own `page : String` model field on every web
+/// target. Before v0.30.0 Sky.Live wrote the NotFound page (`()`) into that
+/// field on every request and the view rendered `{}`: with no routes the
+/// runtime owns no page type, so it now writes the field only for an app with
+/// routes. An unknown path still answers 404, with the app's view. A
+/// route-less `web:app` build has no server render: its backend serves the
+/// client shell, for `/` and (F8, v0.30.0) with 404 for an unknown path, while
+/// a missing dist asset stays a plain 404. The wasm client writes the page field only
+/// for an app with routes (`spaApplyURL`; the server-render resolver is covered
+/// by `TestSpaSsrResolveModel_RoutelessAppKeepsUserPageField`).
+#[test]
+#[cfg(unix)]
+fn a_routeless_app_keeps_its_own_page_field_on_live_and_web_app() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("std-app-routeless-page", &[]);
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let want = "PAGE=user-page-value COUNT=0";
+    let check = |port: u16, what: &str| {
+        let jar = proj.join(format!("jar-{port}.txt"));
+        for path in ["/", "/no/such/page"] {
+            let page = curl_get_jar(port, path, &jar);
+            assert!(
+                page.contains(want) && !page.contains("PAGE={}"),
+                "{what} GET {path}: the view must see the model's own page field:\n{page}"
+            );
+        }
+    };
+    let (live, port) = start_live_app(&proj);
+    check(port, "Sky.Live");
+    let status = curl_status_ctype(port, "/no/such/page").map(|(c, _)| c);
+    drop(live);
+    assert_eq!(
+        status,
+        Some(404),
+        "Sky.Live: an unknown path is still a 404"
+    );
+    let (split, port) = start_split_backend(&proj);
+    let page = curl_get_jar(port, "/", &proj.join("jar-split.txt"));
+    // F8: an unknown path of a route-less app is the client shell with 404,
+    // as Sky.Live answers it with the app's view and 404. A missing dist
+    // asset stays a plain 404, never the shell's HTML.
+    let unknown = curl_get_jar(port, "/zz", &proj.join("jar-split.txt"));
+    let unknown_status = curl_status_ctype(port, "/zz");
+    let deep_status = curl_status_ctype(port, "/no/such/page").map(|(c, _)| c);
+    let wasm = curl_status_ctype(port, "/main.0123456789abcdef.wasm");
+    let wasm_body = curl_get_jar(port, "/main.0123456789abcdef.wasm", &proj.join("jar-w.txt"));
+    let boot = curl_status_ctype(port, "/spa-boot.0123456789abcdef.js");
+    drop(split);
+    assert!(
+        page.contains("spa-boot.") && !page.contains("PAGE={}"),
+        "web:app backend GET /: the client shell is served:\n{page}"
+    );
+    assert!(
+        unknown.contains("spa-boot."),
+        "web:app backend GET /zz: the client shell boots the app's view:\n{unknown}"
+    );
+    assert_eq!(
+        unknown_status.as_ref().map(|(c, _)| *c),
+        Some(404),
+        "web:app backend GET /zz: an unknown path is a 404, as on Sky.Live"
+    );
+    assert!(
+        unknown_status
+            .as_ref()
+            .is_some_and(|(_, t)| t.starts_with("text/html")),
+        "web:app backend GET /zz: the shell is HTML: {unknown_status:?}"
+    );
+    assert_eq!(deep_status, Some(404), "web:app backend GET /no/such/page");
+    assert_eq!(
+        wasm.as_ref().map(|(c, _)| *c),
+        Some(404),
+        "a missing wasm stays a 404"
+    );
+    assert!(
+        !wasm_body.contains("spa-boot.") && !wasm.is_some_and(|(_, t)| t.starts_with("text/html")),
+        "a missing wasm is never the shell's HTML:\n{wasm_body}"
+    );
+    assert!(
+        !boot
+            .as_ref()
+            .is_some_and(|(_, t)| t.starts_with("text/html")),
+        "a missing boot loader is never HTML: {boot:?}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A routed app's page type is the type of the model's `page` field (D7
+/// follow-up, v0.30.0). The runtime writes the routed page (and the NotFound
+/// page) into `model.page` on every request, but `App.withRoutes` never tied
+/// the App's `page` parameter to that field. A program whose routes give a
+/// `String` page while the model holds `page : Route` passed `sky check`,
+/// built, and then every request was a 500 (`reflect.Set: value of type string
+/// is not assignable to type main.Main_Route`) on Sky.Live and on the
+/// `web:app` backend. With a second enum of the same arity the wrong write
+/// passed unseen until the view's `case` panicked. Both shapes are now a
+/// compile error on every target; the correct program builds and serves.
+#[test]
+#[cfg(unix)]
+fn a_routed_page_must_have_the_model_page_type_on_live_and_web_app() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = "App.route \"/\" Dashboard";
+    let detail = "App.routeParam \"/item/:id\" Detail";
+    let not_found = "App.withNotFound Missing";
+    let main = "src/Main.sky";
+    // The routes set by a helper that a user custom type holds: the type of
+    // `router` shows no `App`, so only the check at the served app sees the
+    // mismatch (v0.30.0).
+    let routes_block = "App.withRoutes\n                   [ App.route \"/\" Dashboard\n                   , App.routeParam \"/item/:id\" Detail\n                   ]";
+    let router_helper = "type Router f s p m msg k\n    = Router (App.App f s p m msg k -> App.App f s p m msg k)\n\n\n\
+                         router : Router f s String m msg k\nrouter =\n    Router (\\a -> App.withRoutes [ App.route \"/\" \"home\" ] a)\n\n\n\
+                         runRouter : Router f s p m msg k -> App.App f s p m msg k -> App.App f s p m msg k\n\
+                         runRouter (Router f) a =\n    f a\n\n\nmain =\n    App.run";
+    let mismatches: [(&str, [(&str, &str, &str); 3]); 3] = [
+        (
+            "String pages",
+            [
+                (main, home, "App.route \"/\" \"home\""),
+                (
+                    main,
+                    detail,
+                    "App.routeParam \"/item/:id\" (\\s -> \"item:\" ++ s)",
+                ),
+                (main, not_found, "App.withNotFound \"missing\""),
+            ],
+        ),
+        (
+            "an enum of the same arity",
+            [
+                (main, home, "App.route \"/\" Home"),
+                (main, detail, "App.route \"/about\" About"),
+                (main, not_found, "App.withNotFound Gone"),
+            ],
+        ),
+        (
+            "a helper in a custom type",
+            [
+                (main, "main =\n    App.run", router_helper),
+                (main, routes_block, "runRouter router"),
+                (main, not_found, "App.withNotFound \"missing\""),
+            ],
+        ),
+    ];
+    for (what, edits) in mismatches {
+        let (proj, out, log) = web_app_build("std-app-routed-page-type", &edits);
+        let refused = |out: &std::process::Output, log: &str, how: &str| {
+            assert!(
+                !out.status.success(),
+                "{what}, {how}: a route page that is not the model's page type must not build:\n{log}"
+            );
+            assert!(
+                log.contains("E2001") && log.contains("model's `page` field"),
+                "{what}, {how}: the error names the model's page field:\n{log}"
+            );
+        };
+        refused(&out, &log, "sky build --target web:app");
+        for args in [["check", "src/Main.sky"], ["build", "src/Main.sky"]] {
+            let out = Command::new(SKY)
+                .args(args)
+                .current_dir(&proj)
+                .output()
+                .expect("run sky");
+            let log = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            refused(&out, &log, &format!("sky {}", args[0]));
+        }
+        let _ = std::fs::remove_dir_all(&proj);
+    }
+    let (proj, out, log) = web_app_build("std-app-routed-page-type", &[]);
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (live, port) = start_live_app(&proj);
+    let jar = proj.join("jar-live.txt");
+    let home = curl_get_jar(port, "/", &jar);
+    let detail = curl_get_jar(port, "/item/42", &jar);
+    let missing = curl_get_jar(port, "/no/such/page", &jar);
+    let missing_status = curl_status_ctype(port, "/no/such/page").map(|(c, _)| c);
+    drop(live);
+    assert!(
+        home.contains("PAGE=dashboard TITLE=t"),
+        "Sky.Live GET /:\n{home}"
+    );
+    assert!(
+        detail.contains("PAGE=detail 42 TITLE=t"),
+        "Sky.Live GET /item/42:\n{detail}"
+    );
+    assert!(
+        missing.contains("PAGE=missing TITLE=t"),
+        "Sky.Live GET /no/such/page:\n{missing}"
+    );
+    assert_eq!(
+        missing_status,
+        Some(404),
+        "Sky.Live: an unknown path is a 404"
+    );
+    let (split, port) = start_split_backend(&proj);
+    let jar = proj.join("jar-split.txt");
+    let pages: Vec<(&str, Option<u32>, String)> = ["/", "/item/42"]
+        .into_iter()
+        .map(|p| {
+            let status = curl_status_ctype(port, p).map(|(c, _)| c);
+            (p, status, curl_get_jar(port, p, &jar))
+        })
+        .collect();
+    drop(split);
+    for (path, status, page) in pages {
+        assert_eq!(status, Some(200), "web:app backend GET {path}:\n{page}");
+        assert!(
+            page.contains("spa-boot."),
+            "web:app backend GET {path}: the client shell is served:\n{page}"
+        );
     }
     let _ = std::fs::remove_dir_all(&proj);
 }
@@ -10363,6 +11415,118 @@ fn the_wire_hash_and_legacy_follow_ups_are_generated() {
         v["notice"].as_str(),
         Some("sending"),
         "the follow-up ran on the server for the legacy page: {legacy}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// D6: a legacy request (no `X-Sky-Wire`) runs the follow-ups on the server,
+/// so its answer must carry what they wrote. `AskServer` writes only `draft`
+/// and its follow-up `Submitted` writes `notice`: the answer used to hold the
+/// first arm's write-set alone, so the follow-up's `notice` was lost.
+#[test]
+#[cfg(unix)]
+fn a_legacy_follow_up_answer_carries_the_follow_up_writes() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build(
+        "spa-whole-model-follow",
+        &[(
+            "src/Main.sky",
+            "        AskServer ->\n            submit { model | draft = serverDraft }\n",
+            "        AskServer ->\n            ( { model | draft = serverDraft }, Cmd.perform (submitS serverDraft) Submitted )\n",
+        )],
+    );
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    let held = frontend_arm(&front, "AppliedAskServer (Ok resp)");
+    assert!(
+        !held.contains("resp.notice"),
+        "a current client applies only the first arm's write-set:\n{front}"
+    );
+    let (_child, port) = start_split_backend(&proj);
+    let body = r#"{"draft":"","notice":""}"#;
+    let (code, _, legacy) = curl_post_with_headers(port, "/_rpc/AskServer", body, &[]);
+    assert_eq!(code, 200, "{legacy}");
+    let v: serde_json::Value = serde_json::from_str(&legacy).expect("json");
+    assert_eq!(v["spaFollow_"].as_str(), Some("[]"), "{legacy}");
+    assert_eq!(v["draft"].as_str(), Some("from the server"), "{legacy}");
+    assert!(
+        v["notice"]
+            .as_str()
+            .is_some_and(|n| n.ends_with("from the server")),
+        "the legacy answer carries the follow-up's write: {legacy}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// F1: a fully client-local routed app (`App.web`, a `Std.Html` view, no
+/// server arm) serves every route on `--target web:app`, as the docs say: a
+/// path that matches a route is 200 with the server-rendered first paint, an
+/// unknown path is the NotFound page with 404. The backend used to be
+/// static-only, so `GET /about` was the file server's plain 404.
+#[test]
+#[cfg(unix)]
+fn a_client_only_routed_app_serves_its_deep_routes() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-client-routes", &[]);
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (_child, port) = start_split_backend(&proj);
+    let root = curl_body_p(port, "/").unwrap_or_default();
+    assert!(
+        root.contains("Counter page"),
+        "GET / renders the root:\n{root}"
+    );
+    let (code, _) = curl_status_ctype(port, "/about").unwrap_or((0, String::new()));
+    assert_eq!(code, 200, "GET /about matches a route");
+    let about = curl_body_p(port, "/about").unwrap_or_default();
+    assert!(
+        about.contains("data-sky-ssr") && about.contains("About this app"),
+        "GET /about renders the About page:\n{about}"
+    );
+    let (code, _) = curl_status_ctype(port, "/nowhere").unwrap_or((0, String::new()));
+    assert_eq!(code, 404, "an unknown path is the NotFound page with 404");
+    let missing = curl_body_p(port, "/nowhere").unwrap_or_default();
+    assert!(
+        missing.contains("No such page"),
+        "an unknown path renders the NotFound page:\n{missing}"
+    );
+    let asset = curl_status_ctype(port, "/wasm_exec.js").map(|(c, _)| c);
+    assert_eq!(asset, Some(200), "the assets are still served");
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// D7: a user `type Route` in its own module, used as the page type of an
+/// `App.app` web:app app with `App.withRoutes`, never clashes with the stdlib
+/// `App.Route`. The route table sits next to the type and is annotated
+/// `List (App.Route Route)`, which the checker used to read as the app's own
+/// `Route`. The app builds and serves each route.
+#[test]
+#[cfg(unix)]
+fn a_user_route_type_in_its_own_module_builds_and_serves_its_routes() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-route-module", &[]);
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (_child, port) = start_split_backend(&proj);
+    let home = curl_status_ctype(port, "/").map(|(c, _)| c);
+    assert_eq!(home, Some(200), "GET / serves the Home route");
+    let post = curl_body_p(port, "/blog/hello").unwrap_or_default();
+    assert!(
+        post.contains("data-sky-ssr") && post.contains("hello"),
+        "GET /blog/hello renders the Post route:\n{post}"
+    );
+    let err = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/server.err"))
+        .unwrap_or_default();
+    assert!(
+        !err.contains("panic") && !err.contains("interface conversion"),
+        "the backend must not panic:\n{err}"
     );
     let _ = std::fs::remove_dir_all(&proj);
 }
@@ -13037,5 +14201,183 @@ fn watch_on_a_spa_entry_splits_and_runs_the_backend() {
     assert!(
         page.contains(".wasm") || page.contains("spa-boot"),
         "the backend does not serve the wasm frontend:\n{page}\n{log}"
+    );
+}
+
+fn spa_breaker_port_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-breaker-port")
+}
+
+/// Every generated `.sky` / `.go` file under `dir` (the split's own sources and
+/// the Go it emits), skipping the staged browser bundle and the runtime library.
+fn frontend_source_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            // `dist` is the staged browser bundle; `rt` is the embedded Go
+            // runtime library, copied whole into every build (it defines
+            // every kernel, used or not). The app's own emitted Go is what
+            // must not call a Breaker or Sync kernel.
+            if p.file_name().is_some_and(|n| n == "dist" || n == "rt") {
+                continue;
+            }
+            frontend_source_files(&p, out);
+        } else if p.extension().is_some_and(|x| x == "sky" || x == "go") {
+            out.push(p);
+        }
+    }
+}
+
+/// `Std.Breaker` (v0.30.0) is pure Sky on a `Std.Sync.Ref`, which lives on the
+/// server only. An `App.app` update arm that calls a port through
+/// `Breaker.call` must split into a server RPC: the frontend carries no
+/// Breaker or Sync code (a wasm client holding its own breaker would count
+/// failures per browser tab, not per server), both legs build, and the backend
+/// answers the RPC by running the call through the breaker. The port is the
+/// backend's own `/_sky/healthz`, so the round trip proves the breaker let a
+/// real call through.
+#[test]
+#[cfg(unix)]
+fn a_breaker_call_in_update_splits_to_a_server_rpc_and_answers() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_breaker_port_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-breaker-port fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+
+    // ── Always-run split-shape leg. ──
+    let back = std::fs::read_to_string(split.join("backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    assert!(
+        back.contains("SpaServer_.rpc \"POST /_rpc/Check\""),
+        "the Breaker.call arm must become the server RPC /_rpc/Check:\n{back}"
+    );
+    assert!(
+        back.contains("Breaker.call"),
+        "the backend must run the call through the breaker:\n{back}"
+    );
+    let front = std::fs::read_to_string(split.join("frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        front.contains("SpaLib_.rpc") && front.contains("/_rpc/Check"),
+        "the client must reach the breaker through the RPC boundary:\n{front}"
+    );
+
+    // ── Go-gated: both legs build, the client has no breaker, the RPC answers. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "--target web:app must build both legs:\n{log}"
+    );
+    let backend_dir = split.join("backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(
+        app_bin.is_file(),
+        "the backend binary must be built:\n{log}"
+    );
+    assert!(
+        dist_has_wasm(&split.join("frontend/dist")),
+        "the frontend must build to a content-hashed wasm:\n{log}"
+    );
+
+    // The frontend's sources and its emitted Go hold no Breaker or Sync code.
+    let mut files = Vec::new();
+    frontend_source_files(&split.join("frontend"), &mut files);
+    assert!(
+        files
+            .iter()
+            .any(|p| p.extension().is_some_and(|x| x == "go")),
+        "the frontend build must leave its emitted Go to inspect: {files:?}"
+    );
+    // Control: the same walk over the backend finds the breaker in the Go it
+    // emits, so the frontend check below can fail.
+    let mut back_files = Vec::new();
+    frontend_source_files(&backend_dir, &mut back_files);
+    assert!(
+        back_files.iter().any(|p| {
+            p.extension().is_some_and(|x| x == "go")
+                && std::fs::read_to_string(p).is_ok_and(|t| t.contains("Breaker"))
+        }),
+        "the backend's emitted Go must carry the breaker: {back_files:?}"
+    );
+    for f in &files {
+        let text = std::fs::read_to_string(f).unwrap_or_default();
+        if f.extension().is_some_and(|x| x == "go") {
+            // The emitted Go: no breaker and no Sync kernel at all.
+            for needle in ["Breaker", "Sync_newRef", "Sync_update"] {
+                assert!(
+                    !text.contains(needle),
+                    "the client's emitted Go carries server-only `{needle}` in {}",
+                    f.display()
+                );
+            }
+        } else {
+            // The generated Sky: no use of the breaker or a Ref. The copied
+            // header comment and the `import` line (pruned by the build, as
+            // the Go check shows) are not uses.
+            for line in text.lines() {
+                let code = line.trim_start();
+                if code.starts_with("--") || code.starts_with("import ") {
+                    continue;
+                }
+                for needle in ["Breaker.", "Sync."] {
+                    assert!(
+                        !code.contains(needle),
+                        "the client uses server-only `{needle}` in {}: {line}",
+                        f.display()
+                    );
+                }
+            }
+        }
+    }
+
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled spa-breaker-port backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let server = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-breaker-port backend never reported listening on :{port}:\n{server}");
+    }
+    let posted = curl_post_status_body(port, "/_rpc/Check", "{}");
+    child.kill();
+    let server = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let (code, body) = posted.expect("POST /_rpc/Check should return");
+    assert_eq!(
+        code, 200,
+        "/_rpc/Check must answer 200; body {body:?}\n{server}"
+    );
+    assert!(
+        body.contains("port 200"),
+        "the breaker must let the port call through and the answer reach the model, was {body:?}\n{server}"
     );
 }

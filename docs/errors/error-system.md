@@ -130,6 +130,14 @@ cardDeclined reason =
         |> Error.fromDomain Error.InvalidInput "the card was declined"
 ```
 
+### Stdlib domain codes outside `"ai"`
+
+| Domain | Code | Kind | Retryable | Attributes | Raised by |
+|---|---|---|---|---|---|
+| `"task"` | `DeadlineExceeded` | `Timeout` | yes | `op`, `timeoutMs` (from `Task.timeout`) | `Task.timeout` when the task is not done by the deadline; every outbound network call (`Http.*`, `Http.Stream`, `WebSocket.connect` and its Task reads, `Email.send`, `Std.Ai` calls and streams, `Std.Ai.Store`) and `Sync.pop` / `popWithin` when a `Task.timeout` deadline ends the call or the wait, or has passed before it starts (v0.30.0) |
+| `"http"` | `DeadlineTooShort` | `Timeout` | no | `op`, `minRemainingMs`, `remainingMs` | `Http.request` or `Http.Stream.open` with `Http.withMinRemaining ms`, refused before it is sent when less than `ms` milliseconds are left before the deadline (v0.30.0) |
+| `"breaker"` | `Open` | `Unavailable` | yes, with `retryAfter` = the time until a trial call may run (none while the trials are busy, attribute `state` = `HalfOpen`) | `name` | `Std.Breaker.call` / `callCounting` when the breaker is open and refuses the call without running it; `Breaker.isOpenRefusal` recognises it (v0.30.0) |
+
 **Write code that does not break when a domain grows.** Prefer the generic
 helpers, or a domain's typed view with a `_ ->` branch. A `case` over
 `ErrorDetails` with one arm per variant and no `_ ->` is refused with

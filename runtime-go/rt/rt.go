@@ -8922,6 +8922,11 @@ type SkyRoute struct {
 	// guard replaces.
 	Rpc bool
 
+	// Api — true for a route made by Server_api (`Server.api`, `App.api` on
+	// the Sky.Spa backend). serverRouteMux puts it behind the admission
+	// gate's Api class (admission_http.go).
+	Api bool
+
 	// SpaPage — true for a Sky.Spa SSR page route (Spa_pageRoute). It is a
 	// GET route that renders the page, and serverRouteMux also makes it the
 	// answer to a native form POST on its path, unless another route on the

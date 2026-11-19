@@ -1,4 +1,4 @@
--- | Shared — the ONE wire contract compiled into BOTH the Sky.Spa wasm client
+-- | Contract — the ONE wire contract compiled into BOTH the Sky.Spa wasm client
 -- and the stateless Sky.Http.Server backend. This SAME file is symlinked into
 -- `client/src/` and `server/src/`, so it is literally one source of truth: the
 -- backend encodes with these codecs, the client decodes with the SAME codecs.
@@ -10,7 +10,7 @@
 -- (trims + length-clamps titles, ignores unknown ids) and re-reads the
 -- authoritative list from its own SQLite store before answering. A client may
 -- never dictate durable state directly.
-module Shared exposing
+module Contract exposing
     ( Todo
     , todoCodec
     , todoListCodec

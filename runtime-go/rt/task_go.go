@@ -118,7 +118,13 @@ func goSky(context string, fn func()) {
 // re-raises it (reraiseSkyPanic). A nil onPanic logs it (logSkyPanic). A panic
 // inside onPanic itself is logged, never propagated.
 func goSkyWith(context string, fn func(), onPanic func(*skyPanic)) {
-	gc := captureGoCtx()
+	goSkyFrom(captureGoCtx(), context, fn, onPanic)
+}
+
+// goSkyFrom is goSkyWith with the goroutine-local context given rather than
+// captured: Task.timeout passes the caller's context with its deadline
+// context in place of the trace context (task_deadline.go).
+func goSkyFrom(gc goCtx, context string, fn func(), onPanic func(*skyPanic)) {
 	go gc.run(func() {
 		defer func() {
 			r := recover()

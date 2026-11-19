@@ -114,10 +114,11 @@ func wsEventKindToSubKind(k wsEventKind) string {
 type wsTaskOutcome int
 
 const (
-	wsTaskFrame   wsTaskOutcome = iota // a message frame (value = WebSocketMessage)
-	wsTaskClosed                       // clean close / socket gone — Nothing
-	wsTaskFailed                       // read error (value = Sky Error)
-	wsTaskTimeout                      // receiveWithin expired
+	wsTaskFrame    wsTaskOutcome = iota // a message frame (value = WebSocketMessage)
+	wsTaskClosed                        // clean close / socket gone — Nothing
+	wsTaskFailed                        // read error (value = Sky Error)
+	wsTaskTimeout                       // receiveWithin expired
+	wsTaskDeadline                      // the reader's Task.timeout deadline passed
 )
 
 // wsTaskEvent maps one queued event to an outcome. Open events are skipped

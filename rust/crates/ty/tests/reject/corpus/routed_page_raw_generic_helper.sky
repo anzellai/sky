@@ -1,0 +1,60 @@
+-- gate: reject
+-- defect: a raw Sky.Spa routing helper hides the model type from the checker
+-- rust: reject [E2001] in the helper: the model type is not known there
+--
+-- Found 2026-11-19 (v0.30.0). `Spa.AppConfig model msg` carries no page
+-- type, so a helper generic in the model cannot be checked at its callers.
+-- The checker refuses the helper and asks for an annotation with the model
+-- type (or `App.withRoutes`, which it follows through helpers).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Html as Html exposing (Html)
+import Std.Spa as Spa
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Inc
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( model, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Html.text model.title
+
+
+withPages config =
+    config |> Spa.withRoutes [ Spa.route "/" Dashboard ]
+        |> Spa.withNotFound Missing
+
+
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> withPages)

@@ -173,6 +173,11 @@ connectRaw =
 -- | `connect url` — open a new WebSocket to `url` (typically
 -- `ws://…` or `wss://…`).  The Task resolves once the handshake
 -- completes; frames flow via `onMessage` after that.
+--
+-- Under a `Task.timeout` deadline (v0.30.0) the dial and the handshake
+-- stop at the deadline and are refused once it has passed. The socket
+-- outlives the task that opened it; `receive`, `receiveWithin` and
+-- `forEachMessage` stop at the deadline of the task that reads.
 connect : String -> Task Error WebSocket
 connect url =
     Task.map WebSocket (connectRaw url)
@@ -290,7 +295,10 @@ receiveRaw =
 --
 -- Several Tasks may receive from one socket at once; each frame goes to
 -- one of them.  A waiting `receive` wakes when the socket closes, returns
--- any frame still queued, then `Nothing`.
+-- any frame still queued, then `Nothing`.  Under a `Task.timeout` deadline
+-- it stops waiting at the deadline with the deadline's error
+-- (`"task"` / `"DeadlineExceeded"`); that consumes no frame and leaves the
+-- socket open, and `forEachMessage` then closes it.
 receive : WebSocket -> Task Error (Maybe WebSocketMessage)
 receive sock =
     case sock of

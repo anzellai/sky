@@ -61,6 +61,252 @@ pub(crate) struct Obligation {
     pub span: Option<Span>,
 }
 
+/// A deferred tie between a routed app's page type and its model's `page`
+/// field (v0.30.0). `Std.App.withRoutes` has the type
+/// `List (Route page) -> App f s page model msg key -> …`, and the runtime
+/// writes the routed page (and the NotFound page) into the model's `page`
+/// field on every request. A model with no `page` field is valid (the runtime
+/// writes nothing), so the tie is not in the signature: it is decided once the
+/// model's type is known ([`Infer::discharge_page_ties`]).
+#[derive(Clone, Debug)]
+pub(crate) struct PageTie {
+    pub page: TyVarId,
+    pub model: TyVarId,
+    pub span: Option<Span>,
+    /// A raw route API or a runner in a user module: a model still unknown
+    /// at the end of the def is refused (no caller can check it).
+    pub strict: bool,
+    /// A use of a runner (`App.run`, `App.serve`, a target runner): the tie
+    /// of the app that is served ([`World::routed_page_runners`]).
+    pub served: bool,
+}
+
+/// A raw route API whose use ties a page to the model's `page` field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoutedApi {
+    /// `Live.config { …, routes : List (Route page), notFound : page }`.
+    LiveConfig,
+    /// `Spa.withRoutes : List (Route page) -> AppConfig model msg -> …`.
+    SpaRoutes,
+    /// `Spa.withNotFound : page -> AppConfig model msg -> …`.
+    SpaNotFound,
+    /// `Live.withOnNavigate` and `Spa.withOnNavigate :
+    /// (page -> msg) -> AppConfig model msg -> …`. The runtime gives the
+    /// model's `page` field to the function after each navigation.
+    OnNavigate,
+}
+
+/// Does a scheme type hold an `App f s page model msg key` whose page or
+/// model has a type variable? Only then can a use of it meet a model its own
+/// body did not check.
+pub(crate) fn app_page_or_model_is_generic(t: &crate::Ty) -> bool {
+    use crate::Ty;
+    match t {
+        Ty::App(n, args) => {
+            (n.as_str() == "Std.App.App"
+                && args.len() == 6
+                && (!args[2].free_vars().is_empty() || !args[3].free_vars().is_empty()))
+                || args.iter().any(app_page_or_model_is_generic)
+        }
+        Ty::Fun(a, b) => app_page_or_model_is_generic(a) || app_page_or_model_is_generic(b),
+        Ty::Tuple(vs) => vs.iter().any(app_page_or_model_is_generic),
+        Ty::Record(fs, _) => fs.iter().any(|(_, f)| app_page_or_model_is_generic(f)),
+        _ => false,
+    }
+}
+
+/// A stdlib module: its routing plumbing is generic in the model, and the
+/// user's use of it is what the checker ties. Decided by origin
+/// ([`crate::variance::is_stdlib_module`]): a project module named
+/// `Sky.Pages` is app code, so its routing helper is a carrier and its body
+/// is tied strictly.
+fn is_stdlib_module(name: &str) -> bool {
+    crate::variance::is_stdlib_module(name)
+}
+
+/// Pass 4 (v0.30.0): the routing defs of [`PageTie`]. The carriers are
+/// `Std.App.withRoutes` and every user def whose body reaches a carrier (a
+/// fixpoint over the call graph, [`extend_routed_page_carriers`]), so a
+/// generic helper is checked at its callers. The raw APIs tie at their own
+/// use.
+fn seed_routed_page(world: &mut World, db: &dyn SkyDb) {
+    let mut apis = std::collections::HashMap::new();
+    for (module, name, api) in [
+        ("Std.Live", "config", RoutedApi::LiveConfig),
+        ("Std.Spa", "withRoutes", RoutedApi::SpaRoutes),
+        ("Std.Spa", "withNotFound", RoutedApi::SpaNotFound),
+        ("Std.Live", "withOnNavigate", RoutedApi::OnNavigate),
+        ("Std.Spa", "withOnNavigate", RoutedApi::OnNavigate),
+    ] {
+        if let Some(d) = routing_def(db, module, name).filter(|d| world.value_sigs.contains_key(d))
+        {
+            apis.insert(d, api);
+        }
+    }
+    world.routed_page_apis = apis;
+    world.routed_page_runners = SERVED_APP_RUNNERS
+        .iter()
+        .filter_map(|name| routing_def(db, "Std.App", name))
+        .filter(|d| world.value_sigs.contains_key(d))
+        .collect();
+    world.routed_page_carriers = std::collections::HashSet::new();
+    world.routed_page_served_defs = std::collections::HashSet::new();
+    extend_routed_page_carriers(world, db);
+}
+
+/// The last paragraph of a routed page mismatch found where the app is
+/// served. The checker drops such an error when the same program has a
+/// routed page error from a per-use tie (the served one is then its cascade,
+/// [`drop_served_page_cascades`]).
+pub(crate) const SERVED_MISMATCH_NOTE: &str = "\n\nThis is the app that is served here. The \
+     check runs where the app is served, so it covers routes that a helper sets, in any shape.";
+
+/// The opening of every routed page error that a per-use tie raises.
+const PER_USE_PAGE_ERRORS: &[&str] = &[
+    "The app's pages have type",
+    "The routed page type cannot be checked here",
+];
+
+/// Drop each served routed page mismatch (see [`SERVED_MISMATCH_NOTE`]) when
+/// the same check has a routed page error from a per-use tie: the per-use
+/// error is the better located report of the same mismatch, and the served
+/// one follows from it. A program with no per-use error keeps the served
+/// error, which is the guarantee.
+pub(crate) fn drop_served_page_cascades(diagnostics: &mut Vec<diagnostics::Diagnostic>) -> usize {
+    let body = |d: &diagnostics::Diagnostic| {
+        d.message
+            .split_once("] ")
+            .map_or(d.message.as_str(), |(_, m)| m)
+            .to_string()
+    };
+    let per_use = diagnostics.iter().any(|d| {
+        d.code.0 == "E2001"
+            && !d.message.ends_with(SERVED_MISMATCH_NOTE)
+            && PER_USE_PAGE_ERRORS.iter().any(|p| body(d).starts_with(p))
+    });
+    if !per_use {
+        return 0;
+    }
+    let before = diagnostics.len();
+    diagnostics.retain(|d| !(d.code.0 == "E2001" && d.message.ends_with(SERVED_MISMATCH_NOTE)));
+    before - diagnostics.len()
+}
+
+/// The `Std.App` functions that serve an app: every app the build serves
+/// passes through one of them (the dispatcher `run`, which the build
+/// rewrites to a target runner, `serve`, and the target runners). The
+/// routed page check runs at each use, where the served app's type is
+/// known (see [`PageTie::served`]).
+const SERVED_APP_RUNNERS: &[&str] = &[
+    "run",
+    "serve",
+    "runLive",
+    "runLiveWindow",
+    "runSpa",
+    "runTui",
+    "runCli",
+    "runWebview",
+];
+
+fn routing_def(db: &dyn SkyDb, module: &str, name: &str) -> Option<base::DefId> {
+    let m = db.module_by_name(module)?;
+    Some(db.intern_def(m, &Name::new(name), hir::DefKind::Value))
+}
+
+/// The `Std.App` builders that tie the app's page type to the model's
+/// `page` field: the runtime writes the routed page (and the NotFound page)
+/// into that field for an app with routes, and gives that field to the
+/// `withOnNavigate` function after each navigation, with or without routes.
+const PAGE_CARRIER_SEEDS: &[&str] = &["withRoutes", "withOnNavigate"];
+
+/// Add to the routed page carriers every user def of `db`'s module set whose
+/// body reaches a carrier, and to the served defs
+/// ([`World::routed_page_served_defs`]) every user carrier and every def it
+/// reaches. Additive, so the shared-world path runs it again
+/// over a case's own modules (a body-derived pass, see
+/// `World::extend_query_bodies`) on top of the base world's carriers; the
+/// whole-program path reaches the same set.
+pub(crate) fn extend_routed_page_carriers(world: &mut World, db: &dyn SkyDb) {
+    let seeds: Vec<base::DefId> = PAGE_CARRIER_SEEDS
+        .iter()
+        .filter_map(|name| routing_def(db, "Std.App", name))
+        .filter(|d| world.value_sigs.contains_key(d))
+        .collect();
+    if seeds.is_empty() {
+        return;
+    }
+    let mut carriers = std::mem::take(&mut world.routed_page_carriers);
+    carriers.extend(seeds.iter().copied());
+    let mut user = Vec::new();
+    for m in db.module_ids() {
+        if is_stdlib_module(db.module_name(m)) {
+            continue;
+        }
+        let resolved = db.resolve(m);
+        for (def, body) in &resolved.bodies {
+            user.push((*def, callees(body).0));
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (d, calls) in &user {
+            if !carriers.contains(d) && calls.iter().any(|c| carriers.contains(c)) {
+                carriers.insert(*d);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    world.routed_page_user_carriers |= carriers.iter().any(|d| !seeds.contains(d));
+    // The served defs: each user carrier and every user def it reaches. A
+    // runner use in such a def may serve an app that carries routes or a
+    // navigation hook: the carrier builds the app there, or passes it (or
+    // a function that serves it) to a def it reaches.
+    let edges: std::collections::HashMap<base::DefId, &Vec<base::DefId>> =
+        user.iter().map(|(d, calls)| (*d, calls)).collect();
+    let mut served = std::mem::take(&mut world.routed_page_served_defs);
+    let mut stack: Vec<base::DefId> = edges
+        .keys()
+        .copied()
+        .filter(|d| carriers.contains(d))
+        .chain(served.iter().copied())
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    while let Some(d) = stack.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        served.insert(d);
+        if let Some(calls) = edges.get(&d) {
+            stack.extend(calls.iter().copied());
+        }
+    }
+    world.routed_page_served_defs = served;
+    world.routed_page_carriers = carriers;
+}
+
+/// Is the runner use in `def` tied (the served tie, [`PageTie::served`])?
+/// The routes and the navigation hook of an `App` are set only by
+/// `App.withRoutes` and `App.withOnNavigate` (its constructor is opaque).
+/// The runtime writes the model's `page` field only for an app with routes,
+/// and reads it only for an app with routes or a navigation hook. So the
+/// check is decided per served app: a runner use is tied when its def is a
+/// served def ([`World::routed_page_served_defs`]), that is a def that
+/// reaches a carrier (the app it serves may be built there) or a def that a
+/// carrier reaches (the app may be passed to it). A runner use in any other
+/// def serves an app with no routes and no navigation hook, whatever other
+/// entries, modules or unused helpers of the program set, and its
+/// `App.withNotFound` page may have any type. With no def under inference
+/// (no `self_def`), the program-wide rule applies.
+pub(crate) fn ties_served_app(world: &World, def: Option<base::DefId>) -> bool {
+    match def {
+        Some(d) => world.routed_page_served_defs.contains(&d),
+        None => world.routed_page_user_carriers,
+    }
+}
+
 /// Runtime handles (A-1/A-1b): an id into a table of one running process.
 /// Never ordered, never encoded (a handle decoded from JSON would be forged,
 /// and a restored one is dead).
@@ -219,6 +465,7 @@ impl Infer<'_> {
         if fin {
             self.uf.default_all_int_literals();
         }
+        self.discharge_page_ties(fin);
         let saved = self.cur_span;
         let mut kept = Vec::new();
         loop {
@@ -236,6 +483,229 @@ impl Infer<'_> {
         }
         self.obligations = kept;
         self.cur_span = saved;
+    }
+
+    /// Tie every `Std.App.App f s page model msg key` in `inst`, the instance
+    /// of a use of a routing def (`App.withRoutes`, or a user def that reaches
+    /// it). A generic helper keeps the tie out of its own scheme; its callers
+    /// are checked here, where the model is known.
+    ///
+    /// `served`: `inst` is the instance of a runner (`App.run`, …), so the
+    /// `App` in it is the app that is served. In a user module the tie is
+    /// strict: the model type must be known at the end of the def (or at
+    /// each use of a let-bound helper), so no helper can hide the served
+    /// app's model from the check.
+    pub(crate) fn tie_app_nodes(&mut self, inst: TyVarId, served: bool) {
+        let strict = served && self.in_user_module();
+        let mut seen = std::collections::HashSet::new();
+        let mut tied = std::collections::HashSet::new();
+        let mut stack = vec![inst];
+        while let Some(v) = stack.pop() {
+            let r = self.uf.find(v);
+            if !seen.insert(r) {
+                continue;
+            }
+            match self.uf.content(r) {
+                Content::Structure(FlatTy::App(n, args)) => {
+                    if n.as_str() == "Std.App.App" {
+                        if let [_, _, page, model, _, _] = args[..] {
+                            let key = (self.uf.find(page), self.uf.find(model));
+                            if tied.insert(key) {
+                                self.page_ties.push(PageTie {
+                                    page,
+                                    model,
+                                    span: self.cur_span,
+                                    strict,
+                                    served,
+                                });
+                            }
+                        }
+                    }
+                    stack.extend(args);
+                }
+                Content::Structure(FlatTy::Fun(a, b)) => stack.extend([a, b]),
+                Content::Structure(FlatTy::Tuple(vs)) => stack.extend(vs),
+                Content::Structure(FlatTy::Record(fs, ext)) => {
+                    stack.extend(fs.values().copied());
+                    stack.extend(ext);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The `(argument, result)` of a function type, if `t` is one.
+    fn fun_parts(&mut self, t: TyVarId) -> Option<(TyVarId, TyVarId)> {
+        match self.uf.content(t) {
+            Content::Structure(FlatTy::Fun(a, b)) => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    /// The first argument of a nominal type application, if `t` is one.
+    fn first_arg(&mut self, t: TyVarId) -> Option<TyVarId> {
+        match self.uf.content(t) {
+            Content::Structure(FlatTy::App(_, args)) => args.first().copied(),
+            _ => None,
+        }
+    }
+
+    /// Tie the page and the model of a use of a raw route API (`inst` is its
+    /// instance). In a user module the tie is strict: a model that is still
+    /// unknown at the end of the def is refused, because `AppConfig model msg`
+    /// carries no page type a caller could check.
+    pub(crate) fn tie_routed_api(&mut self, api: RoutedApi, inst: TyVarId) {
+        let found = (|| {
+            let (arg, rest) = self.fun_parts(inst)?;
+            match api {
+                RoutedApi::LiveConfig => {
+                    let page = match self.uf.content(arg) {
+                        Content::Structure(FlatTy::Record(fs, ext)) => {
+                            let (fs, _) = self.uf.normalize_record(fs, ext);
+                            *fs.get(&Name::new("notFound"))?
+                        }
+                        _ => return None,
+                    };
+                    Some((page, self.first_arg(rest)?))
+                }
+                RoutedApi::SpaRoutes => {
+                    let route = self.first_arg(arg)?;
+                    let page = self.first_arg(route)?;
+                    let (cfg, _) = self.fun_parts(rest)?;
+                    Some((page, self.first_arg(cfg)?))
+                }
+                RoutedApi::SpaNotFound => {
+                    let (cfg, _) = self.fun_parts(rest)?;
+                    Some((arg, self.first_arg(cfg)?))
+                }
+                RoutedApi::OnNavigate => {
+                    let (page, _) = self.fun_parts(arg)?;
+                    let (cfg, _) = self.fun_parts(rest)?;
+                    Some((page, self.first_arg(cfg)?))
+                }
+            }
+        })();
+        let Some((page, model)) = found else {
+            return;
+        };
+        let strict = self.in_user_module();
+        self.page_ties.push(PageTie {
+            page,
+            model,
+            span: self.cur_span,
+            strict,
+            served: false,
+        });
+    }
+
+    /// Is the def under inference in a user module (not the stdlib)?
+    fn in_user_module(&self) -> bool {
+        self.self_def
+            .and_then(|d| self.db.def_loc(d))
+            .is_some_and(|l| !is_stdlib_module(self.db.module_name(l.module)))
+    }
+
+    /// Decide each [`PageTie`] whose model type is known: a record with a
+    /// `page` field must hold the routes' page type there. A model that is
+    /// still a variable (or a record whose row may still gain a `page`
+    /// field) waits for the end of the def; then a model with no `page`
+    /// field passes (the runtime writes nothing into it).
+    pub(crate) fn discharge_page_ties(&mut self, fin: bool) {
+        let saved = self.cur_span;
+        let mut kept = Vec::new();
+        for tie in std::mem::take(&mut self.page_ties) {
+            let r = self.uf.find(tie.model);
+            let field = match self.uf.content(r) {
+                Content::Structure(FlatTy::Record(fs, ext)) => {
+                    let (fs, ext) = self.uf.normalize_record(fs, ext);
+                    match fs.get(&Name::new("page")) {
+                        Some(&f) => f,
+                        None => {
+                            // A row that may still gain a `page` field: a
+                            // flex row waits for the end of the def; a rigid
+                            // row (an annotation) is decided only for a
+                            // strict tie, which needs a closed model.
+                            let row = ext.map(|row| self.uf.content(row));
+                            let flex = matches!(row, Some(Content::Flex | Content::FlexSuper(_)));
+                            let rigid = matches!(row, Some(Content::Rigid(_)));
+                            if !fin && (flex || (rigid && tie.strict)) {
+                                kept.push(tie);
+                            } else if fin && tie.strict && (flex || rigid) {
+                                self.push_unknown_model_error(&tie);
+                            }
+                            continue;
+                        }
+                    }
+                }
+                Content::Flex | Content::FlexSuper(_) if !fin => {
+                    kept.push(tie);
+                    continue;
+                }
+                Content::Flex | Content::FlexSuper(_) | Content::Rigid(_) if tie.strict => {
+                    self.push_unknown_model_error(&tie);
+                    continue;
+                }
+                _ => continue,
+            };
+            let routed = self.uf.describe(tie.page);
+            let held = self.uf.describe(field);
+            let served = if tie.served { SERVED_MISMATCH_NOTE } else { "" };
+            if self.uf.unify(field, tie.page).is_err() {
+                self.errors.push(TypeError {
+                    message: format!(
+                        "The app's pages have type `{routed}` (from its routes, its NotFound \
+                         page or its `withOnNavigate` function), but the model's `page` field \
+                         has type `{held}`.\n\nThe app writes the routed page (and the \
+                         `App.withNotFound` page) into the model's `page` field on every \
+                         request, and gives that field to the `withOnNavigate` function after \
+                         each navigation, so the two types must be the same. Make every \
+                         `App.route` / `App.routeParam` page, the `App.withNotFound` page and \
+                         the argument of the `withOnNavigate` function a `{held}`, or give the \
+                         model field another name if it is not the app's page.{served}"
+                    ),
+                    span: tie.span,
+                    code: "E2001",
+                });
+            }
+            self.cur_span = tie.span;
+            self.drain_pending();
+        }
+        self.cur_span = saved;
+        self.page_ties.extend(kept);
+    }
+
+    /// A strict [`PageTie`] whose model type is still not known (a type
+    /// variable, or a record that may still gain a `page` field) at the end
+    /// of the def: no caller can check it.
+    fn push_unknown_model_error(&mut self, tie: &PageTie) {
+        // A served model that is unknown because of an earlier error in the
+        // def (a wrong `init`, say) is that error's cascade: the program is
+        // refused already, so the first error stays the only one.
+        if tie.served && !self.errors.is_empty() {
+            return;
+        }
+        let message = if tie.served {
+            "The routed page type of the app that is served here cannot be checked: the \
+             model type is not known in this function.\n\nThe app writes the routed page \
+             into the model's `page` field on every request, so the checker must see the \
+             model type where the app is served (`App.run`, `App.serve` or a target \
+             runner). Serve the app where its model type is known (for example `main = \
+             App.run app`), or give this function a type annotation with the app's model \
+             type."
+        } else {
+            "The routed page type cannot be checked here: the model type is not known in \
+             this function.\n\nThe app writes the routed page into the model's `page` \
+             field on every request and gives it to the `withOnNavigate` function, so the \
+             checker must see the model type where the routes or the navigation function \
+             are set. Give this function a type annotation with the app's model type, or \
+             use `App.withRoutes` and `App.withOnNavigate`, which the checker follows \
+             through helpers."
+        };
+        self.errors.push(TypeError {
+            message: message.to_string(),
+            span: tie.span,
+            code: "E2001",
+        });
     }
 
     /// Decide one obligation. `false` = keep it for the end of the def.
@@ -451,6 +921,7 @@ fn with_bounds(scheme: &Scheme, bounds: &[(Name, SuperType)]) -> Scheme {
 /// Pass 4 (with the other static seeds): the bounded overrides of
 /// [`ENCODABLE_APIS`].
 pub(crate) fn seed_bound_overrides(world: &mut World, db: &dyn SkyDb) {
+    seed_routed_page(world, db);
     for (module, name, var) in ENCODABLE_APIS {
         let Some(m) = db.module_by_name(module) else {
             continue;
@@ -503,7 +974,7 @@ fn callees(body: &hir::Body) -> (Vec<base::DefId>, Vec<(String, String)>) {
 impl World {
     /// The scheme a check-path caller of `d` instantiates (mirrors the order
     /// of `Infer::infer_res`).
-    fn caller_scheme(&self, d: &base::DefId) -> Option<&Scheme> {
+    pub(crate) fn caller_scheme(&self, d: &base::DefId) -> Option<&Scheme> {
         self.bound_check_sigs
             .get(d)
             .or_else(|| self.any_result_check_sigs.get(d))

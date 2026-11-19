@@ -37,6 +37,18 @@ use std::path::{Path, PathBuf};
 /// A new entry here is a decision, not a formality: prefer a name that does not
 /// collide. The failure message lists the module pairs for each name.
 const EXPECTED_COLLISIONS: &[&str] = &[
+    // v0.30.0: Task.timeout, the deadline combinator (the name the request
+    // asked for, beside Task.loop / Task.forever). Sky.Core.Error already
+    // exports the value `timeout : Error`; a program that exposes
+    // Sky.Core.Error and Sky.Core.Task with `(..)` and uses the bare name
+    // gets `[E1012]`. Breaking line in the v0.30.0 CHANGELOG.
+    "value timeout",
+    // v0.30.0: Std.Live.routeParam and Std.Spa.routeParam, the `:param`
+    // route of the typed `Route page` (the name Std.App already uses for the
+    // same job). A program that exposes two of Std.App, Std.Live and
+    // Std.Spa with `(..)` and uses the bare name gets `[E1012]`. Breaking
+    // line in the v0.30.0 CHANGELOG.
+    "value routeParam",
     // v0.29.2: Std.Money.sum replaces sumOf (the user's Money API redesign).
     // Std.Decimal already exports `sum`; a program that exposes both modules
     // with `(..)` and uses the bare name gets `[E1012]`. Breaking line in the
@@ -128,6 +140,19 @@ const EXPECTED_COLLISIONS: &[&str] = &[
 /// qualifies it. Listed so the set is reviewed, and so a rename that would
 /// avoid a clash is considered before the release rather than after.
 const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
+    // v0.30.0: Std.Admission names its hook's answer `Decision` (as
+    // Std.Ai.Policy does for its firewall) and its refusal delay builder
+    // `withRetryAfter` (as Sky.Core.Error does for an error's delay). It is a
+    // new module, so no existing program changes; a program reads it
+    // qualified (`import Std.Admission as Admission`).
+    "type Decision",
+    "value withRetryAfter",
+    // v0.30.0: Std.Breaker. `Breaker.new` is named like `Cache.new` (a
+    // constructor Task) and `Breaker.call` for what it does with a Task; the
+    // other `call` is `Ffi.call`, which is stdlib-only. A program reads them
+    // qualified.
+    "value call",
+    "value new",
     // v0.29.0: Sky.Core.Array has Elm's Array API, which shares its names
     // with List, String, Dict, Set, Bytes and the Std.Sync / Std.Cache
     // accessors, as in Elm. It is a new module, so no existing program
@@ -840,4 +865,23 @@ fn e1012_names_the_newest_release_that_lacked_a_v0_29_2_name() {
     let snap =
         hir::stdlib_history::new_since("Sky.Core.Regex", "findMatch").expect("a v0.29.0 name");
     assert_eq!(snap.release, "v0.28.1");
+}
+
+#[test]
+fn e1012_points_a_v0_30_name_at_the_v0_30_guide() {
+    // v0.30.0: a name new in v0.30.0 is new since v0.29.13, the last release
+    // of the v0.29 line, and its message links the v0.30 guide. A v0.29.2
+    // name still names v0.29.1 and the v0.29 guide.
+    for (module, name) in [
+        ("Sky.Core.Task", "timeout"),
+        ("Std.Live", "routeParam"),
+        ("Std.Sub", "viewport"),
+    ] {
+        let snap = hir::stdlib_history::new_since(module, name).expect("a v0.30.0 name");
+        assert_eq!(snap.release, "v0.29.13", "{module}.{name}");
+        assert_eq!(snap.migration, "docs/migration/v0.30.md#new-stdlib-names");
+    }
+    let snap = hir::stdlib_history::new_since("Std.Money", "sum").expect("a v0.29.2 name");
+    assert_eq!(snap.release, "v0.29.1");
+    assert_eq!(snap.migration, "docs/migration/v0.29.md#new-stdlib-names");
 }

@@ -76,20 +76,32 @@ fn load_stdlib(root: &Path) -> Vec<(String, syntax::Parse)> {
 /// Build stdlib + module A (`State`) + module B (`Main`, source given), then
 /// return the number of type errors reported for B.
 fn type_errors_for_b(root: &Path, b_src: &str) -> usize {
+    let a_src = "module State exposing (xs)\n\nxs = [ \"a\", \"b\" ]\n";
+    type_errors_for_main(root, ("State", a_src), b_src).0
+}
+
+/// Build stdlib + the module `a` (name, source) + module `Main` (source
+/// given), then return the number of type errors reported for `Main` and
+/// their rendered text.
+fn type_errors_for_main(root: &Path, a: (&str, &str), b_src: &str) -> (usize, String) {
     let stdlib = load_stdlib(root);
     assert!(!stdlib.is_empty(), "stdlib failed to load");
-
-    let a_src = "module State exposing (xs)\n\nxs = [ \"a\", \"b\" ]\n";
 
     let mut db = SourceDb::new();
     for (n, parse) in &stdlib {
         db.add_module(n, parse.clone());
     }
-    db.add_module("State", syntax::parse(a_src, base::FileId(0)));
+    db.add_module(a.0, syntax::parse(a.1, base::FileId(0)));
     let b_mid = db.add_module("Main", syntax::parse(b_src, base::FileId(0)));
 
     let out = ty::check_modules(&db, &[b_mid]);
-    out.type_errors
+    let text = out
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (out.type_errors, text)
 }
 
 #[test]
@@ -118,5 +130,312 @@ fn cross_module_valid_use_still_accepts() {
     assert_eq!(
         errs, 0,
         "OVER-EAGER — a valid cross-module use `List.length xs` was REJECTED ({errs} errors)"
+    );
+}
+
+/// A routing helper from another module, hidden in a user custom type
+/// (v0.30.0, D7). `Routing.router` sets `String` pages inside a `Router`
+/// value, whose type holds no `App` node. The model's `page` field is a
+/// `Route`, so the served app is refused with `[E2001]`.
+const ROUTING: &str = "module Routing exposing (Router(..), router, runRouter)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\n\
+type Router f s p m msg k\n    = Router (App.App f s p m msg k -> App.App f s p m msg k)\n\n\n\
+router =\n    Router (\\a -> App.withRoutes [ App.route \"/\" PAGE ] a)\n\n\n\
+runRouter (Router f) a =\n    f a\n";
+
+const ROUTED_MAIN: &str = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\
+import Std.Ui as Ui exposing (Element)\n\
+import Routing exposing (router, runRouter)\n\n\
+type Route\n    = Dashboard\n    | Missing\n\n\
+type alias Model =\n    { page : Route, title : String }\n\n\
+type Msg\n    = Inc\n\n\n\
+init : () -> ( Model, Cmd Msg )\n\
+init () =\n    ( { page = Dashboard, title = \"t\" }, Cmd.none )\n\n\n\
+update : Msg -> Model -> ( Model, Cmd Msg )\n\
+update msg model =\n    ( model, Cmd.none )\n\n\n\
+view : Model -> Element Msg\n\
+view model =\n    Ui.text model.title\n\n\n\
+app =\n    App.app { init = init, update = update, view = view, subscriptions = \\_ -> Sub.none }\
+\n        |> runRouter router\
+\n        |> App.withNotFound MISSING\n\n\n\
+main =\n    App.run app\n";
+
+#[test]
+fn cross_module_routing_helper_in_a_custom_type_is_checked_at_the_served_app() {
+    let root = repo_root();
+    let routing = ROUTING.replace("PAGE", "\"home\"");
+    let main = ROUTED_MAIN.replace("MISSING", "\"missing\"");
+    let (errs, text) = type_errors_for_main(&root, ("Routing", &routing), &main);
+    assert!(
+        errs > 0 && text.contains("model's `page` field"),
+        "SOUNDNESS HOLE — a cross-module routing helper in a custom type gave `String` pages \
+         to a model whose `page` field is a `Route`, and the app was ACCEPTED ({errs} errors):\n{text}"
+    );
+}
+
+#[test]
+fn cross_module_routing_helper_in_a_custom_type_with_the_model_page_type_accepts() {
+    let root = repo_root();
+    // The helper's pages must name the main module's `Route`, so the control
+    // gives the helper a generic page: the caller passes the routes.
+    let good = "module Routing exposing (Router(..), router, runRouter)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\n\
+type Router f s p m msg k\n    = Router (App.App f s p m msg k -> App.App f s p m msg k)\n\n\n\
+router routes =\n    Router (\\a -> App.withRoutes routes a)\n\n\n\
+runRouter (Router f) a =\n    f a\n";
+    let main = ROUTED_MAIN
+        .replace(
+            "runRouter router\n",
+            "runRouter (router [ App.route \"/\" Dashboard ])\n",
+        )
+        .replace("MISSING", "Missing");
+    let (errs, text) = type_errors_for_main(&root, ("Routing", good), &main);
+    assert_eq!(
+        errs, 0,
+        "OVER-EAGER — a cross-module routing helper with the model's page type was REJECTED:\n{text}"
+    );
+}
+
+/// Build stdlib + the project module `a` + `Main`, check BOTH (as `sky check`
+/// does: every project module is checked), and return the type errors and
+/// their rendered text.
+fn type_errors_for_program(root: &Path, a: (&str, &str), main: &str) -> (usize, String) {
+    let stdlib = load_stdlib(root);
+    assert!(!stdlib.is_empty(), "stdlib failed to load");
+    let mut db = SourceDb::new();
+    for (n, parse) in &stdlib {
+        db.add_module(n, parse.clone());
+    }
+    let a_mid = db.add_module(a.0, syntax::parse(a.1, base::FileId(0)));
+    let main_mid = db.add_module("Main", syntax::parse(main, base::FileId(0)));
+    let out = ty::check_modules(&db, &[a_mid, main_mid]);
+    let text = out
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (out.type_errors, text)
+}
+
+/// A project routing helper in a module under the `Sky.` / `Std.` namespace
+/// (v0.30.0). The stdlib is the modules of `sky-stdlib/`, not every module
+/// whose name starts with `Std.` or `Sky.`: the project may define a new name
+/// there (`module_ownership`), and such a module is app code. Before the fix
+/// the checker classified it by its name, so the helper was not a routed page
+/// carrier, the served app was not tied, and the program failed at run time.
+const PAGES: &str = "module NAME exposing (withPages)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\n\n\
+withPages routes missing a =\n    a |> App.withRoutes routes |> App.withNotFound missing\n";
+
+const PAGES_MAIN: &str = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\
+import Std.Ui as Ui exposing (Element)\n\
+import NAME as Pages\n\n\
+type Route\n    = Dashboard\n    | Missing\n\n\
+type alias Model =\n    { page : Route, title : String }\n\n\
+type Msg\n    = Inc\n\n\n\
+init : () -> ( Model, Cmd Msg )\n\
+init () =\n    ( { page = Dashboard, title = \"t\" }, Cmd.none )\n\n\n\
+update : Msg -> Model -> ( Model, Cmd Msg )\n\
+update msg model =\n    ( model, Cmd.none )\n\n\n\
+view : Model -> Element Msg\n\
+view model =\n    Ui.text model.title\n\n\n\
+app =\n    App.app { init = init, update = update, view = view, subscriptions = \\_ -> Sub.none }\
+\n        |> Pages.withPages [ App.route \"/\" HOME ] MISSING\n\n\n\
+main =\n    App.run app\n";
+
+#[test]
+fn a_routing_helper_in_a_project_module_under_the_stdlib_namespaces_is_checked() {
+    let root = repo_root();
+    for name in ["Sky.Pages", "Std.Pages", "Usr.Pages"] {
+        let pages = PAGES.replace("NAME", name);
+        let main = PAGES_MAIN
+            .replace("NAME", name)
+            .replace("HOME", "\"home\"")
+            .replace("MISSING", "\"missing\"");
+        let (errs, text) = type_errors_for_program(&root, (name, &pages), &main);
+        assert!(
+            errs > 0 && text.contains("model's `page` field"),
+            "SOUNDNESS HOLE — a routing helper in the project module {name} gave `String` \
+             pages to a model whose `page` field is a `Route`, and the app was ACCEPTED \
+             ({errs} errors):\n{text}"
+        );
+    }
+}
+
+#[test]
+fn a_routing_helper_in_a_project_module_under_the_stdlib_namespaces_accepts_the_page_type() {
+    let root = repo_root();
+    for name in ["Sky.Pages", "Std.Pages", "Usr.Pages"] {
+        let pages = PAGES.replace("NAME", name);
+        let main = PAGES_MAIN
+            .replace("NAME", name)
+            .replace("HOME", "Dashboard")
+            .replace("MISSING", "Missing");
+        let (errs, text) = type_errors_for_program(&root, (name, &pages), &main);
+        assert_eq!(
+            errs, 0,
+            "OVER-EAGER — a routing helper in the project module {name} with the model's \
+             page type was REJECTED:\n{text}"
+        );
+    }
+}
+
+/// The `any` result fill (`sig.rs`, D1) reaches every project module. A
+/// project module named under `Std.` used to keep `Int -> any` as a cast.
+#[test]
+fn an_any_result_in_a_project_module_under_the_stdlib_namespaces_is_pinned() {
+    let root = repo_root();
+    for name in ["Std.Coerce", "Sky.Coerce", "Usr.Coerce"] {
+        let coerce = format!(
+            "module {name} exposing (coerce)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\n\n\
+             coerce : Int -> any\ncoerce x =\n    x\n"
+        );
+        let main = format!(
+            "module Main exposing (bad)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import {name} exposing (coerce)\n\n\n\
+             bad : String\nbad =\n    coerce 1\n"
+        );
+        let (errs, text) = type_errors_for_program(&root, (name, &coerce), &main);
+        assert!(
+            errs > 0,
+            "SOUNDNESS HOLE — `coerce : Int -> any` in the project module {name} cast an \
+             `Int` to a `String`, and the program was ACCEPTED:\n{text}"
+        );
+    }
+}
+
+/// Build stdlib + the project modules `modules` (name, source), check every
+/// one of them (as `sky check` does), and return the type errors and their
+/// rendered text.
+fn type_errors_for_modules(root: &Path, modules: &[(&str, &str)]) -> (usize, String) {
+    let stdlib = load_stdlib(root);
+    assert!(!stdlib.is_empty(), "stdlib failed to load");
+    let mut db = SourceDb::new();
+    for (n, parse) in &stdlib {
+        db.add_module(n, parse.clone());
+    }
+    let ids: Vec<_> = modules
+        .iter()
+        .map(|(n, src)| db.add_module(n, syntax::parse(src, base::FileId(0))))
+        .collect();
+    let out = ty::check_modules(&db, &ids);
+    let text = out
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (out.type_errors, text)
+}
+
+/// A second entry of the project that serves a route-less app (v0.30.0,
+/// Judge 8). `Admin` sets no routes and no navigation hook, so the runtime
+/// never reads or writes its model's `page` field: a pagination `page : Int`
+/// with `App.withNotFound ()` is a correct program. The served app is tied
+/// only when its own definition reaches `App.withRoutes` or
+/// `App.withOnNavigate`, not when another entry of the project does.
+const ROUTELESS_ADMIN: &str = "module Admin exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\
+import Std.Ui as Ui exposing (Element)\n\n\
+type alias Model =\n    { page : Int, rows : List String }\n\n\
+type Msg\n    = Next\n\n\n\
+init : () -> ( Model, Cmd Msg )\n\
+init () =\n    ( { page = 1, rows = [] }, Cmd.none )\n\n\n\
+update : Msg -> Model -> ( Model, Cmd Msg )\n\
+update msg model =\n    case msg of\n        Next ->\n            ( { model | page = model.page + 1 }, Cmd.none )\n\n\n\
+view : Model -> Element Msg\n\
+view m =\n    Ui.text (String.fromInt m.page)\n\n\n\
+main =\n    App.run\n        (App.app { init = init, update = update, view = view, subscriptions = \\_ -> Sub.none }\
+\n            |> App.withNotFound ()\n        )\n";
+
+const ROUTED_ENTRY: &str = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\
+import Std.Ui as Ui exposing (Element)\n\n\
+type Route\n    = Dashboard\n    | Missing\n\n\
+type alias Model =\n    { page : Route, title : String }\n\n\
+type Msg\n    = Go Int\n\n\n\
+init : () -> ( Model, Cmd Msg )\n\
+init () =\n    ( { page = Dashboard, title = \"t\" }, Cmd.none )\n\n\n\
+update : Msg -> Model -> ( Model, Cmd Msg )\n\
+update msg model =\n    ( model, Cmd.none )\n\n\n\
+view : Model -> Element Msg\n\
+view m =\n    Ui.text m.title\n\n\n\
+main =\n    App.run\n        (App.app { init = init, update = update, view = view, subscriptions = \\_ -> Sub.none }\
+\n            |> App.withRoutes [ App.route \"/\" HOME ]\n            |> App.withNotFound MISSING\n        )\n";
+
+#[test]
+fn a_route_less_entry_beside_a_routed_entry_is_accepted() {
+    let root = repo_root();
+    let main = ROUTED_ENTRY
+        .replace("HOME", "Dashboard")
+        .replace("MISSING", "Missing");
+    let (errs, text) =
+        type_errors_for_modules(&root, &[("Admin", ROUTELESS_ADMIN), ("Main", &main)]);
+    assert_eq!(
+        errs, 0,
+        "OVER-EAGER — a route-less entry whose model `page` field is an `Int` was REJECTED \
+         because another entry of the project sets routes:\n{text}"
+    );
+}
+
+#[test]
+fn a_routed_entry_beside_a_route_less_entry_is_still_checked() {
+    let root = repo_root();
+    let main = ROUTED_ENTRY
+        .replace("HOME", "\"home\"")
+        .replace("MISSING", "\"missing\"");
+    let (errs, text) =
+        type_errors_for_modules(&root, &[("Admin", ROUTELESS_ADMIN), ("Main", &main)]);
+    assert!(
+        errs > 0 && text.contains("model's `page` field"),
+        "SOUNDNESS HOLE — the routed entry gave `String` pages to a model whose `page` field \
+         is a `Route`, and the program was ACCEPTED ({errs} errors):\n{text}"
+    );
+}
+
+/// A routed app hidden in a custom type (`Routing.router`, D7) and served by
+/// a helper that takes the app as an argument. The helper reaches no carrier
+/// itself, but a def that reaches one calls it, so the app it serves may
+/// carry routes: its use of `App.run` is still tied, beside a route-less
+/// entry that is not.
+#[test]
+fn a_routed_app_served_by_a_helper_that_takes_it_is_still_checked() {
+    let root = repo_root();
+    let routing = ROUTING.replace("PAGE", "\"home\"");
+    let main = ROUTED_MAIN.replace("MISSING", "\"missing\"").replace(
+        "main =\n    App.run app\n",
+        "serveIt : App.App f () String Model Msg k -> Task Error ()\n\
+             serveIt a =\n    App.run a\n\n\n\
+             main =\n    serveIt app\n",
+    );
+    assert!(main.contains("serveIt app"));
+    let (errs, text) = type_errors_for_modules(
+        &root,
+        &[
+            ("Routing", &routing),
+            ("Admin", ROUTELESS_ADMIN),
+            ("Main", &main),
+        ],
+    );
+    assert!(
+        errs > 0 && text.contains("model's `page` field"),
+        "SOUNDNESS HOLE — a helper served a routed app with `String` pages for a model whose \
+         `page` field is a `Route`, and the program was ACCEPTED ({errs} errors):\n{text}"
+    );
+    assert!(
+        !text.contains("`Int`"),
+        "OVER-EAGER — the route-less entry was tied:\n{text}"
     );
 }

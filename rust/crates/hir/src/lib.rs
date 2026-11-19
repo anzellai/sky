@@ -18,6 +18,7 @@ mod ids;
 mod kernel;
 mod resolve;
 pub mod stdlib_history;
+mod stdlib_set;
 mod value_cycle;
 
 pub use db::{ImportSource, SkyDb, SourceDb};
@@ -38,6 +39,7 @@ pub use resolve::{
     resolve, BinderDef, ClassA, ClassB, FieldDecl, FieldOcc, FieldRecv, RefKind, RefOcc,
     ResolveResult, ScopeNameKind, TypeOcc,
 };
+pub use stdlib_set::{is_stdlib_module_name, STDLIB_MODULES};
 
 #[cfg(test)]
 mod tests {

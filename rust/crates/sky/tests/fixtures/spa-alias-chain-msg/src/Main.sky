@@ -1,0 +1,62 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Types exposing (..)
+import Cards
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { card = { title = "" } }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Load ->
+            ( { model
+                  | card =
+                      Task.run (Cards.loadCard ())
+                          |> Result.withDefault { title = "none" }
+              }
+            , Cmd.none
+            )
+
+        Show c ->
+            let
+                _ = Task.run (File.writeFile "saved.txt" c.title)
+            in
+                ( { model | card = c }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text ("TITLE=" ++ model.card.title)
+        , Ui.button [] { onPress = Just Load, label = Ui.text "load" }
+        , Ui.button
+              []
+              { onPress = Just (Show { title = "x" }), label = Ui.text "show" }
+        ]
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound (\_ -> Ui.text "not found")
+
+
+main : Task Error ()
+main =
+    App.run app

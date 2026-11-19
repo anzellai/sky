@@ -42,7 +42,6 @@ use project::{
     assets_root_for, build_example, build_project, is_compiler_repo_root, project_dir_for,
     repo_root_for, run_app, BuildOptions,
 };
-use testrunner::run_test;
 
 mod ai_device;
 mod ai_doctor;
@@ -320,6 +319,7 @@ fn dispatch(args: &[String]) -> ExitCode {
         Some("spa-partition") => cmd_spa_partition(&args[1..]),
         Some("spa-split") => cmd_spa_split(&args[1..]),
         Some("fuzz") => cmd_fuzz(&args[1..]),
+        Some("coverage") => cmd_coverage(&args[1..]),
         Some("upgrade") => cmd_upgrade(&args[1..]),
         // Hidden: warm Sky's isolated Go build cache (native + wasm) so the first
         // real build is not a cold compile. Invoked by `sky upgrade` (with the NEW
@@ -2373,6 +2373,11 @@ struct AppFields {
     /// `spaServerConfig_` boot task (`App.applySessionLifetime`), so the
     /// backend sets it before it listens (operator env > code > 30 days).
     session_lifetime: Option<String>,
+    /// `App.withAdmission <policy>` (v0.30.0): the server's admission
+    /// policy (`Std.Admission`). Carried into the `spaServerConfig_` boot task
+    /// (`App.applyAdmission`), so the backend installs it before it listens.
+    /// Server-only: the client never sees it.
+    admission: Option<String>,
     /// `App.withPersistExclude [ … ]` (v0.29.0): model fields the client never
     /// stores in localStorage and always takes from the server-rendered seed.
     /// Carried into a `spaPersistExclude_` binding the client config chain
@@ -2418,6 +2423,7 @@ const SPA_CARRIED_BUILDERS: &[&str] = &[
     "withConfig",
     "withBase",
     "withSessionLifetime",
+    "withAdmission",
     "withPersistExclude",
 ];
 
@@ -2496,6 +2502,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
     let mut server_configs: Vec<String> = Vec::new();
     let mut server_base: Option<String> = None;
     let mut session_lifetime: Option<String> = None;
+    let mut admission: Option<String> = None;
     let mut persist_exclude: Option<String> = None;
     let mut client_crypto = false;
     let mut dropped_builders: Vec<String> = Vec::new();
@@ -2564,6 +2571,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
             }
             "withBase" => server_base = Some(place("base", arg)),
             "withSessionLifetime" => session_lifetime = Some(place("sessionLifetime", arg)),
+            "withAdmission" => admission = Some(place("admission", arg)),
             "withPersistExclude" => persist_exclude = Some(place("persistExclude", arg)),
             _ => unreachable!("carried builder list and match disagree: {name}"),
         }
@@ -2584,6 +2592,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
         server_configs,
         server_base,
         session_lifetime,
+        admission,
         persist_exclude,
         client_crypto,
         dropped_builders,
@@ -3452,10 +3461,19 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
         }
         None => (String::new(), String::new()),
     };
+    // The client router writes the NotFound page into the model's `page`
+    // field only for an app with routes (`spaApplyURL`), and the checker ties
+    // `Spa.withNotFound`'s page to that field (v0.30.0). A route-less app's
+    // `page` field is the user's own, of any type, so its client config gets
+    // no `Spa.withNotFound`; the binding stays for the backend's server render.
     let (not_found_binding, not_found_line) = match &fields.not_found {
         Some(n) => (
             format!("spaNotFound_ =\n    ({n})\n\n\n"),
-            "\n            |> Spa.withNotFound spaNotFound_".to_string(),
+            if fields.routes.is_some() {
+                "\n            |> Spa.withNotFound spaNotFound_".to_string()
+            } else {
+                String::new()
+            },
         ),
         None => (String::new(), String::new()),
     };
@@ -3542,13 +3560,27 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 .unwrap_or_else(|| format!("{aq}.baseDefaults"))
         ))
     };
-    let server_config_binding = match (config_task, &fields.session_lifetime) {
-        (None, None) => String::new(),
-        (Some(t), None) => format!("spaServerConfig_ =\n    {t}\n\n\n"),
-        (t, Some(l)) => format!(
-            "spaServerConfig_ =\n    {}\n        |> Task.andThen (\\_ -> {aq}.applySessionLifetime {l})\n\n\n",
-            t.unwrap_or_else(|| "Task.succeed ()".to_string())
-        ),
+    // `App.withAdmission` joins it too (v0.30.0): the backend installs the
+    // admission policy (`Std.Admission`) before it listens.
+    let mut boot_steps: Vec<String> = Vec::new();
+    if let Some(l) = &fields.session_lifetime {
+        boot_steps.push(format!("{aq}.applySessionLifetime {l}"));
+    }
+    if let Some(p) = &fields.admission {
+        boot_steps.push(format!("{aq}.applyAdmission {p}"));
+    }
+    let server_config_binding = if config_task.is_none() && boot_steps.is_empty() {
+        String::new()
+    } else {
+        let mut b = format!(
+            "spaServerConfig_ =\n    {}",
+            config_task.unwrap_or_else(|| "Task.succeed ()".to_string())
+        );
+        for step in &boot_steps {
+            b.push_str(&format!("\n        |> Task.andThen (\\_ -> {step})"));
+        }
+        b.push_str("\n\n\n");
+        b
     };
     let (persist_exclude_binding, persist_exclude_line) = match &fields.persist_exclude {
         Some(f) => (
@@ -4414,7 +4446,11 @@ fn spa_split_and_build(
     // linked into the backend's small `skybuildinfo` package when the
     // frontend has built (project::spa_wasm_handoff): beside the frontend
     // when memory allows, else after it.
-    let backend_main = backend_dir.join("src").join("Main.sky");
+    // The generated entries keep the app entry's path (`src/Main.sky`, or
+    // `src/Other.sky` for an app built from `src/Other.sky`).
+    let backend_entry = project::spa_split::generated_entry(&backend_dir);
+    let frontend_entry = project::spa_split::generated_entry(&frontend_dir);
+    let backend_main = backend_dir.join(&backend_entry);
     // A web bundle (no native shell) is compressed here, in the parent, all
     // assets at once, and alongside the backend leg when that is still
     // building; a native shell's frontend child compresses its own bundle.
@@ -4474,7 +4510,7 @@ fn spa_split_and_build(
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
         }
         let t = project::timings::phase("backend leg (child sky build, native)");
-        c.arg("src/Main.sky").current_dir(&backend_dir);
+        c.arg(&backend_entry).current_dir(&backend_dir);
         let out = match tx {
             Some(tx) => run_with_handoff(c, tx),
             None => leg_output(&mut c),
@@ -4486,7 +4522,7 @@ fn spa_split_and_build(
     let build_frontend = || {
         let t = project::timings::phase("frontend leg (child sky build, wasm)");
         let mut c = Command::new(sky_ref);
-        c.args(["build", "--target", target, "src/Main.sky"]);
+        c.args(["build", "--target", target, frontend_entry.as_str()]);
         if json_leg {
             c.args(["--format", "json"]);
         }
@@ -4525,8 +4561,8 @@ fn spa_split_and_build(
         t.end();
     };
     // Deliver the frontend's wasm name (or `failed`) to the backend leg. A
-    // write error means the backend child has already exited; its own output
-    // (reported below) says why.
+    // backend child that has already exited is not an error here (the Sender
+    // ignores the broken pipe): its own output, reported below, says why.
     let deliver_name = |frontend: &std::io::Result<std::process::Output>| {
         let Some(tx) = &handoff else { return };
         use project::spa_wasm_handoff::Delivered;
@@ -4853,6 +4889,20 @@ fn build_and_run_fuzz_harness(
     app_project_dir: &Path,
     seed: i64,
 ) -> Result<(), String> {
+    build_and_run_fuzz_harness_with(repo_root, harness_dir, app_project_dir, seed, None, &[])
+}
+
+/// [`build_and_run_fuzz_harness`] with coverage instrumentation (the guided
+/// model net's in-process counters, `sky fuzz --coverage`'s `go build -cover`)
+/// and extra environment for the harness run.
+fn build_and_run_fuzz_harness_with(
+    repo_root: &Path,
+    harness_dir: &Path,
+    app_project_dir: &Path,
+    seed: i64,
+    coverage: Option<project::coverage::CoverageBuild>,
+    env: &[(&str, PathBuf)],
+) -> Result<(), String> {
     let opts = BuildOptions {
         repo_root: repo_root.to_path_buf(),
         example_dir: harness_dir.to_path_buf(),
@@ -4865,7 +4915,8 @@ fn build_and_run_fuzz_harness(
         embed_bundle: None,
         wasm: false,
     };
-    let built = build_example(&opts);
+    let built =
+        project::build_project_instrumented(&opts, &[], None, project::AppScope::All, coverage);
     if !built.emitted {
         return Err(format!("harness build failed: {}", built.note));
     }
@@ -4881,6 +4932,9 @@ fn build_and_run_fuzz_harness(
     cmd.env("SKY_TEST_MODE", "1");
     cmd.env("SKY_TEST_SEED", seed.to_string());
     cmd.env("SKY_TEST_CLOCK_MS", "1704067200000");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     // The runtime does not load `.env` in test mode, so a DSN there never
     // reaches the run.
     for name in testrunner::dot_env_dsns(app_project_dir) {
@@ -4935,8 +4989,8 @@ fn build_and_run_fuzz_harness(
 fn cmd_fuzz(args: &[String]) -> ExitCode {
     if wants_help(args) {
         println!(
-            "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S]  \
-             (or run inside a Sky app project)"
+            "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S] \
+             [--unguided] [--coverage[=dir]]  (or run inside a Sky app project)"
         );
         return ExitCode::SUCCESS;
     }
@@ -4962,13 +5016,14 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
             "--target" | "--iters" | "--seed" => {
                 it.next();
             }
+            // `--coverage` takes its directory only as `--coverage=<dir>`.
             s if s.starts_with("--") => {}
             s => positional.push(s.to_string()),
         }
     }
     let file = match resolve_entry_arg(
         &positional,
-        "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S]  (or run inside a Sky app project)",
+        "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S] [--unguided] [--coverage[=dir]]  (or run inside a Sky app project)",
     ) {
         Ok(f) => f,
         Err(code) => return code,
@@ -4983,6 +5038,16 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     let target = flag_value(args, "--target").or_else(|| sky_toml_app_target(&project_dir));
 
     // --- 1. Model no-panic net (always) ---
+    // Guided by default: the harness counts each `case` arm it reaches in
+    // process (rt.CovHit) and the loop keeps and mutates the Msg sequences
+    // that reach a new one. `--unguided` folds fresh random sequences only.
+    // `--coverage[=dir]` also builds with `go build -cover` and records one
+    // run that `sky coverage report` reads.
+    let guided = !args.iter().any(|a| a == "--unguided");
+    let coverage_dir = coverage_flag(args).map(|dir| {
+        dir.map(PathBuf::from)
+            .unwrap_or_else(|| project_dir.join(project::coverage::DEFAULT_DIR))
+    });
     let model_out = project_dir.join(".modelfuzz");
     let report = match project::spa_split::generate_model_fuzz(
         &repo_root,
@@ -4991,6 +5056,7 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
         &model_out,
         iters,
         seed,
+        guided,
     ) {
         Ok(r) => r,
         Err(e) => {
@@ -5006,10 +5072,72 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     for n in &report.notes {
         println!("  note: {n}");
     }
-    match build_and_run_fuzz_harness(&repo_root, &model_out, &project_dir, seed) {
+    let instrument =
+        (guided || coverage_dir.is_some()).then_some(project::coverage::CoverageBuild {
+            go_cover: coverage_dir.is_some(),
+            hits: guided,
+        });
+    let seen_file = model_out.join("fuzz-coverage-ids.txt");
+    let _ = std::fs::remove_file(&seen_file);
+    let mut env: Vec<(&str, PathBuf)> = vec![("SKY_FUZZ_COV_OUT", seen_file.clone())];
+    let run_dir = match &coverage_dir {
+        Some(dir) => match project::coverage::reset(dir)
+            .and_then(|()| project::coverage::new_run(dir, "fuzz"))
+        {
+            Ok(run) => {
+                env.push(("GOCOVERDIR", project::coverage::run_counters(&run)));
+                Some(run)
+            }
+            Err(e) => {
+                eprintln!("sky fuzz: cannot prepare {}: {e}", dir.display());
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+    let outcome = build_and_run_fuzz_harness_with(
+        &repo_root,
+        &model_out,
+        &project_dir,
+        seed,
+        instrument,
+        &env,
+    );
+    let map = std::fs::read_to_string(model_out.join("sky-out").join(project::coverage::MAP_FILE))
+        .ok()
+        .and_then(|t| project::coverage::CoverageMap::from_json(&t).ok())
+        .map(|mut m| {
+            // The harness's own definitions are not the app's code.
+            m.points.retain(|p| {
+                !(p.module == report.entry_module && report.generated.contains(&p.function))
+            });
+            m
+        });
+    if let (Some(run), Some(map)) = (&run_dir, &map) {
+        if let Err(e) = std::fs::write(project::coverage::run_map(run), map.to_json()) {
+            eprintln!("sky fuzz: coverage map not saved: {e}");
+        }
+    }
+    if let (true, Some(map)) = (guided, &map) {
+        let seen: std::collections::BTreeSet<usize> = std::fs::read_to_string(&seen_file)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.trim().parse().ok())
+            .collect();
+        let (reached, total) = project::coverage::arms_reached(map, &seen, &|_, _| false);
+        println!("sky fuzz: case arms reached {reached}/{total}");
+    }
+    if let Some(dir) = &coverage_dir {
+        println!(
+            "sky fuzz: coverage data in {}; `sky coverage report {}` for detail",
+            dir.display(),
+            dir.display()
+        );
+    }
+    match outcome {
         Ok(()) => {
             println!(
-                "sky fuzz: model net PASS — {iters} random Msg sequences, no unclassified panic"
+                "sky fuzz: model net PASS — {iters} Msgs in random sequences, no unclassified panic"
             );
         }
         Err(e) => {
@@ -12265,29 +12393,183 @@ fn cmd_test(args: &[String]) -> ExitCode {
         return cmd_scaffold_mocks(args);
     }
     let (positional, out_override) = parse_out(args);
-    let Some(file) = positional.first() else {
-        eprintln!("usage: sky test <suite.sky>");
+    if positional.is_empty() {
+        eprintln!("usage: sky test <suite.sky>... [--coverage[=dir]]");
         return ExitCode::from(2);
-    };
+    }
     let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
+    // `--coverage` / `--coverage=<dir>`: a fresh coverage directory (default
+    // `.sky-coverage/` in the first suite's project), one run per suite.
+    let coverage = coverage_flag(args).map(|dir| {
+        dir.map(PathBuf::from).unwrap_or_else(|| {
+            project_dir_for(Path::new(&positional[0])).join(project::coverage::DEFAULT_DIR)
+        })
+    });
+    if let Some(dir) = &coverage {
+        if let Err(e) = project::coverage::reset(dir) {
+            eprintln!("sky test: cannot prepare {}: {e}", dir.display());
+            return ExitCode::from(testrunner::EXIT_NOT_RUN);
+        }
+    }
     if json_out::active() {
-        return cmd_test_json(Path::new(file), &out_dir_name);
+        if positional.len() > 1 {
+            eprintln!("sky test --format json: give one suite per run");
+            return ExitCode::from(2);
+        }
+        let code = cmd_test_json(
+            Path::new(&positional[0]),
+            &out_dir_name,
+            coverage.as_deref(),
+        );
+        if let Some(dir) = &coverage {
+            print_coverage_summary(dir);
+        }
+        return code;
     }
-    match run_test(Path::new(file), &out_dir_name) {
-        Ok(run) => {
-            if !run.note.is_empty() {
-                eprintln!("sky test: {}", run.note);
+    // 0 all passed, 1 a test failed, 2 nothing ran (build failure). Several
+    // suites report the worst.
+    let mut status = testrunner::EXIT_PASSED;
+    for file in &positional {
+        let suite = Path::new(file);
+        let topts = match test_options_for(suite, coverage.as_deref()) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("sky test: {e}");
+                return ExitCode::from(testrunner::EXIT_NOT_RUN);
             }
-            // 0 all passed, 1 a test failed, 2 nothing ran (build failure).
-            ExitCode::from(run.exit_status())
+        };
+        let code = match testrunner::run_test_with(suite, &out_dir_name, &topts) {
+            Ok(run) => {
+                if !run.note.is_empty() {
+                    eprintln!("sky test: {}", run.note);
+                }
+                run.exit_status()
+            }
+            Err(e) => {
+                // An I/O error before the build (the scratch dir, the
+                // synthesised entry): no test ran.
+                eprintln!("sky test: {e}");
+                testrunner::EXIT_NOT_RUN
+            }
+        };
+        status = status.max(code);
+    }
+    if let Some(dir) = &coverage {
+        print_coverage_summary(dir);
+    }
+    ExitCode::from(status)
+}
+
+/// `--coverage` (`Some(None)`) or `--coverage=<dir>` (`Some(Some(dir))`).
+fn coverage_flag(args: &[String]) -> Option<Option<String>> {
+    args.iter().rev().find_map(|a| {
+        if a == "--coverage" {
+            Some(None)
+        } else {
+            a.strip_prefix("--coverage=").map(|d| Some(d.to_string()))
         }
-        Err(e) => {
-            // An I/O error before the build (the scratch dir, the synthesised
-            // entry): no test ran.
-            eprintln!("sky test: {e}");
-            ExitCode::from(testrunner::EXIT_NOT_RUN)
+    })
+}
+
+/// The runner options for one suite: a new coverage run when `coverage` names
+/// a coverage directory.
+fn test_options_for(
+    suite: &Path,
+    coverage: Option<&Path>,
+) -> std::io::Result<testrunner::TestOptions> {
+    let coverage_run = match coverage {
+        Some(dir) => {
+            let label = suite
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "suite".to_string());
+            Some(project::coverage::new_run(dir, &label)?)
+        }
+        None => None,
+    };
+    Ok(testrunner::TestOptions {
+        coverage_run,
+        ..Default::default()
+    })
+}
+
+/// The coverage summary after `sky test --coverage`, on stderr (stdout may be
+/// the NDJSON stream).
+fn print_coverage_summary(dir: &Path) {
+    match project::coverage::report(dir) {
+        Ok(r) => {
+            let r = r.filtered(false);
+            eprintln!(
+                "coverage: {}\n  data in {}; `sky coverage report {}` for detail",
+                r.summary_line(),
+                dir.display(),
+                dir.display()
+            );
+        }
+        Err(e) => eprintln!("sky test: coverage: {e}"),
+    }
+}
+
+/// `sky coverage report [dir] [--by-module] [--format json|text] [--all]`:
+/// the function and `case`-arm coverage `sky test --coverage` recorded, per
+/// Sky module. Text by default; `--format json` prints the stable JSON shape
+/// (docs/tooling/testing.md, "Coverage"). Only the project's own modules
+/// unless `--all` (tests, dependencies and the stdlib too).
+fn cmd_coverage(args: &[String]) -> ExitCode {
+    const USAGE: &str =
+        "usage: sky coverage report [dir] [--by-module] [--format json|text] [--all]";
+    if wants_help(args) {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    if args.first().map(String::as_str) != Some("report") {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    let rest = &args[1..];
+    let mut dir: Option<PathBuf> = None;
+    let mut by_module = false;
+    let mut all = false;
+    let mut json = false;
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--by-module" => by_module = true,
+            "--all" => all = true,
+            "--format" => match it.next().map(String::as_str) {
+                Some("json") => json = true,
+                Some("text") => json = false,
+                other => {
+                    eprintln!("sky coverage report: --format takes json or text, not {other:?}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--format=json" => json = true,
+            "--format=text" => json = false,
+            s if s.starts_with('-') => {
+                eprintln!("sky coverage report: unknown flag {s}\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            s => dir = Some(PathBuf::from(s)),
         }
     }
+    let dir = dir.unwrap_or_else(|| {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        project_dir_for(&cwd.join("sky.toml")).join(project::coverage::DEFAULT_DIR)
+    });
+    let report = match project::coverage::report(&dir) {
+        Ok(r) => r.filtered(all),
+        Err(e) => {
+            eprintln!("sky coverage report: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if json {
+        println!("{}", report.to_json());
+    } else {
+        print!("{}", report.to_text(by_module));
+    }
+    ExitCode::SUCCESS
 }
 
 /// `sky test --format json`: the build's diagnostics, one `test` line per
@@ -12296,7 +12578,7 @@ fn cmd_test(args: &[String]) -> ExitCode {
 /// the case counts. The suite binary's human `ok` / `FAIL` lines go to stderr.
 /// The exit code is the text mode's: 0 all passed, 1 a test failed, 2 nothing
 /// ran.
-fn cmd_test_json(suite: &Path, out_dir_name: &str) -> ExitCode {
+fn cmd_test_json(suite: &Path, out_dir_name: &str, coverage: Option<&Path>) -> ExitCode {
     use serde_json::Value;
     let root = project_dir_for(suite);
     json_out::set_root(&root);
@@ -12308,10 +12590,15 @@ fn cmd_test_json(suite: &Path, out_dir_name: &str) -> ExitCode {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    let topts = testrunner::TestOptions {
-        json_report: Some(report_path.clone()),
-        stdout_to_stderr: true,
+    let mut topts = match test_options_for(suite, coverage) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("sky test: {e}");
+            return ExitCode::from(testrunner::EXIT_NOT_RUN);
+        }
     };
+    topts.json_report = Some(report_path.clone());
+    topts.stdout_to_stderr = true;
     let run = match testrunner::run_test_with(suite, out_dir_name, &topts) {
         Ok(r) => r,
         Err(e) => {
@@ -12739,9 +13026,11 @@ main =
     // dataset versions, the `sky ai` pipeline build cache and dedupe spill
     // files (Std.Ai). A team shares a registry through gs:// or s3://.
     // `.skyapp/` and `.split/` are build outputs (`sky check` / `sky build` and
-    // the Sky.Spa split); `.env.local` / `.env.*.local` are per-machine
-    // overrides of `.env` and `.env.test` and hold credentials.
-    let gitignore = "sky-out/\n.skyapp/\n.split/\n.skycache/\n.skydeps/\n.skydata/\n.sky/\n\
+    // the Sky.Spa split). `.sky-coverage/` holds `sky test --coverage` data.
+    // `.env.local` / `.env.*.local` are per-machine overrides of `.env` and
+    // `.env.test` and hold credentials.
+    let gitignore =
+        "sky-out/\n.skyapp/\n.split/\n.skycache/\n.skydeps/\n.skydata/\n.sky/\n.sky-coverage/\n\
                      .env\n.env.local\n.env.*.local\n*.db\n*.db-shm\n*.db-wal\n";
     // `.dockerignore`: a `COPY . .` must not bake local state into an image.
     // `.skydata/` holds the dev Sky.Spa session key and the local database
@@ -12749,7 +13038,7 @@ main =
     let dockerignore = "# Local state and secrets never go into an image.\n\
                         .skydata/\n.sky/\n.env\n*.db\n*.db-shm\n*.db-wal\n\
                         # Build outputs are rebuilt inside the image.\n\
-                        sky-out/\n.skycache/\n.skydeps/\n.skyapp/\n.split/\n.git/\n";
+                        sky-out/\n.skycache/\n.skydeps/\n.skyapp/\n.split/\n.sky-coverage/\n.git/\n";
 
     // docker-compose.yml — always scaffolded so the production path is one command
     // away, whether or not you start on Postgres. Host port 5433 avoids clashing
@@ -18836,7 +19125,8 @@ fn print_help() {
          \x20 package --release --target mobile:ios|mobile:android|desktop:mac [file]\n\
          \x20                  the signed store artefact → sky-out/release/ (.ipa · .apk/.aab · .app/.dmg)\n\
          \x20 fmt   <file...>  format in place (--check / --stdin)\n\
-         \x20 test  <file>     run a Sky.Test suite\n\
+         \x20 test  <file...>  run Sky.Test suites (--coverage[=dir] records function + case-arm coverage)\n\
+         \x20 coverage report [dir] [--by-module] [--format json|text] [--all]  report `sky test --coverage`\n\
          \x20 --format json    check / build / test / fmt --check: NDJSON diagnostics on stdout\n\
          \x20 lsp              launch the sky-lsp server (stdio)\n\
          \x20 clean            remove sky-out/ + .skycache/\n\
@@ -18861,7 +19151,7 @@ fn print_help() {
          \x20 verify [target]      build + run each example / the project\n\
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
          \x20 spa-split <file> --out <dir> [--build|--target <t>] [--broker <url>]  auto-split: generate (+build) the wasm frontend + native backend\n\
-         \x20 fuzz  <file> [--target <t>]  no-panic model fuzz of update; --target web:app etc. adds the differential split oracle\n\
+         \x20 fuzz  <file> [--target <t>] [--unguided] [--coverage[=dir]]  coverage-guided no-panic model fuzz of update; --target web:app etc. adds the differential split oracle\n\
          \x20 doc   --diagram <kind> [--format puml|md|svg] [--out <path>]  architecture diagram (journey|components|wire|telemetry|audit)\n\
          \x20 doc   --api <format> [--format yaml|json] [--out <path>]  machine-readable API contract (openapi; proto/grpc/asyncapi planned)\n\
          \x20 version          print the version\n\n\
@@ -19396,6 +19686,24 @@ mod tests {
         assert!(
             both.contains("App.applyServerConfig [ cfg ] App.baseDefaults\n        |> Task.andThen (\\_ -> App.applySessionLifetime (60))"),
             "the lifetime must follow the config task:\n{both}"
+        );
+    }
+
+    // v0.30.0: `App.withAdmission` joins the backend's boot task after the
+    // configuration, and never reaches the client config.
+    #[test]
+    fn std_app_admission_is_carried_into_the_backend_boot_task() {
+        let out = synth_ok(&sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withSessionLifetime 60\n        |> App.withAdmission admission\n\n\n\
+             main =\n    App.run appDef\n",
+        ));
+        assert!(
+            out.contains("spaServerConfig_ =\n    Task.succeed ()\n        |> Task.andThen (\\_ -> App.applySessionLifetime (60))\n        |> Task.andThen (\\_ -> App.applyAdmission admission)"),
+            "withAdmission must reach the boot task:\n{out}"
+        );
+        assert!(
+            !out.contains("withAdmission"),
+            "the admission policy is server-only and must not reach the client config:\n{out}"
         );
     }
 

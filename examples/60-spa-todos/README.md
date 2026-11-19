@@ -31,13 +31,13 @@ It exercises the complete Sky.Spa v1 stack end to end:
 ## Layout
 
 ```
-shared/Shared.sky      the ONE wire contract (Todo + codecs), symlinked into
+shared/Contract.sky    the ONE wire contract (Todo + codecs), symlinked into
 client/                the Sky.Spa wasm client (Model/Msg/update/view, Std.Ui)
   src/Main.sky           - Model = { page, ui, data }
-  src/Shared.sky         → ../../shared/Shared.sky (symlink)
+  src/Contract.sky       → ../../shared/Contract.sky (symlink)
 server/                the STATELESS Sky.Http.Server backend (SQLite store)
   src/Main.sky           - Server.api routes + Server.static for same-origin
-  src/Shared.sky         → ../../shared/Shared.sky (symlink)
+  src/Contract.sky       → ../../shared/Contract.sky (symlink)
 public/index.html      the Go/wasm bootstrap page (served by the backend)
 public/boot.js         the wasm loader (a file, so a strict CSP runs it)
 run_roundtrip.sh       reproducible headless full-loop acceptance (below)
@@ -45,7 +45,7 @@ run_e2e_db.sh          DB-backed boundary acceptance — curl as a hostile clien
 run.sh                 serve for a real browser (prints the URL)
 ```
 
-`Shared.sky` is **literally one file** symlinked into both projects, so the type
+`Contract.sky` is **literally one file** symlinked into both projects, so the type
 and codec flow both ways: change a field there and **both** the client and the
 server stop compiling. That is the whole point — no OpenAPI/TS drift.
 
@@ -58,7 +58,7 @@ lives" (the whole model is client-owned — the loop runs on the client):
 - `ui` — ephemeral client state (input text, edit buffer, fetch status). No
   codec: it never leaves the browser.
 - `data` — a cached projection of server truth (the todo list). It **has a
-  `Std.Codec`** (in `Shared.sky`) because it crosses the wire and hits the DB.
+  `Std.Codec`** (in `Contract.sky`) because it crosses the wire and hits the DB.
   "Has a codec ⇒ server-backed" *is* the boundary.
 
 v1 does not auto-enforce the `{ui, data}` split (that is the v2 auto-split); this

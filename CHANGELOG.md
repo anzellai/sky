@@ -11,6 +11,373 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.30.0 — timeouts, a circuit breaker, admission control and test coverage (2026-11-19)
+
+### ⚠ Breaking changes
+
+- `Sky.Core.Task` exports `timeout`, and `Sky.Core.Error` already exports the
+  value `timeout`. A program that imports both with `exposing (..)` and writes
+  a bare `timeout` gets `[E1012]`: write `Error.timeout` or `Task.timeout`
+  (`docs/migration/v0.30.md`).
+- `HttpRequest` has the new field `minRemaining`. A request written as a full
+  record literal is `[E2001]` until it adds `minRemaining = 0`. A request
+  built from `Http.defaultRequest` is unchanged.
+- A routed app (`App.withRoutes`) whose model has a `page` field must use
+  the routes' page type for that field. A program whose routes give another
+  type (a `String` page, another custom type) built before and then failed on
+  every request; it is now `[E2001]` at `App.withRoutes`, or where the app is
+  served (`App.run`, `App.serve` or a target runner). The check at the
+  served app is decided for each top-level function that serves an app,
+  not for each app: a runner use is checked when its function reaches
+  `App.withRoutes` or `App.withOnNavigate`, or when such a function uses
+  it. Where the served app can have routes, a function that serves an app
+  whose model type it does not know (`serve parts = App.app parts |> … |>
+  App.run`) is refused: give it a type annotation with the model type
+  (`docs/migration/v0.30.md`). A served app with no routes and no
+  navigation function is not checked when the function that serves it
+  neither reaches those builders nor is used by a function that does.
+  Another entry, another module or an unused helper of the project that
+  sets them does not change this.
+- An app with `App.withOnNavigate`, `Live.withOnNavigate` or
+  `Spa.withOnNavigate` whose model has a `page` field must give the
+  navigation function an argument of that field's type, with or without
+  routes. The runtime gives the model's `page` field to the function after
+  each navigation, so a program whose function took another type built and
+  then failed or used a wrong value. It is now `[E2001]` at
+  `withOnNavigate`. In such an app the `App.withNotFound` page must have the
+  field's type too, also with no routes. An app that has routes or a
+  navigation function must be served where its model type is known (see
+  the line above).
+- A route-less app (no `App.withRoutes`, no `App.withOnNavigate`) is now
+  checked when it is served in a function that reaches `App.withRoutes` or
+  `App.withOnNavigate`, or in a function that such a function uses: its
+  model's `page` field must have the type of its `App.withNotFound` page.
+  `main = App.serve admin |> Task.andThen (\_ -> App.run site)`, with a
+  routed `site` and a route-less `admin` whose `page : String` field meets
+  `App.withNotFound 404`, was accepted by v0.29.12 and is now `[E2001]` at
+  `App.serve admin`. A `serveAdmin` function that `main` uses is checked
+  too, because `main` reaches `App.withRoutes`. Give the `page` field the
+  NotFound page's type (`page : Int`), or give the field another name
+  (`docs/migration/v0.30.md`).
+- `Std.Admission` and `Std.Breaker` are new stdlib modules, and a stdlib
+  module name is reserved. A project module with one of these names
+  (`module Std.Breaker`), which v0.29.13 accepted, is now refused. Rename the
+  module.
+- A qualified type name now always names the type of the qualifier's
+  module (see "Fixed"). A program that wrote a qualified name for its own
+  type, such as `List App.Route` for a list of the module's own `Route`
+  values, was accepted and is now `[E2001]` (`Std.App.Route` vs
+  `Main.Route`). Write the bare name, `List Route`.
+- `Std.Live.Route` and `Std.Spa.Route` take the page type: `Route page`. An
+  annotation `List Live.Route` becomes `List (Live.Route Page)`. A `:param`
+  route uses the new `Live.routeParam` / `Spa.routeParam` (a constructor
+  passed to `Live.route` is now a page of a function type). `Live.config`,
+  `Spa.withRoutes` and `Spa.withNotFound` tie the page type to the model's
+  `page` field (`[E2001]`), and a raw routing helper whose model type is not
+  known is refused: annotate it with the model type.
+- `Std.Live` and `Std.Spa` export `routeParam`, and `Std.App` already
+  exports it. A program that imports two of them with `exposing (..)` and
+  writes a bare `routeParam` gets `[E1012]`: write `App.routeParam`,
+  `Live.routeParam` or `Spa.routeParam`.
+- More new exports can clash with a name of your own under `exposing (..)`,
+  as `timeout` and `routeParam` do: `Std.Sub` exports `viewport`,
+  `onBreakpoint` and `onQuery`, `Sky.Core.Task` exports `remaining`,
+  `Sky.Core.Http` exports `withMinRemaining` and `Std.App` exports
+  `withAdmission`. A program that imports such a module and a project
+  module that exports the same name, both with `exposing (..)`, and writes
+  the bare name gets `[E1012]` (v0.29.12 accepted it). Qualify the name
+  (`Screen.viewport`, `Sub.viewport`), or give one of the two imports an
+  explicit exposing list (`docs/migration/v0.30.md`).
+- An unqualified type name that no module declares is now `[E1001]
+  Undefined name` at the name. Before, it was accepted as an opaque type.
+  A common case is a test file with `main : Program`: no module declares
+  `Program`, so write `main : Task Error ()`. Thirty conformance suites in
+  this repository had to change in this way. See the line in "Fixed" and
+  `docs/migration/v0.30.md`.
+- A Sky.Spa app that the build splits (for example `--target web:app`) with
+  a project module named `Shared` is refused (`cannot auto-split`), because
+  the split generates its wire contract as `Shared.sky`.
+  Rename the module (`examples/60-spa-todos` renamed it to `Contract`). See
+  the line in "Fixed" and `docs/migration/v0.30.md`.
+
+### Added
+
+- **Test coverage: `sky test --coverage[=dir]` and `sky coverage report`.**
+  `sky test` takes one or more suites, and `--coverage` records which
+  top-level functions and which `case` arms of your Sky modules the suites
+  ran. The run ends with a summary line (`functions 1/3, case arms 1/2`).
+  `sky coverage report [dir] [--by-module] [--format json|text] [--all]`
+  shows it per module, function and arm, with the Sky file and line. The JSON
+  shape is stable (`version` 1, see `docs/tooling/testing.md`). Only the
+  project's own modules are shown unless `--all`. Data goes to
+  `.sky-coverage/` by default (`sky init` adds it to `.gitignore`). The
+  emitted `main.go` is byte-identical to an ordinary build: the build records
+  where each function body and arm starts in `main.go`, builds with
+  `go build -cover -coverpkg=sky-app` (the Go runtime is not instrumented),
+  and joins the Go profile to that map. There are no `//line` directives.
+  The cover tool cannot carry Sky line numbers through them (a relative file
+  name keeps the Go line numbers, an absolute path reports `main.go`), and
+  they would remap `go build` errors and panic traces, which the build maps
+  back by `main.go` line.
+- **`sky fuzz` is coverage-guided.** The model net's harness counts each
+  `case` arm in process (the coverage markers, compiled as `rt.CovHit`).
+  After each Msg sequence the loop keeps the prefixes that reached a new arm
+  and builds most later sequences by changing them (append, replace, join),
+  favouring the ones that reached rare arms. A panic that needs a particular
+  order of Msgs is now found where random sequences miss it. One seed drives
+  every choice, so a run is reproducible, and `--iters` is still the Msg
+  budget. A panicking sequence is shrunk and printed
+  (`panicking sequence (3 Msg(s) from init): Open, Turn, Fire`), and the run
+  prints `case arms reached R/T`. `--unguided` folds fresh random sequences
+  only. `sky fuzz --coverage[=dir]` records a run that `sky coverage report`
+  reads.
+
+- **`Std.Admission` and `App.withAdmission`: a bound on the requests a
+  server runs at the same time.** Before, a burst of Sky.Spa `/_rpc/<Msg>`
+  calls or `App.api` requests queued inside the process. A policy gives each
+  route class (`Rpc`, `Api`) a limit: a request over it gets `503` with
+  `Retry-After` at once, before its body is read and before any app code
+  runs. An optional hook (`Admission.withHook`) reads the request and the
+  load (`{ routeClass, route, inFlight, limit, session }`, where `session`
+  is the request's verified session id: the id the Sky.Live store holds, or
+  the id inside a verified session token on a `web:app` backend (`sky_spa`,
+  or a Spa token still in the legacy `sky_sid`, converted as an RPC converts
+  it), `Nothing` for a cookie that does not verify) and answers `Admit`,
+  `Throttle ms` (`429`) or `Shed ms` (`503`); a hook that fails sheds. The
+  origin check of an RPC runs first, so a foreign origin is still `403`. The
+  slot is given back when the handler returns, also after a panic. Sky.Live
+  installs the policy at boot, the `web:app` build carries it into the
+  backend's boot, and a `Sky.Http.Server` program calls `Admission.install`
+  before `Server.listen` (it gates `Server.rpc` and `Server.api` routes). The
+  operator variables `SKY_ADMISSION_RPC_LIMIT` / `SKY_ADMISSION_API_LIMIT`
+  win over the code. Refusals are counted in `sky_admission_refused_total`.
+  The default is no limit, so nothing changes without a policy. An adaptive
+  limit is not provided.
+- **`Sub.viewport`, `Sub.onBreakpoint` and `Sub.onQuery`.** `Sub.viewport
+  toMsg` gives the viewport width in CSS pixels, at load and again after a
+  resize settles (150 ms with no resize event), never the same width twice,
+  so a view can switch between a table and cards at any width. On Sky.Live
+  each settled resize is one request to the server. `Sub.onBreakpoint
+  [ 600, 900 ] toMsg` gives the largest listed width the viewport is at least
+  (0 below all of them), at load and only when a resize crosses one of the
+  widths, with no Msg per pixel. On Sky.Live the page hands the client the
+  widths (and says whether the app wants the width), the client reports its
+  width on a crossing and after a settled resize through one listener and
+  one report, and the server computes the breakpoint again from the clamped
+  width. A report that changes both runs the breakpoint Msg first.
+  `Sub.onQuery toMsg` gives the URL query string as a
+  `Dict String String` (parsed as `Http.parseQuery`), at load when it is not
+  empty and on every change: a `sky-nav` link, `Nav.pushUrl` /
+  `Nav.replaceUrl`, Back and Forward. On Sky.Live the server reads it from
+  each page request and runs `update` before it renders. Sky.Spa and the
+  `Std.App` client targets read `innerWidth` and `location.search` in the
+  client. Terminal targets ignore both.
+- `Task.timeout ms task` runs a task with a deadline. A task that has not
+  finished in time fails with a `Timeout` error whose domain failure is
+  `"task"` / `"DeadlineExceeded"` (retryable). The deadline travels: tasks
+  started inside it (`Task.parallel`, `parallelN`, `spawn`, a nested
+  `Task.timeout`) see the earliest deadline, and every outbound network call
+  stops at it and refuses to start once it has passed: `Http.get` / `post` /
+  `request`, the open of an `Http.Stream`, `WebSocket.connect` /
+  `connectWith` (and `send` refuses), `Email.send`, the `Std.Ai` slot,
+  provider and local engine calls and stream opens, and the `Std.Ai.Store`
+  transfers. A stream or a socket outlives the task that opened it: each read
+  (`Http.Stream.forEachChunk`, `WebSocket.receive` / `receiveWithin` /
+  `forEachMessage`, a `Std.Ai` stream read) stops at its own reader's
+  deadline. `Sync.pop` / `popWithin` stop waiting at it. The start of a
+  shared local AI engine and its downloads are not cut by one caller's
+  deadline. A timed-out task is abandoned, not stopped:
+  an effect that is already running finishes in the background. In a Sky.Spa
+  client each timeout has its own timer and a nested task does not see an
+  outer deadline.
+- `Task.remaining : Task e (Maybe Int)` gives the milliseconds left before
+  the current deadline, or `Nothing` outside a `Task.timeout`.
+- `Http.withMinRemaining ms` refuses a request (or the open of an
+  `Http.Stream`) before it is sent when less
+  than `ms` milliseconds are left before the deadline (`Timeout`, domain
+  `"http"`, code `"DeadlineTooShort"`, not retryable). `HttpRequest` has the
+  new field `minRemaining : Int` (`0` in `defaultRequest`), so a request
+  written as a full record literal adds `minRemaining = 0`
+  (`docs/migration/v0.30.md`).
+- `Std.Breaker`, a circuit breaker for calls to another service, written in
+  Sky on `Std.Sync.Ref`. `Breaker.call breaker task` counts the failures
+  `Error.isRetryable` accepts (a missed `Task.timeout` deadline included,
+  and `callCounting` takes your own rule). `failures` of them within
+  `windowMs` open it for `openForMs`. An open breaker refuses at once,
+  without running the call, with an `Unavailable` error whose domain failure
+  is `"breaker"` / `"Open"` and whose `Error.retryAfter` is the time until a
+  trial call. Then `halfOpenProbes` trial calls run: one success closes it,
+  one failure opens it again. `state`, `reset` and `isOpenRefusal` complete
+  it. Its state lives in this process only and cannot be stored in a
+  Sky.Live model.
+
+### Fixed
+
+- **`[E1012]` names v0.29.13 for a name new in v0.30.0.** A clash on a new
+  name such as `Task.timeout` or `Live.routeParam` said "new since Sky
+  v0.29.1", though every v0.29 release lacked it. The message now names
+  v0.29.13, the release users upgrade from, and links
+  `docs/migration/v0.30.md#new-stdlib-names`.
+- Sky.Spa: a route-less `Std.App` app (`App.app` or `App.web` with no
+  `App.withRoutes`) built for `web:app` answered an unknown path such as
+  `/zz` with the file server's plain `404 page not found`, so the client
+  never started. On Sky.Live the same path shows the app's view with 404. The
+  backend's `/` catch-all now falls back to the page `/` serves (the server
+  render, else the dist shell) with status 404. A missing asset, such as a
+  stale `main.<hash>.wasm`, is still a plain 404, never HTML.
+- Sky.Live: an app with no routes and a NotFound page (`App.withNotFound`
+  and no `App.withRoutes`) had the NotFound page written into its model's
+  `page` field on every request, whatever the field's type. A `page :
+  String` field then held `()` and the view showed `{}`. With no routes the
+  runtime owns no page type, so it now writes the `page` field only for an
+  app with routes. An unknown path on a route-less app still answers 404
+  with the app's view. The Sky.Spa client and its server render already
+  wrote the field only for an app with routes.
+- `Http.request` sent its request without the calling Task's context, so it
+  carried neither the trace context nor any cancellation, and a call under a
+  deadline ran on until the client timeout. It now carries the trace context
+  and stops at a `Task.timeout` deadline. The end of the HTTP request that
+  started the work still does not cancel it.
+- `Http.Stream.open` sent its request with the calling Task's own context,
+  so a stream opened inside a `Task.timeout` was cut the moment the open
+  returned. The stream now keeps the trace context without that
+  cancellation, and only `Http.Stream.close` (or the end of the stream)
+  ends it.
+- Sky.Live: an `html` patch on a `table`, `thead`, `tbody`, `tfoot` or `tr`
+  kept no rows or cells. The client parsed the new markup inside a `div`,
+  where the HTML parser drops table tags, so a table whose rows changed when
+  a tab switched lost its rows, cells and roles. The patch now parses in a
+  `template` element, as the `kids` patch does.
+- Sky.Spa: a request without `X-Sky-Wire` lost the follow-up writes. The
+  backend ran the follow-up Msgs of the server arm on the server and answered
+  `spaFollow_ = "[]"`, but the answer held only the first arm's write-set. The
+  answer now carries the merged write-set of the arm and all its follow-ups,
+  and the request carries what the follow-ups read.
+- A qualified type name was captured by a same-named local type. In a module
+  that declares `type Route`, `List (App.Route Page)` was checked as the
+  module's own `Route` (`Std.App` does not expose `Route`, so the checker fell
+  back to the bare name). A qualified name now always names the type of the
+  qualifier's module.
+- A routed app whose route pages did not have the type of the model's `page`
+  field passed `sky check` and built. The runtime writes the routed page into
+  `model.page`, so every request on Sky.Live and on the `web:app` backend was
+  a 500 (`reflect.Set: value of type string is not assignable to type
+  main.Main_Route`). With a second custom type of the same shape the wrong
+  write went unseen until the view's `case` panicked. The checker now ties
+  the routes' page type to the model's `page` field at `App.withRoutes`, and
+  a mismatch is `[E2001]`: "The app's pages have type `String` (from its
+  routes, its NotFound page or its `withOnNavigate` function), but the
+  model's `page` field has type `Route`". A model with no `page` field is
+  unchanged. This closes the routed half of the route-less fix above. The
+  check follows a routing helper that is generic in the model (each caller
+  is checked), also when the helper is bound in a `let` (a function, a
+  lambda, an alias or a record field, at any depth: each use of the let
+  binding is checked with its own model), and covers the raw `Live.config`,
+  `Spa.withRoutes` and `Spa.withNotFound`. The guarantee is a check on the
+  served app: at each use of `App.run`, `App.serve` and the target runners
+  (`runLive`, `runLiveWindow`, `runSpa`, `runTui`, `runCli`, `runWebview`),
+  the app's page type is tied to its model's `page` field, and the model type
+  must be known there. This tie is decided for each top-level function that
+  serves an app, not for each app: a runner use is tied when its function
+  reaches `App.withRoutes` or `App.withOnNavigate`, or when such a function
+  uses it, so a route-less app served in such a function is tied too (see
+  "⚠ Breaking changes"). A route-less app served from a function outside
+  that set is not tied, also beside another entry, a module or an unused
+  helper that sets routes. The type of the served app carries the routes' page
+  type through every helper, so a helper of any shape is covered: one hidden
+  in a user custom type, in a record field of one, or in another module (a
+  helper in a custom type passed `sky check` and stopped at run time before).
+  As defence in depth, the runtime
+  no longer panics on every request when a page of the wrong type reaches
+  it: Sky.Live, the Sky.Spa server render and the Sky.Spa client report the
+  mismatch once, in Sky words (`[E2001] The routes give a page of type …`),
+  stop the process, and never write the page. A page of one enum type is no longer converted
+  silently into a field of another enum type.
+- An app with a navigation function (`App.withOnNavigate`,
+  `Live.withOnNavigate`, `Spa.withOnNavigate`) passed `sky check` when the
+  function took a page of another type than the model's `page` field. The
+  runtime gives that field to the function after each navigation, on
+  Sky.Live, the Sky.Spa server render and the Sky.Spa client. With a record
+  page every request was a 500 (`rt.Coerce: expected struct { Count int },
+  got main.Main_Route_Detail_V`). With an `Int` or a `String` page the app
+  used a wrong value. A route-less `Std.App` app was not checked at all,
+  and the raw APIs tied only their routes and NotFound page. The checker now
+  ties the function's argument to the model's `page` field at each
+  `withOnNavigate`, and a served app that has a navigation function is
+  checked as a routed one is.
+- A project module under the `Sky.` or `Std.` root (`module Sky.Pages`) was
+  checked as if it were the standard library, because the checker decided
+  "stdlib" by the module name. A routing helper in such a module escaped the
+  routed page check above: an app with `String` pages and a `Route` model
+  passed `sky check`, built, and stopped at run time with `[E2001]`. A
+  `coerce : Int -> any` in such a module also stayed an unchecked cast. The
+  checker now decides it by origin: a module is the stdlib only when it is a
+  file of `sky-stdlib/`. A project module is app code whatever its name, and
+  it is checked like any other. This fix refuses no module name (the new
+  `Std.Admission` and `Std.Breaker` names are in "Breaking changes").
+- Sky.Spa: a routed `web:app` app with no server arm did not serve its deep
+  routes. Its backend was static-only, so `GET /about` was the Go file
+  server's plain 404 and `GET /` had no first paint. The backend now
+  server-renders every route of a routed app (200, and the NotFound page with
+  404 for an unknown path), whether or not an arm runs on the server.
+- Sky.Spa: the client copy of a module kept a function named `update` that
+  the app does not configure, but dropped the server helpers it calls. The
+  split skipped every def named `update`, `init`, `view`, `subscriptions` or
+  `main` in every module, so a module imported only for a type failed in the
+  frontend with `Undefined name`. Only the app's configured entry points (and
+  the entry's `main`) are skipped now. Any other def is tainted by the normal
+  rule.
+- Sky.Spa: when the backend leg of a `web:app` build failed, the build printed
+  `could not hand the frontend's wasm name to the backend leg: Broken pipe`
+  above the backend's real error. A backend that has already exited is now
+  not reported as a separate handoff failure. The build shows only the
+  backend's own error.
+- An unqualified type name that no module declares was accepted. In
+  `type alias R = { card : CardView }` with no `CardView` anywhere, the name
+  became an opaque type: an unused alias compiled, and a used one failed with
+  `type mismatch: CardView vs record` at a use site. `sky check` now reports
+  `[E1001] Undefined name: CardView` at the name. A type that some module
+  declares, or a kernel type such as `Dict`, is accepted as before. A test
+  file's `main : Program` (no module declares `Program`) is now refused the
+  same way: write `main : Task Error ()`.
+- Sky.Spa: a second entry built the wrong backend, silently. `sky build
+  src/Other.sky --target web:app` in a project that also has `src/Main.sky`
+  wrote the generated entry as `module Main` at `src/Main.sky`, and then the
+  copy of the project's own `Main` replaced it. The generated entry now keeps
+  the entry's module name and path (`module Other`, `src/Other.sky`), the
+  split never writes one file twice, and a project module named `Shared` (the
+  name of the generated wire contract) is refused with a message.
+- Sky.Spa split (`--target web:app`): three multi-module shapes that `sky
+  check` accepted failed to build. A record alias of another module's record
+  alias (`View.CardView = Store.CardView`) through a module with a server
+  function failed with `[E2001] type mismatch: record vs CardView` (or
+  `[E1016]` when both modules were copied): `Shared` copied the record and the
+  module's client copy dropped its own declaration. Two modules that export
+  one constructor (`P1.Matched`, `P2.Matched`) failed with `[E1012]` in
+  `Shared`, which imported both `exposing (..)` and wrote the blank's
+  constructor bare, and two wire records with one name (`P1.Refusal`,
+  `P2.Refusal`) were refused. A pure module that names a type of a server
+  module (`Wire.Card = { tag : Tags.Tag }`) made the import cycle `Wire ->
+  Tags -> Shared -> Wire` (`[E1010]`), also through a chain of modules.
+  `Shared` now copies only the types of the entry and of a module that
+  imports one that imports `Shared`; it imports every other module under a
+  generated alias (`import Store as SpaTy_Store_`) and every generated
+  reference to a type, constructor or codec of another module is qualified.
+  A cycle the copy set cannot avoid is refused with the import path.
+- `Json.Encode.encode` of a value JSON cannot hold (a NaN or infinite
+  `Float`) failed with Go's own text, which named a Go runtime type and
+  changed with the Go release (`json: error calling MarshalJSON for type
+  rt.jsonOrderedObject: json: unsupported value: NaN` on Go 1.26,
+  `*rt.jsonOrderedObject` on Go 1.27). The `JsonEncodeFailure` now says
+  `the Float NaN has no JSON form` (or `+Inf`, `-Inf`, or `the value refers
+  to itself (a cycle)`) on every Go release. The class is unchanged.
+- `Process.close` on macOS 27 left a descendant running when it had left
+  the child's session, double-forked and run an Apple program (`sleep`,
+  `sh`, `perl`, …). macOS 27 no longer shows the environment of an Apple
+  program to another process, so the tree cookie could not be read. Close
+  now also finds a descendant by the child's stdout or stderr pipe, or its
+  PTY, that the descendant still holds.
+
 ## v0.29.13 — your own CSS wins over the base reset (2026-11-17)
 
 ### Fixed

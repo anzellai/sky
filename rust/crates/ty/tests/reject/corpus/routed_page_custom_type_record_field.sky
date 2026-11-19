@@ -1,0 +1,76 @@
+-- gate: reject
+-- defect: a routing helper in a record field of a custom type hid the routed page type
+-- rust: reject [E2001] where the app is served, naming the model's `page` field
+--
+-- Found 2026-11-19 (v0.30.0). The routes are set by a function in a record
+-- field of a user custom type (`Pages`). Its type shows no `App` node, so no
+-- use of it was tied to the model's `page` field. The program passed `sky
+-- check` and stopped at run time on every request.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Inc
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text model.title
+
+type Pages f s p m msg k
+    = Pages { attach : App.App f s p m msg k -> App.App f s p m msg k, name : String }
+
+
+pages =
+    Pages
+        { attach = \a -> a |> App.withRoutes [ App.route "/" "home" ]
+        , name = "pages"
+        }
+
+
+attachPages pagesValue a =
+    case pagesValue of
+
+        Pages p ->
+            p.attach a
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> attachPages pages
+        |> App.withNotFound "missing"
+
+
+main =
+    App.run app

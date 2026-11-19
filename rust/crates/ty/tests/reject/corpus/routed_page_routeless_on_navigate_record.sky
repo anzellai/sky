@@ -1,0 +1,59 @@
+-- gate: reject
+-- defect: a route-less Std.App app gives its `withOnNavigate` function a page of another type
+-- rust: reject [E2001] at App.withOnNavigate, naming the model's `page` field
+--
+-- Found 2026-11-19 (v0.30.0). With no `App.withRoutes` the served app was
+-- not tied, but the runtime gives the model's `page` field to the
+-- `withOnNavigate` function on every request: `rt.Coerce` panicked with
+-- HTTP 500 (a `Route` given to a function of `{ count : Int }`).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Missing
+    | Detail String
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Go Int
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Detail "abc", title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Go n ->
+            ( { model | title = String.fromInt (n + 1) }, Cmd.none )
+
+
+view : Model -> Element Msg
+view m =
+    Ui.text m.title
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound { count = 1 }
+        |> App.withOnNavigate (\r -> Go r.count)
+
+
+main =
+    App.run app

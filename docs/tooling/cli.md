@@ -958,6 +958,29 @@ HTTP boundary (method + `urlContains` pre-filled from the typed IR; fill each
 `body` with a captured payload). It never overwrites an existing fixture. See
 [`testing.md`](testing.md#scaffolding-the-fixtures--sky-test---scaffold-mocks).
 
+`sky test` takes several suites (`sky test tests/ATest.sky tests/BTest.sky`)
+and exits with the worst status of them. `--coverage` (data in
+`.sky-coverage/`) or `--coverage=<dir>` records which top-level functions and
+`case` arms the suites ran, and prints a one-line summary on stderr. Read the
+detail with [`sky coverage report`](#sky-coverage-report). With `--format json`
+give one suite per run.
+
+### `sky coverage report`
+
+```bash
+sky coverage report [dir] [--by-module] [--format json|text] [--all]
+```
+
+Reports the coverage the last `sky test --coverage` recorded in `dir`
+(default `.sky-coverage/` in the project): per Sky module, the functions that
+ran and the `case` arms that ran. Text by default. `--by-module` prints one
+line per module. `--format json` prints the stable JSON shape (`version` 1)
+documented in [`testing.md`](testing.md#coverage--sky-test---coverage). Only
+the project's own modules are shown unless `--all` (test suites, Sky
+dependencies, and the stdlib functions the program reached). Needs the `go`
+toolchain (`go tool covdata`). Exits 1 when the directory holds no coverage
+data.
+
 ### `sky fuzz <file>`
 
 The unified app fuzzer for any TEA app (Spa or Live). It always runs the model
@@ -968,7 +991,19 @@ unclassified panic. Runs offline under test mode.
 ```bash
 sky fuzz src/Main.sky --iters 500 --seed 42          # model no-panic net
 sky fuzz src/Main.sky --target web:app --iters 500   # + the differential split oracle
+sky fuzz src/Main.sky --unguided                     # fresh random sequences only
+sky fuzz src/Main.sky --coverage[=dir]               # + a run for `sky coverage report`
 ```
+
+The model net is coverage-guided by default: it counts the `case` arms each
+sequence reaches, keeps the Msg prefixes that reach a new arm and mutates
+them, and prints `case arms reached R/T`. A panicking sequence is shrunk and
+printed (`panicking sequence (3 Msg(s) from init): Open, Turn, Fire`).
+`--unguided` folds fresh random sequences only. `--iters` is the Msg budget.
+`--coverage` (data in `.sky-coverage/`) or `--coverage=<dir>` also builds the
+harness with `go build -cover`, so
+[`sky coverage report`](#sky-coverage-report) shows what the fuzz reached. See
+[`testing.md`](testing.md#the-model-no-panic-net-always-any-tea-app).
 
 `--target` (default: the project's `sky.toml [app] target`) selects the app
 shape. When it is a Sky.Spa client target (`web:app`, `mobile*`, `desktop:<os>`,
@@ -1770,7 +1805,7 @@ Refreshed AGENTS.md (61204 → 67701 bytes)
   previous version saved as AGENTS.md.bak
 Refreshed CLAUDE.md (12918 → 13533 bytes)
   previous version saved as CLAUDE.md.bak
-(from sky v0.29.0 (70969ab3e))
+(from sky v0.30.0 (70969ab3e))
 ```
 
 ## Dev console

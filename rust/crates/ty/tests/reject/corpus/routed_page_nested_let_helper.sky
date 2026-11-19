@@ -1,0 +1,64 @@
+-- gate: reject
+-- defect: a routing helper inside another let helper hid the routed page type
+-- rust: reject [E2001] at the outer helper's use, naming the model's `page` field
+--
+-- Found 2026-11-19 (v0.30.0). The inner helper's tie reaches the outer
+-- helper's body as an instance, and the outer helper is generalised too.
+-- The tie must reach each use of the outer helper.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Inc
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text model.title
+
+
+app =
+    let
+        withPages routes missing a =
+            let
+                routed r b = b |> App.withRoutes r
+            in
+                routed routes a |> App.withNotFound missing
+    in
+        App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> withPages [ App.route "/" "home" ] "missing"
+
+
+main =
+    App.run app

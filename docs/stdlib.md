@@ -741,6 +741,8 @@ main =
 | `Task.Step state a` | ADT | `Loop state \| Done a` — what a `Task.loop` step returns: go again with a new state, or stop with a result |
 | `Task.loop` | `(state -> Task e (Step state a)) -> state -> Task e a` | Stack-safe loop: run the step, then again on each `Loop` state, until `Done`. An `Err` stops it. The clearest form for a loop with explicit state (`andThen` recursion is stack-safe too) |
 | `Task.forever` | `Task e a -> Task e b` | Re-run a task until it fails, then fail with that error. Stack-safe. The free `b` says it never succeeds |
+| `Task.timeout` | `Int -> Task Error a -> Task Error a` | v0.30.0. Run a task with a deadline `ms` away. A task that has not finished by then fails with a `Timeout` error, domain `"task"`, code `"DeadlineExceeded"` (retryable). The deadline travels: see below |
+| `Task.remaining` | `Task e (Maybe Int)` | v0.30.0. The milliseconds left before the current deadline (`Just 0` once it has passed), `Nothing` outside a `Task.timeout` |
 | `Task.run` | `Task e a -> Result e a` | Force at the boundary |
 | `Task.fromResult` | `Result e a -> Task e a` | Bridge from Result |
 | `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` | Chain Result step after Task |
@@ -781,6 +783,33 @@ countStep limit n =
 
 `Loop` and `Done` come from `Sky.Core.Task`: import them with `exposing (Step(..))`, or write `Task.Loop` / `Task.Done` after `import Sky.Core.Task as Task`.
 
+**Deadlines: `Task.timeout` and `Task.remaining` (v0.30.0).** `Task.timeout ms task` runs `task` with a deadline `ms` milliseconds away. A result that arrives in time, `Ok` or `Err`, is returned unchanged. When the task has not finished by then, the result is an `Error` of kind `Timeout` whose domain failure is `"task"` / `"DeadlineExceeded"` (retryable, attributes `op` and `timeoutMs`), so `Error.isRetryable` counts it as transient.
+
+The deadline travels with the work:
+
+- A task started inside it (`Task.parallel`, `parallelN`, `spawn`, a nested `Task.timeout`) sees the EARLIEST deadline in force. An inner `Task.timeout 5000` inside an outer `Task.timeout 1000` ends at the outer deadline.
+- Every outbound network call sends its request with the deadline, so the call stops at it, and refuses to start once it has passed: `Http.get`, `Http.post`, `Http.request`, `Http.Stream.open`, `WebSocket.connect` / `connectWith` (and `WebSocket.send` / `sendBinary` refuse), `Email.send`, the `Std.Ai` slot, provider and local engine calls (`Std.Ai.Provider` over `Sky.Core.Http` included) and stream opens, and `Std.Ai.Store` transfers. `Http.withMinRemaining ms` asks for more time before a request or a stream open is sent.
+- A stream or a socket outlives the task that opened it: the deadline bounds the wait for it to open, not its life. Each read stops at the deadline of the task that reads: `Http.Stream.forEachChunk` (which then closes the stream), `WebSocket.receive` / `receiveWithin` (the socket stays open and no frame is lost), `WebSocket.forEachMessage` (which then closes the socket), and a `Std.Ai` stream read (`Provider.chatStream`, `readStream`).
+- The start of a shared local AI engine (`Std.Ai.Local`, a slot with `withLocal`) and the downloads that provision it are not cut by one caller's deadline, because other callers share them. The caller still stops waiting at its deadline.
+- `Sync.pop` and `Sync.popWithin` stop waiting at the deadline, with the deadline's error. A shorter `popWithin` limit still ends with its own `Timeout`.
+- `Task.remaining` reads the time left, so a task can skip optional work near the deadline.
+
+A timed-out task is **abandoned, not stopped**. Its result is discarded and a later panic in it is logged. An `Http` call or a `Sync` wait in it ends at the deadline, but an effect that is already running (a database query, a file write) finishes in the background. Use `Task.timeout` to stop waiting, not to undo work. The end of the HTTP request that started the work does not cancel a deadline-bound task: only the deadline does.
+
+```elm
+import Sky.Core.Http as Http
+import Sky.Core.Task as Task
+
+quote : Task Error Http.HttpResponse
+quote =
+    Http.defaultRequest "https://quotes.example.test/today"
+        |> Http.withMinRemaining 500
+        |> Http.request
+        |> Task.timeout 2000
+```
+
+In a Sky.Spa client each `Task.timeout` has its own timer. A nested task does not see an outer deadline, `Task.remaining` is `Nothing`, and the timer fires only while the task waits (a fetch, a sleep), because the client runs one goroutine at a time.
+
 ### `Cmd` / `Sub` — Sky.Live commands and subscriptions
 
 ```elm
@@ -807,6 +836,9 @@ update msg model =
 | `Sub.everyWithTime` | `Int -> (Int -> msg) -> Sub msg` | `Sub.every` whose Msg carries the tick's time (epoch ms): a tick is a wake-up, not a clock |
 | `Sub.subscribeTopic` | `String -> (any -> msg) -> Sub msg` | Receive pub/sub broadcasts on topic; decoder turns payload into a Msg |
 | `Sub.onFragment` | `(String -> msg) -> Sub msg` | Receive the URL fragment (after `#`) at load and on every change, on Sky.Live, Sky.Spa and the `Std.App` web targets |
+| `Sub.onQuery` | `(Dict String String -> msg) -> Sub msg` | Receive the URL query string, parsed as `Http.parseQuery` does, at load (when not empty) and on every change (a `sky-nav` link, `Nav.pushUrl` / `replaceUrl`, Back / Forward); untrusted input |
+| `Sub.onBreakpoint` | `List Int -> (Int -> msg) -> Sub msg` | Receive the largest listed width the viewport is at least (0 below all), at load and only when a resize crosses one of the widths (never one Msg per pixel) |
+| `Sub.viewport` | `(Int -> msg) -> Sub msg` | Receive the viewport width in CSS pixels (0 to 100000), at load and after a resize settles (150 ms), never the same width twice; on Sky.Live one server request per settled resize, so prefer `onBreakpoint` for a few fixed widths |
 | `Sub.connection` | `(ConnectionState -> msg) -> Sub msg` | The Sky.Spa client's connection state on every change: `Online \| Reconnecting \| Offline { pending : Int }` (never fires on Sky.Live or a terminal) — see [Network resilience](skyspa/overview.md#network-resilience--offline-sleep-and-overload-are-the-runtimes-job) |
 | `Sub.batch` | `List (Sub msg) -> Sub msg` | Combine timer + topic + others |
 
@@ -904,7 +936,23 @@ req =
         |> Http.withHeader "Authorization" ("Bearer " ++ token)
         |> Http.withBody jsonBody
         |> Http.withTimeout 60000              -- 60 s; 0 disables
+        |> Http.withMinRemaining 500           -- v0.30.0, see below
 ```
+
+**Deadlines (v0.30.0).** Under a `Task.timeout` deadline, `get`, `post` and
+`request` send the request with the deadline: the call stops when it passes
+and fails with the deadline's error (`"task"` / `"DeadlineExceeded"`). A call
+is refused before it is sent once the deadline has passed. `withMinRemaining
+ms` refuses it earlier, when less than `ms` milliseconds are left: the error
+has kind `Timeout`, domain `"http"`, code `"DeadlineTooShort"`, is not
+retryable and carries the attributes `minRemainingMs` and `remainingMs`. The
+default (`minRemaining = 0` in `defaultRequest`) refuses only once the
+deadline has passed. Outside a `Task.timeout` it has no effect. `HttpRequest`
+gained the `minRemaining : Int` field in v0.30.0, so a request written as a
+full record literal adds `minRemaining = 0`. `Http.Stream.open` reads the
+deadline and `minRemaining` the same way for its open; the stream it returns
+is not bound by the deadline, and `Http.Stream.forEachChunk` stops at the
+deadline of the task that reads it.
 
 Pair with `Task.retryWith` for flaky upstreams:
 
@@ -2946,6 +2994,87 @@ batch.
 `Task.lazy : (() -> a) -> Task err a` — defer a pure computation
 so it can be sequenced with other tasks.
 
+### `Std.Admission` — a bound on the requests a server runs at once (v0.30.0)
+
+Without a policy a burst of requests queues inside the process: every request
+starts its handler at once. A policy gives each route class a limit on the
+requests that run at the same time. A request over the limit is answered at
+once with `503 Service Unavailable` and `Retry-After`, before its body is read
+and before any app code runs. An optional hook runs next, with the request
+and the load, and answers `Admit`, `Throttle ms` (`429`) or `Shed ms` (`503`).
+
+The route classes: `Rpc` is every Sky.Spa `/_rpc/<Msg>` call (`Server.rpc`);
+`Api` is every `App.api` route on Sky.Live and Sky.Spa, and every
+`Server.api` route. Pages, static files, the Sky.Live event endpoint and the
+runtime's `/_sky/` routes are not gated. The origin check of an RPC runs
+first, so a foreign origin is still a `403`, never a `429` / `503`.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Http.Server as Server exposing (Request, Response)
+import Std.Admission as Admission
+
+
+decide : Request -> Admission.Load -> Task Error Admission.Decision
+decide req load =
+    if load.inFlight * 2 > load.limit && Server.header "X-Priority" req /= Just "high" then
+        Task.succeed (Admission.Throttle 2000)
+
+    else
+        Task.succeed Admission.Admit
+
+
+admission : Admission.Policy
+admission =
+    Admission.policy
+        |> Admission.withLimit Admission.Api 16
+        |> Admission.withRetryAfter 2000
+        |> Admission.withHook decide
+
+
+items : Request -> Task Error Response
+items _ =
+    Task.succeed (Server.text "[]")
+
+
+main =
+    Admission.install admission
+        |> Task.andThen (\_ -> Server.listen 8000 [ Server.api "GET /api/items" items ])
+```
+
+A `Std.App` app passes the policy to `App.withAdmission`; the runtime installs
+it at boot on Sky.Live and on the Sky.Spa backend.
+
+| Function | Type | Notes |
+|---|---|---|
+| `Admission.policy` | `Policy` | No limit, no hook, `Retry-After` 1000 ms |
+| `Admission.withLimit` | `RouteClass -> Int -> Policy -> Policy` | At most `n` requests of the class at the same time; `0` or less is no limit |
+| `Admission.withRetryAfter` | `Int -> Policy -> Policy` | The `Retry-After` (ms, sent rounded up to whole seconds) of a refusal for the limit |
+| `Admission.withHook` | `(Request -> Load -> Task Error Decision) -> Policy -> Policy` | Decide each admitted request; a hook that fails sheds it (`503`) |
+| `Admission.limitOf` | `RouteClass -> Policy -> Int` | The limit a policy sets for a class |
+| `Admission.retryAfterOf` | `Policy -> Int` | The policy's `Retry-After` in ms |
+| `Admission.install` | `Policy -> Task Error ()` | Make it the process's policy (one per process; the last one wins) |
+
+`Load` is `{ routeClass, route, inFlight, limit, session }`: the class, the
+route as declared (`"/_rpc/Save"`, `"/api/items/:id"`), the requests of the
+class running now (this one included), the limit (`0`: none) and the
+request's verified session id. `session` is `Just` the id only after the
+runtime verified it: on Sky.Live the id the session store holds for the
+request, on a `web:app` backend the id inside a session token (`sky_spa`,
+or a Spa token still in the legacy `sky_sid`) whose signature, expiry and
+sign-out check pass. It is `Nothing` for no session,
+for a cookie that does not verify, and in a `Sky.Http.Server` program. Key a
+per-session rule on `load.session`, never on a raw cookie: a client can
+change its cookie to get a new quota. The operator
+variables `SKY_ADMISSION_RPC_LIMIT` and `SKY_ADMISSION_API_LIMIT` (a whole
+number, `0` for no limit) win over the code. Each refusal is counted in the
+`sky_admission_refused_total` metric (labels `class`, `route`, `status`). The
+Sky.Spa client re-sends a `429` / `503` by itself after the `Retry-After`.
+The limits are fixed: an adaptive limit that follows latency is not provided.
+
 ### `Std.Sync` — shared state between concurrent Tasks (v0.27.0)
 
 Pure code needs none of this: a Sky value never changes, so two
@@ -2968,6 +3097,7 @@ newQueue  : Int -> Task Error (Queue a)                    -- a capacity of 1 or
 push      : a -> Queue a -> Task Error ()                  -- waits while full
 pop       : Queue a -> Task Error (Maybe a)                -- waits; Nothing once closed and empty
 popWithin : Int -> Queue a -> Task Error (Maybe a)         -- Err Timeout after the ms
+                                                           -- (both stop at a Task.timeout deadline)
 close     : Queue a -> Task Error ()                       -- pushes then fail with Unavailable
 size      : Queue a -> Task Error Int
 ```
@@ -3030,6 +3160,89 @@ a restart, is not shared between replicas, and cannot be stored in a
 Sky.Live model (the session store cannot save it). Two values are equal only
 when they are the same `Ref` / `Mutex` / `Queue`. `withLock` is not
 re-entrant. In a Sky.Spa app these calls run on the server.
+
+### `Std.Breaker` — a circuit breaker for calls to another service (v0.30.0)
+
+A breaker counts the failures of the calls it wraps. When `failures` of them
+fail within `windowMs`, it opens: it refuses every call at once, without
+running it, for `openForMs`. Then it lets `halfOpenProbes` trial calls
+through. One trial success closes it. One trial failure opens it again.
+It is written in Sky on `Std.Sync.Ref` and the clock.
+
+```elm
+type Breaker                       -- opaque
+type State = Closed | Open { untilMs : Int } | HalfOpen
+type alias Settings = { failures : Int, windowMs : Int, openForMs : Int, halfOpenProbes : Int }
+
+defaults      : Settings                                  -- 5 in 10000 ms, open 30000 ms, 1 trial
+new           : String -> Settings -> Task Error Breaker  -- Err InvalidInput for a bad setting
+name          : Breaker -> String
+call          : Breaker -> Task Error a -> Task Error a    -- counts what Error.isRetryable accepts
+callCounting  : (Error -> Bool) -> Breaker -> Task Error a -> Task Error a
+state         : Breaker -> Task Error State
+reset         : Breaker -> Task Error ()                  -- close it and forget its failures
+isOpenRefusal : Error -> Bool
+```
+
+`call` counts a failure that `Error.isRetryable` accepts: a `Network`,
+`Timeout` or `Unavailable` error, or a domain failure marked retryable, such
+as a missed `Task.timeout` deadline. A `NotFound` or an `InvalidInput` says
+nothing about the health of the other service and does not count.
+`callCounting` takes your own rule. A refused call fails with an
+`Unavailable` error whose domain failure is `"breaker"` / `"Open"`
+(retryable, attribute `name`), and `Error.retryAfter` gives the milliseconds
+until the breaker lets a trial call through. A trial that ends with a
+failure the rule does not count frees its place for the next trial.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Std.Breaker as Breaker exposing (Breaker)
+import Std.Log exposing (println)
+
+
+payments : Result Error Breaker
+payments =
+    Task.run (Breaker.new "payments" Breaker.defaults)
+
+
+charge : Breaker -> Int -> Task Error String
+charge breaker cents =
+    Breaker.call breaker
+        (Task.succeed ("charged " ++ String.fromInt cents)
+            |> Task.timeout 2000
+        )
+
+
+main =
+    case payments of
+        Ok breaker ->
+            charge breaker 1250
+                |> Task.andThen println
+                |> Task.onError
+                    (\e ->
+                        if Breaker.isOpenRefusal e then
+                            println "payments are paused, try again later"
+
+                        else
+                            println (Error.toString e)
+                    )
+                |> Task.run
+
+        Err e ->
+            Err e
+```
+
+A breaker holds its state in a `Std.Sync.Ref`, so it has the same limits: it
+lives in this process only, it does not survive a restart, it is not shared
+between replicas, and it cannot be stored in a Sky.Live model. Make one per
+service at the top level (a top-level binding runs once) and share it. In a
+Sky.Spa app a call through a breaker runs on the server. A trial call that
+never reports back (it panicked) holds its place for at most `openForMs`,
+then a new trial may run.
 
 ---
 

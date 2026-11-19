@@ -1,52 +1,102 @@
-# Autonomous goal: Sky v0.29.1
+# Autonomous goal: Sky v0.30.0
 
-Branch `fix/v0.29.1`, from the v0.29.0 merge on `main` (2b89d90da).
-Private context: `.claude/AUTONOMOUS_GOAL.private.md` (gitignored).
-The previous mandate (v0.29.0 real-world capabilities) is complete: v0.29.0
-was tagged on 2b89d90da and published on 2026-10-31.
+Branch `fix/v0.29.14`, from `main` at fc2f7437e (v0.29.13 is tagged and
+published). Private context: `.claude/AUTONOMOUS_GOAL.private.md` (gitignored).
+The previous mandate (v0.29.1) is complete.
 
-## The user's words (2026-10-31)
+## The user's words (2026-11-17)
 
-- "For 0.29.1 there's a possible critical bug we found from my private ...
-  app" (a Sky.Spa form submitted before the client hydrates ends on a 403
-  JSON page). "Ok 0.29.1 that is."
-- "after v0.29.0 is released, please refer to ... a otel metrics/tracing etc.
-  for request path or querystring with sensitive info like token, secret path
-  link, or secrets/PII on querystring. that will be for 0.29.1 (together with
-  anything we found issues against 0.29.0)"
-- On a database-versus-code drift tool: "Yes 0.29.1, and should use --sql and
-  --code flag? Much more intuitive"
-- "If this round of checks still found issue unrelated to this branch, I
-  reckon we should do a release. And patch all findings in 0.29.1"
-- "You have my permissions to run rollback + start all the fixes"
+"there are defects discovered by working on a private project, take the notes
+of these, and investigate + then research + analyse + plan on fixes if needed.
+if all of them are worth fixing/updating, 100% unattended + autonomous + PIV
+mode until e2e validated + completed. then tag release as next patch release."
 
-## Scope
+## The notes (verbatim headings; the full text is in the private companion)
 
-1. A regression found in production on v0.29.0: `Store.defaultWith` (and the
-   other default builders) on a column that is in the table but not in the
-   record codec is refused, so every Store call on that table fails and the
-   app shows empty lists. That use was valid in v0.28. Restore it, with a
-   test. A Store builder problem must never make a page empty without a loud
-   error the operator can see.
-2. Sky.Spa: a form submitted before the client hydrates must not end on a
-   403 JSON page. Hold and replay the submit after hydration, inject the CSRF
-   field on the Spa SSR page (first visit included), and answer a native POST
-   to a Spa page route with 303 to the same URL.
-3. OTel / metrics / traces / logs: never record secrets or personal data
-   from a request path or query string (tokens, secret path links, PII).
-4. Moved to v0.29.2 by the user ("If sky dB check takes considerable amount
-   of time, leave that for 0.29.2 the others are more priority to rollout +
-   migrate all apps"): `sky db check`, `--sql`, `--code`.
-5. Every finding deferred from v0.29.0 (listed in the private companion).
-6. Added by the user (2026-10-31): "the header case sensitive get/check isn't
-   consistent. so checking/getting like X-Sky-Api-Key very often incorrectly if
-   with x-sky-api-key or X-SKY-API-KEY etc. could you check and fix if possible
-   too?" Every place Sky reads or checks an HTTP header name must match it
-   without regard to case.
+Part A. Defects (found on v0.29.12 in a large multi-module app):
 
-## Done means
+- D1. A second entry builds the wrong backend, silently.
+- D2. Alias of an alias becomes a recursive alias in `Shared`.
+- D3. Name clash in the generated `Shared`.
+- D4. The split creates an import cycle in the client tree.
+- D5. The client copy of a mixed module keeps `update` but drops its server
+  helpers.
+- D6 (minor). The follow-up write is lost for a request without `X-Sky-Wire`.
+- D7. A user type named `Route` clashes with `App.Route` in the generated Go.
+- D8. Sky.Live `html` patch on a table loses its structure.
 
-All of the above built, tested (a failing test first for each bug), documented
-(CHANGELOG, migration guide where behaviour changes, docs, templates), both
-`rust-ci.yml` and `release.yml` green on one SHA, and a fresh-context Judge
-passing. Then tag v0.29.1 and redeploy the apps.
+Part B. Runtime features (after part A):
+
+- B1. Server admission control for `/_rpc` and `App.api` routes.
+- B2. A deadline that travels with a Task (`Task.timeout ms task`).
+- B3. A circuit breaker in the stdlib for ports.
+- B4. `Sub.viewport` and a query-string reader.
+- B5. Coverage (`//line` directives, `sky test --coverage`,
+  `sky coverage report`).
+
+Per item: a failing reproduction as a test first, the fix, existing suites
+green, a line in `docs/migration/v0.30.md` and `CHANGELOG.md`. One commit per
+item, Conventional Commits title. No outside project named anywhere.
+
+Gate: every reproduction is a test, the full Sky test suite passes, `sky
+verify` passes on the example projects, then the full release workflow, then
+tag v0.30.0.
+
+## Found during the work (ship in this release, CLAUDE.md §0.2.2)
+
+- F1. An `App.web` app built with `--target web:app` answers a plain 404 for
+  a declared route other than `/`.
+- F2. An undefined type name inside a record alias gives a type mismatch,
+  not an undefined-name error.
+- F3. A failed backend leg prints a "Broken pipe" wasm-name handoff message
+  that hides the real error.
+- F4. `httpRequestDo` does not attach the request context, so an HTTP client
+  call carries no trace and no cancellation (fixed with B2).
+
+## Decisions
+
+- B5: a spike (2026-11-17, go1.27.3) shows the cover tool cannot carry Sky
+  line numbers through `//line` directives: a relative file name keeps the Go
+  line numbers (main.go line 8 shows as `Shape.sky:8`), an absolute path
+  reports main.go. `//line` would also remap `go build` errors and panic
+  traces, which the build maps back by main.go line. B5 maps coverage through a
+  side map from main.go line ranges to Sky module, function and case arm.
+- B1 ships with no default limit. The adaptive limit is cut.
+- F5. `scripts/build.sh` installed the compiler with `cp -f`, and macOS
+  killed the new binary (stale code signature). Fixed in 9d3db3af9.
+- F6. Sky.Live wrote `withNotFound` into a model field named `page` of
+  another type in a route-less app (type-unsound write).
+- F7. The gate build cache lost its `SKY_*` key on BSD sed. Fixed in
+  db1538dcd.
+- F8. A route-less `web:app` backend answered an unknown path with a plain Go
+  404 and no client shell (Sky.Live shows the app's view with 404).
+- F9. Seven Go runtime tests fail on this host (go1.27.3, macOS): four JSON
+  tree writer NaN texts, two macOS process-tree tests, one allocation bound.
+
+## Status (2026-11-18)
+
+All Part A and Part B items, and F1 to F8, are on `fix/v0.29.14`. Next: F9,
+the milestone gates, the Judge, the release workflow, the tag.
+- Decisions on B2 (2026-11-18): keep the name `Task.timeout` (the request
+  names it) although a bare `timeout` with both `Sky.Core.Error` and
+  `Sky.Core.Task` exposed is `[E1012]`; keep `HttpRequest.minRemaining` (a
+  loud, documented change). Both are under "Breaking changes".
+- F10. `Http.Stream.open` (and any other outbound HTTP path) did not read the
+  Task deadline. Std.Breaker had no Sky.Spa split test.
+- F11. `Http.Stream.open` inside a `Task.timeout` was cut as soon as the
+  open returned (it used the deadline context for the whole stream). Fixed
+  with F10 in 4fe2d84d6.
+
+## The user's words (2026-11-18, later)
+
+- "be aware of CPU+memory usage"
+- "please go ahead, but don't merge yet, until all are completed + tested"
+
+So: one heavy job at a time on this host, at low priority. No merge to `main`
+and no tag until the Judge passes and the full release workflow is green on
+`fix/v0.29.14`.
+- 2026-11-18: the user waived the one-commit-per-item rule for D2, D3 and
+  D4 ("Keep one commit"): one root cause, one code change, commit 4b0d32a7f.
+- Second Judge (bc635f481): NOT ACHIEVED, 2 gaps. The stale coverage ledger
+  is fixed in c879e912f, and the D2-D4 commit is waived. The release workflow
+  full suite is still to run (needs the user: PR and dispatch).

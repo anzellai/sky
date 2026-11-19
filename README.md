@@ -155,14 +155,14 @@ The same `view : Model -> Element Msg` paints to the DOM, to terminal cells and 
 
 - **Safety.** Hindley-Milner inference, exhaustive pattern matching, `Result` and `Maybe` instead of null, and typed `Secret` values that redact themselves in every log.
 - **App shapes.** One `Std.App` entry point for a server-driven web UI, a wasm client for web, desktop, iOS and Android, a terminal UI and a CLI. `Sky.Http.Server` for HTTP and JSON APIs. [Std.App](docs/skyapp/overview.md)
-- **UI updates.** SPA updates reuse unchanged immutable data. Typed navigation commands scroll after rendering, including server answers. [Post-render scrolling](docs/skyapp/overview.md)
+- **UI updates.** SPA updates reuse unchanged immutable data. Typed navigation commands scroll after rendering, including server answers. `Sub.viewport`, `Sub.onBreakpoint` and `Sub.onQuery` give a view the viewport width, its breakpoint and the URL query. [Post-render scrolling](docs/skyapp/overview.md)
 - **Data.** `Std.Db` on SQLite or PostgreSQL with the same code, one `Std.Codec` for JSON, XML and tables, and file-based migrations. `sky build --embed` puts PostgreSQL inside your binary, and an app plus its database fits in 1 GB. [Std.Db](docs/skydb/overview.md) · [Sizing](docs/perf/sizing.md)
 - **Files and documents.** `Std.Office.Xlsx` and `Std.Office.Docx` read and write Excel and Word files. `Std.Xml` and `Std.Zip` read hostile input safely. `Std.Image` and `Std.Image.Canvas` resize, re-encode and draw images on the server. [Stdlib](docs/stdlib.md)
 - **Auth, money and crypto.** `Std.Auth` (bcrypt, JWT, roles), `Std.Money` on exact decimals, and XChaCha20, Ed25519, X25519 and Noise sessions for encryption and signatures.
 - **Durable workflows.** `Std.Durable` runs multi-step processes that survive a restart. [Design](docs/design/durable-execution.md)
 - **AI.** `Std.Ai`: swappable providers (OpenAI, any compatible endpoint, or a managed local model), durable agents, a policy firewall, cost tracing in `Std.Money`, datasets, evals, a model registry, LoRA training, GPU serving and on-device models. [Guides](docs/ai/)
-- **Tooling.** `sky fmt`, `sky test`, `sky fuzz`, `sky watch`, an LSP, `sky doc` for the live API, and an OpenAPI spec from your source with `sky doc --api openapi`. [CLI](docs/tooling/cli.md)
-- **Operations.** Structured logs, Prometheus metrics, health checks, OpenTelemetry and a built-in console at `/_sky/console`. [Observability](docs/observability.md)
+- **Tooling.** `sky fmt`, `sky test` (with function and `case`-arm coverage: `sky test --coverage`, `sky coverage report`), `sky fuzz`, `sky watch`, an LSP, `sky doc` for the live API, and an OpenAPI spec from your source with `sky doc --api openapi`. [CLI](docs/tooling/cli.md)
+- **Operations.** Structured logs, Prometheus metrics, health checks, OpenTelemetry and a built-in console at `/_sky/console`. `Std.Admission` bounds the requests a server runs at once and answers a burst with 503 and `Retry-After`. [Observability](docs/observability.md)
 
 ## Real examples
 
@@ -182,7 +182,7 @@ There are 74 projects in [`examples/`](examples/). Start with these:
 
 ## Status
 
-> **Status: v0.29.x, pre-1.0.** A minor version can include breaking changes.
+> **Status: v0.30.x, pre-1.0.** A minor version can include breaking changes.
 > Each one is listed in the [CHANGELOG](CHANGELOG.md) with a migration guide
 > under [`docs/migration/`](docs/migration/), and `sky upgrade` shows it. See
 > [VERSIONING.md](VERSIONING.md) and the

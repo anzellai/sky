@@ -566,7 +566,14 @@ pub struct GoProgram {
     /// emitted `main.go` blank-imports `sky-app/rt/console_app`, so the build
     /// driver must materialise `rt/console_app` for the import to resolve.
     pub console_needed: bool,
+    /// A coverage build's points (`lower::LowerConfig::coverage`) and where
+    /// each lowered point's marker stands in `source`. Both empty otherwise.
+    pub coverage_points: Vec<lower::coverage::CovPoint>,
+    pub coverage_marks: Vec<codegen::MarkPos>,
 }
+
+/// Where a coverage marker stands in the emitted `main.go` (`codegen`).
+pub use codegen::MarkPos;
 
 /// `go_program` — the Stage-E tracked query (doc 01 `typed_hir → go_module →
 /// build`, landed at the whole-program floor). Lowers the whole program from
@@ -598,10 +605,15 @@ pub fn compute_go_program(
     // Emit only when lowering yielded a buildable program — otherwise the driver
     // reports `errors`/`entry_ok` and never writes/`go build`s (unchanged from
     // the eager path).
-    let source = if out.entry_ok && out.errors.is_empty() {
-        Some(codegen::emit_program(&out.items, out.console_needed))
+    let (source, coverage_marks) = if out.entry_ok && out.errors.is_empty() {
+        let (src, marks) = codegen::emit_program_instrumented(
+            &out.items,
+            out.console_needed,
+            cfg.coverage && cfg.coverage_hits,
+        );
+        (Some(src), marks)
     } else {
-        None
+        (None, Vec::new())
     };
     GoProgram {
         source,
@@ -610,6 +622,8 @@ pub fn compute_go_program(
         entry_ok: out.entry_ok,
         ffi_used: out.ffi_used,
         console_needed: out.console_needed,
+        coverage_points: out.coverage_points,
+        coverage_marks,
     }
 }
 

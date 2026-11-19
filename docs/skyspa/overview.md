@@ -426,6 +426,22 @@ retry code and no network banner (v0.27.3, `runtime-go/rt/spa_retry.go`).
   (`SpaInit_`) is held too, and a wasm download that WebKit cancels for the
   navigation raises no page error (the loader starts again if the page
   stays).
+- **Bounding a burst on the server.** By default the backend runs every
+  `/_rpc/<Msg>` call at once. `App.withAdmission` (`Std.Admission`) gives the
+  RPC calls and the `App.api` routes a limit on the requests that run at the
+  same time, and an optional hook that can answer 429 or 503 per request. The
+  hook's `load.session` is the session id inside the request's session
+  token (`sky_spa`, or a Spa token still in the legacy `sky_sid`, converted
+  as an RPC converts it) after the backend verified it (`Nothing` for a
+  forged, expired or
+  signed-out cookie), so a per-session throttle cannot be dodged by editing
+  the cookie. A
+  call over the limit gets 503 with `Retry-After` before its body is read; the
+  client treats it as transient and re-sends it after the `Retry-After`. The
+  build carries the policy into the backend's boot (the argument must be a
+  value the backend can compute). `SKY_ADMISSION_RPC_LIMIT` /
+  `SKY_ADMISSION_API_LIMIT` override the limits. The limits are fixed: an
+  adaptive limit is not provided.
 - **Protecting a recovering server.** A retry token bucket per origin (10
   tokens; a failure costs 1, a success refunds 0.1; below 5 no automatic
   retry starts) and, after a 429 or 503, client-side adaptive throttling of
@@ -507,7 +523,10 @@ The names read exactly like the web target:
   intercepted internal-link click, and on Back/Forward, setting `model.page`.
 - `App.withNotFound page` — the page shown when nothing matches. The backend's
   server-rendered first paint of such a path is sent with HTTP 404 (the full
-  page, which boots the client); a path that matches a route is 200. A
+  page, which boots the client); a path that matches a route is 200. An app
+  with no `App.withRoutes` shows its view for every path, as on Sky.Live: an
+  unknown path gets the page `/` serves, with 404. A missing asset (a stale
+  `main.<hash>.wasm`) is a plain 404 in both cases, never a page. A
   client-side navigation to an unknown route renders the page in the browser
   and sends no request.
 - `App.withOnNavigate (page -> msg)` — fired after the route is applied, so the
@@ -794,7 +813,12 @@ These are real, current scope boundaries — not roadmap optimism:
   `Time.now` / `Random` inline; async `Http` via `fetch`), `Sub.every` timers,
   `Sub.subscribeTopic` (an `EventSource` on the backend's push endpoint),
   `Sub.onFragment` (the client reads `location.hash` at load and on every
-  `hashchange`), `Std.Nav` (`pushUrl` / `replaceUrl` / `clearFragment`: the
+  `hashchange`), `Sub.onQuery` (the client reads `location.search` at load
+  and after every navigation and Back / Forward), `Sub.onBreakpoint` (the
+  client reads `innerWidth` at load and on `resize`, and dispatches only when
+  the breakpoint changes; no request to the server), `Sub.viewport` (the
+  client reads `innerWidth` at load and 150 ms after the last `resize`, and
+  dispatches only a changed width; no request to the server), `Std.Nav` (`pushUrl` / `replaceUrl` / `clearFragment`: the
   History API, then the route like a link click; a server branch's navigation
   is returned with its answer and runs after it renders; `scrollToTop` /
   `scrollIntoView` / `scrollIntoViewIfNeeded` run after the corresponding DOM

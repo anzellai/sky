@@ -1,0 +1,15 @@
+module P1 exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+type Status
+    = Matched
+    | Open
+
+type alias Refusal =
+    { why : String }
+
+type alias Card =
+    { title : String
+    , status : Status
+    }

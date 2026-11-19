@@ -1,0 +1,27 @@
+module Route exposing (Route(..), routes, toTitle)
+
+import Std.App as App
+
+type Route
+    = Home
+    | Post String
+    | NotFoundPage
+
+
+routes : List (App.Route Route)
+routes =
+    [ App.route "/" Home, App.routeParam "/blog/:slug" Post ]
+
+
+toTitle : Route -> String
+toTitle r =
+    case r of
+
+        Home ->
+            "Home"
+
+        Post s ->
+            "Post " ++ s
+
+        NotFoundPage ->
+            "Missing"

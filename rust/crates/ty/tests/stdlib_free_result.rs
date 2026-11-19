@@ -71,6 +71,10 @@ const ALLOWED: &[(&str, &str)] = &[
         "phantom: the task always succeeds (the trampoline wraps the thunk in Ok), so it never fails with an `e`; a panic stays a classified panic",
     ),
     (
+        "Sky.Core.Task.remaining",
+        "phantom: the task always succeeds (`Task_remaining` returns Ok in both branches, `TestTaskRemaining_NothingWithoutADeadline` and the `remainingProbe` timeout tests in rt), so it never fails with an `e`",
+    ),
+    (
         "Sky.Core.Task.succeed",
         "phantom: the task always succeeds, it never fails with an `e`",
     ),
@@ -120,6 +124,14 @@ const ALLOWED: &[(&str, &str)] = &[
     (
         "Std.Spa.returnedScrolls",
         "phantom: strict decoding returns only no-message scroll batches or error commands",
+    ),
+    (
+        "Std.Live.api",
+        "phantom: an api route answers with its own Response and gives no page (`Live_api` holds only the method, pattern and handler), so no `page` value reaches the model; the variable lets it sit in a `List (Route page)` beside the page routes",
+    ),
+    (
+        "Std.Spa.serverRoute",
+        "phantom: a server route is a full browser navigation and gives no page (`Spa_serverRoute` holds only the method and pattern), so no `page` value reaches the model; the variable lets it sit in a `List (Route page)` beside the client routes",
     ),
     (
         "Std.Spa.reportError",

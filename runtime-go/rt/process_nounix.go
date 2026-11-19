@@ -95,7 +95,12 @@ type procTreeRoot struct {
 	pid    int
 	start  uint64
 	cookie string
+	marks  procFdMarks
 }
+
+type procFdMarks struct{}
+
+func procFdMarksOf(readEnds []*os.File, ptySlave *os.File) procFdMarks { return procFdMarks{} }
 
 func newProcTreeCookie() string    { return "" }
 func procStartTime(pid int) uint64 { return 0 }

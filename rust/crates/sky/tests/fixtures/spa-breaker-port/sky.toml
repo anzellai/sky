@@ -1,0 +1,5 @@
+[project]
+name = "spa-breaker-port"
+
+[app]
+target = "web:app"

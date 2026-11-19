@@ -28,6 +28,9 @@ import (
 func Http_get(url any) any {
 	u := fmt.Sprintf("%v", url)
 	return func() any {
+		if r := httpDeadlineRefusal("Http.get", 0); r != nil {
+			return r
+		}
 		return WithHTTPClientSpan("GET", u, func() any {
 			req, err := http.NewRequest("GET", u, nil)
 			if err != nil {
@@ -39,10 +42,16 @@ func Http_get(url any) any {
 			InjectTraceHeaders(req)
 			resp, err := skyHTTPClient().Do(req)
 			if err != nil {
+				if r := httpDeadlinePassed("Http.get"); r != nil {
+					return r
+				}
 				return Err[any, any](ErrNetwork("http.get: " + redactURLError(err, u)))
 			}
 			body, err := readBoundedBody(resp.Body)
 			if err != nil {
+				if r := httpDeadlinePassed("Http.get"); r != nil {
+					return r
+				}
 				return Err[any, any](ErrNetwork("http.get read: " + redactURLError(err, u)))
 			}
 			return Ok[any, any](HttpResponse{
@@ -63,6 +72,9 @@ func Http_post(url any, body any) any {
 		if r := ssrSuppressedWrite("http.post"); r != nil {
 			return r
 		}
+		if r := httpDeadlineRefusal("Http.post", 0); r != nil {
+			return r
+		}
 		return WithHTTPClientSpan("POST", u, func() any {
 			req, err := http.NewRequest("POST", u, strings.NewReader(b))
 			if err != nil {
@@ -73,10 +85,16 @@ func Http_post(url any, body any) any {
 			InjectTraceHeaders(req)
 			resp, err := skyHTTPClient().Do(req)
 			if err != nil {
+				if r := httpDeadlinePassed("Http.post"); r != nil {
+					return r
+				}
 				return Err[any, any](ErrNetwork("http.post: " + redactURLError(err, u)))
 			}
 			rb, err := readBoundedBody(resp.Body)
 			if err != nil {
+				if r := httpDeadlinePassed("Http.post"); r != nil {
+					return r
+				}
 				return Err[any, any](ErrNetwork("http.post read: " + redactURLError(err, u)))
 			}
 			return Ok[any, any](HttpResponse{

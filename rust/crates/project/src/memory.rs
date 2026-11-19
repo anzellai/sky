@@ -227,6 +227,10 @@ fn wait4(
             }
             return Err(e);
         }
+        // On Linux this is never below the spawning process's own peak RSS:
+        // the kernel records the old address space's high-water mark at
+        // `exec`, and a `posix_spawn` child execs from this process's. So a
+        // small child reads as at least this process's peak there.
         let max = u64::try_from(ru.ru_maxrss).ok().filter(|m| *m > 0);
         // macOS reports bytes; Linux and the BSDs kilobytes.
         let peak_rss = max.map(|m| {

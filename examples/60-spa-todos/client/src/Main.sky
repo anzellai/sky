@@ -12,17 +12,17 @@ module Main exposing (main)
 --     edit buffer, the fetch status. NEVER serialized, no codec, never leaves
 --     the browser. Editing these is a PURE `update` branch → zero round-trip.
 --   * `data` — a cached projection of server truth: the todo list. It has a
---     `Std.Codec` (in Shared.sky) because it crosses the wire and hits the DB.
+--     `Std.Codec` (in Contract.sky) because it crosses the wire and hits the DB.
 --     "Has a codec ⇒ server-backed" is the boundary.
 --
 -- The performance story: typing a new title, switching filters, and opening the
 -- edit buffer are all pure client-local transitions — they never touch the
 -- network. Only add / toggle / delete / rename round-trip to the stateless
 -- backend through the EXPLICIT typed boundary (`Spa.getJson` / `Spa.postJson`)
--- using the SHARED codecs from Shared.sky — one type, one codec, one wire shape.
+-- using the SHARED codecs from Contract.sky — one type, one codec, one wire shape.
 --
 -- SECURITY: the client is untrusted. It only PROPOSES mutations; the backend
--- re-validates and re-reads authoritative data. See Shared.sky + the server.
+-- re-validates and re-reads authoritative data. See Contract.sky + the server.
 --
 -- View is written in `Std.Ui` (the renderer-agnostic Element DSL), so the SAME
 -- view could render on Sky.Live (web), Sky.Tui (terminal), and Sky.Webview
@@ -37,7 +37,7 @@ import Std.Spa as Spa
 import Std.Sub as Sub
 import Std.Ui as Ui exposing (Element)
 import Std.Ui.Events as Ev
-import Shared
+import Contract
     exposing
         ( Todo
         , todoListCodec

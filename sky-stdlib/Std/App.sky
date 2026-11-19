@@ -69,6 +69,7 @@ module Std.App exposing
     , withOnNavigate
     , withRequest
     , withConsoleAuth
+    , withAdmission
     , withRpcError
     , withAppUrl
     , withClientCrypto
@@ -95,6 +96,7 @@ module Std.App exposing
     , runSpa
     , applyServerConfig
     , applySessionLifetime
+    , applyAdmission
     , runTui
     , runCli
     , runWebview
@@ -110,6 +112,7 @@ import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Sky.Ffi as Ffi
 import Sky.Http.Server as Server
+import Std.Admission as Admission
 import Std.Cli as Cli
 import Std.Cmd as Cmd
 import Std.Codec as Codec exposing (Codec)
@@ -418,6 +421,7 @@ type App fallback seed page model msg key
 , onNavigate : Maybe (page -> msg)
 , onRequest : Maybe (Request -> model -> ( model, Cmd msg ))
 , consoleAuth : Maybe (Request -> model -> Task Error (Maybe Console.Identity))
+, admission : Maybe Admission.Policy
 , rpcError : Maybe (Error -> msg)
 , durable : DurableWiring model
 }
@@ -480,6 +484,7 @@ app cfg =
         , onNavigate = Nothing
         , onRequest = Nothing
         , consoleAuth = Nothing
+        , admission = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
         }
@@ -515,6 +520,7 @@ web cfg =
         , onNavigate = Nothing
         , onRequest = Nothing
         , consoleAuth = Nothing
+        , admission = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
         }
@@ -549,6 +555,7 @@ cli cfg =
         , onNavigate = Nothing
         , onRequest = Nothing
         , consoleAuth = Nothing
+        , admission = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
         }
@@ -585,6 +592,7 @@ tui cfg =
         , onNavigate = Nothing
         , onRequest = Nothing
         , consoleAuth = Nothing
+        , admission = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
         }
@@ -948,6 +956,54 @@ withConsoleAuth check (App a) =
     App { a | consoleAuth = Just check }
 
 
+-- | Bound the requests the server runs at the same time (`Std.Admission`):
+-- a limit per route class (`Rpc`: the Sky.Spa `/_rpc/<Msg>` calls; `Api`:
+-- the `App.api` routes) and an optional hook. A request over the limit gets
+-- `503` with `Retry-After` at once; the hook can answer `429` or `503`.
+--
+--     app { … }
+--         |> App.withAdmission
+--                (Admission.policy |> Admission.withLimit Admission.Rpc 64)
+--
+-- It runs on the server of every web target: Sky.Live (`web`, `desktop`)
+-- and the backend of a `web:app` split, where the build carries the policy
+-- into the backend's boot. There the argument must be a value the backend can
+-- compute (a literal, or a top-level value). Terminal targets ignore it. The
+-- default is no limit; `SKY_ADMISSION_RPC_LIMIT` / `SKY_ADMISSION_API_LIMIT`
+-- override the limits.
+withAdmission : Admission.Policy -> App fallback seed page model msg key -> App fallback seed page model msg key
+withAdmission p (App a) =
+    App { a | admission = Just p }
+
+
+-- | The client build's boot step for [`withAdmission`]: install the policy
+-- in the generated backend before it listens. Called by the generated
+-- backend; app code does not need it.
+applyAdmission : Admission.Policy -> Task Error ()
+applyAdmission p =
+    Task.andThen (\_ -> Admission.install p) (useSpaSessions_ ())
+
+
+-- The generated backend is a Sky.Spa backend: the admission hook gets the
+-- verified `sky_spa` session (runtime-go/rt/admission.go). Private.
+useSpaSessions_ : () -> Task Error ()
+useSpaSessions_ =
+    Ffi.kernel "Admission_useSpaSessions"
+
+
+-- | Install an app's admission policy, if it has one, then run `boot`.
+-- Private.
+withAdmissionBoot_ : Maybe Admission.Policy -> Task Error a -> Task Error a
+withAdmissionBoot_ found boot =
+    case found of
+
+        Just p ->
+            Task.andThen (\_ -> boot) (Admission.install p)
+
+        Nothing ->
+            boot
+
+
 -- | Route a FAILED RPC into your own `update`. On the `web:app` (Sky.Spa)
 -- target every server branch runs as a `POST /_rpc/<Msg>` round-trip; when one
 -- fails FINALLY (a 5xx the backend answered, a response the shared codec cannot
@@ -1282,9 +1338,10 @@ run =
     runTui
 
 
--- | Lower an [`App`] [`Route`] to a `Sky.Live` route. `Live.route` erases its
--- page arg, so a static page and a `:param` constructor (`String -> page`) both
--- pass through — Live applies the constructor to the captured segment at match.
+-- | Lower an [`App`] [`Route`] to a `Sky.Live` route. A static page goes
+-- through `Live.route` and a `:param` constructor (`String -> page`) through
+-- `Live.routeParam` — Live applies the constructor to the captured segment at
+-- match. Both keep the page type.
 liveRoute_ r =
     case r of
 
@@ -1292,7 +1349,7 @@ liveRoute_ r =
             Live.route path page_
 
         RouteParam path make ->
-            Live.route path make
+            Live.routeParam path make
 
         RouteApi path handler ->
             Live.api path handler
@@ -1303,7 +1360,7 @@ liveRoute_ r =
 -- maps the app's routes through it. A raw [`api`] endpoint yields a
 -- `Spa.serverRoute`: the client knows the path is the backend's, so a link to it
 -- is a full navigation even when a page route also matches it.
-spaRoute : Route page -> List Spa.Route
+spaRoute : Route page -> List (Spa.Route page)
 spaRoute r =
     case r of
 
@@ -1311,7 +1368,7 @@ spaRoute r =
             [ Spa.route path page_ ]
 
         RouteParam path make ->
-            [ Spa.route path make ]
+            [ Spa.routeParam path make ]
 
         RouteApi path _ ->
             [ Spa.serverRoute path ]
@@ -1474,7 +1531,9 @@ runLive (App a) =
     applyWebBase_
         (findWeb a.configs)
         a.base
-        (guardTerminalView_ a.viewImpl (runLiveBoot_ (App a)))
+        (guardTerminalView_
+            a.viewImpl
+            (withAdmissionBoot_ a.admission (runLiveBoot_ (App a))))
 
 
 runLiveBoot_ : App HasFallback () page model msg key -> Task Error ()
@@ -1713,7 +1772,9 @@ serve appVal =
     case appVal of
 
         App a ->
-            serveBoot_ appVal a.viewImpl (findWeb a.configs) a.base
+            withAdmissionBoot_
+                a.admission
+                (serveBoot_ appVal a.viewImpl (findWeb a.configs) a.base)
 
 
 serveBoot_ : App HasFallback () page model msg key -> ViewImpl model msg -> WebOpts -> BaseConfig -> Task Error Running

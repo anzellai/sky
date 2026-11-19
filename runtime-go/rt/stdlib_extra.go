@@ -478,7 +478,7 @@ func JsonEnc_encode(indent any, v any) any {
 		// no error channel, so the failure is a classified panic
 		// (JsonEncodeFailure, panic_recover.go): recovered per request to a
 		// 500 in a server, exit 1 with a structured log in a CLI.
-		panic("rt.JsonEnc_encode: cannot encode the value as JSON: " + err.Error())
+		panic("rt.JsonEnc_encode: cannot encode the value as JSON: " + jsonEncodeFailureReason(err))
 	}
 	return string(b)
 }

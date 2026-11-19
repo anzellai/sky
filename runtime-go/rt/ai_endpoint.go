@@ -349,7 +349,9 @@ func (s *aiSlot) postWith(path, body string, f *aiCallFacts) (string, error) {
 		if s.cfg.mode == "local" {
 			url = aiJoinPath(aiTestLocalBase(s.cfg.slot), path)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.timeout)
+		// The call's timeout, or less when a Task.timeout deadline is
+		// nearer (task_deadline_outbound.go).
+		ctx, cancel := skyCallContext(s.cfg.timeout)
 		defer cancel()
 		extra := map[string]string{}
 		if s.cfg.mode == "remote" && s.cfg.auth == "google" {
@@ -376,7 +378,7 @@ func (s *aiSlot) postWith(path, body string, f *aiCallFacts) (string, error) {
 		f.startFailed(placed)
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.timeout)
+	ctx, cancel := skyCallContext(s.cfg.timeout)
 	defer cancel()
 	f.sent(placed)
 	out, err := e.post(ctx, s.cfg.timeout, path, body)
@@ -644,13 +646,16 @@ func Ai_endpointPost(cfgArg, pathArg, bodyArg any) any {
 	b := parseAiEndpointBuilder(cfgArg)
 	path, body := AsString(pathArg), AsString(bodyArg)
 	return func() any {
+		if r := skyDeadlineRefusal("Ai.call"); r != nil {
+			return r
+		}
 		s, err := aiSlotFor(b)
 		if err != nil {
 			return aiTaskErr(err)
 		}
 		out, err := s.call(path, body)
 		if err != nil {
-			return aiTaskErr(err)
+			return aiDeadlineTaskErr("Ai.call", err)
 		}
 		return Ok[any, any](out)
 	}

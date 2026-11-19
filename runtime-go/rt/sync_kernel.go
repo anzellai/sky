@@ -222,10 +222,20 @@ func Sync_push(v, qArg any) any {
 }
 
 // syncPop takes the oldest item. timeout < 0 waits without limit.
+//
+// A Task.timeout deadline in force (task_deadline.go) bounds the wait too: it
+// waits for the earlier of `timeout` and the deadline, and when the deadline
+// ends the wait it fails with the deadline's DeadlineExceeded error rather
+// than its own Timeout.
 func syncPop(qArg any, timeout time.Duration, op string) any {
 	q, e := syncUnbox[syncQueue](qArg, "Queue__Internal")
 	if e != nil {
 		return Err[any, any](e)
+	}
+	byDeadline := false
+	if left, ok := skyRemaining(); ok && (timeout < 0 || left < timeout) {
+		timeout = left
+		byDeadline = true
 	}
 	var deadline <-chan time.Time
 	if timeout >= 0 {
@@ -252,6 +262,9 @@ func syncPop(qArg any, timeout time.Duration, op string) any {
 		select {
 		case <-wait:
 		case <-deadline:
+			if byDeadline {
+				return Err[any, any](deadlineExceededError(op, -1))
+			}
 			return Err[any, any](makeError(4, "Timeout",
 				fmt.Sprintf("%s: nothing arrived within %d ms", op, timeout.Milliseconds())))
 		}

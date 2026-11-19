@@ -1,0 +1,50 @@
+module Other exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { n : Int }
+
+type Msg
+    = Bump
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { n = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Bump ->
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text ("OTHER APP " ++ String.fromInt model.n)
+        , Ui.button [] { onPress = Just Bump, label = Ui.text "bump" }
+        ]
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound (\_ -> Ui.text "not found")
+
+
+main : Task Error ()
+main =
+    App.run app

@@ -388,6 +388,26 @@ pub const SURFACES: &[Surface] = &[
     // no write, FIFO order, Nothing once closed and empty, Err on a push to a
     // closed queue), not observations of this runtime.
     sf2("sync", "Std.Sync", &["Sky.Core.Task as Task"]),
+    // v0.30.0 Task.timeout / Task.remaining: a deadline that travels with a
+    // Task. The expected values are the documented contract (a result in
+    // time unchanged, a missed deadline is `task` / `DeadlineExceeded`, the
+    // earlier outer deadline wins, `remaining` is Nothing outside a timeout),
+    // not observations of this runtime.
+    sf2(
+        "deadline",
+        "Sky.Core.Task",
+        &["Sky.Core.Time as Time", "Sky.Core.Error as Error"],
+    ),
+    // v0.30.0 Std.Breaker: a circuit breaker on Std.Sync. The expected values
+    // are the documented contract (closed until `failures` counting failures,
+    // an open breaker refuses with `breaker` / `Open` and does not run the
+    // call, a non-counting error leaves it closed, a trial success closes it),
+    // not observations of this runtime.
+    sf2(
+        "breaker",
+        "Std.Breaker",
+        &["Sky.Core.Task as Task", "Sky.Core.Error as Error"],
+    ),
     // v0.28.0 Std.Ai.Local: a model reference and a spec are pure values (the
     // reference string IS the pinning contract: it carries the digest), and a
     // refusal of an unpinned model is decided before any fetch, so the
@@ -830,7 +850,8 @@ pub fn inventory(
 /// `compression` batteries can reach `Task.run` and fold an `Element` — but no
 /// battery asserts a value ABOUT a symbol of theirs, so they are NOT here. The
 /// printed report used to count them as touched, which understated the dark set
-/// by exactly those 3 (it said 59; the honest number is 62).
+/// by exactly those 3 (it said 59; the honest number is 62). `Sky.Core.Task`
+/// has been asserted since v0.30.0 (the `deadline` surface).
 pub const ASSERTED_MODULES: &[&str] = &[
     "Sky.Core.Array",
     "Sky.Core.Basics",
@@ -884,6 +905,11 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Watch",
     // v0.27.0: Std.Sync lands covered (`sync` surface).
     "Std.Sync",
+    // v0.30.0: Sky.Core.Task is asserted by the `deadline` surface
+    // (`Task.timeout`, `Task.remaining`).
+    "Sky.Core.Task",
+    // v0.30.0: Std.Breaker lands covered (`breaker` surface).
+    "Std.Breaker",
     // v0.28.0: Std.Ai.Local lands covered (`ailocal` surface).
     "Std.Ai.Local",
     // v0.28.0: Std.Ai.Failure lands covered (`aifailure` surface).
@@ -1038,6 +1064,21 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// Lowered 76 -> 75 (v0.29.0): `Sky.Core.Array` gained the `array` surface
 /// (every export asserted at the nominal, empty, boundary, unicode and
 /// failure edges, including pushes across the 32 and 1,024 trie boundaries).
+///
+/// Raised 75 -> 76 (v0.30.0): the new `Std.Admission`. It is config-shaped,
+/// like `Sky.Config`: an opaque `Policy` built by `withX` builders and consumed
+/// for its EFFECT by `install` (a `Task`) and `App.withAdmission`. What it does
+/// happens to HTTP requests under load, so it is covered by
+/// `runtime-go/rt/admission_test.go` (limit, Retry-After, origin first, slot
+/// released after a panic, hook decisions, env over code, the Sky.Live api
+/// path) and `spa_split_flow.rs`
+/// `an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend`
+/// (the Sky hook on Sky.Live and the split backend), not here.
+///
+/// Lowered 75 -> 74 (v0.30.0): `Sky.Core.Task`, imported by many batteries
+/// but asserted by none, gained the `deadline` surface (`Task.timeout`,
+/// `Task.remaining`).
+/// Net (v0.30.0): 75 + 1 (Std.Admission) - 1 (Sky.Core.Task) = 75.
 pub const DARK_MODULE_CEILING: usize = 75;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
@@ -1537,6 +1578,8 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "process" => process_battery(edge),
         "watch" => watch_battery(edge),
         "sync" => sync_battery(edge),
+        "deadline" => deadline_battery(edge),
+        "breaker" => breaker_battery(edge),
         "ailocal" => ailocal_battery(edge),
         "aifailure" => aifailure_battery(edge),
         "aieval" => aieval_battery(edge),
@@ -4720,6 +4763,73 @@ fn sync_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Sky.Core.Task deadlines -----------------------------------------------
+//
+// `Task.timeout` and `Task.remaining`. Each helper runs its Task with
+// `Task.run` and renders the outcome as a String: the value, or
+// `<domain>/<code>` of the error's domain failure.
+fn deadline_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(&["Task.timeout"], "deadlineInTime", "fast"),
+            s(
+                &["Task.remaining", "Task.timeout"],
+                "deadlineRemainingInside",
+                "T",
+            ),
+            s(&["Task.remaining"], "deadlineRemainingOutside", "N"),
+        ],
+        "failure" => vec![
+            s(&["Task.timeout"], "deadlineMissed", "task/DeadlineExceeded"),
+            s(&["Task.timeout"], "deadlineNested", "task/DeadlineExceeded"),
+            s(&["Task.timeout"], "deadlineErrPassesThrough", "none/none"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Breaker -----------------------------------------------------------
+//
+// Each helper builds a breaker, runs its calls with `Task.run` and renders
+// the outcome as a String (`E` for an Err the helper does not expect).
+fn breaker_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Breaker.new", "Breaker.call", "Breaker.defaults"],
+                "breakerRuns",
+                "7",
+            ),
+            s(&["Breaker.name", "Breaker.new"], "breakerName", "payments"),
+            s(&["Breaker.state", "Breaker.new"], "breakerFresh", "Closed"),
+            s(
+                &["Breaker.reset", "Breaker.state", "Breaker.call"],
+                "breakerReset",
+                "Open,Closed",
+            ),
+        ],
+        "failure" => vec![
+            s(
+                &["Breaker.call", "Breaker.state"],
+                "breakerOpens",
+                "Closed,Open",
+            ),
+            s(
+                &["Breaker.isOpenRefusal", "Breaker.call"],
+                "breakerRefuses",
+                "breaker/Open,T,not run",
+            ),
+            s(
+                &["Breaker.callCounting", "Breaker.state"],
+                "breakerNotCounted",
+                "Closed",
+            ),
+            s(&["Breaker.new"], "breakerBadSettings", "E"),
+        ],
+        _ => vec![],
+    }
+}
+
 // --- Std.Ai.Local ---------------------------------------------------------
 //
 // `hf:<org>/<repo>/<file>#sha256=<hex>` and `file:<path>#sha256=<hex>` are the
@@ -7030,6 +7140,227 @@ syncZeroCapacity =
         |> orE
 "#
         }
+        "deadline" => {
+            r#"failureName : Result Error String -> String
+failureName r =
+    case r of
+        Ok v ->
+            v
+
+        Err e ->
+            Maybe.withDefault "none" (Error.domain e)
+                ++ "/"
+                ++ (Error.failureOf e
+                        |> Maybe.map Error.failureCode
+                        |> Maybe.withDefault "none"
+                   )
+
+
+slowly : Int -> String -> Task Error String
+slowly ms v =
+    Time.sleep ms |> Task.map (\_ -> v)
+
+
+deadlineInTime : String
+deadlineInTime =
+    Task.succeed "fast"
+        |> Task.timeout 2000
+        |> Task.run
+        |> failureName
+
+
+deadlineMissed : String
+deadlineMissed =
+    slowly 3000 "late"
+        |> Task.timeout 20
+        |> Task.run
+        |> failureName
+
+
+deadlineNested : String
+deadlineNested =
+    slowly 3000 "late"
+        |> Task.timeout 10000
+        |> Task.timeout 20
+        |> Task.run
+        |> failureName
+
+
+deadlineErrPassesThrough : String
+deadlineErrPassesThrough =
+    Task.fail (Error.io "disk")
+        |> Task.timeout 2000
+        |> Task.run
+        |> failureName
+
+
+showLeft : Int -> Maybe Int -> String
+showLeft limit m =
+    case m of
+        Just n ->
+            if n > 0 && n <= limit then
+                "T"
+
+            else
+                "F"
+
+        Nothing ->
+            "N"
+
+
+deadlineRemainingInside : String
+deadlineRemainingInside =
+    Task.remaining
+        |> Task.map (showLeft 2000)
+        |> Task.timeout 2000
+        |> Task.run
+        |> failureName
+
+
+deadlineRemainingOutside : String
+deadlineRemainingOutside =
+    Task.remaining
+        |> Task.map (showLeft 2000)
+        |> Task.run
+        |> failureName
+"#
+        }
+        "breaker" => {
+            r#"orE : Result Error String -> String
+orE r =
+    case r of
+        Ok v ->
+            v
+
+        Err _ ->
+            "E"
+
+
+stateName : State -> String
+stateName st =
+    case st of
+        Closed ->
+            "Closed"
+
+        Open _ ->
+            "Open"
+
+        HalfOpen ->
+            "HalfOpen"
+
+
+tight : Breaker.Settings
+tight =
+    { failures = 2, windowMs = 60000, openForMs = 60000, halfOpenProbes = 1 }
+
+
+down : Task Error Int
+down =
+    Task.fail (Error.unavailable "down")
+
+
+swallow : Task Error Int -> Task Error ()
+swallow t =
+    t |> Task.map (\_ -> ()) |> Task.onError (\_ -> Task.succeed ())
+
+
+withBreaker : Breaker.Settings -> (Breaker -> Task Error String) -> String
+withBreaker settings body =
+    Breaker.new "payments" settings
+        |> Task.andThen body
+        |> Task.run
+        |> orE
+
+
+breakerRuns : String
+breakerRuns =
+    withBreaker Breaker.defaults (\b -> Breaker.call b (Task.succeed 7) |> Task.map String.fromInt)
+
+
+breakerName : String
+breakerName =
+    withBreaker Breaker.defaults (\b -> Task.succeed (Breaker.name b))
+
+
+breakerFresh : String
+breakerFresh =
+    withBreaker Breaker.defaults (\b -> Breaker.state b |> Task.map stateName)
+
+
+breakerReset : String
+breakerReset =
+    withBreaker tight
+        (\b ->
+            Task.sequence [ swallow (Breaker.call b down), swallow (Breaker.call b down) ]
+                |> Task.andThen (\_ -> Breaker.state b)
+                |> Task.andThen
+                    (\before ->
+                        Breaker.reset b
+                            |> Task.andThen (\_ -> Breaker.state b)
+                            |> Task.map (\after -> stateName before ++ "," ++ stateName after)
+                    )
+        )
+
+
+breakerOpens : String
+breakerOpens =
+    withBreaker tight
+        (\b ->
+            swallow (Breaker.call b down)
+                |> Task.andThen (\_ -> Breaker.state b)
+                |> Task.andThen
+                    (\one ->
+                        swallow (Breaker.call b down)
+                            |> Task.andThen (\_ -> Breaker.state b)
+                            |> Task.map (\two -> stateName one ++ "," ++ stateName two)
+                    )
+        )
+
+
+refusalText : Error -> String
+refusalText e =
+    Maybe.withDefault "none" (Error.domain e)
+        ++ "/"
+        ++ (Error.failureOf e |> Maybe.map Error.failureCode |> Maybe.withDefault "none")
+        ++ ","
+        ++ (if Breaker.isOpenRefusal e then
+                "T"
+
+            else
+                "F"
+           )
+
+
+breakerRefuses : String
+breakerRefuses =
+    withBreaker tight
+        (\b ->
+            Task.sequence [ swallow (Breaker.call b down), swallow (Breaker.call b down) ]
+                |> Task.andThen (\_ -> Breaker.call b (Task.succeed 1))
+                |> Task.map (\_ -> "ran")
+                |> Task.onError (\e -> Task.succeed (refusalText e ++ ",not run"))
+        )
+
+
+breakerNotCounted : String
+breakerNotCounted =
+    withBreaker tight
+        (\b ->
+            List.repeat 5 (swallow (Breaker.callCounting (\_ -> False) b down))
+                |> Task.sequence
+                |> Task.andThen (\_ -> Breaker.state b)
+                |> Task.map stateName
+        )
+
+
+breakerBadSettings : String
+breakerBadSettings =
+    Breaker.new "payments" { tight | failures = 0 }
+        |> Task.map Breaker.name
+        |> Task.run
+        |> orE
+"#
+        }
         "watch" => {
             r#"baseName : String -> String
 baseName path =
@@ -8005,6 +8336,8 @@ fn import_exposing(module: &str) -> Option<&'static str> {
         // The AI failure battery builds failures from their constructors.
         "Std.Ai.Failure" => Some("Failure(..)"),
         "Std.Ai.Eval" => Some("Expect(..)"),
+        // The breaker battery matches on the state constructors.
+        "Std.Breaker" => Some("Breaker, State(..)"),
         _ => None,
     }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Reproducible END-TO-END acceptance for the Sky.Spa Todos app: builds the
 # stateless Sky.Http.Server backend (SQLite store) and the Sky.Spa wasm client
-# (both importing the ONE symlinked Shared.sky), starts the backend on a CLEAN
+# (both importing the ONE symlinked Contract.sky), starts the backend on a CLEAN
 # database, then drives the real wasm client against it headlessly — asserting
 # durable add/toggle/rename/delete round-trips, the zero-round-trip pure-UI
 # property, client-side routing, and rehydration on reload.

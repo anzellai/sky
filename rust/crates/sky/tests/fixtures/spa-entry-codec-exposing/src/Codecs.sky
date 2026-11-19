@@ -1,0 +1,19 @@
+module Codecs exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Codec as Codec exposing (Codec)
+
+
+trimmed : String -> String
+trimmed s =
+    String.trim s
+
+
+labelCodec : Codec String
+labelCodec =
+    Codec.map trimmed identity Codec.string
+
+type Status
+    = Matched
+    | Open

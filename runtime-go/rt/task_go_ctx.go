@@ -46,6 +46,13 @@ func (gc goCtx) run(fn func()) {
 	fn()
 }
 
+// withTrace returns the context with `ctx` as the trace context (Task.timeout
+// stamps its deadline context this way).
+func (gc goCtx) withTrace(ctx context.Context) goCtx {
+	gc.trace = ctx
+	return gc
+}
+
 // skyPanicStack captures the stack of the goroutine that panicked. The one
 // capture point is capturePanicStack (panic_log.go).
 func skyPanicStack() []byte { return capturePanicStack() }

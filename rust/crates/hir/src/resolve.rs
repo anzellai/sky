@@ -198,6 +198,13 @@ pub struct ResolveResult {
     /// being conflated (issue #164). Foreign (Go FFI) qualifier members are
     /// omitted (they are not Sky type constructors).
     pub type_refs: HashMap<String, TypeRes>,
+    /// Every UNQUALIFIED type reference the resolver could not bind (not in
+    /// scope, not kernel-implicit), with its span. The resolver accepts these
+    /// leniently, because a kernel-backed type (`Dict`, `Set`) has no `.sky`
+    /// declaration and an un-imported alias still resolves through the type
+    /// checker's program-wide table. `ty::check` decides which of them name no
+    /// type at all and reports those as `[E1001]` (`ty::undefined_types`).
+    pub lenient_types: Vec<(Name, Span)>,
 }
 
 /// Resolve a module. Never panics; partial results + diagnostics (L7).
@@ -3476,6 +3483,12 @@ impl<'a> Resolver<'a> {
         // recovery table). Resolve leniently, no diagnostic; the oracle agrees.
         // (A bare uppercase type is a kernel/local type, never an FFI type —
         // those only ever appear qualified, so no foreign attribution here.)
+        // Recorded so the checker can report a name that is declared nowhere.
+        if let Some(sp) = span {
+            if self.quiet == 0 {
+                self.result.lenient_types.push((Name::new(name), sp));
+            }
+        }
         self.body.ty(Type::Con {
             con: None,
             name: Name::new(name),

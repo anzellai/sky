@@ -115,7 +115,9 @@ does. Everything else (`routes`, `window`, `input`) stays optional.
 `tablet`, `desktop` through Sky.Live, and the server-rendered first paint of
 `web:app`). It is the full page, so the client boots and the user can navigate
 away. A path that matches a declared route is 200, even when the page
-constructor then shows "not found" for an id it rejects. Point health checks at
+constructor then shows "not found" for an id it rejects. An app with no
+`App.withRoutes` shows its view for every path: `/` is 200 and any other path
+is the same page with 404, on Sky.Live and on `web:app`. Point health checks at
 `/_sky/healthz` or `/_sky/readyz`, not at a path the app does not declare.
 
 ## Configuration — `withBase` (shared) + `withConfig` (per-target)
@@ -195,9 +197,18 @@ of `App.app`, on every target. Only the Live/web runner consumes the request.
 The URL fragment (the text after `#`) never reaches the server, so no request
 hook can read it. Subscribe to it instead: `subscriptions = \_ -> Sub.onFragment
 FragmentChanged` delivers it when the page loads with one and on every change,
-on `web`, `web:app`, desktop and mobile. To move the address bar from `update`
-(go to a page after a save, drop a one-time fragment), return a `Std.Nav`
-command: `Nav.pushUrl "/orders/7"`, `Nav.replaceUrl "/"` or
+on `web`, `web:app`, desktop and mobile. `Sub.onQuery QueryChanged` delivers
+the query string (a `Dict String String`, at load and on every change; it is
+user input), and `Sub.onBreakpoint [ 600, 900 ] LayoutChanged` the viewport
+width as one of your breakpoints (at load and when a resize crosses one), so
+one `view` can show a table on a wide screen and cards on a phone.
+`Sub.viewport WidthChanged` gives the width itself in CSS pixels (at load and
+after a resize settles); on `web` each settled resize is one server request,
+so prefer `onBreakpoint` for a few fixed widths. Terminal
+targets have no URL or viewport: these subscriptions never fire there.
+
+To move the address bar from `update` (go to a page after a save, drop a
+one-time fragment), return a `Std.Nav` command: `Nav.pushUrl "/orders/7"`, `Nav.replaceUrl "/"` or
 `Nav.clearFragment`. It routes like an in-app link on every web target, and a
 terminal target ignores it.
 
@@ -356,6 +367,32 @@ Set it to keep console sessions valid across replicas.
 
 With `SKY_CONSOLE_AUTH=app` and no `withConsoleAuth`, every console request
 gets 403. Use `SKY_CONSOLE_AUTH=token` in that case.
+
+## Bounding a burst of requests — `App.withAdmission`
+
+By default the server runs every `App.api` request and every Sky.Spa
+`/_rpc/<Msg>` call at once, so a burst queues inside the process.
+`App.withAdmission` installs a `Std.Admission` policy at boot: a limit per
+route class (`Rpc`, `Api`) on the requests that run at the same time, and an
+optional hook that decides each request with the request and the load.
+
+```elm
+appDef
+    |> App.withAdmission
+           (Admission.policy
+               |> Admission.withLimit Admission.Rpc 64
+               |> Admission.withLimit Admission.Api 16)
+```
+
+A request over the limit gets `503` with `Retry-After` at once, before its
+body is read; the hook can answer `Throttle ms` (`429`) or `Shed ms` (`503`).
+The Sky.Spa client re-sends both after the `Retry-After`. It runs on Sky.Live
+(`web`, `desktop`) and on the backend of a `web:app` split, where the build
+carries the policy into the backend's boot, so the argument must be a value
+the backend can compute (a literal or a top-level value). Terminal targets
+ignore it. The operator variables `SKY_ADMISSION_RPC_LIMIT` /
+`SKY_ADMISSION_API_LIMIT` win over the code. The default is no limit, and an
+adaptive limit is not provided. See `sky doc Std.Admission`.
 
 ## Surviving a restart — `App.withDurable`
 

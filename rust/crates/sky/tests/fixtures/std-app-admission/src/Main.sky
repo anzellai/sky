@@ -1,0 +1,137 @@
+module Main exposing (main)
+
+-- App.withAdmission: the admission policy gates the App.api routes on
+-- Sky.Live and on the Sky.Spa backend. The hook reads the request and the
+-- load and answers Admit, Throttle or Shed.
+-- `session` is the protected field: SignIn is a server branch (it reads a
+-- file), so the split backend signs it into `sky_spa`, and the hook sees the
+-- verified session id (`X-Load-Test: session-is` compares it with the
+-- `X-Expect-Session` header).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Sky.Core.Task as Task
+import Sky.Http.Server as Server exposing (Request, Response)
+import Std.Admission as Admission
+import Std.App as App
+import Std.Sub as Sub
+import Std.Ui as Ui
+
+type Page
+    = Home
+
+type alias Session =
+    { userId : String }
+
+type alias Model =
+    { page : Page
+    , count : Int
+    , session : Maybe Session
+    }
+
+type Msg
+    = Increment
+    | SignIn String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = Home, count = 0, session = Nothing }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        SignIn uid ->
+            ( { model | session = Just { userId = uid ++ serverMark () } }
+            , Cmd.none
+            )
+
+
+-- A server effect, so SignIn runs on the server (an empty string here).
+serverMark : () -> String
+serverMark _ =
+    if Result.withDefault "" (Task.run (File.readFile "data/none.txt")) == "x" then
+        "!"
+
+    else
+        ""
+
+
+view : Model -> Ui.Element Msg
+view m =
+    Ui.text ("COUNT=" ++ String.fromInt m.count)
+
+
+decide : Request -> Admission.Load -> Task Error Admission.Decision
+decide req load =
+    case Server.header "X-Load-Test" req of
+
+        Just "throttle" ->
+            Task.succeed (Admission.Throttle 2500)
+
+        Just "shed" ->
+            Task.succeed (Admission.Shed 1000)
+
+        Just "session-is" ->
+            case load.session of
+
+                Just sid ->
+                    if Server.header "X-Expect-Session" req == Just sid then
+                        Task.succeed Admission.Admit
+
+                    else
+                        Task.succeed (Admission.Throttle 6000)
+
+                Nothing ->
+                    Task.succeed (Admission.Throttle 4000)
+
+        Just "session" ->
+            case load.session of
+
+                Nothing ->
+                    Task.succeed (Admission.Throttle 4000)
+
+                Just _ ->
+                    Task.succeed Admission.Admit
+
+        Just "load" ->
+            if load.routeClass == Admission.Api && load.route == "/api/ping"
+                && load.inFlight == 1 then
+                Task.succeed (Admission.Throttle (load.limit * 1000))
+
+            else
+                Task.succeed Admission.Admit
+
+        _ ->
+            Task.succeed Admission.Admit
+
+
+admission : Admission.Policy
+admission =
+    Admission.policy |> Admission.withLimit Admission.Api 5
+        |> Admission.withLimit Admission.Rpc 32
+        |> Admission.withHook decide
+
+
+ping : Request -> Task Error Response
+ping _ =
+    Task.succeed (Server.text "pong")
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withRoutes
+                   [ App.route "/" Home, App.api "GET /api/ping" ping ]
+            |> App.withNotFound Home
+            |> App.withAdmission admission)

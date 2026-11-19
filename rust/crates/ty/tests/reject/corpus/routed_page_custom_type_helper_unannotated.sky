@@ -1,0 +1,69 @@
+-- gate: reject
+-- defect: an unannotated routing helper hidden in a custom type hid the routed page type
+-- rust: reject [E2001] where the app is served, naming the model's `page` field
+--
+-- Found 2026-11-19 (v0.30.0). As `routed_page_custom_type_helper.sky`, with
+-- no annotations: `router` is a function that returns the `Router`. The
+-- program passed `sky check` and stopped at run time on every request.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Inc
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text model.title
+
+type Router f s p m msg k
+    = Router (App.App f s p m msg k -> App.App f s p m msg k)
+
+
+router () =
+    Router (App.withRoutes [ App.route "/" "home" ])
+
+
+runRouter (Router f) a =
+    f a
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> runRouter (router ())
+        |> App.withNotFound "missing"
+
+
+main =
+    App.run app

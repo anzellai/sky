@@ -1,0 +1,13 @@
+module ShapeTest exposing (tests)
+
+import Sky.Core.Prelude exposing (..)
+import Shape exposing (Shape(..))
+import Sky.Test as Test exposing (Test)
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "a circle is described"
+          (\_ -> Test.equal "circle 1" (Shape.describe (Circle 1)))
+    ]

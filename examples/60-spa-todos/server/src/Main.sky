@@ -25,7 +25,7 @@ import Std.Log exposing (println)
 import Std.Codec as Codec
 import Std.Db as Db exposing (Db)
 import Std.Db.Store as Store exposing (Store)
-import Shared exposing (Todo, todoListCodec, newTodoCodec, idReqCodec, renameReqCodec)
+import Contract exposing (Todo, todoListCodec, newTodoCodec, idReqCodec, renameReqCodec)
 
 
 -- ─── Store (SQLite; one codec drives schema + reads + writes) ───────

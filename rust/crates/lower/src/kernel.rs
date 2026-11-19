@@ -61,6 +61,9 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
             | ("Sub", "none")
             | ("Uuid", "v4")
             | ("Uuid", "v7")
+            // `Task.remaining : Task e (Maybe Int)` (v0.30.0), a zero-arg
+            // `func Task_remaining() any` returning the Task.
+            | ("Task", "remaining")
             | ("JsonEnc", "null")
             | ("JsonDec", "string" | "int" | "float" | "bool" | "value")
             | ("Config", "string" | "int" | "float" | "bool")
@@ -293,6 +296,8 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Task", "retryWith", "rt.Task_retryWith"),
     ("Task", "loop", "rt.Task_loop"),
     ("Task", "forever", "rt.Task_forever"),
+    ("Task", "timeout", "rt.Task_timeout"),
+    ("Task", "remaining", "rt.Task_remaining"),
     ("Cmd", "none", "rt.Cmd_none"),
     ("Cmd", "batch", "rt.Cmd_batch"),
     ("Cmd", "perform", "rt.Cmd_perform"),
@@ -730,6 +735,9 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Sub", "batch", "rt.Sub_batch"),
     ("Sub", "subscribeTopic", "rt.Sub_subscribeTopic"),
     ("Sub", "onFragment", "rt.Sub_onFragment"),
+    ("Sub", "onBreakpoint", "rt.Sub_onBreakpoint"),
+    ("Sub", "viewport", "rt.Sub_viewport"),
+    ("Sub", "onQuery", "rt.Sub_onQuery"),
     ("Sub", "subscribeStream", "rt.Sub_subscribeStream"),
     ("HttpStream", "open", "rt.HttpStream_open"),
     ("HttpStream", "close", "rt.HttpStream_close"),

@@ -1,0 +1,312 @@
+module Std.BreakerTest exposing (tests)
+
+-- Std.Breaker (v0.30.0): a circuit breaker on Std.Sync.Ref and the clock.
+--
+-- The tests hold under a frozen test clock (SKY_TEST_CLOCK_MS) and under the
+-- wall clock: a long `openForMs` keeps a breaker open for the whole test, and
+-- `openForMs = 0` makes the next call a trial at once.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Std.Breaker as Breaker exposing (Breaker, State(..))
+import Sky.Test as Test exposing (Test)
+
+
+down : Task Error Int
+down =
+    Task.fail (Error.unavailable "the service is down")
+
+
+missing : Task Error Int
+missing =
+    Task.fail (Error.invalidInput "no such order")
+
+
+settings : Int -> Int -> Breaker.Settings
+settings failures openForMs =
+    { failures = failures
+    , windowMs = 60000
+    , openForMs = openForMs
+    , halfOpenProbes = 1
+    }
+
+
+stateName : State -> String
+stateName s =
+    case s of
+
+        Closed ->
+            "Closed"
+
+        Open _ ->
+            "Open"
+
+        HalfOpen ->
+            "HalfOpen"
+
+
+-- Run `n` calls of `task` one after another, ignoring their results.
+repeat : Int -> Breaker -> Task Error Int -> Task Error ()
+repeat n breaker task =
+    List.repeat
+        n
+        (Breaker.call breaker task |> Task.onError (\_ -> Task.succeed 0))
+        |> Task.sequence
+        |> Task.map (\_ -> ())
+
+
+-- Make a breaker, run `steps` on it, then read its state.
+stateAfter : Breaker.Settings -> (Breaker -> Task Error ()) -> String
+stateAfter s steps =
+    Breaker.new "svc" s
+        |> Task.andThen (\b -> steps b |> Task.andThen (\_ -> Breaker.state b))
+        |> Task.run
+        |> Result.map stateName
+        |> Result.withDefault "Err"
+
+
+-- The error of the next call after `steps`.
+nextError : Breaker.Settings -> (Breaker -> Task Error ()) -> Maybe Error
+nextError s steps =
+    case Breaker.new "svc" s
+             |> Task.andThen
+                    (\b ->
+                        steps b
+                            |> Task.andThen
+                                   (\_ -> Breaker.call b (Task.succeed 1)))
+             |> Task.run of
+
+        Err e ->
+            Just e
+
+        Ok _ ->
+            Nothing
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Breaker"
+          [ Test.test
+                "a new breaker is closed and runs the call"
+                (\_ ->
+                    Breaker.new "svc" Breaker.defaults
+                        |> Task.andThen (\b -> Breaker.call b (Task.succeed 7))
+                        |> Task.run
+                        |> Test.equal (Ok 7))
+          , Test.test
+                "defaults: 5 failures within 10000 ms, open 30000 ms, 1 probe"
+                (\_ ->
+                    Test.equal
+                        { failures = 5
+                        , windowMs = 10000
+                        , openForMs = 30000
+                        , halfOpenProbes = 1
+                        }
+                        Breaker.defaults)
+          , Test.test
+                "it stays closed below the threshold"
+                (\_ ->
+                    Test.equal
+                        "Closed"
+                        (stateAfter (settings 3 60000) (\b -> repeat 2 b down)))
+          , Test.test
+                "it opens after N counting failures"
+                (\_ ->
+                    Test.equal
+                        "Open"
+                        (stateAfter (settings 3 60000) (\b -> repeat 3 b down)))
+          , Test.test
+                "an open breaker refuses with breaker/Open, the name and a retry delay"
+                (\_ ->
+                    case nextError (settings 2 30000) (\b -> repeat 2 b down) of
+
+                        Just e ->
+                            Test.equal
+                                ( ( Error.domain e
+                                  , Error.failureOf e
+                                        |> Maybe.map Error.failureCode
+                                  )
+                                , ( Error.failureOf e
+                                        |> Maybe.andThen
+                                               (Error.failureAttr "name")
+                                  , Breaker.isOpenRefusal e
+                                  )
+                                )
+                                ( ( Just "breaker", Just "Open" )
+                                , ( Just "svc", True )
+                                )
+
+                        Nothing ->
+                            Test.fail "the open breaker ran the call")
+          , Test.test
+                "the refusal is Unavailable and retryable, with retryAfter up to openForMs"
+                (\_ ->
+                    case nextError (settings 2 30000) (\b -> repeat 2 b down) of
+
+                        Just e ->
+                            let
+                                after =
+                                    Maybe.withDefault (-1) (Error.retryAfter e)
+                            in
+                                Test.isTrue
+                                    (Error.isRetryable e && after > 29000
+                                        && after <= 30000)
+
+                        Nothing ->
+                            Test.fail "the open breaker ran the call")
+          , Test.test
+                "the refusal is an Unavailable error"
+                (\_ ->
+                    Breaker.new "svc" (settings 1 30000)
+                        |> Task.andThen
+                               (\b ->
+                                   repeat 1 b down
+                                       |> Task.andThen
+                                              (\_ ->
+                                                  Breaker.call
+                                                      b
+                                                      (Task.succeed 1)))
+                        |> Task.run
+                        |> Test.expectErrorKind Error.Unavailable)
+          , Test.test
+                "an open breaker does not run the task"
+                (\_ ->
+                    case nextError (settings 1 30000) (\b -> repeat 1 b down) of
+
+                        Just e ->
+                            Test.isTrue (Breaker.isOpenRefusal e)
+
+                        Nothing ->
+                            Test.fail "the open breaker ran the call")
+          , Test.test
+                "a non-counting error does not trip it"
+                (\_ ->
+                    Test.equal
+                        "Closed"
+                        (stateAfter
+                            (settings 2 60000)
+                            (\b -> repeat 10 b missing)))
+          , Test.test
+                "callCounting takes its own rule"
+                (\_ ->
+                    stateAfter
+                        (settings 2 60000)
+                        (\b ->
+                            List.repeat
+                                2
+                                (Breaker.callCounting (\_ -> True) b missing
+                                    |> Task.onError (\_ -> Task.succeed 0))
+                                |> Task.sequence
+                                |> Task.map (\_ -> ()))
+                        |> Test.equal "Open")
+          , Test.test
+                "a missed Task.timeout deadline counts"
+                (\_ ->
+                    Test.equal
+                        "Open"
+                        (stateAfter
+                            (settings 1 60000)
+                            (\b -> repeat 1 b (Task.timeout 10 slowOne))))
+          , Test.test
+                "openForMs 0: the next call is a trial, and its success closes the breaker"
+                (\_ ->
+                    stateAfter
+                        (settings 1 0)
+                        (\b ->
+                            repeat 1 b down
+                                |> Task.andThen
+                                       (\_ -> Breaker.call b (Task.succeed 1))
+                                |> Task.map (\_ -> ()))
+                        |> Test.equal "Closed")
+          , Test.test
+                "a failed trial opens it again"
+                (\_ ->
+                    Breaker.new "svc" (settings 1 50)
+                        |> Task.andThen
+                               (\b ->
+                                   repeat 1 b down
+                                       |> Task.andThen (\_ -> Time.sleep 80)
+                                       |> Task.andThen
+                                              (\_ ->
+                                                  Breaker.call b down
+                                                      |> Task.map (\_ -> "ok")
+                                                      |> Task.onError
+                                                             (\e ->
+                                                                 Task.succeed
+                                                                     (trialOutcome
+                                                                         e)))
+                                       |> Task.andThen
+                                              (\trial ->
+                                                  Breaker.state b
+                                                      |> Task.map
+                                                             (\s ->
+                                                                 trial ++ ","
+                                                                     ++ stateName
+                                                                            s)))
+                        |> Task.run
+                        |> Test.equal (Ok "ran,Open"))
+          , Test.test
+                "concurrent calls lose no count"
+                (\_ ->
+                    Breaker.new "svc" (settings 40 60000)
+                        |> Task.andThen
+                               (\b ->
+                                   List.repeat
+                                       39
+                                       (Breaker.call b down
+                                           |> Task.onError
+                                                  (\_ -> Task.succeed 0))
+                                       |> Task.parallel
+                                       |> Task.andThen (\_ -> Breaker.state b)
+                                       |> Task.andThen
+                                              (\before ->
+                                                  repeat 1 b down
+                                                      |> Task.andThen
+                                                             (\_ ->
+                                                                 Breaker.state b)
+                                                      |> Task.map
+                                                             (\after ->
+                                                                 stateName
+                                                                     before
+                                                                     ++ ","
+                                                                     ++ stateName
+                                                                            after)))
+                        |> Task.run
+                        |> Test.equal (Ok "Closed,Open"))
+          , Test.test
+                "reset closes an open breaker"
+                (\_ ->
+                    Test.equal
+                        "Closed"
+                        (stateAfter
+                            (settings 1 60000)
+                            (\b ->
+                                repeat 1 b down
+                                    |> Task.andThen (\_ -> Breaker.reset b))))
+          , Test.test
+                "new refuses a threshold below 1"
+                (\_ ->
+                    Test.expectErrorKind
+                        Error.InvalidInput
+                        (Task.run (Breaker.new "svc" (settings 0 1000))))
+          ]
+    ]
+
+
+slowOne : Task Error Int
+slowOne =
+    Time.sleep 2000 |> Task.map (\_ -> 1)
+
+
+trialOutcome : Error -> String
+trialOutcome e =
+    if Breaker.isOpenRefusal e then
+        "refused"
+
+    else
+        "ran"

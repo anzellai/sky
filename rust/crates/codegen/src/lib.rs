@@ -4,15 +4,36 @@
 //! — those are finished in `lower`. `HashMap`-free: every collection walked here
 //! arrives already ordered (L4).
 
+use lower::coverage::mark_id;
 use lower::ir::{
     declared_ty, GoBin, GoExpr, GoExprKind, GoFuncDecl, GoItem, GoParam, GoStmt, GoTy, GoTypeDef,
     Prim,
 };
 
+/// Where a coverage marker (`lower::coverage`) stood in the emitted `main.go`:
+/// the 1-based line and 1-based byte column of the Go statement that follows
+/// it, the position `go tool covdata textfmt` reports blocks in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct MarkPos {
+    pub mark: usize,
+    pub line: u32,
+    pub col: u32,
+}
+
+/// A marker renders as `\u{1}<id>\u{2}` while the text is built, and
+/// [`strip_marks`] removes it, so the emitted Go never holds one. A Go string
+/// literal escapes both control characters (`escape_go`), so no literal can
+/// look like a marker.
+fn sentinel(id: usize) -> String {
+    format!("\u{1}{id}\u{2}")
+}
+
 /// A thin append-only buffer (doc 08 §1). One growing `String`; O(n) total.
 struct Writer {
     buf: String,
     indent: u32,
+    /// Coverage markers waiting for the next line: they mark where it starts.
+    pending: String,
 }
 
 impl Writer {
@@ -20,6 +41,7 @@ impl Writer {
         Writer {
             buf: String::with_capacity(4096),
             indent: 0,
+            pending: String::new(),
         }
     }
     fn pad(&mut self) {
@@ -29,6 +51,10 @@ impl Writer {
     }
     fn line(&mut self, s: &str) {
         self.pad();
+        if !self.pending.is_empty() {
+            self.buf.push_str(&self.pending);
+            self.pending.clear();
+        }
         self.buf.push_str(s);
         self.buf.push('\n');
     }
@@ -49,6 +75,104 @@ impl Writer {
 /// Tui / Webview binary never links the console stack). Mirrors the oracle's
 /// `consoleNeededFromImports` gate on `collectGoImports`.
 pub fn emit_program(items: &[GoItem], console_needed: bool) -> String {
+    emit_program_marked(items, console_needed).0
+}
+
+/// [`emit_program`], with the `main.go` position of every coverage marker in
+/// `items` (`lower::coverage`). Markers render as nothing: the source is the
+/// one [`emit_program`] returns. With no marker in `items` (every build but
+/// `sky test --coverage`) the positions are empty and the text is untouched.
+pub fn emit_program_marked(items: &[GoItem], console_needed: bool) -> (String, Vec<MarkPos>) {
+    emit_program_instrumented(items, console_needed, false)
+}
+
+/// [`emit_program_marked`]. With `hits` (a `sky fuzz` harness build), each
+/// marker also renders as the statement `rt.CovHit(<id>)`, which sets the
+/// marker's bit in the runtime's in-process coverage bitmap
+/// (`runtime-go/rt/spa_fuzz.go`), and the position is that statement's.
+/// Without `hits` the output is exactly [`emit_program_marked`]'s.
+pub fn emit_program_instrumented(
+    items: &[GoItem],
+    console_needed: bool,
+    hits: bool,
+) -> (String, Vec<MarkPos>) {
+    let src = {
+        let _hits = HitsGuard::set(hits);
+        emit_program_raw(items, console_needed)
+    };
+    if !src.contains('\u{1}') {
+        return (src, Vec::new());
+    }
+    strip_marks(&src)
+}
+
+thread_local! {
+    /// Whether markers render as `rt.CovHit(<id>)` ([`emit_program_instrumented`]).
+    /// A thread-local, so the deep `render_*` walkers need no extra argument.
+    static HITS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Sets [`HITS`] for one emission and restores it after, also on unwind.
+struct HitsGuard(bool);
+
+impl HitsGuard {
+    fn set(on: bool) -> HitsGuard {
+        HitsGuard(HITS.with(|h| h.replace(on)))
+    }
+}
+
+impl Drop for HitsGuard {
+    fn drop(&mut self) {
+        HITS.with(|h| h.set(self.0));
+    }
+}
+
+fn hits_on() -> bool {
+    HITS.with(|h| h.get())
+}
+
+/// The counter statement a marker renders as in a hits build.
+fn cov_hit(id: usize) -> String {
+    format!("rt.CovHit({id})")
+}
+
+/// Remove every marker sentinel from `src`, recording where each stood in the
+/// text that remains.
+fn strip_marks(src: &str) -> (String, Vec<MarkPos>) {
+    let bytes = src.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut marks = Vec::new();
+    let (mut line, mut col) = (1u32, 1u32);
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == 1 {
+            let end = bytes[i..]
+                .iter()
+                .position(|&c| c == 2)
+                .map_or(bytes.len(), |j| i + j);
+            if let Ok(mark) = src[i + 1..end].parse() {
+                marks.push(MarkPos { mark, line, col });
+            }
+            i = end + 1;
+            continue;
+        }
+        out.push(b);
+        if b == b'\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+        i += 1;
+    }
+    // Only ASCII bytes were removed, so the rest is still UTF-8.
+    let text = String::from_utf8(out)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+    (text, marks)
+}
+
+fn emit_program_raw(items: &[GoItem], console_needed: bool) -> String {
     // Emit the body (items + gob registration) into a buffer FIRST, so the import
     // block can be decided from what the body actually references: FFI wrappers
     // live in `package skyffi` (materialised into `sky-out/skyffi/`, a dot-import
@@ -338,10 +462,23 @@ fn emit_stmt(w: &mut Writer, st: &GoStmt) {
         GoStmt::Continue => w.line("continue"),
         GoStmt::Return(None) => w.line("return"),
         GoStmt::Return(Some(e)) => w.line(&format!("return {}", render_expr(e))),
-        GoStmt::Comment(c) => w.line(&format!("// {c}")),
+        GoStmt::Comment(c) => match mark_id(c) {
+            Some(id) => {
+                w.pending.push_str(&sentinel(id));
+                if hits_on() {
+                    w.line(&cov_hit(id));
+                }
+            }
+            None => w.line(&format!("// {c}")),
+        },
         GoStmt::Scope(body) => {
+            // A marker before a bare block stands at the block's first
+            // statement: `go build -cover` gives a bare `{` no block of its
+            // own, so a position on it would fall between two counted blocks.
+            let carried = std::mem::take(&mut w.pending);
             w.line("{");
             w.indent += 1;
+            w.pending = carried;
             for s in body {
                 emit_stmt(w, s);
             }
@@ -474,7 +611,19 @@ fn render_expr_inner(e: &GoExpr) -> String {
 
 fn render_stmts_inline(body: &[GoStmt]) -> String {
     let mut parts: Vec<String> = Vec::new();
+    // Coverage markers wait for the next statement and start it.
+    let mut pending = String::new();
     for s in body {
+        if let GoStmt::Comment(c) = s {
+            if let Some(id) = mark_id(c) {
+                pending.push_str(&sentinel(id));
+                if hits_on() {
+                    parts.push(format!("{}{}", std::mem::take(&mut pending), cov_hit(id)));
+                }
+                continue;
+            }
+        }
+        let at = parts.len();
         match s {
             GoStmt::Expr(e) => parts.push(render_expr(e)),
             GoStmt::Short(n, e) => parts.push(format!("{n} := {}", render_expr(e))),
@@ -492,7 +641,13 @@ fn render_stmts_inline(body: &[GoStmt]) -> String {
             GoStmt::Return(None) => parts.push("return".to_string()),
             GoStmt::Return(Some(e)) => parts.push(format!("return {}", render_expr(e))),
             GoStmt::Comment(c) => parts.push(format!("/* {c} */")),
-            GoStmt::Scope(body) => parts.push(format!("{{ {} }}", render_stmts_inline(body))),
+            // A marker before a bare block moves to its first statement (see
+            // `emit_stmt`).
+            GoStmt::Scope(body) => parts.push(format!(
+                "{{ {}{} }}",
+                std::mem::take(&mut pending),
+                render_stmts_inline(body)
+            )),
             GoStmt::If(cond, then, els) => {
                 let mut s = format!(
                     "if {} {{ {} }}",
@@ -518,6 +673,18 @@ fn render_stmts_inline(body: &[GoStmt]) -> String {
                     render_stmts_inline(then)
                 ));
             }
+        }
+        if !pending.is_empty() {
+            if let Some(p) = parts.get_mut(at) {
+                p.insert_str(0, &pending);
+                pending.clear();
+            }
+        }
+    }
+    if !pending.is_empty() {
+        match parts.last_mut() {
+            Some(p) => p.push_str(&pending),
+            None => parts.push(pending),
         }
     }
     parts.join("; ")
@@ -784,6 +951,157 @@ mod tests {
         let code = narrow_call(&slot, "capture()");
         assert!(!code.contains("rt.Coerce[any]"), "{code}");
         assert_eq!(code.matches("capture()").count(), 1, "{code}");
+    }
+
+    fn mark(id: usize) -> GoStmt {
+        GoStmt::Comment(lower::coverage::mark_text(id))
+    }
+
+    fn int_ty() -> GoTy {
+        GoTy::Bare(Prim::Int)
+    }
+
+    /// `func F(x int) int { <m0> return func() int { if x == 1 { <m1> return 10 }; <m2> return 20 }() }`
+    /// with or without the markers.
+    fn marked_program(with_marks: bool) -> Vec<GoItem> {
+        let m = |id| with_marks.then(|| mark(id));
+        let x = GoExpr::new(GoExprKind::Ident("x".into()), int_ty());
+        let cond = GoExpr::new(
+            GoExprKind::Binary(
+                GoBin::Eq,
+                Box::new(x),
+                Box::new(GoExpr::new(GoExprKind::IntLit(1), int_ty())),
+            ),
+            GoTy::Bare(Prim::Bool),
+        );
+        let lit = |n| GoExpr::new(GoExprKind::IntLit(n), int_ty());
+        let mut then: Vec<GoStmt> = m(1).into_iter().collect();
+        then.push(GoStmt::Return(Some(lit(10))));
+        let mut inner: Vec<GoStmt> = vec![GoStmt::If(cond, then, vec![])];
+        inner.extend(m(2));
+        inner.push(GoStmt::Return(Some(lit(20))));
+        let block = GoExpr::new(GoExprKind::Block(inner), int_ty());
+        let mut body: Vec<GoStmt> = m(0).into_iter().collect();
+        body.push(GoStmt::Return(Some(block)));
+        vec![GoItem::Func(GoFuncDecl {
+            name: "F".into(),
+            type_params: vec![],
+            params: vec![GoParam {
+                name: "x".into(),
+                ty: int_ty(),
+            }],
+            ret: int_ty(),
+            body,
+            doc: None,
+        })]
+    }
+
+    /// Coverage markers render as nothing: a program with markers emits the
+    /// bytes of the same program without them, and a program without markers
+    /// reports no positions.
+    #[test]
+    fn coverage_markers_emit_the_same_go_and_report_their_positions() {
+        let plain = emit_program(&marked_program(false), false);
+        let (plain2, none) = emit_program_marked(&marked_program(false), false);
+        assert_eq!(plain, plain2);
+        assert!(none.is_empty());
+        let (marked, marks) = emit_program_marked(&marked_program(true), false);
+        assert_eq!(marked, plain, "markers changed the emitted Go");
+        assert!(!marked.contains('\u{1}') && !marked.contains('\u{2}'));
+        let lines: Vec<&str> = marked.lines().collect();
+        let at = |p: &MarkPos| -> String {
+            let l = lines[(p.line - 1) as usize];
+            l[(p.col - 1) as usize..].to_string()
+        };
+        assert_eq!(marks.len(), 3, "{marks:?}");
+        assert_eq!(marks[0].mark, 0);
+        assert!(
+            at(&marks[0]).starts_with("return func() int {"),
+            "{}",
+            at(&marks[0])
+        );
+        assert_eq!(marks[1].mark, 1);
+        assert!(
+            at(&marks[1]).starts_with("return 10 }"),
+            "{}",
+            at(&marks[1])
+        );
+        assert_eq!(marks[2].mark, 2);
+        assert!(
+            at(&marks[2]).starts_with("return 20 }()"),
+            "{}",
+            at(&marks[2])
+        );
+        // Columns are 1-based bytes after the indent tab.
+        assert_eq!(marks[0].col, 2);
+    }
+
+    /// A hits build renders each marker as `rt.CovHit(<id>)` at the marker's
+    /// position, and an ordinary emission after it is unchanged.
+    #[test]
+    fn a_hits_build_counts_each_marker_in_place() {
+        let (go, marks) = emit_program_instrumented(&marked_program(true), false, true);
+        let lines: Vec<&str> = go.lines().collect();
+        for m in &marks {
+            let at = &lines[(m.line - 1) as usize][(m.col - 1) as usize..];
+            assert!(
+                at.starts_with(&format!("rt.CovHit({})", m.mark)),
+                "{m:?}: {at}"
+            );
+        }
+        assert_eq!(marks.len(), 3);
+        assert!(
+            go.contains("if (x == 1) { rt.CovHit(1); return 10 }; rt.CovHit(2); return 20"),
+            "{go}"
+        );
+        let (plain, _) = emit_program_marked(&marked_program(true), false);
+        assert_eq!(plain, emit_program(&marked_program(false), false));
+    }
+
+    /// A marker before a bare block (`GoStmt::Scope`, from tail-block
+    /// flattening) stands at the block's first statement, multi-line and
+    /// inline, since Go's cover gives the `{` itself no counted block.
+    #[test]
+    fn a_marker_before_a_scope_moves_inside_it() {
+        let lit = |n| GoExpr::new(GoExprKind::IntLit(n), int_ty());
+        let body = vec![
+            mark(4),
+            GoStmt::Scope(vec![
+                GoStmt::Short("a".into(), lit(1)),
+                GoStmt::Return(Some(lit(2))),
+            ]),
+        ];
+        let items = vec![GoItem::Func(GoFuncDecl {
+            name: "F".into(),
+            type_params: vec![],
+            params: vec![],
+            ret: int_ty(),
+            body: body.clone(),
+            doc: None,
+        })];
+        let (go, marks) = emit_program_marked(&items, false);
+        let line = go.lines().nth(marks[0].line as usize - 1).unwrap();
+        assert_eq!(&line[(marks[0].col - 1) as usize..], "a := 1", "{go}");
+        let (inline, marks) = strip_marks(&render_stmts_inline(&body));
+        assert_eq!(inline, "{ a := 1; return 2 }");
+        assert_eq!(marks[0].col, 3);
+    }
+
+    /// A marker that ends a list (no statement follows) still lands in the
+    /// text, and an ordinary comment still renders.
+    #[test]
+    fn a_trailing_marker_and_an_ordinary_comment() {
+        let inline = render_stmts_inline(&[GoStmt::Comment("note".into()), mark(7)]);
+        let (text, marks) = strip_marks(&inline);
+        assert_eq!(text, "/* note */");
+        assert_eq!(
+            marks,
+            vec![MarkPos {
+                mark: 7,
+                line: 1,
+                col: 11
+            }]
+        );
     }
 
     #[test]

@@ -60,6 +60,31 @@ var (
 	spaFragmentToMsg    any
 	spaFragmentListener js.Func
 	spaFragmentListens  bool
+	// Sub.onBreakpoint / Sub.onQuery (sub_viewport.go), refreshed by
+	// reconcileSubs. The breakpoint last delivered, and the raw query last
+	// delivered, keep a resize inside one breakpoint, or a navigation that
+	// keeps the query, from dispatching anything. The `resize` and
+	// `popstate` listeners are installed once, the first time a leaf appears;
+	// spaWindowCheck runs a delivery check outside the current step.
+	spaBreakpointToMsg  any
+	spaBreakpointWidths []int
+	spaBreakpointLast   int
+	spaBreakpointSent   bool
+	// Sub.viewport: the width last delivered, and the 150 ms settle timer the
+	// shared `resize` listener restarts on every resize event.
+	spaViewportToMsg    any
+	spaViewportLast     int
+	spaViewportSent     bool
+	spaViewportTimer    js.Value
+	spaViewportSettle   js.Func
+	spaViewportSettleOK bool
+	spaQueryToMsg       any
+	spaLastQuery        string
+	spaResizeListens    bool
+	spaQueryPopListens  bool
+	spaWindowCheck      js.Func
+	spaWindowCheckSet   bool
+	spaBooted           bool
 	// Routing (P4). spaRoutes is the registered client-side routes (empty ⇒ no
 	// routing; a route-less app keeps native <a href> behaviour). spaNotFound is
 	// the 404 page value (nil ⇒ leave the model's Page unchanged on a miss).
@@ -320,6 +345,11 @@ func spaRun(cfg any) any {
 	reconcileSubs()
 	// Sub.onFragment: the page loaded with a fragment the server never saw.
 	spaDeliverFragment(true)
+	// Sub.onBreakpoint / Sub.onQuery: the width and the query at load.
+	spaDeliverBreakpoint()
+	spaDeliverViewport()
+	spaDeliverQuery()
+	spaBooted = true
 
 	// Install link interception + Back/Forward only when the app routes — a
 	// route-less app (a counter) must keep native <a href> behaviour, so we
@@ -408,7 +438,7 @@ func spaApplyURL(path string) {
 		}
 		page = spaNotFound
 	}
-	spaModel = RecordUpdate(spaModel, map[string]any{"Page": page})
+	spaModel = writeRoutedPage(spaModel, page)
 }
 
 // spaPrePaintNavigate runs onNavigate(model.Page) through the guarded update
@@ -463,6 +493,8 @@ func spaNavigate(path string) {
 	// while a scroll-capable request is in flight. Revoke its old scroll first.
 	spaScrollCommands.supersede()
 	spaApplyURL(path)
+	// Sub.onQuery: a navigation may change the query (sub_viewport.go).
+	defer spaDeliverQuery()
 	if spaOnNavigate != nil {
 		spaFireOnNavigate()
 		return
@@ -1294,6 +1326,7 @@ func reconcileSubs() {
 		spaFragmentToMsg = fragmentToMsg(root)
 		spaConnToMsg = connectionToMsg(root)
 	}
+	spaReconcileWindowSubs(root)
 	if spaFragmentToMsg != nil && !spaFragmentListens {
 		spaFragmentListens = true
 		spaFragmentListener = js.FuncOf(func(this js.Value, args []js.Value) any {
@@ -1335,6 +1368,131 @@ func reconcileSubs() {
 		}
 		openTopic(topic, toMsg)
 	}
+}
+
+// spaReconcileWindowSubs records the app's Sub.onBreakpoint, Sub.viewport
+// and Sub.onQuery leaves (sub_viewport.go) and installs the `resize` /
+// `popstate` listener the first time a leaf appears. One `resize` listener
+// serves both window leaves: the breakpoint is checked at once, the width
+// after the resize settles. A leaf that appears, or whose widths change,
+// after load gets its first value from a check run after the current step.
+func spaReconcileWindowSubs(root subT) {
+	prevWidths := breakpointsHeader(spaBreakpointWidths)
+	hadQuery := spaQueryToMsg != nil
+	hadViewport := spaViewportToMsg != nil
+	toMsg, widths, _ := breakpointLeaf(root)
+	spaBreakpointToMsg, spaBreakpointWidths = toMsg, widths
+	spaViewportToMsg = viewportToMsg(root)
+	spaQueryToMsg = queryToMsg(root)
+	if (spaBreakpointToMsg != nil || spaViewportToMsg != nil) && !spaResizeListens {
+		spaResizeListens = true
+		js.Global().Call("addEventListener", "resize", js.FuncOf(func(this js.Value, args []js.Value) any {
+			spaDeliverBreakpoint()
+			spaScheduleViewport()
+			return nil
+		}))
+	}
+	if spaQueryToMsg != nil && !spaQueryPopListens {
+		spaQueryPopListens = true
+		js.Global().Call("addEventListener", "popstate", js.FuncOf(func(this js.Value, args []js.Value) any {
+			spaDeliverQuery()
+			return nil
+		}))
+	}
+	widthsChanged := spaBreakpointToMsg != nil && breakpointsHeader(widths) != prevWidths
+	queryAppeared := spaQueryToMsg != nil && !hadQuery
+	viewportAppeared := spaViewportToMsg != nil && !hadViewport
+	if (widthsChanged || queryAppeared || viewportAppeared) && spaBooted {
+		if widthsChanged {
+			spaBreakpointSent = false
+		}
+		if viewportAppeared {
+			spaViewportSent = false
+		}
+		if !spaWindowCheckSet {
+			spaWindowCheckSet = true
+			spaWindowCheck = js.FuncOf(func(this js.Value, args []js.Value) any {
+				spaDeliverBreakpoint()
+				spaDeliverViewport()
+				spaDeliverQuery()
+				return nil
+			})
+		}
+		js.Global().Call("setTimeout", spaWindowCheck, 0)
+	}
+}
+
+// spaDeliverBreakpoint dispatches the viewport's breakpoint to the app's
+// Sub.onBreakpoint leaf when it differs from the one last delivered.
+func spaDeliverBreakpoint() {
+	toMsg := spaBreakpointToMsg
+	if toMsg == nil {
+		return
+	}
+	w := 0
+	if v := js.Global().Get("innerWidth"); v.Type() == js.TypeNumber {
+		w = v.Int()
+	}
+	b := breakpointOf(w, spaBreakpointWidths)
+	if spaBreakpointSent && b == spaBreakpointLast {
+		return
+	}
+	spaBreakpointSent, spaBreakpointLast = true, b
+	spaDispatch(sky_call(toMsg, b))
+}
+
+// spaScheduleViewport restarts the 150 ms settle timer of the Sub.viewport
+// leaf: a burst of resize events delivers one width, after the last event.
+func spaScheduleViewport() {
+	if spaViewportToMsg == nil {
+		return
+	}
+	if !spaViewportSettleOK {
+		spaViewportSettleOK = true
+		spaViewportSettle = js.FuncOf(func(this js.Value, args []js.Value) any {
+			spaViewportTimer = js.Undefined()
+			spaDeliverViewport()
+			return nil
+		})
+	}
+	if spaViewportTimer.Type() == js.TypeNumber {
+		js.Global().Call("clearTimeout", spaViewportTimer)
+	}
+	spaViewportTimer = js.Global().Call("setTimeout", spaViewportSettle, 150)
+}
+
+// spaDeliverViewport dispatches the viewport width (CSS pixels) to the app's
+// Sub.viewport leaf when it differs from the width last delivered.
+func spaDeliverViewport() {
+	toMsg := spaViewportToMsg
+	if toMsg == nil {
+		return
+	}
+	w := 0
+	if v := js.Global().Get("innerWidth"); v.Type() == js.TypeNumber {
+		w = viewportWidthOf(v.Float())
+	}
+	if spaViewportSent && w == spaViewportLast {
+		return
+	}
+	spaViewportSent, spaViewportLast = true, w
+	spaDispatch(sky_call(toMsg, w))
+}
+
+// spaDeliverQuery dispatches the parsed query string to the app's Sub.onQuery
+// leaf when it differs from the one last delivered (at load: when it is not
+// empty).
+func spaDeliverQuery() {
+	toMsg := spaQueryToMsg
+	if toMsg == nil {
+		return
+	}
+	q := strings.TrimPrefix(js.Global().Get("location").Get("search").String(), "?")
+	if q == spaLastQuery {
+		return
+	}
+	spaLastQuery = q
+	spaDispatch(sky_call(toMsg, queryDict(q)))
 }
 
 // spaDeliverFragment dispatches the URL fragment to the app's Sub.onFragment

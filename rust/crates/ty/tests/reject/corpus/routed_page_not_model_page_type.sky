@@ -1,0 +1,68 @@
+-- gate: reject
+-- defect: a routed app's pages are not of the model's `page` field type
+-- rust: reject [E2001] at App.withRoutes, naming the model's `page` field
+--
+-- Found 2026-11-19 (v0.30.0). The runtime writes the routed page and the
+-- NotFound page into the model's `page` field on every request, but
+-- `App.withRoutes` did not tie its `page` type to that field. This program
+-- built, and every request was a 500 (`reflect.Set: value of type string is
+-- not assignable to type main.Main_Route`).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Detail String
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Inc
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    case model.page of
+
+        Dashboard ->
+            Ui.text ("dash " ++ model.title)
+
+        Detail s ->
+            Ui.text ("detail " ++ s)
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withRoutes
+               [ App.route "/" "home"
+               , App.routeParam "/item/:id" (\s -> "item:" ++ s)
+               ]
+        |> App.withNotFound "missing"
+
+
+main =
+    App.run app

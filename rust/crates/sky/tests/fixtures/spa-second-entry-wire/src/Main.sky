@@ -1,0 +1,15 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import P1
+
+
+main =
+    println
+        ("I AM THE PROJECT MAIN "
+            ++ (if P1.Open == P1.Open then
+                   "ok"
+
+               else
+                   "no"))

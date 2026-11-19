@@ -1,0 +1,14 @@
+module Types exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Cards
+
+type alias CardView =
+    Cards.CardView
+
+type alias Model =
+    { card : CardView }
+
+type Msg
+    = Load
+    | Show CardView

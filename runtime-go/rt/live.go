@@ -171,6 +171,21 @@ type liveSession struct {
 	// and replicas (sqlite / postgres / redis / firestore).
 	identity      ConsoleIdentity
 	identityValid bool
+	// Sub.onBreakpoint / Sub.onQuery (sub_viewport.go). viewportWidths is the
+	// widths of the app's breakpoint leaf after the last subscriptions
+	// evaluation (nil: no leaf); viewportBucket / viewportSent the last
+	// breakpoint delivered, so a report in the same bucket dispatches
+	// nothing. lastQuery is the raw query last delivered to the query leaf.
+	// Sub.viewport: viewportWants says the app has the leaf (so the client
+	// reports widths); viewportWidth / viewportWidthSent the width last
+	// delivered. All are read and written under mu.
+	viewportWidths    []int
+	viewportBucket    int
+	viewportSent      bool
+	viewportWants     bool
+	viewportWidth     int
+	viewportWidthSent bool
+	lastQuery         string
 	// userID / boundAt — PULL-model revocation binding (auth_revocation.go).
 	// The APPLICATION user this session is authenticated as, set once at auth
 	// time by Live.bindSessionUser (session apps) or auto-stamped from a
@@ -1512,6 +1527,13 @@ func collectLiveRoutes(cfg any) ([]liveRoute, []apiRoute) {
 // serveAPI calls the Sky handler with a Request-like map and renders
 // the returned Response.
 func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter, r *http.Request) {
+	// The admission gate's Api class (admission_http.go): over the limit,
+	// 503 before the body is read; the slot is released when this returns.
+	ticket, admitted := admissionEnter(w, admissionApi, ar.pattern)
+	if !admitted {
+		return
+	}
+	defer ticket.release()
 	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, serverMaxBodyBytes))
 	// Build the SAME canonical SkyRequest the Sky.Http.Server listener passes
 	// to handlers (rt.go), so every Server.* accessor works identically on the
@@ -1562,6 +1584,9 @@ func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter
 				}
 			}
 		}
+	}
+	if !admissionAdmit(w, ticket, skyReq, func() string { return app.liveAdmissionSession(r) }) {
+		return
 	}
 	// The handler is `Request -> Task Error Response`. Invoke via `SkyCall`
 	// (NOT `sky_call`): `SkyCall` maps the `SkyRequest` onto the handler's
@@ -1742,12 +1767,18 @@ func applyRouteWithParams(app *liveApp, model any, urlPath string) (any, any) {
 	for _, rt := range app.routes {
 		if params, ok := matchRoute(rt.path, urlPath); ok {
 			page := fillRoutePage(rt.page, params)
-			model := RecordUpdate(model, map[string]any{"Page": page})
+			model := writeRoutedPage(model, page)
 			return model, buildRouteParamsDict(rt.path, params)
 		}
 	}
-	if app.notFound != nil {
-		return RecordUpdate(model, map[string]any{"Page": app.notFound}),
+	// The page field belongs to the router only when the app has routes:
+	// then `page` is the routes' page type and the NotFound page has it. A
+	// route-less app owns no page type, so its model's `page` field (if any)
+	// is the user's own field, of any type, and the runtime never writes it
+	// (v0.30.0). An unknown path on such an app still answers 404
+	// (matchAnyRoute), with the app's own view.
+	if app.notFound != nil && len(app.routes) > 0 {
+		return writeRoutedPage(model, app.notFound),
 			buildRouteParamsDict("", nil)
 	}
 	return model, buildRouteParamsDict("", nil)
@@ -1829,6 +1860,31 @@ func dispatchOnNavigate(app *liveApp, model any) (any, any) {
 	// site at line ~4322 — sky_call(sky_call(...)) panics here
 	// because the typed-codegen path packs both params into a
 	// single reflect.Call.
+	res := sky_call2(app.update, msg, model)
+	return tupleFirst(res), tupleSecond(res)
+}
+
+// dispatchQuery delivers a page request's query string to the app's
+// Sub.onQuery leaf (sub_viewport.go): on the session's first page when the
+// query is not empty, and on every page request whose query differs from the
+// last one delivered. The query is client data: it is only parsed, never
+// interpreted. Runs under sess.mu, like dispatchOnNavigate.
+func dispatchQuery(app *liveApp, sess *liveSession, model any, rawQuery string) (any, any) {
+	if app.subscriptions == nil || app.update == nil || sess == nil {
+		return model, nil
+	}
+	if rawQuery == sess.lastQuery {
+		return model, nil
+	}
+	toMsg := queryToMsg(sky_call(app.subscriptions, model))
+	if toMsg == nil {
+		return model, nil
+	}
+	sess.lastQuery = rawQuery
+	msg := sky_call(toMsg, queryDict(rawQuery))
+	if msg == nil {
+		return model, nil
+	}
 	res := sky_call2(app.update, msg, model)
 	return tupleFirst(res), tupleSecond(res)
 }
@@ -2581,6 +2637,17 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 				cmd = Cmd_batch([]any{cmd, navCmd})
 			}
 		}
+		// Sub.onQuery (sub_viewport.go): every page request carries the
+		// query, so it reaches update in the same step as the route, and
+		// the page this request renders already shows it.
+		model, queryCmd := dispatchQuery(app, sess, model, r.URL.RawQuery)
+		if queryCmd != nil {
+			if cmd == nil {
+				cmd = queryCmd
+			} else {
+				cmd = Cmd_batch([]any{cmd, queryCmd})
+			}
+		}
 		return model
 	}
 	// Hold sess.mu across the model mutation + Cmd/subscription spawn +
@@ -2662,6 +2729,8 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	initialView := sess.viewID
 	initialSeq := sess.nextLocalSeq()
 	initialScrolls := sess.takeDispatchScrolls()
+	pageWidths := sess.viewportWidths
+	pageWantsWidth := sess.viewportWants
 	app.persistSession(sess)
 	sess.mu.Unlock()
 	if mirror {
@@ -2671,6 +2740,12 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// from the header, a full page load from the inline script below.
 	w.Header().Set("X-Sky-View", initialView)
 	w.Header().Set("X-Sky-Seq", strconv.FormatInt(initialSeq, 10))
+	if len(pageWidths) > 0 {
+		w.Header().Set("X-Sky-Breakpoints", breakpointsHeader(pageWidths))
+	}
+	if pageWantsWidth {
+		w.Header().Set("X-Sky-Viewport", "1")
+	}
 
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2745,7 +2820,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	if !routed && app.notFound != nil {
 		w.WriteHeader(http.StatusNotFound)
 	}
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s%s</head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", liveBaseStyleTag, baseMeta, headExtra, body, livePageScriptsWithScrolls(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken, initialScrolls), devBanner)
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s%s</head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", liveBaseStyleTag, baseMeta, headExtra, body, livePageScriptsWithViewport(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken, initialScrolls, pageWidths, pageWantsWidth), devBanner)
 }
 
 // renderAppHead invokes the optional `head : Model -> List (Html
@@ -3083,6 +3158,56 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		}
 		msg, ok = sky_call(toMsg, fragmentOf(frag)), true
 	}
+	// Sub.onBreakpoint / Sub.viewport (sub_viewport.go): the browser reports
+	// its width when it crosses one of the widths it was given, and after a
+	// resize settles when the app wants the width. The server takes the width
+	// only (the client is untrusted, viewportWidthOf clamps it), computes the
+	// breakpoint from the app's own leaf, and dispatches only a changed
+	// breakpoint and a changed width. Both changed: the breakpoint Msg runs
+	// first (preMsg), then the width Msg.
+	var preMsg any
+	if req.Msg == "__skyViewport" && req.HandlerID == "" {
+		var reported float64
+		if len(req.Args) > 0 {
+			_ = json.Unmarshal(req.Args[0], &reported)
+		}
+		width := viewportWidthOf(reported)
+		var bpToMsg, vpToMsg any
+		var widths []int
+		if app.subscriptions != nil {
+			subs := sky_call(app.subscriptions, sess.model)
+			bpToMsg, widths, _ = breakpointLeaf(subs)
+			vpToMsg = viewportToMsg(subs)
+		}
+		sess.viewportWidths = widths
+		sess.viewportWants = vpToMsg != nil
+		var bpMsg, vpMsg any
+		bucket := breakpointOf(width, widths)
+		if bpToMsg != nil && !(sess.viewportSent && sess.viewportBucket == bucket) {
+			sess.viewportSent, sess.viewportBucket = true, bucket
+			bpMsg = sky_call(bpToMsg, bucket)
+		}
+		if vpToMsg != nil && !(sess.viewportWidthSent && sess.viewportWidth == width) {
+			sess.viewportWidthSent, sess.viewportWidth = true, width
+			vpMsg = sky_call(vpToMsg, width)
+		}
+		switch {
+		case bpMsg == nil && vpMsg == nil:
+			sess.mu.Unlock()
+			w.Header().Set("X-Sky-Live", "1")
+			w.Header().Set("X-Sky-Breakpoints", breakpointsHeader(widths))
+			w.Header().Set("X-Sky-Viewport", viewportFlag(vpToMsg != nil))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		case bpMsg != nil && vpMsg != nil:
+			preMsg = bpMsg
+			msg, ok = vpMsg, true
+		case bpMsg != nil:
+			msg, ok = bpMsg, true
+		default:
+			msg, ok = vpMsg, true
+		}
+	}
 	if !ok && req.Msg != "" && req.HandlerID == "" {
 		// Direct-send path: the frontend called __sky_send("MsgName", args)
 		// without a handler ID (e.g. Firebase auth callback, subscription
@@ -3175,7 +3300,22 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// Keep a reference to the previous tree BEFORE dispatch mutates it.
 	prev := sess.prevTree
 	baseView := sess.viewID
-	body2 := app.dispatch(sess, msg)
+	var body2 string
+	if preMsg != nil {
+		// One viewport report changed both the breakpoint and the width:
+		// run both Msgs, keep the scrolls of both, and answer with the
+		// view after both (the second dispatch returns "" when its view
+		// equals the first's, which still differs from the client's).
+		body1 := app.dispatch(sess, preMsg)
+		scrolls1 := sess.dispatchScrolls
+		body2 = app.dispatch(sess, msg)
+		sess.dispatchScrolls = append(scrolls1, sess.dispatchScrolls...)
+		if body2 == "" {
+			body2 = body1
+		}
+	} else {
+		body2 = app.dispatch(sess, msg)
+	}
 	newTree := sess.prevTree
 	newView := sess.viewID
 	dispatchErr := sess.takeDispatchError()
@@ -3198,6 +3338,14 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	respSeq := sess.nextLocalSeq()
 	respAck := ackInputsForPrevTree(sess)
 	respScrolls := sess.takeDispatchScrolls()
+	// The breakpoint widths after this update, so a client learns a
+	// Sub.onBreakpoint leaf that appeared (or changed) with this event.
+	if len(sess.viewportWidths) > 0 {
+		w.Header().Set("X-Sky-Breakpoints", breakpointsHeader(sess.viewportWidths))
+	}
+	if sess.viewportWants {
+		w.Header().Set("X-Sky-Viewport", "1")
+	}
 	sess.mu.Unlock()
 	// PULL-model revocation: the dispatch gate evicted this session (revoked /
 	// disabled user). Reply session-lost so the browser clears + re-inits, and
@@ -4328,6 +4476,8 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	sess.rotateCancelSub()
 
 	if app.subscriptions == nil {
+		sess.viewportWidths = nil
+		sess.viewportWants = false
 		// No subscriptions at all → tear down anything that was
 		// previously active (e.g. user returned Sub.subscribeTopic
 		// last dispatch, returns Sub.none / no subscriptions fn now).
@@ -4338,6 +4488,8 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	}
 	subResult := sky_call(app.subscriptions, sess.model)
 	leaves := flattenSubs(subResult, nil)
+	_, sess.viewportWidths, _ = breakpointLeaf(subResult)
+	sess.viewportWants = viewportToMsg(subResult) != nil
 
 	// Partition leaves by kind: every Sub.every (SA-4 — all of them, not
 	// only the first), any number of Sub.subscribeTopic entries, any

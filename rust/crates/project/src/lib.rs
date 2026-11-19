@@ -27,6 +27,7 @@ pub mod config_migrate;
 /// target in `runtime-go/rt/sky_config.go` — a new builder cannot ship without
 /// its migration entry.
 pub mod config_migration;
+pub mod coverage;
 /// `sky doc --diagram components` — a read-only architecture/component diagram
 /// of a Sky app (module nodes + capability buckets + edges, with the Sky.Spa
 /// client/server split). Reads the resolved HIR; never lowers, emits, or writes.
@@ -89,14 +90,15 @@ pub fn migration_see(anchor: &str) -> String {
     format!("see {MIGRATION_GUIDE}#{anchor}")
 }
 pub use build::{
-    build_example, build_project, build_project_scoped, bundled_source_texts, configured_bin_name,
-    configured_source_root, db_driver_conflict, driver_for_dsn, emit_example_source,
-    emit_example_warnings, enumerate_dependency_files, enumerate_skydep_files, ffi_trust,
-    ffi_type_surface, front_half_errors, front_half_loaded, go_diagnostics,
-    is_spa_generated_project, load_ffi_surface, migration_hint_for, offline_db_plan, parse_errors,
-    parse_go_build_timeout, sky_toml_flag, sky_toml_project_key, sky_toml_section_key, AppScope,
-    BuildOptions, BuildReport, LoadedProgram, OfflineDbPlan, DEFAULT_GO_BUILD_TIMEOUT,
-    EMBEDDED_BUNDLE_FILENAME, ENV_GO_BUILD_TIMEOUT, SPA_GENERATED_KERNEL_PREFIX,
+    build_example, build_project, build_project_coverage, build_project_instrumented,
+    build_project_scoped, bundled_source_texts, configured_bin_name, configured_source_root,
+    db_driver_conflict, driver_for_dsn, emit_example_source, emit_example_warnings,
+    enumerate_dependency_files, enumerate_skydep_files, ffi_trust, ffi_type_surface,
+    front_half_errors, front_half_loaded, go_diagnostics, is_spa_generated_project,
+    load_ffi_surface, migration_hint_for, offline_db_plan, parse_errors, parse_go_build_timeout,
+    sky_toml_flag, sky_toml_project_key, sky_toml_section_key, AppScope, BuildOptions, BuildReport,
+    LoadedProgram, OfflineDbPlan, DEFAULT_GO_BUILD_TIMEOUT, EMBEDDED_BUNDLE_FILENAME,
+    ENV_GO_BUILD_TIMEOUT, SPA_GENERATED_KERNEL_PREFIX,
 };
 /// The structured diagnostic types a [`BuildReport`] carries, re-exported so
 /// the CLI and `testrunner` read them without a second dependency edge.

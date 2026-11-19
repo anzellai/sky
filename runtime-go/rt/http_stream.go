@@ -54,6 +54,7 @@
 package rt
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -133,7 +134,10 @@ type streamEvent struct {
 type streamHandle struct {
 	id   int64
 	body io.ReadCloser
-	ch   chan streamEvent
+	// cancel ends the request's context (HttpStream_open); Close calls it.
+	// nil for a handle built without a request (tests).
+	cancel context.CancelFunc
+	ch     chan streamEvent
 
 	// closed — set true the first time Close fires (idempotent via
 	// closeOnce). Read by the spool goroutine on a non-blocking-send
@@ -302,6 +306,9 @@ func (sh *streamHandle) Close() {
 		sh.closed.Store(true)
 		if sh.body != nil {
 			_ = sh.body.Close()
+		}
+		if sh.cancel != nil {
+			sh.cancel()
 		}
 		close(sh.done)
 	})
@@ -529,25 +536,52 @@ func HttpStream_open(reqArg any) any {
 	url := fmt.Sprintf("%v", recordField(reqArg, "Url", "url"))
 	body := fmt.Sprintf("%v", recordField(reqArg, "Body", "body"))
 	headers := recordField(reqArg, "Headers", "headers")
+	minRemainingMs := 0 // Http.withMinRemaining
+	if m := recordField(reqArg, "MinRemaining", "minRemaining"); m != nil {
+		minRemainingMs = AsInt(m)
+	}
 
 	return func() any {
+		// A Task.timeout deadline refuses the open before it is sent, as
+		// Http.request does (task_deadline_outbound.go).
+		if r := httpDeadlineRefusal("Http.Stream.open", minRemainingMs); r != nil {
+			return r
+		}
 		var bodyReader io.Reader
 		if body != "" {
 			bodyReader = strings.NewReader(body)
 		}
-		req, err := http.NewRequest(method, url, bodyReader)
+		// The request carries the calling goroutine's trace context (spans
+		// nest under the originating session) WITHOUT its cancellation: the
+		// stream outlives the Task that opened it. Before v0.30.0 it was
+		// sent with the trace context itself, so a stream opened inside a
+		// Task.timeout was cut the moment the open returned. The deadline
+		// bounds only the open (the wait for the response headers); each
+		// read stops at its reader's deadline (forEachChunk). Close cancels
+		// the request.
+		ctx, cancel := context.WithCancel(context.WithoutCancel(CurrentTraceContext()))
+		req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 		if err != nil {
+			cancel()
 			return Err[any, any](ErrNetwork("http.stream.open: " + redactURLError(err, url)))
 		}
 		applyHttpHeaders(req, headers)
-		// Carry the request's trace context onto the downstream call
-		// so spans nest correctly under the originating session.
-		req = req.WithContext(CurrentTraceContext())
 		InjectTraceHeaders(req)
 
+		disarm := skyCancelAtDeadline(cancel)
 		resp, err := streamHTTPClient().Do(req)
+		disarm()
 		if err != nil {
+			cancel()
+			if r := httpDeadlinePassed("Http.Stream.open"); r != nil {
+				return r
+			}
 			return Err[any, any](ErrNetwork("http.stream.open do: " + redactURLError(err, url)))
+		}
+		if ctx.Err() != nil {
+			// The deadline fired as the headers arrived: the body is gone.
+			resp.Body.Close()
+			return Err[any, any](deadlineExceededError("Http.Stream.open", -1))
 		}
 		// HTTP error statuses (4xx/5xx) still surface as a stream —
 		// the body might carry the error JSON the user wants to
@@ -557,10 +591,11 @@ func HttpStream_open(reqArg any) any {
 		// (Equivalent to Http.get returning Ok with Status=4xx.)
 
 		sh := &streamHandle{
-			id:   nextStreamID(),
-			body: resp.Body,
-			ch:   make(chan streamEvent, streamChanBuffer),
-			done: make(chan struct{}),
+			id:     nextStreamID(),
+			body:   resp.Body,
+			cancel: cancel,
+			ch:     make(chan streamEvent, streamChanBuffer),
+			done:   make(chan struct{}),
 		}
 
 		sess := currentLiveSession()
@@ -621,8 +656,17 @@ func HttpStream_forEachChunk(sidArg any, bodyArg any) any {
 			// state-restore path), still scrub the global map.
 			sessionlessStreams.Delete(id)
 		}()
+		// The reader's Task.timeout deadline stops the drain; the deferred
+		// Close then releases the connection.
+		if r := skyDeadlineRefusal("Http.Stream.forEachChunk"); r != nil {
+			return r
+		}
+		expired, stop := skyDeadlineTimer()
+		defer stop()
 		for {
 			select {
+			case <-expired:
+				return Err[any, any](deadlineExceededError("Http.Stream.forEachChunk", -1))
 			case ev, open := <-sh.ch:
 				if !open {
 					// Channel closed without a Done/Errored sentinel —

@@ -78,3 +78,40 @@ fn an_unresolved_type_reference_is_reported_not_the_type_error_it_causes() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// An UNQUALIFIED type name that no module declares, inside a record alias
+/// (v0.30.0). The resolver accepts a bare type it cannot bind (a kernel-backed
+/// type such as `Dict` has no `.sky` declaration), and the checker used to treat
+/// it as an opaque nominal: `sky check` reported `type mismatch: CardView vs
+/// record` at the use sites and never the undefined name.
+#[test]
+fn an_undefined_bare_type_in_a_record_alias_is_reported_at_the_name() {
+    let dir = scratch();
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Std.Log exposing (println)\n\n\ntype alias R =\n    { card : CardView }\n\n\nx : R\nx =\n    { card = { title = \"a\" } }\n\n\nmain =\n    println x.card.title\n",
+    )
+    .unwrap();
+    let out = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky check");
+    let mut log = String::from_utf8_lossy(&out.stdout).into_owned();
+    log.push_str(&String::from_utf8_lossy(&out.stderr));
+    assert!(!out.status.success(), "must be rejected:\n{log}");
+    assert!(
+        log.contains("[E1001]") && log.contains("Undefined name: CardView"),
+        "the undefined type name is the reported cause:\n{log}"
+    );
+    assert!(
+        log.contains("src/Main.sky:8:"),
+        "reported at the record alias field:\n{log}"
+    );
+    assert!(
+        !log.contains("[E2001]"),
+        "the consequential type error must not be shown:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

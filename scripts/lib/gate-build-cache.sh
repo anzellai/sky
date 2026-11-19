@@ -196,7 +196,9 @@ _gc_toolchain() {
 # compiler source starts reading it.
 _gc_env() {
     local name val h
-    for name in $(env | sed -n 's/^\(\(SKY\|CGO\)_[A-Za-z0-9_]*\)=.*/\1/p' | LC_ALL=C sort -u); do
+    # `sed -E`: BSD sed (macOS) has no `\|` in a basic regex, so the
+    # basic-regex form matched nothing there and the section was empty.
+    for name in $(env | sed -n -E 's/^((SKY|CGO)_[A-Za-z0-9_]*)=.*/\1/p' | LC_ALL=C sort -u); do
         case "$name" in SKY_GATE_CACHE* | SKY_RUNTIME_DIR | SKY_WITH_TIMEOUT_* | _SKY_*) continue ;; esac
         eval "val=\${$name-}"
         h="$(_gc_checked "$(printf '%s' "$val" | _gc_sha256)")" || return 1

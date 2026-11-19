@@ -29,6 +29,8 @@ module Sky.Core.Task exposing
     , Step(..)
     , loop
     , forever
+    , timeout
+    , remaining
     , ShouldRetry(..)
     , RetryPolicy
     , linearBackoff
@@ -50,6 +52,7 @@ module Sky.Core.Task exposing
     )
 
 import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
 
 
 -- ─── Constructors ──────────────────────────────────────────────────
@@ -217,6 +220,64 @@ loop =
 forever : Task e a -> Task e b
 forever =
     Ffi.kernel "Task_forever"
+
+
+-- ─── Deadlines (v0.30.0) ──────────────────────────────────────────
+-- | `timeout ms task` — run `task` with a deadline `ms` milliseconds away.
+-- When the task has not finished by then, the result is a `Timeout`-kind
+-- error whose domain failure is `"task"` / `"DeadlineExceeded"` (retryable,
+-- attribute `timeoutMs`). A result that arrives in time, `Ok` or `Err`, is
+-- returned unchanged.
+--
+-- The deadline travels with the work. A task started inside it
+-- (`parallel`, `parallelN`, `spawn`, a nested `timeout`) sees the EARLIEST
+-- deadline in force, so an inner `timeout 5000` inside an outer
+-- `timeout 1000` ends at the outer deadline. Every outbound network call
+-- stops at it and refuses to start once it has passed: `Http.get`, `post`
+-- and `request`, `Http.Stream.open`, `WebSocket.connect`, `Email.send`, the
+-- `Std.Ai` calls and `Std.Ai.Store` transfers (`Http.withMinRemaining` asks
+-- for more). A stream or a socket outlives the task that opened it; each
+-- read (`Http.Stream.forEachChunk`, `WebSocket.receive`, a `Std.Ai` stream
+-- read) stops at the deadline of the task that reads. `Sync.pop` and
+-- `Sync.popWithin` stop waiting at it, and `remaining` reads it.
+--
+-- A timed-out task is ABANDONED, not stopped: its result is discarded and
+-- a later panic in it is logged. An `Http` call or a `Sync` wait in it ends
+-- at the deadline, but an effect already running (a database query, a file
+-- write) finishes in the background. Do not use `timeout` to undo work: use
+-- it to stop waiting.
+--
+--     fetchQuote : Task Error HttpResponse
+--     fetchQuote =
+--         Http.get "https://quotes.example.test/today"
+--             |> Task.timeout 2000
+--
+-- In a Sky.Spa client each `timeout` has its own timer: a nested task does
+-- not see an outer deadline, and the timer fires only while the task waits
+-- (a fetch, a sleep).
+timeout : Int -> Task Error a -> Task Error a
+timeout =
+    Ffi.kernel "Task_timeout"
+
+
+-- | The milliseconds left before the current deadline (`Just 0` once it
+-- has passed), or `Nothing` when no `timeout` is in force. Use it to skip
+-- optional work near the deadline. Always `Nothing` in a Sky.Spa client.
+--
+--     enrich : Task Error ()
+--     enrich =
+--         Task.remaining
+--             |> Task.andThen
+--                 (\left ->
+--                     if Maybe.withDefault 1000000 left > 500 then
+--                         fetchExtras
+--
+--                     else
+--                         Task.succeed ()
+--                 )
+remaining : Task e (Maybe Int)
+remaining =
+    Ffi.kernel "Task_remaining"
 
 -- ─── Retry combinator (v0.15.44) ───────────────────────────────────
 -- | Predicate ADT for `RetryPolicy.shouldRetry`.  Encodes the two

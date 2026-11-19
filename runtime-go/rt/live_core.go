@@ -2574,6 +2574,9 @@ type subT struct {
 	// sourceKey identifies it for reconciliation across updates.
 	source    any
 	sourceKey string
+	// Viewport field (kind = "breakpoint"): the app's widths, positive,
+	// sorted, without repeats (sub_viewport.go).
+	breakpoints []int
 }
 
 // SkySub is the public type for Sky's Sub msg type.

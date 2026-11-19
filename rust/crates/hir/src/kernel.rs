@@ -308,6 +308,8 @@ pub const PRELUDE_QUALIFIERS: &[(&str, &[&str])] = &[
             "onError",
             "loop",
             "forever",
+            "timeout",
+            "remaining",
         ],
     ),
 ];
@@ -535,6 +537,8 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "retryWith",
             "loop",
             "forever",
+            "timeout",
+            "remaining",
         ],
     ),
     (
@@ -826,6 +830,9 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "subscribeStream",
             "subscribeWebSocket",
             "onFragment",
+            "onBreakpoint",
+            "viewport",
+            "onQuery",
         ],
     ),
     (

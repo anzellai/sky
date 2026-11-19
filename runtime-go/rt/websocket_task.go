@@ -39,11 +39,21 @@
 
 package rt
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // wsTaskNext waits for the next frame on sh. hasLimit selects receiveWithin
-// semantics (limit <= 0 polls).
+// semantics (limit <= 0 polls). The calling goroutine's Task.timeout deadline
+// also ends the wait (wsTaskDeadline), consuming no frame and leaving the
+// socket open, as Sync.pop does; once it has passed no frame is taken.
 func wsTaskNext(sh *wsHandle, hasLimit bool, limit time.Duration) (wsTaskOutcome, any) {
+	if left, ok := skyRemaining(); ok && left <= 0 {
+		return wsTaskDeadline, nil
+	}
+	deadline, stopDeadline := skyDeadlineTimer()
+	defer stopDeadline()
 	var expired <-chan time.Time
 	if hasLimit {
 		if limit <= 0 {
@@ -88,6 +98,8 @@ func wsTaskNext(sh *wsHandle, hasLimit bool, limit time.Duration) (wsTaskOutcome
 			}
 		case <-expired:
 			return wsTaskTimeout, nil
+		case <-deadline:
+			return wsTaskDeadline, nil
 		}
 	}
 }
@@ -109,6 +121,8 @@ func wsTaskReceive(id int64, hasLimit bool, limit time.Duration, op string) any 
 		return Err[any, any](v)
 	case wsTaskTimeout:
 		return Err[any, any](ErrTimeout())
+	case wsTaskDeadline:
+		return Err[any, any](deadlineExceededError("WebSocket."+strings.TrimPrefix(op, "websocket."), -1))
 	default:
 		return Ok[any, any](Nothing[any]())
 	}
@@ -174,6 +188,9 @@ func WebSocket_forEachMessage(sidArg any, body any) any {
 				}
 			case wsTaskFailed:
 				return Err[any, any](v)
+			case wsTaskDeadline:
+				// The deferred close releases the socket.
+				return Err[any, any](deadlineExceededError("WebSocket.forEachMessage", -1))
 			default:
 				return Ok[any, any](skyUnit())
 			}

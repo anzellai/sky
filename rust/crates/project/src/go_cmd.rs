@@ -126,6 +126,13 @@ pub fn goflags_readonly_from(existing: &str) -> String {
 /// would drop the user's own flags (`-N -l` for a debugger) for the runtime.
 pub const RT_BACKEND_GCFLAGS: &str = "-gcflags=sky-app/rt=-c=2";
 
+/// The flags of a coverage build (`sky test --coverage`, `coverage.rs`),
+/// passed in [`GoBuild::extra`]. `-coverpkg=sky-app` instruments the
+/// program's own package (`main.go`, module `sky-app`) and never the runtime
+/// (`sky-app/rt`), whose counters no Sky report reads. Go writes the counters
+/// to `GOCOVERDIR` when the binary exits, `os.Exit` included.
+pub const COVER_FLAGS: [&str; 2] = ["-cover", "-coverpkg=sky-app"];
+
 /// Whether [`RT_BACKEND_GCFLAGS`] goes on a build run with this `GOFLAGS`.
 pub fn rt_backend_cap_for(goflags: &str) -> bool {
     !goflags
@@ -286,6 +293,31 @@ mod tests {
     /// The cache warm-up compiles packages without linking: no `-o`, no
     /// `-ldflags`, but the same `-trimpath` and `GOFLAGS` as a project build,
     /// so its objects are the project's cache hits.
+    #[test]
+    fn a_coverage_build_instruments_the_program_package_only() {
+        let b = GoBuild {
+            dir: Path::new("/x"),
+            target: Target::Native { cgo: false },
+            jobs: None,
+            output: Some(OsStr::new("app")),
+            packages: &["."],
+            extra: &COVER_FLAGS,
+        };
+        assert_eq!(
+            strs(&b.args(true)),
+            [
+                "build",
+                "-trimpath",
+                RT_BACKEND_GCFLAGS,
+                "-cover",
+                "-coverpkg=sky-app",
+                "-o",
+                "app",
+                "."
+            ]
+        );
+    }
+
     #[test]
     fn a_package_build_has_the_project_flags_without_an_output() {
         for target in [Target::Native { cgo: false }, Target::Wasm] {

@@ -1,0 +1,56 @@
+-- gate: reject
+-- defect: a raw `Spa.withOnNavigate` function takes a page of another type than the model's `page` field
+-- rust: reject [E2001] at Spa.withOnNavigate, naming the model's `page` field
+--
+-- Found 2026-11-19 (v0.30.0). `AppConfig model msg` has no page type, so
+-- the `withOnNavigate` page was not tied. The wasm client gave the `Route`
+-- in `page` to a function of `{ count : Int }`.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Spa as Spa
+import Std.Html as Html exposing (Html)
+
+type Route
+    = Dashboard
+    | Missing
+    | Detail String
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Go Int
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Detail "abc", title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Go n ->
+            ( { model | title = String.fromInt (n + 1) }, Cmd.none )
+
+
+view : Model -> Html Msg
+view m =
+    Html.text m.title
+
+
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> Spa.withRoutes [ Spa.route "/" Dashboard ]
+            |> Spa.withNotFound Missing
+            |> Spa.withOnNavigate (\r -> Go r.count))

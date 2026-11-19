@@ -7,6 +7,7 @@
 //! §6) — not a pervasive surface. Server/TUI/Webview runtime backends are out of
 //! the M4 CLI-family scope; see the milestone report.
 
+pub mod coverage;
 pub mod goty;
 pub mod ir;
 pub mod kernel;

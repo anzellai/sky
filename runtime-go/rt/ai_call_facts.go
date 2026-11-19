@@ -273,6 +273,9 @@ func Ai_endpointPostMeasured(cfgArg, tokenArg, pathArg, bodyArg any) any {
 	b := parseAiEndpointBuilder(cfgArg)
 	token, path, body := AsString(tokenArg), AsString(pathArg), AsString(bodyArg)
 	return func() any {
+		if r := skyDeadlineRefusal("Ai.call"); r != nil {
+			return r
+		}
 		s, err := aiSlotFor(b)
 		if err != nil {
 			return aiTaskErr(err)
@@ -281,7 +284,7 @@ func Ai_endpointPostMeasured(cfgArg, tokenArg, pathArg, bodyArg any) any {
 		aiPutCallFacts(token, f)
 		out, err := s.callWith(path, body, f)
 		if err != nil {
-			return aiTaskErr(err)
+			return aiDeadlineTaskErr("Ai.call", err)
 		}
 		return Ok[any, any](out)
 	}
@@ -294,6 +297,9 @@ func Ai_endpointStreamOpenMeasured(cfgArg, tokenArg, pathArg, bodyArg any) any {
 	b := parseAiEndpointBuilder(cfgArg)
 	token, path, body := AsString(tokenArg), AsString(pathArg), AsString(bodyArg)
 	return func() any {
+		if r := skyDeadlineRefusal("Ai.stream"); r != nil {
+			return r
+		}
 		s, err := aiSlotFor(b)
 		if err != nil {
 			return aiTaskErr(err)
@@ -302,7 +308,7 @@ func Ai_endpointStreamOpenMeasured(cfgArg, tokenArg, pathArg, bodyArg any) any {
 		aiPutCallFacts(token, f)
 		id, err := s.openStreamWith(path, body, f)
 		if err != nil {
-			return aiTaskErr(err)
+			return aiDeadlineTaskErr("Ai.stream", err)
 		}
 		return Ok[any, any](id)
 	}

@@ -1,0 +1,20 @@
+-- gate: reject
+-- defect: a record alias field names a type that no module declares
+-- rust: reject [E1001] undefined type name, reported at the name
+--
+-- Found 2026-11-17 (v0.30.0). An unqualified type name that is not in scope
+-- resolved leniently to an opaque nominal, so `{ card : CardView }` with no
+-- `CardView` anywhere was accepted. An unused alias compiled; a used one
+-- reported `type mismatch: CardView vs record` at the use site, never the
+-- undefined name.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type alias R =
+    { card : CardView }
+
+
+main =
+    println "x"

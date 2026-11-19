@@ -210,8 +210,18 @@ impl SendState {
         let (Some(mut pipe), Some(what)) = (self.pipe.take(), self.pending.take()) else {
             return Ok(());
         };
-        pipe.write_all(line(&what).as_bytes())?;
-        pipe.flush()
+        let wrote = pipe
+            .write_all(line(&what).as_bytes())
+            .and_then(|()| pipe.flush());
+        match wrote {
+            // The backend child has exited, so the read end is closed: the
+            // backend leg FAILED, and its own output (which the build
+            // reports) says why. A broken pipe here is that failure seen
+            // from this side, not a second one, and printing it hid the real
+            // error under `Broken pipe` (v0.30.0).
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+            other => other,
+        }
     }
 }
 
@@ -221,7 +231,8 @@ impl Sender {
     }
 
     /// The backend child's stdin. A delivery already made is written now.
-    /// An error means the child has already exited; its own output says why.
+    /// A child that has already exited is not an error here (see `flush`):
+    /// its own output says why it stopped.
     pub fn attach(&self, pipe: impl Write + Send + 'static) -> std::io::Result<()> {
         let Ok(mut s) = self.state.lock() else {
             return Ok(());
@@ -355,6 +366,30 @@ mod tests {
             wait(&a, Duration::from_secs(10)).unwrap(),
             Delivered::Name("main.cd.wasm".into())
         );
+    }
+
+    /// F3 (v0.30.0): the backend leg failed and exited before the frontend
+    /// leg delivered, so its stdin's read end is closed. Writing the delivery
+    /// then fails with a broken pipe. That is not a separate failure: the
+    /// backend's own output says why it stopped, and the build reports it.
+    /// The parent printed `could not hand the frontend's wasm name to the
+    /// backend leg: Broken pipe` above the real error, which hid it.
+    #[test]
+    fn a_backend_that_has_exited_is_not_a_handoff_error() {
+        // Delivered after the pipe is attached.
+        let (r, w) = std::io::pipe().unwrap();
+        drop(r);
+        let tx = Sender::new();
+        tx.attach(w).unwrap();
+        tx.deliver(Delivered::Name("main.ab.wasm".into()))
+            .expect("a closed reader is the backend's failure, not a handoff error");
+        // Delivered before the pipe is attached (written by `attach`).
+        let (r, w) = std::io::pipe().unwrap();
+        drop(r);
+        let tx = Sender::new();
+        tx.deliver(Delivered::Failed).unwrap();
+        tx.attach(w)
+            .expect("a closed reader is the backend's failure, not a handoff error");
     }
 
     /// N2: the time limit counts from the backend leg's start, not from the

@@ -1,0 +1,5 @@
+[project]
+name = "spa-route-module"
+
+[app]
+target = "web:app"

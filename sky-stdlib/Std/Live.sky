@@ -34,6 +34,7 @@ module Std.Live exposing
     , stop
     , config
     , route
+    , routeParam
     , api
     , lifecycle
     , withHead
@@ -81,7 +82,11 @@ type AppConfig model msg
 -- `Std.Spa` / `Sky.Http.Server` `Route` declarations. Without this an annotated
 -- converter `Local.Route -> Live.Route` mis-narrowed the kernel handle to the
 -- local nominal and panicked at runtime while `sky check` passed.
-type Route
+--
+-- `page` is the type of the page the route gives (v0.30.0). The runtime
+-- writes that page into the model's `page` field, so [`config`] ties it to
+-- the field: a page of another type is a compile error.
+type Route page
     = Route_OPAQUE
 
 -- | A Sky.Live app started with [`serve`]: pass it to [`address`] and
@@ -107,7 +112,7 @@ config :
     , update : msg -> model -> ( model, Cmd msg )
     , view : model -> Html msg
     , subscriptions : model -> Sub msg
-    , routes : List Route
+    , routes : List (Route page)
     , notFound : page
     }
     -> AppConfig model msg
@@ -153,15 +158,23 @@ stop =
 
 
 -- | `route path page` — register a page route. Put literals before
--- `:param` patterns (declaration order matters).
-route : String -> page -> Route
+-- `:param` patterns (declaration order matters). For a `:param` pattern,
+-- use [`routeParam`].
+route : String -> page -> Route page
 route =
+    Ffi.kernel "Live_route"
+
+
+-- | `routeParam path make` — register a `:param` page route. The runtime
+-- passes the captured segment to `make` (`Detail : String -> Page`).
+routeParam : String -> (String -> page) -> Route page
+routeParam =
     Ffi.kernel "Live_route"
 
 
 -- | `api path handler` — register a raw JSON/HTTP endpoint alongside the
 -- page routes; the handler returns a `Response`.
-api : String -> (Request -> Task Error Response) -> Route
+api : String -> (Request -> Task Error Response) -> Route page
 api =
     Ffi.kernel "Live_api"
 

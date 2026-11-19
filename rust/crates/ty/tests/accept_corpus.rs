@@ -13,8 +13,11 @@ use ty::reject_corpus::{evaluate_modules, load_stdlib};
 
 /// Files in `tests/accept/`. **1 since v0.27.0 judge round 2**
 /// (`ffi_result_handled.sky`, the accept side of
-/// `ffi_result_used_as_payload.sky`).
-const EXPECTED_ACCEPT_FILES: usize = 1;
+/// `ffi_result_used_as_payload.sky`). **2 since v0.30.0**
+/// (`routed_page_type.sky`, the routed page type rule). **3 since v0.30.0**
+/// (`routed_page_on_navigate.sky`, the `withOnNavigate` page rule). **4 since
+/// v0.30.0** (`routed_page_unused_carrier.sky`, the tie per served app).
+const EXPECTED_ACCEPT_FILES: usize = 4;
 
 fn root() -> PathBuf {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

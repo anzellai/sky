@@ -1499,11 +1499,11 @@ never copied.
 
 **`Shared` brings the types its copied records name.** A wire record copied
 into `Shared` can name a type of another module (`at : Shape.Point`). The
-references are read from `type_occs` inside the copied declarations: a pure
-module is imported under the alias the record uses (`import Shape as S
-exposing (..)`); a type of a server module is copied into `Shared` too, and
-each qualified reference to it is rewritten to the bare name; a stdlib type
-keeps its module's import line.
+references are read from `type_occs` inside the copied declarations; a stdlib
+type keeps its module's import line. (Until v0.30.0 a pure module was
+imported `exposing (..)` under the record's alias and a type of a server
+module was copied into `Shared`. §29 replaces both: the module is imported
+under a generated alias and the reference is qualified.)
 
 **A result Msg with captured arguments crosses whole.** `Cmd.perform task (Got
 url)` is not a client-result RPC (§19), whose answer is the task result alone:
@@ -1587,9 +1587,9 @@ a wire" rule was decided on the wrong type. Now:
 projects carry the dependency, so `Shared` imports its module under a
 generated alias (`import Geo.Shape as SpaTy_Geo_Shape_`), names the type
 `SpaTy_Geo_Shape_.Point`, and derives its codec (`autoGeo_Shape_PointCodec_`).
-Two different project records with the same bare name on the wire are refused
-with a message naming both (the generated module names a project type by its
-bare name).
+Two different project records with the same bare name on the wire were
+refused until v0.30.0 (the generated module named a project type by its bare
+name); since §29 each is named by its module and gets its own codec.
 
 **An error in derived code names the user's construct.** The app's own source
 type-checks before the split runs, so a type or name error reported from the
@@ -1982,3 +1982,74 @@ module or another alias already takes the name. Test:
 `project/tests/spa_split_reserved_aliases.rs` (project modules `Server`,
 `Codec` and `Error`, `import Sky.Core.Task as T`, `import Sky.Http.Server as
 Http`, a sibling codec written with `C.`; both generated halves type-check).
+
+## 29. `Shared` names every user type by its module (v0.30.0)
+
+Three multi-module shapes passed `sky check` and failed in the split. Each
+came from `Shared` taking a user type into its own scope, by a copy or by an
+`exposing (..)` import:
+
+- **An alias chain through a server module.** `View.CardView = Store.CardView`,
+  both modules with a server function. `Shared` copied `Store`'s record, and
+  `Store`'s client copy dropped its declaration and imported it from `Shared`.
+  `exposing (..)` does not re-export, so `View.CardView` named a missing type
+  (`[E2001] type mismatch: record vs CardView`). With both modules copied, the
+  bare rewrite made `type alias CardView = CardView` (`[E1016]`).
+- **Two modules that export one name.** `Shared` imported each wire module
+  `exposing (..)` and the generated blanks wrote constructors bare, so
+  `P1.Matched` and `P2.Matched` made `Matched` ambiguous (`[E1012]`). Two
+  records named `Refusal` were refused (§24).
+- **A cycle through `Shared`.** A pure `Wire` names `Tags.Tag`, and `Tags` has a
+  server function. `Shared` copied `Tag`, `Tags`' client copy imported it from
+  `Shared`, and `Shared` imported `Wire`: `Wire -> Tags -> Shared -> Wire`
+  (`[E1010]`). The same held through a chain of pure modules.
+
+**The rule.** `Shared` copies the declarations of a module only when it cannot
+import it: the entry, and every module whose import closure (as the user wrote
+it) reaches a module R whose generated copy imports `Shared`. R holds the
+module of `update` and of the `Msg` union (the regenerated `update` and the
+`Applied<Msg>` variants name the wire records), the module of an `init` whose
+command became an RPC, a server module whose client copy strips a copied
+declaration, and a module that names a union `Shared` owns (GAP-A). R grows
+with the copy set, so the two are computed to a fixpoint. A module that does
+not export a wire type or codec `Shared` must name is copied too. Every other
+module that declares a wire type or a referenced codec is imported once,
+qualified only, under a generated alias (`import Store as SpaTy_Store_`), as a
+dependency module already was (§24). A server module is imported too: since
+§23 its client copy keeps its type declarations and pure codecs, and the
+backend has the whole module. No module copy loses its own types, so an alias
+chain resolves in the user's own scope.
+
+**Every generated reference is qualified.** `ProjectShapes::type_ref`,
+`ctor_ref` and each codec binding's reference name a type, constructor or
+codec of another module as `SpaTy_<Mod>_.<Name>`; an entry type stays bare
+(`Shared` declares it). The auto-derived codec names (`auto<N>Codec_`) are
+module-mangled when two declarations share a bare name
+(`autoP1_RefusalCodec_`). A copied declaration's type references and a copied
+codec's value references (read from `type_occs` and `ref_occs`) follow the
+same rule. Once the copy set is known, the qualifier of a copied module is
+removed, and every generated file gets one `import <Mod> as SpaTy_<Mod>_` for
+each alias it uses (`finish_type_refs`).
+
+**The cycle invariant is checked.** A module `Shared` names through its alias
+must not reach R; the split refuses such a module with the import path. After
+the trees are written, `check_shared_acyclic` refuses any import cycle through
+`Shared` in either generated tree and names it, so a shape the copy set missed
+is a split refusal, never a raw `[E1010]` from a generated file.
+
+The GAP-A shape (a `Msg` module that also declares wire records and unions)
+is unchanged: the `Msg` module is in R, so its wire declarations are copied
+into `Shared` and its unions moved there, as before.
+
+Tests: the fixtures `spa-alias-chain`, `spa-alias-chain-msg`,
+`spa-shared-ctor-clash`, `spa-shared-cycle` and `spa-shared-cycle-chain`
+(`Wire -> Extra -> Inner -> Tags`), driven by the `spa_split_flow.rs` tests
+`a_record_alias_chain_through_server_modules_crosses_the_split`,
+`a_record_alias_chain_through_the_msg_module_crosses_the_split`,
+`generated_shared_code_names_user_types_and_constructors_qualified` and
+`shared_imports_no_module_that_imports_shared`, each of which builds both
+legs and sends a server branch to the split backend;
+`a_copied_wire_record_brings_the_types_it_names` (rewritten for the qualified
+form); the `project` tests
+`two_wire_records_with_one_name_split_with_one_codec_each` and
+`one_module_under_several_aliases_splits_through_generated_aliases`.

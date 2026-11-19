@@ -1,0 +1,55 @@
+-- gate: reject
+-- defect: a raw Sky.Live route page is not of the model's `page` field type
+-- rust: reject [E2001] at Live.config, naming the model's `page` field
+--
+-- Found 2026-11-19 (v0.30.0). `Live.route` erased its page type, so a
+-- `String` page built for a model with `page : Route`, and Sky.Live wrote
+-- the `String` into `page` on every request.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Html as Html exposing (Html)
+import Std.Live as Live
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Inc
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( model, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Html.text model.title
+
+
+main =
+    Live.app
+        (Live.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            , routes = [ Live.route "/" "home" ]
+            , notFound = "missing"
+            })

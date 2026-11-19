@@ -1,0 +1,62 @@
+-- gate: reject
+-- defect: a generic routing helper hid the routed page type from its caller
+-- rust: reject [E2001] at the helper's use, naming the model's `page` field
+--
+-- Found 2026-11-19 (v0.30.0). `withPages` is generic in the model, so the
+-- tie between the route pages and the model's `page` field was dropped in
+-- its body. The caller's model holds `page : Route` and the routes give
+-- `String` pages: the runtime wrote a `String` into `page` on every request.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Inc
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text model.title
+
+
+withPages routes missing a =
+    a |> App.withRoutes routes |> App.withNotFound missing
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> withPages [ App.route "/" "home" ] "missing"
+
+
+main =
+    App.run app

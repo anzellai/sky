@@ -14,7 +14,7 @@ plans, audits, the retired compilers) is in [`history/`](history/).
 * [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md): current gotchas and
   workarounds.
 * [`migration/`](migration/): what changes between minors (`v0.27.md`,
-  `v0.28.md`, `v0.29.md`), as loud, loud at run time and silent.
+  `v0.28.md`, `v0.29.md`, `v0.30.md`), as loud, loud at run time and silent.
 * [`sky-toml.md`](sky-toml.md): every `sky.toml` key and environment variable.
 
 ## One entry point: `Std.App`
@@ -41,7 +41,7 @@ sequences, v0.29.0), `Dict`, `Set`, `String`, `Char`, `Tuple`, `Math`,
 `Http`, `Http.Stream` and `WebSocket`. Every collection function states its
 cost in a `Cost:` line in `sky doc`.
 
-**Apps and UI.** `Std.App`, `Std.Cmd`, `Std.Sub`, `Std.Nav`, `Std.Native`,
+**Apps and UI.** `Std.App`, `Std.Admission`, `Std.Cmd`, `Std.Sub`, `Std.Nav`, `Std.Native`,
 `Std.Bundle`; `Std.Ui` with `Std.Ui.Animation`, `Background`, `Border`,
 `Canvas`, `Chart`, `Events`, `Font`, `Grid`, `Input`, `Keyed`, `Lazy`,
 `Region`, `Responsive`, `Terminal`, `Transform` and `Transition`; `Std.Html`
@@ -67,7 +67,7 @@ images on the server, v0.29.0) and `Std.Qr`.
 `Std.Money`.
 
 **Effects and operations.** `Std.Durable`, `Std.Jobs`, `Std.PubSub`,
-`Std.Sync`, `Std.Watch`, `Std.Email`, `Std.Time`, `Std.System`, `Std.Config`,
+`Std.Sync`, `Std.Breaker` (a circuit breaker, v0.30.0), `Std.Watch`, `Std.Email`, `Std.Time`, `Std.System`, `Std.Config`,
 `Std.Log`, `Std.Trace` and `Std.Analytics`.
 
 **AI (`Std.Ai`).** Calling models: `Std.Ai.Provider`, `Std.Ai.Endpoint` (model
@@ -115,7 +115,8 @@ and `Std.Ai.Memory.Pg`. Training and evaluation: `Std.Ai.Dataset`,
 * [`tooling/cli.md`](tooling/cli.md): every `sky <command>`.
 * [`tooling/lsp.md`](tooling/lsp.md): the language server.
 * [`tooling/testing.md`](tooling/testing.md): `sky test`, test mode and
-  mocks, `sky fuzz`, and the compiler's own gates.
+  mocks, coverage (`sky test --coverage`, `sky coverage report`), `sky fuzz`,
+  and the compiler's own gates.
 * [`tooling/gate-harness.md`](tooling/gate-harness.md): `xtask harness`, gate
   states, falsifying mutations and budgets.
 

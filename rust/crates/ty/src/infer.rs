@@ -109,7 +109,7 @@ pub struct Infer<'a> {
     /// recursion is monomorphic, so the self-call shares the def's type rather
     /// than instantiating a fresh polymorphic copy (which would split e.g.
     /// `SkyResult[any,any]` vs `SkyResult[any,[]any]` in an accumulator helper).
-    self_def: Option<DefId>,
+    pub(crate) self_def: Option<DefId>,
     /// Whether to consult the pass-3 INFERRED schemes (`World::inferred_sigs`)
     /// at a `Res::Def` call site. `true` only for the lowerer's typed table
     /// (result pinning) — the accept-parity check (M3) leaves it `false` so a
@@ -147,6 +147,12 @@ pub struct Infer<'a> {
     /// Every instantiation of a `poly_locals` binder, in order. Read by
     /// [`Infer::collapse_let_poly`] at the end of the def.
     poly_insts: Vec<(LocalId, TyVarId)>,
+    /// The routed page ties of a generalised let binder's body whose page or
+    /// model is one of its quantified variables (v0.30.0). They are taken
+    /// out of `page_ties` at generalisation, and every instance of the binder
+    /// gets a copy, so each use is checked with its own model, like a use of
+    /// a top-level routing helper ([`Infer::infer_res`]).
+    poly_local_ties: HashMap<LocalId, Vec<crate::obligations::PageTie>>,
     /// The value-restriction verdict of the last CAF checked (C-2): its
     /// checked type, the variables it may not generalise, and the fix text.
     /// Read by pass 6b (`World::apply_value_restriction`).
@@ -155,6 +161,9 @@ pub struct Infer<'a> {
     /// custom type or a record), with the span where they arose. Decided by
     /// [`Infer::discharge_bounds`] (`crate::obligations`, v0.27.0).
     pub(crate) obligations: Vec<crate::obligations::Obligation>,
+    /// Routed-page ties waiting for the model's type (v0.30.0,
+    /// [`crate::obligations::PageTie`]). Decided with the obligations.
+    pub(crate) page_ties: Vec<crate::obligations::PageTie>,
     /// Nominal bound checks already made in this run, keyed by the bound, the
     /// type name and its argument roots: stops a recursive type from looping.
     pub(crate) bound_seen: std::collections::HashSet<(SuperType, String, Vec<TyVarId>)>,
@@ -229,8 +238,10 @@ impl<'a> Infer<'a> {
             no_ground_constructor: false,
             poly_locals: HashMap::new(),
             poly_insts: Vec::new(),
+            poly_local_ties: HashMap::new(),
             last_vr: None,
             obligations: Vec::new(),
+            page_ties: Vec::new(),
             bound_seen: std::collections::HashSet::new(),
             inferred_bounds: Vec::new(),
             overlay: None,
@@ -932,21 +943,25 @@ impl<'a> Infer<'a> {
                 .collect(),
         );
         let mut pending = Vec::new();
+        let mut page_ties = Vec::new();
         let mut errors = HashMap::new();
         for &(def, body) in members {
             let mut infer = Infer::new(world, db).with_self_def(Some(def));
             std::mem::swap(&mut infer.uf, &mut solver);
             infer.provisional_defs = provisional.clone();
             infer.obligations = std::mem::take(&mut pending);
+            infer.page_ties = std::mem::take(&mut page_ties);
             infer.cur_span = body.root.and_then(|r| body.expr_span(r));
             infer.infer_def_vars(body);
             pending = std::mem::take(&mut infer.obligations);
+            page_ties = std::mem::take(&mut infer.page_ties);
             errors.insert(def, std::mem::take(&mut infer.errors));
             std::mem::swap(&mut infer.uf, &mut solver);
         }
         let mut finish = Infer::new(world, db);
         std::mem::swap(&mut finish.uf, &mut solver);
         finish.obligations = pending;
+        finish.page_ties = page_ties;
         finish.discharge_bounds(true);
         for error in finish.errors.drain(..) {
             let owner = error
@@ -2114,15 +2129,68 @@ impl<'a> Infer<'a> {
             self.collect_flex(v, &mut env_fv, &mut env_seen);
         }
         let env: std::collections::HashSet<TyVarId> = env_fv.into_iter().collect();
+        let mut moved_ties = std::collections::HashSet::new();
         for (b, v, fv) in candidates {
             let quantified: Vec<TyVarId> = fv.into_iter().filter(|r| !env.contains(r)).collect();
             if !quantified.is_empty() {
+                self.take_poly_local_ties(b, &quantified, &mut moved_ties);
                 if self.numeric.is_some() {
                     let roots=quantified.iter().copied().filter(|q|matches!(self.uf.content(*q),Content::FlexSuper(s) if s.has(SuperType::Number) && !s.has(SuperType::IntLit))).collect();
                     self.numeric.as_mut().unwrap().local_roots.insert(b, roots);
                 }
                 self.poly_locals.insert(b, (v, quantified));
             }
+        }
+        if !moved_ties.is_empty() {
+            let ties = std::mem::take(&mut self.page_ties);
+            self.page_ties = ties
+                .into_iter()
+                .enumerate()
+                .filter(|(i, _)| !moved_ties.contains(i))
+                .map(|(_, t)| t)
+                .collect();
+        }
+    }
+
+    /// Give the generalised let binder `b` every pending routed page tie
+    /// whose page or model reaches one of its `quantified` variables, and
+    /// note the tie's index in `moved` (taken out of `page_ties` by the
+    /// caller). Such a tie cannot be decided in the binder's body: its model
+    /// is generic there, and a generic model is dropped at the end of the
+    /// def. Each instance checks a copy instead ([`Infer::instantiate_local`]).
+    /// A strict raw-API tie stays where it is and is refused if its model is
+    /// still unknown at the end of the def. A served tie (a runner) moves and
+    /// stays strict in each copy.
+    fn take_poly_local_ties(
+        &mut self,
+        b: LocalId,
+        quantified: &[TyVarId],
+        moved: &mut std::collections::HashSet<usize>,
+    ) {
+        if self.page_ties.is_empty() {
+            return;
+        }
+        let q: std::collections::HashSet<TyVarId> =
+            quantified.iter().map(|&v| self.uf.find(v)).collect();
+        let mut taken = Vec::new();
+        for (i, tie) in self.page_ties.clone().into_iter().enumerate() {
+            // A raw-API tie stays (its config type carries no page a use
+            // could check). A served tie moves: each use is checked, and
+            // stays strict there.
+            if tie.strict && !tie.served {
+                continue;
+            }
+            let mut fv = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            self.collect_flex(tie.page, &mut fv, &mut seen);
+            self.collect_flex(tie.model, &mut fv, &mut seen);
+            if fv.iter().any(|r| q.contains(r)) {
+                moved.insert(i);
+                taken.push(tie);
+            }
+        }
+        if !taken.is_empty() {
+            self.poly_local_ties.entry(b).or_default().extend(taken);
         }
     }
 
@@ -2156,7 +2224,14 @@ impl<'a> Infer<'a> {
     /// A fresh instance of a generalised let binder: copy its type graph,
     /// replacing each quantified root by a fresh var (keeping a super-var's
     /// constraint) and sharing everything else.
-    fn instantiate_local(&mut self, generic: TyVarId, quantified: &[TyVarId]) -> TyVarId {
+    /// The binder's routed page ties ([`Infer::take_poly_local_ties`]) are
+    /// copied with the same substitution and tied at the use's span.
+    fn instantiate_local(
+        &mut self,
+        id: LocalId,
+        generic: TyVarId,
+        quantified: &[TyVarId],
+    ) -> TyVarId {
         self.uf.revoke_accessor_rows();
         let mut memo: HashMap<TyVarId, TyVarId> = HashMap::new();
         for &q in quantified {
@@ -2183,7 +2258,21 @@ impl<'a> Infer<'a> {
                 }
             }
         }
-        self.copy_generic(generic, &mut memo)
+        let inst = self.copy_generic(generic, &mut memo);
+        if let Some(ties) = self.poly_local_ties.get(&id).cloned() {
+            for tie in ties {
+                let page = self.copy_generic(tie.page, &mut memo);
+                let model = self.copy_generic(tie.model, &mut memo);
+                self.page_ties.push(crate::obligations::PageTie {
+                    page,
+                    model,
+                    span: self.cur_span.or(tie.span),
+                    strict: tie.strict,
+                    served: tie.served,
+                });
+            }
+        }
+        inst
     }
 
     fn copy_generic(&mut self, v: TyVarId, memo: &mut HashMap<TyVarId, TyVarId>) -> TyVarId {
@@ -2358,12 +2447,47 @@ impl<'a> Infer<'a> {
         }
     }
 
+    /// [`Self::infer_res_plain`], then (v0.30.0, CHECK-ONLY) the routed page
+    /// ties of a use of a routing def (`crate::obligations::PageTie`).
     fn infer_res(&mut self, res: Res) -> TyVarId {
+        let def = match &res {
+            Res::Def(d) if !self.use_inferred && self.self_def != Some(*d) => Some(*d),
+            _ => None,
+        };
+        let t = self.infer_res_plain(res);
+        if let Some(d) = def {
+            // A carrier whose `App` page and model are concrete in its scheme
+            // (`app = App.app … |> App.withRoutes …`) was checked in its own
+            // body; only one generic in them is tied here.
+            let generic = self
+                .world
+                .caller_scheme(&d)
+                .is_none_or(|s| crate::obligations::app_page_or_model_is_generic(&s.ty));
+            if self.world.routed_page_runners.contains(&d) {
+                // The served app (the guarantee): any helper shape that set
+                // its routes or its navigation hook is covered here. The
+                // tie is decided per served app: a def that neither
+                // reaches a carrier nor is reached by one serves an app
+                // whose model `page` field the runtime never reads or
+                // writes (its `withNotFound` page may be any type).
+                if crate::obligations::ties_served_app(self.world, self.self_def) {
+                    self.tie_app_nodes(t, true);
+                }
+            } else if self.world.routed_page_carriers.contains(&d) && generic {
+                self.tie_app_nodes(t, false);
+            } else if let Some(&api) = self.world.routed_page_apis.get(&d) {
+                self.tie_routed_api(api, t);
+            }
+        }
+        t
+    }
+
+    fn infer_res_plain(&mut self, res: Res) -> TyVarId {
         match res {
             Res::Local(id) => {
                 // A generalised let-bound function: a fresh instance per use.
                 if let Some((generic, quantified)) = self.poly_locals.get(&id).cloned() {
-                    let inst = self.instantiate_local(generic, &quantified);
+                    let inst = self.instantiate_local(id, generic, &quantified);
                     self.poly_insts.push((id, inst));
                     return inst;
                 }

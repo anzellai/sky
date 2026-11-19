@@ -1,4 +1,4 @@
-# Known limitations (v0.29.x)
+# Known limitations (v0.30.x)
 
 Active limitations users still hit at HEAD. Each entry explains the gap,
 why it exists, and the workaround. Closures across the v0.15 / v0.16 /

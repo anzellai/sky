@@ -129,6 +129,34 @@ pub struct WorldDecls {
     /// The `Res::Kernel` face of [`World::bound_check_sigs`], keyed
     /// `(pseudo-module, func)`.
     pub bound_kernel_sigs: HashMap<(String, String), Scheme>,
+    /// The defs whose uses tie a routed page type to the model's `page`
+    /// field (v0.30.0, [`crate::obligations`] `PageTie`): `Std.App.withRoutes`,
+    /// `Std.App.withOnNavigate` and every user def that reaches one of them. At each use on the check path, every
+    /// `App f s page model msg key` in the instance is tied, so a generic
+    /// helper is checked at each caller.
+    pub routed_page_carriers: HashSet<DefId>,
+    /// A user def is in [`World::routed_page_carriers`]: the program sets
+    /// routes or a navigation hook. The rule for a runner use with no def
+    /// under inference ([`crate::obligations::ties_served_app`]).
+    pub routed_page_user_carriers: bool,
+    /// The user defs whose runner uses are tied (the served tie,
+    /// [`crate::obligations::ties_served_app`]): every user carrier and
+    /// every user def that a carrier reaches. A runner use in any other def
+    /// serves an app with no routes and no navigation hook.
+    pub routed_page_served_defs: HashSet<DefId>,
+    /// The raw route APIs that tie a page type to the model's `page` field at
+    /// their own use (`Live.config`, `Spa.withRoutes`, `Spa.withNotFound`,
+    /// `Live.withOnNavigate`, `Spa.withOnNavigate`).
+    pub routed_page_apis: HashMap<DefId, crate::obligations::RoutedApi>,
+    /// The `Std.App` runners that serve an app (`run`, `serve` and the
+    /// target runners). Each use in a served def
+    /// ([`World::routed_page_served_defs`]) ties the served app's page type
+    /// to its model's `page` field ([`crate::obligations`] `PageTie`, `served`).
+    /// This is the guarantee of the routed page check: every served app
+    /// that can have routes or a navigation hook passes through a tied
+    /// runner use, and the model type there must be known, so a helper of
+    /// any shape that sets the routes is covered.
+    pub routed_page_runners: HashSet<DefId>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates
@@ -320,6 +348,11 @@ impl World {
     /// Intended for a declaration-world fork; existing aggregate maps are not
     /// cleared or otherwise changed by this additive extension.
     pub fn extend_query_bodies(&mut self, db: &dyn SkyDb) {
+        // ---- the routed page carriers (v0.30.0): the user defs of `db`'s
+        // module set that reach `App.withRoutes`. Pass 4 seeds them over the
+        // whole program; a shared-world case adds its own here, because the
+        // base world was seeded before the case's modules existed. ----
+        crate::obligations::extend_routed_page_carriers(self, db);
         // ---- pass 5: precise CHECK-ONLY schemes for UNANNOTATED app defs ----
         // (F1c narrow subset — see `infer_app_check_sigs`.) Runs on top of the
         // decls world so it can consult every declaration channel + its own prior
@@ -1090,8 +1123,10 @@ impl World {
     /// `a -> a`, and `f : Int -> any; f x = x` exports `Int -> Int` (the old D1
     /// pin, which only covered a monomorphic result, is the special case).
     ///
-    /// Stdlib modules are skipped (kernel + `Std.`/`Sky.` namespaces): stdlib
-    /// signatures keep per-occurrence `any`, and the CAST gate audits them.
+    /// Stdlib modules are skipped (the files of `sky-stdlib/`, by origin, not by
+    /// name: a project module `Std.Coerce` is filled like any app module):
+    /// stdlib signatures keep per-occurrence `any`, and the CAST gate audits
+    /// them.
     ///
     /// A fill can depend on another def's fill (a body calling a sibling whose
     /// annotation has `any`), so the pass repeats until no fill changes. It
@@ -1101,10 +1136,7 @@ impl World {
         let mut targets: Vec<(DefId, Scheme, crate::retained_body::RetainedBody)> = Vec::new();
         for m in db.module_ids() {
             let mname = db.module_name(m).to_string();
-            if KERNEL_MODULES.iter().any(|(p, _)| *p == mname)
-                || mname.starts_with("Std.")
-                || mname.starts_with("Sky.")
-            {
+            if crate::variance::is_stdlib_module(&mname) {
                 continue;
             }
             let resolved = db.resolve(m);
@@ -1579,7 +1611,7 @@ impl World {
         ];
 
         // `Sky.Test.runMain` ends in `System.exit`, so its result is free
-        // (`main : Program` and `main : Task Error ()` both call it). A
+        // (`main : Task Error ()` calls it). A
         // check-only seed, so the emitted Go is unchanged.
         let test_specs: Vec<(&str, Ty)> =
             vec![("runMain", fun(list(Ty::app("Sky.Test.Test", vec![])), a()))];
@@ -2274,6 +2306,34 @@ fn rewrite_alias_refs(
                 // registered bare). A hit that lands on a DECLARED alias or union is
                 // rewritten to that declaration's defining-module key; anything else
                 // stays bare, exactly as before this fix.
+                // A QUALIFIED reference (`App.Route`) names a type of the
+                // qualifier's module, never a same-named type of this one. When
+                // HIR has no entry for it (the module declares the type but does
+                // not expose it, or it is kernel-implicit), the bare fallback
+                // below must not land on a type of ANOTHER module: a local
+                // `type Route` captured `App.Route` there, so `List (App.Route
+                // Page)` was read as the app's own `Route` (D7). Name the
+                // qualifier's own declaration instead. A bare hit in the
+                // qualifier's module itself, or a builtin, keeps the old path.
+                let qual_dep = full
+                    .rsplit_once('.')
+                    .and_then(|(q, _)| match qualifiers.get(q) {
+                        Some(hir::ImportSource::Dep(dep)) => Some(*dep),
+                        _ => None,
+                    });
+                if let (Some(dep), None) = (qual_dep, type_refs.get(full)) {
+                    let captured = type_refs
+                        .get(base)
+                        .and_then(|tr| db.def_loc(tr.con))
+                        .is_some_and(|l| l.module.index() != u32::MAX && l.module != dep);
+                    if captured {
+                        let key = crate::nominal::qualify(db.module_name(dep), base);
+                        if keys.union.contains(&key) || keys.alias.contains(&key) {
+                            return Ty::App(Name::new(&key), args);
+                        }
+                        return Ty::App(Name::new(base), args);
+                    }
+                }
                 if let Some(tr) = type_refs.get(full).or_else(|| type_refs.get(base)) {
                     if let Some(loc) = db.def_loc(tr.con) {
                         // Check the SENTINEL before touching `module_name`: builtins
