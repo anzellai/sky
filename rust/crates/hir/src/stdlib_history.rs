@@ -36,11 +36,12 @@ pub struct Snapshot {
 
 /// Every snapshot, oldest first. A name absent from a snapshot whose module
 /// it had is new since that release; the NEWEST such snapshot is named, so a
-/// name added in v0.29.x points at docs/migration/v0.29.md and a v0.28.0 name
-/// still points at docs/migration/v0.28.md. Add the last release of each minor
-/// line here when the next minor starts, and the newest release of the
-/// current line when a patch adds a stdlib name, so the message names the
-/// release users upgrade from.
+/// name added in v0.29.x points at docs/migration/v0.29.md, a v0.30.0 name at
+/// docs/migration/v0.30.md, and a v0.28.0 name still points at
+/// docs/migration/v0.28.md. Add the last release of each minor line here when
+/// the next minor starts, and the newest release of the current line when a
+/// patch adds a stdlib name, so the message names the release users upgrade
+/// from.
 pub const SNAPSHOTS: &[Snapshot] = &[
     Snapshot {
         release: "v0.27.8",
@@ -59,6 +60,14 @@ pub const SNAPSHOTS: &[Snapshot] = &[
         release: "v0.29.1",
         tsv: include_str!("../data/stdlib-exports-v0.29.1.tsv"),
         migration: "docs/migration/v0.29.md#new-stdlib-names",
+    },
+    // The last release of the v0.29 line. A name new in v0.30.0
+    // (`Task.timeout`, `Live.routeParam`, `Sub.viewport`) is new since it and
+    // points at the v0.30 guide.
+    Snapshot {
+        release: "v0.29.13",
+        tsv: include_str!("../data/stdlib-exports-v0.29.13.tsv"),
+        migration: "docs/migration/v0.30.md#new-stdlib-names",
     },
 ];
 

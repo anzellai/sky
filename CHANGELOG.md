@@ -213,6 +213,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- **`[E1012]` names v0.29.13 for a name new in v0.30.0.** A clash on a new
+  name such as `Task.timeout` or `Live.routeParam` said "new since Sky
+  v0.29.1", though every v0.29 release lacked it. The message now names
+  v0.29.13, the release users upgrade from, and links
+  `docs/migration/v0.30.md#new-stdlib-names`.
 - Sky.Spa: a route-less `Std.App` app (`App.app` or `App.web` with no
   `App.withRoutes`) built for `web:app` answered an unknown path such as
   `/zz` with the file server's plain `404 page not found`, so the client
