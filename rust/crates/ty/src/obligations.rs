@@ -616,6 +616,12 @@ impl Infer<'_> {
     /// variable, or a record that may still gain a `page` field) at the end
     /// of the def: no caller can check it.
     fn push_unknown_model_error(&mut self, tie: &PageTie) {
+        // A served model that is unknown because of an earlier error in the
+        // def (a wrong `init`, say) is that error's cascade: the program is
+        // refused already, so the first error stays the only one.
+        if tie.served && !self.errors.is_empty() {
+            return;
+        }
         let message = if tie.served {
             "The routed page type of the app that is served here cannot be checked: the \
              model type is not known in this function.\n\nThe app writes the routed page \
