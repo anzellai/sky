@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.29.14 (unreleased)
+## v0.29.14 — timeouts, a circuit breaker, admission control and test coverage (2026-11-19)
 
 ### ⚠ Breaking changes
 
