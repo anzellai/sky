@@ -138,6 +138,13 @@ pub struct WorldDecls {
     /// The raw route APIs that tie a page type to the model's `page` field at
     /// their own use (`Live.config`, `Spa.withRoutes`, `Spa.withNotFound`).
     pub routed_page_apis: HashMap<DefId, crate::obligations::RoutedApi>,
+    /// The `Std.App` runners that serve an app (`run`, `serve` and the
+    /// target runners). Each use ties the served app's page type to its
+    /// model's `page` field ([`crate::obligations`] `PageTie`, `served`).
+    /// This is the guarantee of the routed page check: every served app
+    /// passes through a runner, and the model type there must be known, so
+    /// a helper of any shape that sets the routes is covered.
+    pub routed_page_runners: HashSet<DefId>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates

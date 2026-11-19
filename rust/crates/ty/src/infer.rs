@@ -2158,8 +2158,9 @@ impl<'a> Infer<'a> {
     /// caller). Such a tie cannot be decided in the binder's body: its model
     /// is generic there, and a generic model is dropped at the end of the
     /// def. Each instance checks a copy instead ([`Infer::instantiate_local`]).
-    /// A strict tie (a raw route API) stays where it is and is refused if its
-    /// model is still unknown at the end of the def.
+    /// A strict raw-API tie stays where it is and is refused if its model is
+    /// still unknown at the end of the def. A served tie (a runner) moves and
+    /// stays strict in each copy.
     fn take_poly_local_ties(
         &mut self,
         b: LocalId,
@@ -2173,7 +2174,10 @@ impl<'a> Infer<'a> {
             quantified.iter().map(|&v| self.uf.find(v)).collect();
         let mut taken = Vec::new();
         for (i, tie) in self.page_ties.clone().into_iter().enumerate() {
-            if tie.strict {
+            // A raw-API tie stays (its config type carries no page a use
+            // could check). A served tie moves: each use is checked, and
+            // stays strict there.
+            if tie.strict && !tie.served {
                 continue;
             }
             let mut fv = Vec::new();
@@ -2263,7 +2267,8 @@ impl<'a> Infer<'a> {
                     page,
                     model,
                     span: self.cur_span.or(tie.span),
-                    strict: false,
+                    strict: tie.strict,
+                    served: tie.served,
                 });
             }
         }
@@ -2458,8 +2463,16 @@ impl<'a> Infer<'a> {
                 .world
                 .caller_scheme(&d)
                 .is_none_or(|s| crate::obligations::app_page_or_model_is_generic(&s.ty));
-            if self.world.routed_page_carriers.contains(&d) && generic {
-                self.tie_app_nodes(t);
+            if self.world.routed_page_runners.contains(&d) {
+                // The served app (the guarantee): any helper shape that set
+                // its routes is covered here. A program that never sets
+                // routes serves a route-less app, whose model the runtime
+                // never writes (its `withNotFound` page may be any type).
+                if crate::obligations::program_sets_routes(self.world) {
+                    self.tie_app_nodes(t, true);
+                }
+            } else if self.world.routed_page_carriers.contains(&d) && generic {
+                self.tie_app_nodes(t, false);
             } else if let Some(&api) = self.world.routed_page_apis.get(&d) {
                 self.tie_routed_api(api, t);
             }

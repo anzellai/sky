@@ -1594,6 +1594,9 @@ fn check_modules_with_world_reporting(
             suggestion: Some(crate::pubsub_topic::suggestion()),
         });
     }
+    // A served routed page mismatch that follows from a per-use one is not
+    // reported twice (v0.29.14).
+    out.type_errors -= crate::obligations::drop_served_page_cascades(&mut out.diagnostics);
     // stable order for the type table (L4)
     out.def_types.sort_by(|a, b| {
         (a.module.as_str(), a.name.as_str()).cmp(&(b.module.as_str(), b.name.as_str()))

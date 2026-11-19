@@ -10844,7 +10844,15 @@ fn a_routed_page_must_have_the_model_page_type_on_live_and_web_app() {
     let detail = "App.routeParam \"/item/:id\" Detail";
     let not_found = "App.withNotFound Missing";
     let main = "src/Main.sky";
-    let mismatches: [(&str, [(&str, &str, &str); 3]); 2] = [
+    // The routes set by a helper that a user custom type holds: the type of
+    // `router` shows no `App`, so only the check at the served app sees the
+    // mismatch (v0.29.14).
+    let routes_block = "App.withRoutes\n                   [ App.route \"/\" Dashboard\n                   , App.routeParam \"/item/:id\" Detail\n                   ]";
+    let router_helper = "type Router f s p m msg k\n    = Router (App.App f s p m msg k -> App.App f s p m msg k)\n\n\n\
+                         router : Router f s String m msg k\nrouter =\n    Router (\\a -> App.withRoutes [ App.route \"/\" \"home\" ] a)\n\n\n\
+                         runRouter : Router f s p m msg k -> App.App f s p m msg k -> App.App f s p m msg k\n\
+                         runRouter (Router f) a =\n    f a\n\n\nmain =\n    App.run";
+    let mismatches: [(&str, [(&str, &str, &str); 3]); 3] = [
         (
             "String pages",
             [
@@ -10863,6 +10871,14 @@ fn a_routed_page_must_have_the_model_page_type_on_live_and_web_app() {
                 (main, home, "App.route \"/\" Home"),
                 (main, detail, "App.route \"/about\" About"),
                 (main, not_found, "App.withNotFound Gone"),
+            ],
+        ),
+        (
+            "a helper in a custom type",
+            [
+                (main, "main =\n    App.run", router_helper),
+                (main, routes_block, "runRouter router"),
+                (main, not_found, "App.withNotFound \"missing\""),
             ],
         ),
     ];

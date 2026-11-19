@@ -1,11 +1,13 @@
 -- gate: accept
 -- pairs: reject/corpus/routed_page_through_generic_helper.sky
 -- pairs: reject/corpus/routed_page_let_local_helper.sky
+-- pairs: reject/corpus/routed_page_custom_type_helper.sky
 --
 -- The accept side of the routed page type rule (v0.29.14): a generic routing
--- helper, a routing helper bound in a let, a raw `Live.config` and a raw
--- `Spa.withRoutes` whose pages have the type of the model's `page` field are
--- accepted.
+-- helper, a routing helper bound in a let, a routing helper hidden in a
+-- user custom type, a raw `Live.config` and a raw `Spa.withRoutes` whose
+-- pages have the type of the model's `page` field are accepted. The served
+-- app (`App.run`) has a known model type.
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
@@ -85,6 +87,34 @@ appLocal =
                    ]
                    Missing
 
+type Router f s p m msg k
+    = Router (App.App f s p m msg k -> App.App f s p m msg k)
+
+
+router : Router f s Route m msg k
+router =
+    Router
+        (\a ->
+            App.withRoutes
+                [ App.route "/" Dashboard, App.routeParam "/item/:id" Detail ]
+                a)
+
+
+runRouter : Router f s p m msg k -> App.App f s p m msg k -> App.App f s p m msg k
+runRouter (Router f) a =
+    f a
+
+
+appRouter =
+    App.app
+        { init = init
+        , update = update
+        , view = uiView
+        , subscriptions = \_ -> Sub.none
+        }
+        |> runRouter router
+        |> App.withNotFound Missing
+
 
 live =
     Live.config
@@ -114,4 +144,8 @@ spa =
 
 
 main =
-    App.run app
+    if True then
+        App.run app
+
+    else
+        App.run appRouter

@@ -25,8 +25,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - A routed app (`App.withRoutes`) whose model has a `page` field must use
   the routes' page type for that field. A program whose routes give another
   type (a `String` page, another custom type) built before and then failed on
-  every request; it is now `[E2001]` at `App.withRoutes`
-  (`docs/migration/v0.29.md`).
+  every request; it is now `[E2001]` at `App.withRoutes`, or where the app is
+  served (`App.run`, `App.serve` or a target runner). In a program that sets
+  routes, a function that serves an app whose model type it does not know
+  (`serve parts = App.app parts |> … |> App.run`) is refused: give it a type
+  annotation with the model type (`docs/migration/v0.29.md`).
 - `Std.Live.Route` and `Std.Spa.Route` take the page type: `Route page`. An
   annotation `List Live.Route` becomes `List (Live.Route Page)`. A `:param`
   route uses the new `Live.routeParam` / `Spa.routeParam` (a constructor
@@ -217,7 +220,15 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   is checked), also when the helper is bound in a `let` (a function, a
   lambda, an alias or a record field, at any depth: each use of the let
   binding is checked with its own model), and covers the raw `Live.config`,
-  `Spa.withRoutes` and `Spa.withNotFound`. As defence in depth, the runtime
+  `Spa.withRoutes` and `Spa.withNotFound`. The guarantee is a check on the
+  served app: at each use of `App.run`, `App.serve` and the target runners
+  (`runLive`, `runLiveWindow`, `runSpa`, `runTui`, `runCli`, `runWebview`),
+  the app's page type is tied to its model's `page` field, and the model type
+  must be known there. The type of the served app carries the routes' page
+  type through every helper, so a helper of any shape is covered: one hidden
+  in a user custom type, in a record field of one, or in another module (a
+  helper in a custom type passed `sky check` and stopped at run time before).
+  As defence in depth, the runtime
   no longer panics on every request when a page of the wrong type reaches
   it: Sky.Live, the Sky.Spa server render and the Sky.Spa client report the
   mismatch once, in Sky words (`[E2001] The routes give a page of type …`),

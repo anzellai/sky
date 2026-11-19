@@ -73,9 +73,12 @@ pub(crate) struct PageTie {
     pub page: TyVarId,
     pub model: TyVarId,
     pub span: Option<Span>,
-    /// A raw route API in a user module: a model still unknown at the end of
-    /// the def is refused (no caller can check it).
+    /// A raw route API or a runner in a user module: a model still unknown
+    /// at the end of the def is refused (no caller can check it).
     pub strict: bool,
+    /// A use of a runner (`App.run`, `App.serve`, a target runner): the tie
+    /// of the app that is served ([`World::routed_page_runners`]).
+    pub served: bool,
 }
 
 /// A raw route API whose use ties a page to the model's `page` field.
@@ -132,9 +135,68 @@ fn seed_routed_page(world: &mut World, db: &dyn SkyDb) {
         }
     }
     world.routed_page_apis = apis;
+    world.routed_page_runners = SERVED_APP_RUNNERS
+        .iter()
+        .filter_map(|name| routing_def(db, "Std.App", name))
+        .filter(|d| world.value_sigs.contains_key(d))
+        .collect();
     world.routed_page_carriers = std::collections::HashSet::new();
     extend_routed_page_carriers(world, db);
 }
+
+/// The last paragraph of a routed page mismatch found where the app is
+/// served. The checker drops such an error when the same program has a
+/// routed page error from a per-use tie (the served one is then its cascade,
+/// [`drop_served_page_cascades`]).
+pub(crate) const SERVED_MISMATCH_NOTE: &str = "\n\nThis is the app that is served here. The \
+     check runs where the app is served, so it covers routes that a helper sets, in any shape.";
+
+/// The opening of every routed page error that a per-use tie raises.
+const PER_USE_PAGE_ERRORS: &[&str] = &[
+    "The routes give pages of type",
+    "The routed page type cannot be checked here",
+];
+
+/// Drop each served routed page mismatch (see [`SERVED_MISMATCH_NOTE`]) when
+/// the same check has a routed page error from a per-use tie: the per-use
+/// error is the better located report of the same mismatch, and the served
+/// one follows from it. A program with no per-use error keeps the served
+/// error, which is the guarantee.
+pub(crate) fn drop_served_page_cascades(diagnostics: &mut Vec<diagnostics::Diagnostic>) -> usize {
+    let body = |d: &diagnostics::Diagnostic| {
+        d.message
+            .split_once("] ")
+            .map_or(d.message.as_str(), |(_, m)| m)
+            .to_string()
+    };
+    let per_use = diagnostics.iter().any(|d| {
+        d.code.0 == "E2001"
+            && !d.message.ends_with(SERVED_MISMATCH_NOTE)
+            && PER_USE_PAGE_ERRORS.iter().any(|p| body(d).starts_with(p))
+    });
+    if !per_use {
+        return 0;
+    }
+    let before = diagnostics.len();
+    diagnostics.retain(|d| !(d.code.0 == "E2001" && d.message.ends_with(SERVED_MISMATCH_NOTE)));
+    before - diagnostics.len()
+}
+
+/// The `Std.App` functions that serve an app: every app the build serves
+/// passes through one of them (the dispatcher `run`, which the build
+/// rewrites to a target runner, `serve`, and the target runners). The
+/// routed page check runs at each use, where the served app's type is
+/// known (see [`PageTie::served`]).
+const SERVED_APP_RUNNERS: &[&str] = &[
+    "run",
+    "serve",
+    "runLive",
+    "runLiveWindow",
+    "runSpa",
+    "runTui",
+    "runCli",
+    "runWebview",
+];
 
 fn routing_def(db: &dyn SkyDb, module: &str, name: &str) -> Option<base::DefId> {
     let m = db.module_by_name(module)?;
@@ -177,6 +239,17 @@ pub(crate) fn extend_routed_page_carriers(world: &mut World, db: &dyn SkyDb) {
         }
     }
     world.routed_page_carriers = carriers;
+}
+
+/// Does a user def of the program reach `App.withRoutes`? The routed page
+/// carriers are `App.withRoutes` itself and the user defs that reach it
+/// ([`extend_routed_page_carriers`]). The routes of an `App` are set only by
+/// `App.withRoutes` (its constructor is opaque), and the runtime writes the
+/// model's `page` field only for an app with routes. So a program with no
+/// such def serves a route-less app, and its served app is not tied (its
+/// `App.withNotFound` page may have any type).
+pub(crate) fn program_sets_routes(world: &World) -> bool {
+    world.routed_page_carriers.len() > 1
 }
 
 /// Runtime handles (A-1/A-1b): an id into a table of one running process.
@@ -361,7 +434,14 @@ impl Infer<'_> {
     /// of a use of a routing def (`App.withRoutes`, or a user def that reaches
     /// it). A generic helper keeps the tie out of its own scheme; its callers
     /// are checked here, where the model is known.
-    pub(crate) fn tie_app_nodes(&mut self, inst: TyVarId) {
+    ///
+    /// `served`: `inst` is the instance of a runner (`App.run`, …), so the
+    /// `App` in it is the app that is served. In a user module the tie is
+    /// strict: the model type must be known at the end of the def (or at
+    /// each use of a let-bound helper), so no helper can hide the served
+    /// app's model from the check.
+    pub(crate) fn tie_app_nodes(&mut self, inst: TyVarId, served: bool) {
+        let strict = served && self.in_user_module();
         let mut seen = std::collections::HashSet::new();
         let mut tied = std::collections::HashSet::new();
         let mut stack = vec![inst];
@@ -380,7 +460,8 @@ impl Infer<'_> {
                                     page,
                                     model,
                                     span: self.cur_span,
-                                    strict: false,
+                                    strict,
+                                    served,
                                 });
                             }
                         }
@@ -447,16 +528,21 @@ impl Infer<'_> {
         let Some((page, model)) = found else {
             return;
         };
-        let strict = self
-            .self_def
-            .and_then(|d| self.db.def_loc(d))
-            .is_some_and(|l| !is_stdlib_module(self.db.module_name(l.module)));
+        let strict = self.in_user_module();
         self.page_ties.push(PageTie {
             page,
             model,
             span: self.cur_span,
             strict,
+            served: false,
         });
+    }
+
+    /// Is the def under inference in a user module (not the stdlib)?
+    fn in_user_module(&self) -> bool {
+        self.self_def
+            .and_then(|d| self.db.def_loc(d))
+            .is_some_and(|l| !is_stdlib_module(self.db.module_name(l.module)))
     }
 
     /// Decide each [`PageTie`] whose model type is known: a record with a
@@ -475,14 +561,17 @@ impl Infer<'_> {
                     match fs.get(&Name::new("page")) {
                         Some(&f) => f,
                         None => {
-                            let open = ext.is_some_and(|row| {
-                                matches!(
-                                    self.uf.content(row),
-                                    Content::Flex | Content::FlexSuper(_)
-                                )
-                            });
-                            if open && !fin {
+                            // A row that may still gain a `page` field: a
+                            // flex row waits for the end of the def; a rigid
+                            // row (an annotation) is decided only for a
+                            // strict tie, which needs a closed model.
+                            let row = ext.map(|row| self.uf.content(row));
+                            let flex = matches!(row, Some(Content::Flex | Content::FlexSuper(_)));
+                            let rigid = matches!(row, Some(Content::Rigid(_)));
+                            if !fin && (flex || (rigid && tie.strict)) {
                                 kept.push(tie);
+                            } else if fin && tie.strict && (flex || rigid) {
+                                self.push_unknown_model_error(&tie);
                             }
                             continue;
                         }
@@ -493,24 +582,14 @@ impl Infer<'_> {
                     continue;
                 }
                 Content::Flex | Content::FlexSuper(_) | Content::Rigid(_) if tie.strict => {
-                    self.errors.push(TypeError {
-                        message: "The routed page type cannot be checked here: the model type is \
-                                  not known in this function.\n\nThe app writes the routed page \
-                                  into the model's `page` field on every request, so the checker \
-                                  must see the model type where the routes are set. Give this \
-                                  function a type annotation with the app's model type, or use \
-                                  `App.withRoutes`, whose routes the checker follows through \
-                                  helpers."
-                            .to_string(),
-                        span: tie.span,
-                        code: "E2001",
-                    });
+                    self.push_unknown_model_error(&tie);
                     continue;
                 }
                 _ => continue,
             };
             let routed = self.uf.describe(tie.page);
             let held = self.uf.describe(field);
+            let served = if tie.served { SERVED_MISMATCH_NOTE } else { "" };
             if self.uf.unify(field, tie.page).is_err() {
                 self.errors.push(TypeError {
                     message: format!(
@@ -520,7 +599,7 @@ impl Infer<'_> {
                          request, so the two types must be the same. Make every \
                          `App.route` / `App.routeParam` page and the `App.withNotFound` page a \
                          `{held}`, or give the model field another name if it is not the \
-                         app's page."
+                         app's page.{served}"
                     ),
                     span: tie.span,
                     code: "E2001",
@@ -531,6 +610,33 @@ impl Infer<'_> {
         }
         self.cur_span = saved;
         self.page_ties.extend(kept);
+    }
+
+    /// A strict [`PageTie`] whose model type is still not known (a type
+    /// variable, or a record that may still gain a `page` field) at the end
+    /// of the def: no caller can check it.
+    fn push_unknown_model_error(&mut self, tie: &PageTie) {
+        let message = if tie.served {
+            "The routed page type of the app that is served here cannot be checked: the \
+             model type is not known in this function.\n\nThe app writes the routed page \
+             into the model's `page` field on every request, so the checker must see the \
+             model type where the app is served (`App.run`, `App.serve` or a target \
+             runner). Serve the app where its model type is known (for example `main = \
+             App.run app`), or give this function a type annotation with the app's model \
+             type."
+        } else {
+            "The routed page type cannot be checked here: the model type is not known in \
+             this function.\n\nThe app writes the routed page into the model's `page` \
+             field on every request, so the checker must see the model type where the \
+             routes are set. Give this function a type annotation with the app's model \
+             type, or use `App.withRoutes`, whose routes the checker follows through \
+             helpers."
+        };
+        self.errors.push(TypeError {
+            message: message.to_string(),
+            span: tie.span,
+            code: "E2001",
+        });
     }
 
     /// Decide one obligation. `false` = keep it for the end of the def.
