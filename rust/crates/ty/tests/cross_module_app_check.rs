@@ -313,3 +313,129 @@ fn an_any_result_in_a_project_module_under_the_stdlib_namespaces_is_pinned() {
         );
     }
 }
+
+/// Build stdlib + the project modules `modules` (name, source), check every
+/// one of them (as `sky check` does), and return the type errors and their
+/// rendered text.
+fn type_errors_for_modules(root: &Path, modules: &[(&str, &str)]) -> (usize, String) {
+    let stdlib = load_stdlib(root);
+    assert!(!stdlib.is_empty(), "stdlib failed to load");
+    let mut db = SourceDb::new();
+    for (n, parse) in &stdlib {
+        db.add_module(n, parse.clone());
+    }
+    let ids: Vec<_> = modules
+        .iter()
+        .map(|(n, src)| db.add_module(n, syntax::parse(src, base::FileId(0))))
+        .collect();
+    let out = ty::check_modules(&db, &ids);
+    let text = out
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (out.type_errors, text)
+}
+
+/// A second entry of the project that serves a route-less app (v0.29.14,
+/// Judge 8). `Admin` sets no routes and no navigation hook, so the runtime
+/// never reads or writes its model's `page` field: a pagination `page : Int`
+/// with `App.withNotFound ()` is a correct program. The served app is tied
+/// only when its own definition reaches `App.withRoutes` or
+/// `App.withOnNavigate`, not when another entry of the project does.
+const ROUTELESS_ADMIN: &str = "module Admin exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\
+import Std.Ui as Ui exposing (Element)\n\n\
+type alias Model =\n    { page : Int, rows : List String }\n\n\
+type Msg\n    = Next\n\n\n\
+init : () -> ( Model, Cmd Msg )\n\
+init () =\n    ( { page = 1, rows = [] }, Cmd.none )\n\n\n\
+update : Msg -> Model -> ( Model, Cmd Msg )\n\
+update msg model =\n    case msg of\n        Next ->\n            ( { model | page = model.page + 1 }, Cmd.none )\n\n\n\
+view : Model -> Element Msg\n\
+view m =\n    Ui.text (String.fromInt m.page)\n\n\n\
+main =\n    App.run\n        (App.app { init = init, update = update, view = view, subscriptions = \\_ -> Sub.none }\
+\n            |> App.withNotFound ()\n        )\n";
+
+const ROUTED_ENTRY: &str = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\
+import Std.Ui as Ui exposing (Element)\n\n\
+type Route\n    = Dashboard\n    | Missing\n\n\
+type alias Model =\n    { page : Route, title : String }\n\n\
+type Msg\n    = Go Int\n\n\n\
+init : () -> ( Model, Cmd Msg )\n\
+init () =\n    ( { page = Dashboard, title = \"t\" }, Cmd.none )\n\n\n\
+update : Msg -> Model -> ( Model, Cmd Msg )\n\
+update msg model =\n    ( model, Cmd.none )\n\n\n\
+view : Model -> Element Msg\n\
+view m =\n    Ui.text m.title\n\n\n\
+main =\n    App.run\n        (App.app { init = init, update = update, view = view, subscriptions = \\_ -> Sub.none }\
+\n            |> App.withRoutes [ App.route \"/\" HOME ]\n            |> App.withNotFound MISSING\n        )\n";
+
+#[test]
+fn a_route_less_entry_beside_a_routed_entry_is_accepted() {
+    let root = repo_root();
+    let main = ROUTED_ENTRY
+        .replace("HOME", "Dashboard")
+        .replace("MISSING", "Missing");
+    let (errs, text) =
+        type_errors_for_modules(&root, &[("Admin", ROUTELESS_ADMIN), ("Main", &main)]);
+    assert_eq!(
+        errs, 0,
+        "OVER-EAGER — a route-less entry whose model `page` field is an `Int` was REJECTED \
+         because another entry of the project sets routes:\n{text}"
+    );
+}
+
+#[test]
+fn a_routed_entry_beside_a_route_less_entry_is_still_checked() {
+    let root = repo_root();
+    let main = ROUTED_ENTRY
+        .replace("HOME", "\"home\"")
+        .replace("MISSING", "\"missing\"");
+    let (errs, text) =
+        type_errors_for_modules(&root, &[("Admin", ROUTELESS_ADMIN), ("Main", &main)]);
+    assert!(
+        errs > 0 && text.contains("model's `page` field"),
+        "SOUNDNESS HOLE — the routed entry gave `String` pages to a model whose `page` field \
+         is a `Route`, and the program was ACCEPTED ({errs} errors):\n{text}"
+    );
+}
+
+/// A routed app hidden in a custom type (`Routing.router`, D7) and served by
+/// a helper that takes the app as an argument. The helper reaches no carrier
+/// itself, but a def that reaches one calls it, so the app it serves may
+/// carry routes: its use of `App.run` is still tied, beside a route-less
+/// entry that is not.
+#[test]
+fn a_routed_app_served_by_a_helper_that_takes_it_is_still_checked() {
+    let root = repo_root();
+    let routing = ROUTING.replace("PAGE", "\"home\"");
+    let main = ROUTED_MAIN.replace("MISSING", "\"missing\"").replace(
+        "main =\n    App.run app\n",
+        "serveIt : App.App f () String Model Msg k -> Task Error ()\n\
+             serveIt a =\n    App.run a\n\n\n\
+             main =\n    serveIt app\n",
+    );
+    assert!(main.contains("serveIt app"));
+    let (errs, text) = type_errors_for_modules(
+        &root,
+        &[
+            ("Routing", &routing),
+            ("Admin", ROUTELESS_ADMIN),
+            ("Main", &main),
+        ],
+    );
+    assert!(
+        errs > 0 && text.contains("model's `page` field"),
+        "SOUNDNESS HOLE — a helper served a routed app with `String` pages for a model whose \
+         `page` field is a `Route`, and the program was ACCEPTED ({errs} errors):\n{text}"
+    );
+    assert!(
+        !text.contains("`Int`"),
+        "OVER-EAGER — the route-less entry was tied:\n{text}"
+    );
+}

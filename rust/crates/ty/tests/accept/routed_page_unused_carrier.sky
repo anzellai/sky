@@ -1,0 +1,59 @@
+-- gate: accept
+--
+-- A route-less served app beside a helper that sets a navigation hook
+-- (v0.29.14, Judge 8). The served app sets no routes and no navigation
+-- hook, so the runtime never reads or writes its model's `page` field, and
+-- its `App.withNotFound` page may have any type. The served app is tied
+-- only when its own definition reaches `App.withRoutes` or
+-- `App.withOnNavigate`. A helper that the served app does not use (here
+-- `unusedHelper`, which nothing calls) does not tie it.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Go Int
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Go n ->
+            ( { model | title = String.fromInt (n + 1) }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text model.title
+
+
+unusedHelper a =
+    a |> App.withOnNavigate (\_ -> Go 0)
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound "missing")
