@@ -158,6 +158,16 @@ signature, result included; an integer out of range across the boundary is an
 `Err`; and a Sky value where Go wants an interface is `[E2013]`. See
 `docs/ffi/boundary-philosophy.md`.
 
+**Upgrading a v0.29 project?** `docs/migration/v0.30.md` lists every change,
+split into loud (fails to compile, the error shows the fix) and silent. Among
+them: a routed app's pages must have the type of the model's `page` field
+(`[E2001]`, also through helpers and the raw `Live` / `Spa` routes, which now
+take the page type: `Route page`), an undefined type name is `[E1001]`,
+`HttpRequest` has the field `minRemaining`, new stdlib names (`Task.timeout`,
+`Live.routeParam`, `Sub.viewport` and more) can be `[E1012]` under
+`exposing (..)`, and a Sky.Spa app with a project module named `Shared` is
+refused.
+
 **Upgrading a v0.28 project?** `docs/migration/v0.29.md` lists every change,
 split into loud (fails to compile, the error shows the fix), loud at run time
 and silent. Among them: `Sky.Core.Regex` takes a compiled `Regex`
@@ -981,7 +991,7 @@ before assuming a limitation still holds.
 | `sky.toml` + env vars | `docs/sky-toml.md` |
 | Observability / console | `docs/observability.md` |
 | Getting started | `docs/getting-started.md`, `README.md` |
-| Upgrading between minors | `docs/migration/v0.27.md`, `v0.28.md`, `v0.29.md` (loud / loud at run time / silent) |
+| Upgrading between minors | `docs/migration/v0.27.md`, `v0.28.md`, `v0.29.md`, `v0.30.md` (loud / loud at run time / silent) |
 | Sizing: memory, CPU, sessions | `docs/perf/sizing.md` |
 
 ## The test corpus — two layers, and where `examples/` now sits

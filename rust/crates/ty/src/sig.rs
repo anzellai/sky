@@ -130,7 +130,7 @@ pub struct WorldDecls {
     /// `(pseudo-module, func)`.
     pub bound_kernel_sigs: HashMap<(String, String), Scheme>,
     /// The defs whose uses tie a routed page type to the model's `page`
-    /// field (v0.29.14, [`crate::obligations`] `PageTie`): `Std.App.withRoutes`,
+    /// field (v0.30.0, [`crate::obligations`] `PageTie`): `Std.App.withRoutes`,
     /// `Std.App.withOnNavigate` and every user def that reaches one of them. At each use on the check path, every
     /// `App f s page model msg key` in the instance is tied, so a generic
     /// helper is checked at each caller.
@@ -348,7 +348,7 @@ impl World {
     /// Intended for a declaration-world fork; existing aggregate maps are not
     /// cleared or otherwise changed by this additive extension.
     pub fn extend_query_bodies(&mut self, db: &dyn SkyDb) {
-        // ---- the routed page carriers (v0.29.14): the user defs of `db`'s
+        // ---- the routed page carriers (v0.30.0): the user defs of `db`'s
         // module set that reach `App.withRoutes`. Pass 4 seeds them over the
         // whole program; a shared-world case adds its own here, because the
         // base world was seeded before the case's modules existed. ----

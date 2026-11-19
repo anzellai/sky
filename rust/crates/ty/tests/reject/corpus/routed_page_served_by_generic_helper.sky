@@ -2,7 +2,7 @@
 -- defect: a helper that builds and serves the app hid the routed page type
 -- rust: reject [E2001] at `App.run` in the helper: the model type is not known there
 --
--- Found 2026-11-19 (v0.29.14). `serve` takes the routes, the NotFound page
+-- Found 2026-11-19 (v0.30.0). `serve` takes the routes, the NotFound page
 -- and the app's functions, builds the app and runs it. Its type holds no
 -- `App`, so no use of it was tied to the model's `page` field, and the tie
 -- in its generic body was dropped. The program passed `sky check` and

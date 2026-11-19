@@ -80,7 +80,7 @@ fn an_unresolved_type_reference_is_reported_not_the_type_error_it_causes() {
 }
 
 /// An UNQUALIFIED type name that no module declares, inside a record alias
-/// (v0.29.14). The resolver accepts a bare type it cannot bind (a kernel-backed
+/// (v0.30.0). The resolver accepts a bare type it cannot bind (a kernel-backed
 /// type such as `Dict` has no `.sky` declaration), and the checker used to treat
 /// it as an opaque nominal: `sky check` reported `type mismatch: CardView vs
 /// record` at the use sites and never the undefined name.

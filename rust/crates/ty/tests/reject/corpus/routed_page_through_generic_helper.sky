@@ -2,7 +2,7 @@
 -- defect: a generic routing helper hid the routed page type from its caller
 -- rust: reject [E2001] at the helper's use, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). `withPages` is generic in the model, so the
+-- Found 2026-11-19 (v0.30.0). `withPages` is generic in the model, so the
 -- tie between the route pages and the model's `page` field was dropped in
 -- its body. The caller's model holds `page : Route` and the routes give
 -- `String` pages: the runtime wrote a `String` into `page` on every request.

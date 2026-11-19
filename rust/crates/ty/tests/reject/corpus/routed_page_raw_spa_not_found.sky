@@ -2,7 +2,7 @@
 -- defect: a raw Sky.Spa NotFound page is not of the model's `page` field type
 -- rust: reject [E2001] at Spa.withNotFound, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). The routes give `Route` pages, but the
+-- Found 2026-11-19 (v0.30.0). The routes give `Route` pages, but the
 -- NotFound page is a `String`. An unknown path wrote the `String` into
 -- `page`.
 module Main exposing (main)

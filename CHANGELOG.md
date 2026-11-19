@@ -11,14 +11,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.29.14 — timeouts, a circuit breaker, admission control and test coverage (2026-11-19)
+## v0.30.0 — timeouts, a circuit breaker, admission control and test coverage (2026-11-19)
 
 ### ⚠ Breaking changes
 
 - `Sky.Core.Task` exports `timeout`, and `Sky.Core.Error` already exports the
   value `timeout`. A program that imports both with `exposing (..)` and writes
   a bare `timeout` gets `[E1012]`: write `Error.timeout` or `Task.timeout`
-  (`docs/migration/v0.29.md`).
+  (`docs/migration/v0.30.md`).
 - `HttpRequest` has the new field `minRemaining`. A request written as a full
   record literal is `[E2001]` until it adds `minRemaining = 0`. A request
   built from `Http.defaultRequest` is unchanged.
@@ -33,7 +33,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   it. Where the served app can have routes, a function that serves an app
   whose model type it does not know (`serve parts = App.app parts |> … |>
   App.run`) is refused: give it a type annotation with the model type
-  (`docs/migration/v0.29.md`). A served app with no routes and no
+  (`docs/migration/v0.30.md`). A served app with no routes and no
   navigation function is not checked when the function that serves it
   neither reaches those builders nor is used by a function that does.
   Another entry, another module or an unused helper of the project that
@@ -58,7 +58,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `App.serve admin`. A `serveAdmin` function that `main` uses is checked
   too, because `main` reaches `App.withRoutes`. Give the `page` field the
   NotFound page's type (`page : Int`), or give the field another name
-  (`docs/migration/v0.29.md`).
+  (`docs/migration/v0.30.md`).
 - `Std.Admission` and `Std.Breaker` are new stdlib modules, and a stdlib
   module name is reserved. A project module with one of these names
   (`module Std.Breaker`), which v0.29.13 accepted, is now refused. Rename the
@@ -87,18 +87,18 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   module that exports the same name, both with `exposing (..)`, and writes
   the bare name gets `[E1012]` (v0.29.12 accepted it). Qualify the name
   (`Screen.viewport`, `Sub.viewport`), or give one of the two imports an
-  explicit exposing list (`docs/migration/v0.29.md`).
+  explicit exposing list (`docs/migration/v0.30.md`).
 - An unqualified type name that no module declares is now `[E1001]
   Undefined name` at the name. Before, it was accepted as an opaque type.
   A common case is a test file with `main : Program`: no module declares
   `Program`, so write `main : Task Error ()`. Thirty conformance suites in
   this repository had to change in this way. See the line in "Fixed" and
-  `docs/migration/v0.29.md`.
+  `docs/migration/v0.30.md`.
 - A Sky.Spa app that the build splits (for example `--target web:app`) with
   a project module named `Shared` is refused (`cannot auto-split`), because
   the split generates its wire contract as `Shared.sky`.
   Rename the module (`examples/60-spa-todos` renamed it to `Contract`). See
-  the line in "Fixed" and `docs/migration/v0.29.md`.
+  the line in "Fixed" and `docs/migration/v0.30.md`.
 
 ### Added
 
@@ -198,7 +198,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `"http"`, code `"DeadlineTooShort"`, not retryable). `HttpRequest` has the
   new field `minRemaining : Int` (`0` in `defaultRequest`), so a request
   written as a full record literal adds `minRemaining = 0`
-  (`docs/migration/v0.29.md`).
+  (`docs/migration/v0.30.md`).
 - `Std.Breaker`, a circuit breaker for calls to another service, written in
   Sky on `Std.Sync.Ref`. `Breaker.call breaker task` counts the failures
   `Error.isRetryable` accepts (a missed `Task.timeout` deadline included,

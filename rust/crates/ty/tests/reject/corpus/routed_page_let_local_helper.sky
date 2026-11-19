@@ -2,7 +2,7 @@
 -- defect: a routing helper bound in a let hid the routed page type
 -- rust: reject [E2001] at the helper's use, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). The let-bound `withPages` is generalised, so
+-- Found 2026-11-19 (v0.30.0). The let-bound `withPages` is generalised, so
 -- each use is a fresh instance of its type. The tie between the route pages
 -- and the model's `page` field was made once in its generic body and never
 -- copied to the instances, so it was dropped unchecked. The program passed

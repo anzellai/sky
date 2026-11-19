@@ -1,4 +1,4 @@
-# Autonomous goal: Sky v0.29.14
+# Autonomous goal: Sky v0.30.0
 
 Branch `fix/v0.29.14`, from `main` at fc2f7437e (v0.29.13 is tagged and
 published). Private context: `.claude/AUTONOMOUS_GOAL.private.md` (gitignored).
@@ -35,12 +35,12 @@ Part B. Runtime features (after part A):
   `sky coverage report`).
 
 Per item: a failing reproduction as a test first, the fix, existing suites
-green, a line in `docs/migration/v0.29.md` and `CHANGELOG.md`. One commit per
+green, a line in `docs/migration/v0.30.md` and `CHANGELOG.md`. One commit per
 item, Conventional Commits title. No outside project named anywhere.
 
 Gate: every reproduction is a test, the full Sky test suite passes, `sky
 verify` passes on the example projects, then the full release workflow, then
-tag v0.29.14.
+tag v0.30.0.
 
 ## Found during the work (ship in this release, CLAUDE.md §0.2.2)
 

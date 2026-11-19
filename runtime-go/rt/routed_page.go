@@ -1,6 +1,6 @@
 package rt
 
-// The routed page write (v0.29.14). Sky.Live (applyRouteWithParams), the
+// The routed page write (v0.30.0). Sky.Live (applyRouteWithParams), the
 // Sky.Spa server render (Spa_ssrResolveModel) and the Sky.Spa client
 // (spaApplyURL) write the routed page, or the NotFound page, into the model's
 // `page` field. The checker refuses a page whose type is not the field's type

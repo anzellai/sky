@@ -2,7 +2,7 @@
 -- defect: a raw Sky.Spa route page is not of the model's `page` field type
 -- rust: reject [E2001] at Spa.withRoutes, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). `Spa.route` erased its page type, so a
+-- Found 2026-11-19 (v0.30.0). `Spa.route` erased its page type, so a
 -- `String` page built for a model with `page : Route`, and the client wrote
 -- the `String` into `page` on navigation.
 module Main exposing (main)

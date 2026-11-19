@@ -134,7 +134,7 @@ fn cross_module_valid_use_still_accepts() {
 }
 
 /// A routing helper from another module, hidden in a user custom type
-/// (v0.29.14, D7). `Routing.router` sets `String` pages inside a `Router`
+/// (v0.30.0, D7). `Routing.router` sets `String` pages inside a `Router`
 /// value, whose type holds no `App` node. The model's `page` field is a
 /// `Route`, so the served app is refused with `[E2001]`.
 const ROUTING: &str = "module Routing exposing (Router(..), router, runRouter)\n\n\
@@ -223,7 +223,7 @@ fn type_errors_for_program(root: &Path, a: (&str, &str), main: &str) -> (usize, 
 }
 
 /// A project routing helper in a module under the `Sky.` / `Std.` namespace
-/// (v0.29.14). The stdlib is the modules of `sky-stdlib/`, not every module
+/// (v0.30.0). The stdlib is the modules of `sky-stdlib/`, not every module
 /// whose name starts with `Std.` or `Sky.`: the project may define a new name
 /// there (`module_ownership`), and such a module is app code. Before the fix
 /// the checker classified it by its name, so the helper was not a routed page
@@ -338,7 +338,7 @@ fn type_errors_for_modules(root: &Path, modules: &[(&str, &str)]) -> (usize, Str
     (out.type_errors, text)
 }
 
-/// A second entry of the project that serves a route-less app (v0.29.14,
+/// A second entry of the project that serves a route-less app (v0.30.0,
 /// Judge 8). `Admin` sets no routes and no navigation hook, so the runtime
 /// never reads or writes its model's `page` field: a pagination `page : Int`
 /// with `App.withNotFound ()` is a correct program. The served app is tied

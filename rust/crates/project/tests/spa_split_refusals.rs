@@ -2,7 +2,7 @@
 //! still ends with its migration link,
 //! `docs/migration/v0.27.md#spa-split-refusals`. The other two (two wire
 //! records with one name, one module under several import aliases) were
-//! lifted in v0.29.14: `Shared` names every type of another module through a
+//! lifted in v0.30.0: `Shared` names every type of another module through a
 //! generated alias (`SpaTy_Shape_.Point`) and imports that module once under
 //! it, so neither shape is ambiguous any more. Their tests now assert that
 //! the split succeeds and names each type by its module.
@@ -90,7 +90,7 @@ fn assert_linked(err: &str, names: &[&str]) {
 }
 
 /// Two project records named `Point` cross the wire (the entry's own and
-/// `Shape.Point`). Before v0.29.14 the split refused them, because `Shared`
+/// `Shape.Point`). Before v0.30.0 the split refused them, because `Shared`
 /// named a project type by its bare name. Now the entry's `Point` is copied
 /// into `Shared` and named bare, and `Shape.Point` is named through its
 /// module, each with its own codec.
@@ -118,7 +118,7 @@ fn two_wire_records_with_one_name_split_with_one_codec_each() {
 }
 
 /// The wire types name `Shape` as `S` in one module and as `Sh` in another.
-/// Before v0.29.14 the split refused this, because it copied `Wire.Other` into
+/// Before v0.30.0 the split refused this, because it copied `Wire.Other` into
 /// `Shared` and had to import `Shape` under the one alias the copy wrote.
 /// Now `Shared` imports `Wire` and `Shape` under generated aliases and copies
 /// neither type.

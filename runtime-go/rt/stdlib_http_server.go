@@ -182,7 +182,7 @@ func Http_request(firstArg any, rest ...any) any {
 // The request carries the calling goroutine's trace context
 // (httpOutboundContext): the client span is its parent for any
 // instrumentation that reads the request context, and a Task.timeout deadline
-// stops the call. Before v0.29.14 it was sent with context.Background(), so a
+// stops the call. Before v0.30.0 it was sent with context.Background(), so a
 // deadline-bound Http.request ran on until the client timeout.
 func httpRequestDo(method, url, body string, headers any, timeoutMs int, followRedirects bool, maxRedirects int) any {
 	ctx, cancel := httpOutboundContext()

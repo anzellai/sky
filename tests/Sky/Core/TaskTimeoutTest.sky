@@ -1,6 +1,6 @@
 module Sky.Core.TaskTimeoutTest exposing (tests)
 
--- Task.timeout and Task.remaining (v0.29.14): a deadline that travels with a
+-- Task.timeout and Task.remaining (v0.30.0): a deadline that travels with a
 -- Task. The runtime races, the HTTP cancellation and the goroutine-context
 -- hygiene are covered by runtime-go/rt/task_deadline_test.go. This suite pins
 -- the Sky surface: the error a timeout produces, the result that arrives in

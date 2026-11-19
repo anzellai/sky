@@ -174,7 +174,7 @@ connectRaw =
 -- `ws://…` or `wss://…`).  The Task resolves once the handshake
 -- completes; frames flow via `onMessage` after that.
 --
--- Under a `Task.timeout` deadline (v0.29.14) the dial and the handshake
+-- Under a `Task.timeout` deadline (v0.30.0) the dial and the handshake
 -- stop at the deadline and are refused once it has passed. The socket
 -- outlives the task that opened it; `receive`, `receiveWithin` and
 -- `forEachMessage` stop at the deadline of the task that reads.

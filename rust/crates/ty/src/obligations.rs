@@ -62,7 +62,7 @@ pub(crate) struct Obligation {
 }
 
 /// A deferred tie between a routed app's page type and its model's `page`
-/// field (v0.29.14). `Std.App.withRoutes` has the type
+/// field (v0.30.0). `Std.App.withRoutes` has the type
 /// `List (Route page) -> App f s page model msg key -> …`, and the runtime
 /// writes the routed page (and the NotFound page) into the model's `page`
 /// field on every request. A model with no `page` field is valid (the runtime
@@ -124,7 +124,7 @@ fn is_stdlib_module(name: &str) -> bool {
     crate::variance::is_stdlib_module(name)
 }
 
-/// Pass 4 (v0.29.14): the routing defs of [`PageTie`]. The carriers are
+/// Pass 4 (v0.30.0): the routing defs of [`PageTie`]. The carriers are
 /// `Std.App.withRoutes` and every user def whose body reaches a carrier (a
 /// fixpoint over the call graph, [`extend_routed_page_carriers`]), so a
 /// generic helper is checked at its callers. The raw APIs tie at their own

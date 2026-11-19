@@ -2,7 +2,7 @@
 -- defect: a route-less Std.App app gives its `withOnNavigate` function a page of another type
 -- rust: reject [E2001] at App.withOnNavigate, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). The runtime gave the `Route` in the model's
+-- Found 2026-11-19 (v0.30.0). The runtime gave the `Route` in the model's
 -- `page` field to a function of `String`, and the app used a wrong value.
 module Main exposing (main)
 

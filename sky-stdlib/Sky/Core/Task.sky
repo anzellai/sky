@@ -222,7 +222,7 @@ forever =
     Ffi.kernel "Task_forever"
 
 
--- ─── Deadlines (v0.29.14) ──────────────────────────────────────────
+-- ─── Deadlines (v0.30.0) ──────────────────────────────────────────
 -- | `timeout ms task` — run `task` with a deadline `ms` milliseconds away.
 -- When the task has not finished by then, the result is a `Timeout`-kind
 -- error whose domain failure is `"task"` / `"DeadlineExceeded"` (retryable,

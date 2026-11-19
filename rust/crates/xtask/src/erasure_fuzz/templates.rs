@@ -320,7 +320,7 @@ fn kernels() -> Vec<Kernel> {
             module: "Std.Live",
             alias: "Live",
             ty: "Route",
-            // `Live.Route page` (v0.29.14): the page type the route gives.
+            // `Live.Route page` (v0.30.0): the page type the route gives.
             ty_args: " ()",
             extra_imports: &[],
             construct: |i| format!("Live.route \"/p{i}\" ()"),

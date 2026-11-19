@@ -1,6 +1,6 @@
 module Std.BreakerTest exposing (tests)
 
--- Std.Breaker (v0.29.14): a circuit breaker on Std.Sync.Ref and the clock.
+-- Std.Breaker (v0.30.0): a circuit breaker on Std.Sync.Ref and the clock.
 --
 -- The tests hold under a frozen test clock (SKY_TEST_CLOCK_MS) and under the
 -- wall clock: a long `openForMs` keeps a breaker open for the whole test, and

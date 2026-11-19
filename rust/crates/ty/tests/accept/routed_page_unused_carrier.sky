@@ -1,7 +1,7 @@
 -- gate: accept
 --
 -- A route-less served app beside a helper that sets a navigation hook
--- (v0.29.14, Judge 8). The served app sets no routes and no navigation
+-- (v0.30.0, Judge 8). The served app sets no routes and no navigation
 -- hook, so the runtime never reads or writes its model's `page` field, and
 -- its `App.withNotFound` page may have any type. The served app is tied
 -- only when its own definition reaches `App.withRoutes` or

@@ -14,7 +14,7 @@ plans, audits, the retired compilers) is in [`history/`](history/).
 * [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md): current gotchas and
   workarounds.
 * [`migration/`](migration/): what changes between minors (`v0.27.md`,
-  `v0.28.md`, `v0.29.md`), as loud, loud at run time and silent.
+  `v0.28.md`, `v0.29.md`, `v0.30.md`), as loud, loud at run time and silent.
 * [`sky-toml.md`](sky-toml.md): every `sky.toml` key and environment variable.
 
 ## One entry point: `Std.App`
@@ -67,7 +67,7 @@ images on the server, v0.29.0) and `Std.Qr`.
 `Std.Money`.
 
 **Effects and operations.** `Std.Durable`, `Std.Jobs`, `Std.PubSub`,
-`Std.Sync`, `Std.Breaker` (a circuit breaker, v0.29.14), `Std.Watch`, `Std.Email`, `Std.Time`, `Std.System`, `Std.Config`,
+`Std.Sync`, `Std.Breaker` (a circuit breaker, v0.30.0), `Std.Watch`, `Std.Email`, `Std.Time`, `Std.System`, `Std.Config`,
 `Std.Log`, `Std.Trace` and `Std.Analytics`.
 
 **AI (`Std.Ai`).** Calling models: `Std.Ai.Provider`, `Std.Ai.Endpoint` (model

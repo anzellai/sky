@@ -191,7 +191,7 @@ const EFFECT_KERNELS: &[&str] = &[
     // workbooks and documents is ZIP and XML work over untrusted bytes under
     // limits, the same server-side class as Xml and Zip.
     "Office",
-    // v0.29.14 Std.Admission: the server's admission gate (a per-process
+    // v0.30.0 Std.Admission: the server's admission gate (a per-process
     // limit and hook in front of `/_rpc` and api routes). Server only.
     "Admission",
 ];

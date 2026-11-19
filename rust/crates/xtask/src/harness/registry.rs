@@ -581,8 +581,8 @@ pub static GATES: &[Gate] = &[
                 // Std.Office surface (+5 cases, 837 → 842), and the v0.29.0
                 // Std.Image.Canvas surface (+2 cases, 842 → 844), and the
                 // v0.29.6 generic_fn_record_slot stratum (+48 cases, 844 → 892),
-                // and the v0.29.14 deadline surface (+2 cases, 892 → 894),
-                // and the v0.29.14 breaker surface (+2 cases, 894 → 896).
+                // and the v0.30.0 deadline surface (+2 cases, 892 → 894),
+                // and the v0.30.0 breaker surface (+2 cases, 894 → 896).
                 from: "n_min = 896",
                 to: "n_min = 897",
             },

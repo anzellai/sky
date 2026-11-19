@@ -3,7 +3,7 @@
 -- pairs: reject/corpus/routed_page_let_local_helper.sky
 -- pairs: reject/corpus/routed_page_custom_type_helper.sky
 --
--- The accept side of the routed page type rule (v0.29.14): a generic routing
+-- The accept side of the routed page type rule (v0.30.0): a generic routing
 -- helper, a routing helper bound in a let, a routing helper hidden in a
 -- user custom type, a raw `Live.config` and a raw `Spa.withRoutes` whose
 -- pages have the type of the model's `page` field are accepted. The served

@@ -148,7 +148,7 @@ pub struct Infer<'a> {
     /// [`Infer::collapse_let_poly`] at the end of the def.
     poly_insts: Vec<(LocalId, TyVarId)>,
     /// The routed page ties of a generalised let binder's body whose page or
-    /// model is one of its quantified variables (v0.29.14). They are taken
+    /// model is one of its quantified variables (v0.30.0). They are taken
     /// out of `page_ties` at generalisation, and every instance of the binder
     /// gets a copy, so each use is checked with its own model, like a use of
     /// a top-level routing helper ([`Infer::infer_res`]).
@@ -161,7 +161,7 @@ pub struct Infer<'a> {
     /// custom type or a record), with the span where they arose. Decided by
     /// [`Infer::discharge_bounds`] (`crate::obligations`, v0.27.0).
     pub(crate) obligations: Vec<crate::obligations::Obligation>,
-    /// Routed-page ties waiting for the model's type (v0.29.14,
+    /// Routed-page ties waiting for the model's type (v0.30.0,
     /// [`crate::obligations::PageTie`]). Decided with the obligations.
     pub(crate) page_ties: Vec<crate::obligations::PageTie>,
     /// Nominal bound checks already made in this run, keyed by the bound, the
@@ -2447,7 +2447,7 @@ impl<'a> Infer<'a> {
         }
     }
 
-    /// [`Self::infer_res_plain`], then (v0.29.14, CHECK-ONLY) the routed page
+    /// [`Self::infer_res_plain`], then (v0.30.0, CHECK-ONLY) the routed page
     /// ties of a use of a routing def (`crate::obligations::PageTie`).
     fn infer_res(&mut self, res: Res) -> TyVarId {
         let def = match &res {

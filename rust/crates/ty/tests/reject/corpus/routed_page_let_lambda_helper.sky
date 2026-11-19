@@ -2,7 +2,7 @@
 -- defect: a routing lambda bound in a let hid the routed page type
 -- rust: reject [E2001] at the lambda's use, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). A lambda is a syntactic value, so the let
+-- Found 2026-11-19 (v0.30.0). A lambda is a syntactic value, so the let
 -- generalises it like a let-bound function. Its instances must carry the
 -- routed page tie of its body.
 module Main exposing (main)

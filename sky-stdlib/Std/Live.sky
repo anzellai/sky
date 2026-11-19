@@ -83,7 +83,7 @@ type AppConfig model msg
 -- converter `Local.Route -> Live.Route` mis-narrowed the kernel handle to the
 -- local nominal and panicked at runtime while `sky check` passed.
 --
--- `page` is the type of the page the route gives (v0.29.14). The runtime
+-- `page` is the type of the page the route gives (v0.30.0). The runtime
 -- writes that page into the model's `page` field, so [`config`] ties it to
 -- the field: a page of another type is a compile error.
 type Route page

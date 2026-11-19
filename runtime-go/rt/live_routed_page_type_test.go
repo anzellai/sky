@@ -1,6 +1,6 @@
 package rt
 
-// v0.29.14: a routed page whose Go type the model's `page` field cannot hold.
+// v0.30.0: a routed page whose Go type the model's `page` field cannot hold.
 // The checker refuses such a program ([E2001]), so this is defence in depth:
 // before, every request panicked in RecordUpdate (`reflect.Set: value of type
 // string is not assignable to type main.Main_Route`), and two enums of the

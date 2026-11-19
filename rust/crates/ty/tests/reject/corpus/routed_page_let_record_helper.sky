@@ -2,7 +2,7 @@
 -- defect: a routing helper held in a let-bound record hid the routed page type
 -- rust: reject [E2001] at the field's use, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). A record of lambdas is a syntactic value, so
+-- Found 2026-11-19 (v0.30.0). A record of lambdas is a syntactic value, so
 -- the let generalises it. The tie of the field's body must reach each use.
 module Main exposing (main)
 

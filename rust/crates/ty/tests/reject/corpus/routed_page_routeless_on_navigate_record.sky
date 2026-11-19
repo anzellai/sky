@@ -2,7 +2,7 @@
 -- defect: a route-less Std.App app gives its `withOnNavigate` function a page of another type
 -- rust: reject [E2001] at App.withOnNavigate, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). With no `App.withRoutes` the served app was
+-- Found 2026-11-19 (v0.30.0). With no `App.withRoutes` the served app was
 -- not tied, but the runtime gives the model's `page` field to the
 -- `withOnNavigate` function on every request: `rt.Coerce` panicked with
 -- HTTP 500 (a `Route` given to a function of `{ count : Int }`).

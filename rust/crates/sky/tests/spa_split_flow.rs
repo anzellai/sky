@@ -1462,7 +1462,7 @@ fn splits_a_module_whose_wire_rides_a_nominal_union_by_owning_it_in_shared() {
 /// Item` field whose `itemCodec` lived beside a `File` effect fell through to
 /// `no codec for a field of type any`.
 ///
-/// Until v0.29.14 the split COPIED the codec and its type into `Shared`. Now
+/// Until v0.30.0 the split COPIED the codec and its type into `Shared`. Now
 /// `Shared` imports the module under a generated alias and names the codec in
 /// place (`SpaTy_Data_.itemCodec`): the wasm client gets the module's client
 /// SUBSET (§23), which keeps `Item` and `itemCodec` and drops every server
@@ -1919,7 +1919,7 @@ fn generated_wire_types_name_every_type_they_hold() {
         "type alias Item =",
         "products : List Product",
         // `Preset` is declared in `Types`, which `Shared` imports under a
-        // generated alias (v0.29.14): a type of another module is named
+        // generated alias (v0.30.0): a type of another module is named
         // qualified, never through an `exposing (..)` import.
         "hits : List SpaTy_Types_.Preset",
         "pick : Maybe SpaTy_Types_.Preset",
@@ -3704,7 +3704,7 @@ fn web_app_sibling_update_with_rpc_error_builds() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
-/// D1 (v0.29.14): a project with an unrelated `src/Main.sky` program and the
+/// D1 (v0.30.0): a project with an unrelated `src/Main.sky` program and the
 /// app in a second entry `src/Other.sky`. `sky build src/Other.sky --target
 /// web:app` wrote the generated entry as `module Main` at `src/Main.sky`, then
 /// copied the project's own `Main` over it, so the backend silently became the
@@ -9795,7 +9795,7 @@ fn a_server_only_module_keeps_its_types_in_the_client() {
 /// Chan.Batch`; in this fixture a type mismatch). The client-result RPC
 /// answers the nested record.
 ///
-/// Since v0.29.14 `Shared` names every type of another module through a
+/// Since v0.30.0 `Shared` names every type of another module through a
 /// generated alias and imports that module once under it (`import Shape as
 /// SpaTy_Shape_`, `at : SpaTy_Shape_.Point`), whatever alias the source wrote
 /// and whether or not the module has a server function. Before, it imported a
@@ -10102,7 +10102,7 @@ fn shared_imports_no_module_that_imports_shared() {
     }
 }
 
-/// D1 with D2-D4 (v0.29.14): the app is a second entry `src/Other.sky`
+/// D1 with D2-D4 (v0.30.0): the app is a second entry `src/Other.sky`
 /// (`module Other`) beside a project `src/Main.sky` program, and its wire
 /// types live in sibling modules: `P1` and `P2` both export a constructor
 /// `Matched`, and `View.CardView` aliases `Store.CardView` (both modules
@@ -10737,12 +10737,12 @@ fn the_viewport_breakpoint_and_query_reach_update_on_live_and_build_for_every_ta
 
 /// An app with no routes and a NotFound page (`App.withNotFound ()`, no
 /// `App.withRoutes`) keeps its own `page : String` model field on every web
-/// target. Before v0.29.14 Sky.Live wrote the NotFound page (`()`) into that
+/// target. Before v0.30.0 Sky.Live wrote the NotFound page (`()`) into that
 /// field on every request and the view rendered `{}`: with no routes the
 /// runtime owns no page type, so it now writes the field only for an app with
 /// routes. An unknown path still answers 404, with the app's view. A
 /// route-less `web:app` build has no server render: its backend serves the
-/// client shell, for `/` and (F8, v0.29.14) with 404 for an unknown path, while
+/// client shell, for `/` and (F8, v0.30.0) with 404 for an unknown path, while
 /// a missing dist asset stays a plain 404. The wasm client writes the page field only
 /// for an app with routes (`spaApplyURL`; the server-render resolver is covered
 /// by `TestSpaSsrResolveModel_RoutelessAppKeepsUserPageField`).
@@ -10827,7 +10827,7 @@ fn a_routeless_app_keeps_its_own_page_field_on_live_and_web_app() {
 }
 
 /// A routed app's page type is the type of the model's `page` field (D7
-/// follow-up, v0.29.14). The runtime writes the routed page (and the NotFound
+/// follow-up, v0.30.0). The runtime writes the routed page (and the NotFound
 /// page) into `model.page` on every request, but `App.withRoutes` never tied
 /// the App's `page` parameter to that field. A program whose routes give a
 /// `String` page while the model holds `page : Route` passed `sky check`,
@@ -10846,7 +10846,7 @@ fn a_routed_page_must_have_the_model_page_type_on_live_and_web_app() {
     let main = "src/Main.sky";
     // The routes set by a helper that a user custom type holds: the type of
     // `router` shows no `App`, so only the check at the served app sees the
-    // mismatch (v0.29.14).
+    // mismatch (v0.30.0).
     let routes_block = "App.withRoutes\n                   [ App.route \"/\" Dashboard\n                   , App.routeParam \"/item/:id\" Detail\n                   ]";
     let router_helper = "type Router f s p m msg k\n    = Router (App.App f s p m msg k -> App.App f s p m msg k)\n\n\n\
                          router : Router f s String m msg k\nrouter =\n    Router (\\a -> App.withRoutes [ App.route \"/\" \"home\" ] a)\n\n\n\
@@ -14231,7 +14231,7 @@ fn frontend_source_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// `Std.Breaker` (v0.29.14) is pure Sky on a `Std.Sync.Ref`, which lives on the
+/// `Std.Breaker` (v0.30.0) is pure Sky on a `Std.Sync.Ref`, which lives on the
 /// server only. An `App.app` update arm that calls a port through
 /// `Breaker.call` must split into a server RPC: the frontend carries no
 /// Breaker or Sync code (a wasm client holding its own breaker would count

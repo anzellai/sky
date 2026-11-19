@@ -75,7 +75,7 @@ openRaw =
 -- URL, body, and headers — so an existing Http.request call site
 -- can switch to streaming by changing only the function name.
 --
--- Under a `Task.timeout` deadline (v0.29.14) the open stops at the deadline
+-- Under a `Task.timeout` deadline (v0.30.0) the open stops at the deadline
 -- and is refused once it has passed (`Http.withMinRemaining` asks for more).
 -- The stream itself outlives the task that opened it: `forEachChunk` stops
 -- at the deadline of the task that reads it.

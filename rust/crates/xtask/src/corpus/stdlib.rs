@@ -388,7 +388,7 @@ pub const SURFACES: &[Surface] = &[
     // no write, FIFO order, Nothing once closed and empty, Err on a push to a
     // closed queue), not observations of this runtime.
     sf2("sync", "Std.Sync", &["Sky.Core.Task as Task"]),
-    // v0.29.14 Task.timeout / Task.remaining: a deadline that travels with a
+    // v0.30.0 Task.timeout / Task.remaining: a deadline that travels with a
     // Task. The expected values are the documented contract (a result in
     // time unchanged, a missed deadline is `task` / `DeadlineExceeded`, the
     // earlier outer deadline wins, `remaining` is Nothing outside a timeout),
@@ -398,7 +398,7 @@ pub const SURFACES: &[Surface] = &[
         "Sky.Core.Task",
         &["Sky.Core.Time as Time", "Sky.Core.Error as Error"],
     ),
-    // v0.29.14 Std.Breaker: a circuit breaker on Std.Sync. The expected values
+    // v0.30.0 Std.Breaker: a circuit breaker on Std.Sync. The expected values
     // are the documented contract (closed until `failures` counting failures,
     // an open breaker refuses with `breaker` / `Open` and does not run the
     // call, a non-counting error leaves it closed, a trial success closes it),
@@ -851,7 +851,7 @@ pub fn inventory(
 /// battery asserts a value ABOUT a symbol of theirs, so they are NOT here. The
 /// printed report used to count them as touched, which understated the dark set
 /// by exactly those 3 (it said 59; the honest number is 62). `Sky.Core.Task`
-/// has been asserted since v0.29.14 (the `deadline` surface).
+/// has been asserted since v0.30.0 (the `deadline` surface).
 pub const ASSERTED_MODULES: &[&str] = &[
     "Sky.Core.Array",
     "Sky.Core.Basics",
@@ -905,10 +905,10 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Watch",
     // v0.27.0: Std.Sync lands covered (`sync` surface).
     "Std.Sync",
-    // v0.29.14: Sky.Core.Task is asserted by the `deadline` surface
+    // v0.30.0: Sky.Core.Task is asserted by the `deadline` surface
     // (`Task.timeout`, `Task.remaining`).
     "Sky.Core.Task",
-    // v0.29.14: Std.Breaker lands covered (`breaker` surface).
+    // v0.30.0: Std.Breaker lands covered (`breaker` surface).
     "Std.Breaker",
     // v0.28.0: Std.Ai.Local lands covered (`ailocal` surface).
     "Std.Ai.Local",
@@ -1065,7 +1065,7 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// (every export asserted at the nominal, empty, boundary, unicode and
 /// failure edges, including pushes across the 32 and 1,024 trie boundaries).
 ///
-/// Raised 75 -> 76 (v0.29.14): the new `Std.Admission`. It is config-shaped,
+/// Raised 75 -> 76 (v0.30.0): the new `Std.Admission`. It is config-shaped,
 /// like `Sky.Config`: an opaque `Policy` built by `withX` builders and consumed
 /// for its EFFECT by `install` (a `Task`) and `App.withAdmission`. What it does
 /// happens to HTTP requests under load, so it is covered by
@@ -1075,10 +1075,10 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// `an_admission_policy_gates_api_routes_on_live_and_on_the_split_backend`
 /// (the Sky hook on Sky.Live and the split backend), not here.
 ///
-/// Lowered 75 -> 74 (v0.29.14): `Sky.Core.Task`, imported by many batteries
+/// Lowered 75 -> 74 (v0.30.0): `Sky.Core.Task`, imported by many batteries
 /// but asserted by none, gained the `deadline` surface (`Task.timeout`,
 /// `Task.remaining`).
-/// Net (v0.29.14): 75 + 1 (Std.Admission) - 1 (Sky.Core.Task) = 75.
+/// Net (v0.30.0): 75 + 1 (Std.Admission) - 1 (Sky.Core.Task) = 75.
 pub const DARK_MODULE_CEILING: usize = 75;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols

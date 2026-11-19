@@ -553,7 +553,7 @@ func HttpStream_open(reqArg any) any {
 		}
 		// The request carries the calling goroutine's trace context (spans
 		// nest under the originating session) WITHOUT its cancellation: the
-		// stream outlives the Task that opened it. Before v0.29.14 it was
+		// stream outlives the Task that opened it. Before v0.30.0 it was
 		// sent with the trace context itself, so a stream opened inside a
 		// Task.timeout was cut the moment the open returned. The deadline
 		// bounds only the open (the wait for the response headers); each

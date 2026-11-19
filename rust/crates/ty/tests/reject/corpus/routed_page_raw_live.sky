@@ -2,7 +2,7 @@
 -- defect: a raw Sky.Live route page is not of the model's `page` field type
 -- rust: reject [E2001] at Live.config, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). `Live.route` erased its page type, so a
+-- Found 2026-11-19 (v0.30.0). `Live.route` erased its page type, so a
 -- `String` page built for a model with `page : Route`, and Sky.Live wrote
 -- the `String` into `page` on every request.
 module Main exposing (main)

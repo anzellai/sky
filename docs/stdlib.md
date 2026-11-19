@@ -741,8 +741,8 @@ main =
 | `Task.Step state a` | ADT | `Loop state \| Done a` — what a `Task.loop` step returns: go again with a new state, or stop with a result |
 | `Task.loop` | `(state -> Task e (Step state a)) -> state -> Task e a` | Stack-safe loop: run the step, then again on each `Loop` state, until `Done`. An `Err` stops it. The clearest form for a loop with explicit state (`andThen` recursion is stack-safe too) |
 | `Task.forever` | `Task e a -> Task e b` | Re-run a task until it fails, then fail with that error. Stack-safe. The free `b` says it never succeeds |
-| `Task.timeout` | `Int -> Task Error a -> Task Error a` | v0.29.14. Run a task with a deadline `ms` away. A task that has not finished by then fails with a `Timeout` error, domain `"task"`, code `"DeadlineExceeded"` (retryable). The deadline travels: see below |
-| `Task.remaining` | `Task e (Maybe Int)` | v0.29.14. The milliseconds left before the current deadline (`Just 0` once it has passed), `Nothing` outside a `Task.timeout` |
+| `Task.timeout` | `Int -> Task Error a -> Task Error a` | v0.30.0. Run a task with a deadline `ms` away. A task that has not finished by then fails with a `Timeout` error, domain `"task"`, code `"DeadlineExceeded"` (retryable). The deadline travels: see below |
+| `Task.remaining` | `Task e (Maybe Int)` | v0.30.0. The milliseconds left before the current deadline (`Just 0` once it has passed), `Nothing` outside a `Task.timeout` |
 | `Task.run` | `Task e a -> Result e a` | Force at the boundary |
 | `Task.fromResult` | `Result e a -> Task e a` | Bridge from Result |
 | `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` | Chain Result step after Task |
@@ -783,7 +783,7 @@ countStep limit n =
 
 `Loop` and `Done` come from `Sky.Core.Task`: import them with `exposing (Step(..))`, or write `Task.Loop` / `Task.Done` after `import Sky.Core.Task as Task`.
 
-**Deadlines: `Task.timeout` and `Task.remaining` (v0.29.14).** `Task.timeout ms task` runs `task` with a deadline `ms` milliseconds away. A result that arrives in time, `Ok` or `Err`, is returned unchanged. When the task has not finished by then, the result is an `Error` of kind `Timeout` whose domain failure is `"task"` / `"DeadlineExceeded"` (retryable, attributes `op` and `timeoutMs`), so `Error.isRetryable` counts it as transient.
+**Deadlines: `Task.timeout` and `Task.remaining` (v0.30.0).** `Task.timeout ms task` runs `task` with a deadline `ms` milliseconds away. A result that arrives in time, `Ok` or `Err`, is returned unchanged. When the task has not finished by then, the result is an `Error` of kind `Timeout` whose domain failure is `"task"` / `"DeadlineExceeded"` (retryable, attributes `op` and `timeoutMs`), so `Error.isRetryable` counts it as transient.
 
 The deadline travels with the work:
 
@@ -936,10 +936,10 @@ req =
         |> Http.withHeader "Authorization" ("Bearer " ++ token)
         |> Http.withBody jsonBody
         |> Http.withTimeout 60000              -- 60 s; 0 disables
-        |> Http.withMinRemaining 500           -- v0.29.14, see below
+        |> Http.withMinRemaining 500           -- v0.30.0, see below
 ```
 
-**Deadlines (v0.29.14).** Under a `Task.timeout` deadline, `get`, `post` and
+**Deadlines (v0.30.0).** Under a `Task.timeout` deadline, `get`, `post` and
 `request` send the request with the deadline: the call stops when it passes
 and fails with the deadline's error (`"task"` / `"DeadlineExceeded"`). A call
 is refused before it is sent once the deadline has passed. `withMinRemaining
@@ -948,7 +948,7 @@ has kind `Timeout`, domain `"http"`, code `"DeadlineTooShort"`, is not
 retryable and carries the attributes `minRemainingMs` and `remainingMs`. The
 default (`minRemaining = 0` in `defaultRequest`) refuses only once the
 deadline has passed. Outside a `Task.timeout` it has no effect. `HttpRequest`
-gained the `minRemaining : Int` field in v0.29.14, so a request written as a
+gained the `minRemaining : Int` field in v0.30.0, so a request written as a
 full record literal adds `minRemaining = 0`. `Http.Stream.open` reads the
 deadline and `minRemaining` the same way for its open; the stream it returns
 is not bound by the deadline, and `Http.Stream.forEachChunk` stops at the
@@ -2994,7 +2994,7 @@ batch.
 `Task.lazy : (() -> a) -> Task err a` — defer a pure computation
 so it can be sequenced with other tasks.
 
-### `Std.Admission` — a bound on the requests a server runs at once (v0.29.14)
+### `Std.Admission` — a bound on the requests a server runs at once (v0.30.0)
 
 Without a policy a burst of requests queues inside the process: every request
 starts its handler at once. A policy gives each route class a limit on the
@@ -3161,7 +3161,7 @@ Sky.Live model (the session store cannot save it). Two values are equal only
 when they are the same `Ref` / `Mutex` / `Queue`. `withLock` is not
 re-entrant. In a Sky.Spa app these calls run on the server.
 
-### `Std.Breaker` — a circuit breaker for calls to another service (v0.29.14)
+### `Std.Breaker` — a circuit breaker for calls to another service (v0.30.0)
 
 A breaker counts the failures of the calls it wraps. When `failures` of them
 fail within `windowMs`, it opens: it refuses every call at once, without

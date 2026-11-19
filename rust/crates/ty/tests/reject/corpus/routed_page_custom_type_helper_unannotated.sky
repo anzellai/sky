@@ -2,7 +2,7 @@
 -- defect: an unannotated routing helper hidden in a custom type hid the routed page type
 -- rust: reject [E2001] where the app is served, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). As `routed_page_custom_type_helper.sky`, with
+-- Found 2026-11-19 (v0.30.0). As `routed_page_custom_type_helper.sky`, with
 -- no annotations: `router` is a function that returns the `Router`. The
 -- program passed `sky check` and stopped at run time on every request.
 module Main exposing (main)

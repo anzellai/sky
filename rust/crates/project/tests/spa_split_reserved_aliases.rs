@@ -244,7 +244,7 @@ fn a_sibling_codec_copied_into_shared_keeps_its_own_aliases() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// D1 (v0.29.14): a project whose second entry `src/Other.sky` holds the app,
+/// D1 (v0.30.0): a project whose second entry `src/Other.sky` holds the app,
 /// next to an unrelated `src/Main.sky` program. The split wrote the generated
 /// entry as `module Main` at `src/Main.sky` in both trees, then copied the
 /// project's own `Main` over it, so the build silently produced the project
@@ -356,7 +356,7 @@ main =
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// D1 (v0.29.14): a project module named `Shared` would be replaced by the
+/// D1 (v0.30.0): a project module named `Shared` would be replaced by the
 /// split's generated wire contract `Shared.sky`. It is refused by name.
 #[test]
 fn a_project_module_named_shared_is_refused() {

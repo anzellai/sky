@@ -2,7 +2,7 @@ module Main exposing (main)
 
 -- A routed app: every route page and the NotFound page have the type of the
 -- model's `page` field, because the runtime writes the routed page into that
--- field. A route page of another type is a compile error (v0.29.14). The
+-- field. A route page of another type is a compile error (v0.30.0). The
 -- test edits the routes to give a `String` page or a `Screen` page.
 
 import Sky.Core.Prelude exposing (..)

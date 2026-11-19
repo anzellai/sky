@@ -1,6 +1,6 @@
 module Main exposing (main)
 
--- Sky.Spa split fixture for Std.Breaker (v0.29.14). A breaker holds its state
+-- Sky.Spa split fixture for Std.Breaker (v0.30.0). A breaker holds its state
 -- in a Std.Sync.Ref, which lives on the server only. An update arm that calls
 -- another service (a port) through `Breaker.call` must therefore split into a
 -- server RPC: the client never holds the breaker, and the frontend carries no

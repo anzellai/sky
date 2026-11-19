@@ -2,7 +2,7 @@
 -- defect: a routing helper hidden in a custom type hid the routed page type
 -- rust: reject [E2001] where the app is served, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). The routes are set inside a function that a
+-- Found 2026-11-19 (v0.30.0). The routes are set inside a function that a
 -- user custom type (`Router`) holds. The type of `router` shows no `App`
 -- node, so no use of it was tied to the model's `page` field, and the tie in
 -- its generic body was dropped. The program passed `sky check` and stopped

@@ -218,7 +218,7 @@ impl SendState {
             // backend leg FAILED, and its own output (which the build
             // reports) says why. A broken pipe here is that failure seen
             // from this side, not a second one, and printing it hid the real
-            // error under `Broken pipe` (v0.29.14).
+            // error under `Broken pipe` (v0.30.0).
             Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
             other => other,
         }
@@ -368,7 +368,7 @@ mod tests {
         );
     }
 
-    /// F3 (v0.29.14): the backend leg failed and exited before the frontend
+    /// F3 (v0.30.0): the backend leg failed and exited before the frontend
     /// leg delivered, so its stdin's read end is closed. Writing the delivery
     /// then fails with a broken pipe. That is not a separate failure: the
     /// backend's own output says why it stopped, and the build reports it.

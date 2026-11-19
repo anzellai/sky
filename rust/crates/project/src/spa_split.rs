@@ -11387,7 +11387,7 @@ fn gen_backend(
             "        , SpaServer_.staticNotFound \"/\" \"../frontend/dist\" ssrHandler".to_string(),
         );
     } else if !has_synth_routes && has_synth_view && has_synth_head {
-        // F8 (v0.29.14): a route-less Std.App app shows its view for every
+        // F8 (v0.30.0): a route-less Std.App app shows its view for every
         // path, as Sky.Live does, so an unknown path is the page `/` serves
         // (the server render, else the dist shell) with 404, never the file
         // server's plain 404. A missing asset stays a plain 404: Sky-owned
@@ -14532,7 +14532,7 @@ mod type_identity_tests {
     }
 
     /// A type of a project module other than the entry is named through its
-    /// module too (D3, v0.29.14): `Shared` imports that module qualified, so
+    /// module too (D3, v0.30.0): `Shared` imports that module qualified, so
     /// `P1.Matched` and `P2.Matched` never meet. Two declarations with one
     /// bare name get module-mangled codec names.
     #[test]

@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 -- An app with no routes and a NotFound page keeps its own `page` field: the
--- runtime writes a page field only for an app with routes (v0.29.14).
+-- runtime writes a page field only for an app with routes (v0.30.0).
 
 import Sky.Core.Prelude exposing (..)
 import Std.App as App

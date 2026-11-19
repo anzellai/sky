@@ -1595,7 +1595,7 @@ fn check_modules_with_world_reporting(
         });
     }
     // A served routed page mismatch that follows from a per-use one is not
-    // reported twice (v0.29.14).
+    // reported twice (v0.30.0).
     out.type_errors -= crate::obligations::drop_served_page_cascades(&mut out.diagnostics);
     // stable order for the type table (L4)
     out.def_types.sort_by(|a, b| {

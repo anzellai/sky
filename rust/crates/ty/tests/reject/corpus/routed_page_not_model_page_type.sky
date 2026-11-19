@@ -2,7 +2,7 @@
 -- defect: a routed app's pages are not of the model's `page` field type
 -- rust: reject [E2001] at App.withRoutes, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). The runtime writes the routed page and the
+-- Found 2026-11-19 (v0.30.0). The runtime writes the routed page and the
 -- NotFound page into the model's `page` field on every request, but
 -- `App.withRoutes` did not tie its `page` type to that field. This program
 -- built, and every request was a 500 (`reflect.Set: value of type string is

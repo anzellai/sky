@@ -2,7 +2,7 @@
 -- defect: a raw Sky.Spa routing helper hides the model type from the checker
 -- rust: reject [E2001] in the helper: the model type is not known there
 --
--- Found 2026-11-19 (v0.29.14). `Spa.AppConfig model msg` carries no page
+-- Found 2026-11-19 (v0.30.0). `Spa.AppConfig model msg` carries no page
 -- type, so a helper generic in the model cannot be checked at its callers.
 -- The checker refuses the helper and asks for an annotation with the model
 -- type (or `App.withRoutes`, which it follows through helpers).

@@ -152,20 +152,20 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// pin `[E1018]` (a value defined in terms of itself).
 /// **96 since v0.29.0**: `regex_invalid_literal.sky` (`[E2014]`) and
 /// `regex_pattern_string_form.sky` (`[E2001]`, the pre-v0.29 Regex form).
-/// **98 since v0.29.14**: `undefined_type_in_record_alias.sky` pins `[E1001]`
+/// **98 since v0.30.0**: `undefined_type_in_record_alias.sky` pins `[E1001]`
 /// for an unqualified type name that no module declares.
-/// **99 since v0.29.14**: `routed_page_not_model_page_type.sky` pins `[E2001]`
+/// **99 since v0.30.0**: `routed_page_not_model_page_type.sky` pins `[E2001]`
 /// for routes whose page type is not the model's `page` field type.
-/// **104 since v0.29.14**: the routed page type through a generic helper, a
+/// **104 since v0.30.0**: the routed page type through a generic helper, a
 /// raw `Live.config`, a raw `Spa.withRoutes` / `Spa.withNotFound`, and a raw
 /// routing helper generic in the model.
-/// **109 since v0.29.14**: a routing helper bound in a let (a function, a
+/// **109 since v0.30.0**: a routing helper bound in a let (a function, a
 /// lambda, an alias of a top-level helper, a record field, and a helper
 /// nested in another let helper).
-/// **113 since v0.29.14**: a routing helper hidden in a user custom type
+/// **113 since v0.30.0**: a routing helper hidden in a user custom type
 /// (annotated, unannotated, in a record field) and a generic helper that
 /// builds and serves the app (the check at the served app).
-/// **118 since v0.29.14**: a `withOnNavigate` function whose page is not of
+/// **118 since v0.30.0**: a `withOnNavigate` function whose page is not of
 /// the model's `page` field type (three route-less `Std.App` apps, a raw
 /// `Live.withOnNavigate` and a raw `Spa.withOnNavigate`).
 pub const EXPECTED_CORPUS_FILES: usize = 118;
@@ -199,12 +199,12 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// **46 at the merge of v0.27.18 into the v0.28.0 branch** (both of the above).
 /// **48 since v0.29.0** (the two `value_cycle_*.sky` files, `[E1018]`).
 /// **50 since v0.29.0** (the two `regex_*.sky` files).
-/// **51 since v0.29.14** (`undefined_type_in_record_alias.sky`).
-/// **52 since v0.29.14** (`routed_page_not_model_page_type.sky`).
-/// **57 since v0.29.14** (the five other `routed_page_*.sky` files).
-/// **62 since v0.29.14** (the five let-bound `routed_page_*.sky` files).
-/// **66 since v0.29.14** (the four served-app `routed_page_*.sky` files).
-/// **71 since v0.29.14** (the five `withOnNavigate` `routed_page_*.sky` files).
+/// **51 since v0.30.0** (`undefined_type_in_record_alias.sky`).
+/// **52 since v0.30.0** (`routed_page_not_model_page_type.sky`).
+/// **57 since v0.30.0** (the five other `routed_page_*.sky` files).
+/// **62 since v0.30.0** (the five let-bound `routed_page_*.sky` files).
+/// **66 since v0.30.0** (the four served-app `routed_page_*.sky` files).
+/// **71 since v0.30.0** (the five `withOnNavigate` `routed_page_*.sky` files).
 pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 71;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the

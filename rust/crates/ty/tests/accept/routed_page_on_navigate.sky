@@ -3,7 +3,7 @@
 -- pairs: reject/corpus/routed_page_raw_live_on_navigate.sky
 -- pairs: reject/corpus/routed_page_raw_spa_on_navigate.sky
 --
--- The accept side of the `withOnNavigate` page rule (v0.29.14): the runtime
+-- The accept side of the `withOnNavigate` page rule (v0.30.0): the runtime
 -- gives the model's `page` field to the navigation function, so its argument
 -- has the type of that field. A routed and a route-less `Std.App` app, a raw
 -- `Live.withOnNavigate` and a raw `Spa.withOnNavigate` whose function takes a

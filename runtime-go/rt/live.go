@@ -1775,7 +1775,7 @@ func applyRouteWithParams(app *liveApp, model any, urlPath string) (any, any) {
 	// then `page` is the routes' page type and the NotFound page has it. A
 	// route-less app owns no page type, so its model's `page` field (if any)
 	// is the user's own field, of any type, and the runtime never writes it
-	// (v0.29.14). An unknown path on such an app still answers 404
+	// (v0.30.0). An unknown path on such an app still answers 404
 	// (matchAnyRoute), with the app's own view.
 	if app.notFound != nil && len(app.routes) > 0 {
 		return writeRoutedPage(model, app.notFound),

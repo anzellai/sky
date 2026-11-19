@@ -2373,7 +2373,7 @@ struct AppFields {
     /// `spaServerConfig_` boot task (`App.applySessionLifetime`), so the
     /// backend sets it before it listens (operator env > code > 30 days).
     session_lifetime: Option<String>,
-    /// `App.withAdmission <policy>` (v0.29.14): the server's admission
+    /// `App.withAdmission <policy>` (v0.30.0): the server's admission
     /// policy (`Std.Admission`). Carried into the `spaServerConfig_` boot task
     /// (`App.applyAdmission`), so the backend installs it before it listens.
     /// Server-only: the client never sees it.
@@ -3463,7 +3463,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
     };
     // The client router writes the NotFound page into the model's `page`
     // field only for an app with routes (`spaApplyURL`), and the checker ties
-    // `Spa.withNotFound`'s page to that field (v0.29.14). A route-less app's
+    // `Spa.withNotFound`'s page to that field (v0.30.0). A route-less app's
     // `page` field is the user's own, of any type, so its client config gets
     // no `Spa.withNotFound`; the binding stays for the backend's server render.
     let (not_found_binding, not_found_line) = match &fields.not_found {
@@ -3560,7 +3560,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 .unwrap_or_else(|| format!("{aq}.baseDefaults"))
         ))
     };
-    // `App.withAdmission` joins it too (v0.29.14): the backend installs the
+    // `App.withAdmission` joins it too (v0.30.0): the backend installs the
     // admission policy (`Std.Admission`) before it listens.
     let mut boot_steps: Vec<String> = Vec::new();
     if let Some(l) = &fields.session_lifetime {
@@ -19689,7 +19689,7 @@ mod tests {
         );
     }
 
-    // v0.29.14: `App.withAdmission` joins the backend's boot task after the
+    // v0.30.0: `App.withAdmission` joins the backend's boot task after the
     // configuration, and never reaches the client config.
     #[test]
     fn std_app_admission_is_carried_into_the_backend_boot_task() {

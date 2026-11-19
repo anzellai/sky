@@ -1,6 +1,6 @@
 package rt
 
-// v0.29.14 (F6): a Sky.Live app with no routes and a NotFound page
+// v0.30.0 (F6): a Sky.Live app with no routes and a NotFound page
 // (`App.withNotFound ()` and no `App.withRoutes`) had the NotFound page
 // written into its model's `page` field on every request. With no routes the
 // runtime owns no page type, so the field is the user's own field of any

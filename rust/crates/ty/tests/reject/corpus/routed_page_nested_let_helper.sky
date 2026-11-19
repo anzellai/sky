@@ -2,7 +2,7 @@
 -- defect: a routing helper inside another let helper hid the routed page type
 -- rust: reject [E2001] at the outer helper's use, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). The inner helper's tie reaches the outer
+-- Found 2026-11-19 (v0.30.0). The inner helper's tie reaches the outer
 -- helper's body as an instance, and the outer helper is generalised too.
 -- The tie must reach each use of the outer helper.
 module Main exposing (main)

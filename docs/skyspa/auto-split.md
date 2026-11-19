@@ -1500,7 +1500,7 @@ never copied.
 **`Shared` brings the types its copied records name.** A wire record copied
 into `Shared` can name a type of another module (`at : Shape.Point`). The
 references are read from `type_occs` inside the copied declarations; a stdlib
-type keeps its module's import line. (Until v0.29.14 a pure module was
+type keeps its module's import line. (Until v0.30.0 a pure module was
 imported `exposing (..)` under the record's alias and a type of a server
 module was copied into `Shared`. §29 replaces both: the module is imported
 under a generated alias and the reference is qualified.)
@@ -1588,7 +1588,7 @@ projects carry the dependency, so `Shared` imports its module under a
 generated alias (`import Geo.Shape as SpaTy_Geo_Shape_`), names the type
 `SpaTy_Geo_Shape_.Point`, and derives its codec (`autoGeo_Shape_PointCodec_`).
 Two different project records with the same bare name on the wire were
-refused until v0.29.14 (the generated module named a project type by its bare
+refused until v0.30.0 (the generated module named a project type by its bare
 name); since §29 each is named by its module and gets its own codec.
 
 **An error in derived code names the user's construct.** The app's own source
@@ -1983,7 +1983,7 @@ module or another alias already takes the name. Test:
 `Codec` and `Error`, `import Sky.Core.Task as T`, `import Sky.Http.Server as
 Http`, a sibling codec written with `C.`; both generated halves type-check).
 
-## 29. `Shared` names every user type by its module (v0.29.14)
+## 29. `Shared` names every user type by its module (v0.30.0)
 
 Three multi-module shapes passed `sky check` and failed in the split. Each
 came from `Shared` taking a user type into its own scope, by a copy or by an

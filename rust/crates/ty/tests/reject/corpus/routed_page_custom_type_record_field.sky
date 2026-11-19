@@ -2,7 +2,7 @@
 -- defect: a routing helper in a record field of a custom type hid the routed page type
 -- rust: reject [E2001] where the app is served, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). The routes are set by a function in a record
+-- Found 2026-11-19 (v0.30.0). The routes are set by a function in a record
 -- field of a user custom type (`Pages`). Its type shows no `App` node, so no
 -- use of it was tied to the model's `page` field. The program passed `sky
 -- check` and stopped at run time on every request.

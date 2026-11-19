@@ -61,7 +61,7 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
             | ("Sub", "none")
             | ("Uuid", "v4")
             | ("Uuid", "v7")
-            // `Task.remaining : Task e (Maybe Int)` (v0.29.14), a zero-arg
+            // `Task.remaining : Task e (Maybe Int)` (v0.30.0), a zero-arg
             // `func Task_remaining() any` returning the Task.
             | ("Task", "remaining")
             | ("JsonEnc", "null")

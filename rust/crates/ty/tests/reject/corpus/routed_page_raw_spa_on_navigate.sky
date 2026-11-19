@@ -2,7 +2,7 @@
 -- defect: a raw `Spa.withOnNavigate` function takes a page of another type than the model's `page` field
 -- rust: reject [E2001] at Spa.withOnNavigate, naming the model's `page` field
 --
--- Found 2026-11-19 (v0.29.14). `AppConfig model msg` has no page type, so
+-- Found 2026-11-19 (v0.30.0). `AppConfig model msg` has no page type, so
 -- the `withOnNavigate` page was not tied. The wasm client gave the `Route`
 -- in `page` to a function of `{ count : Int }`.
 module Main exposing (main)

@@ -19,8 +19,8 @@ use std::path::Path;
 /// Sky.Core.Array (v0.29.0). 132 with Std.Xml, Std.Xml.Decode, Std.Xml.Encode
 /// and Std.Zip (v0.29.0). 134 with Std.Office.Xlsx and Std.Office.Docx
 /// (v0.29.0). 135 with Std.Image.Canvas (v0.29.0). 136 with Std.Admission
-/// (v0.29.14). 137 with Std.Breaker
-/// (v0.29.14).
+/// (v0.30.0). 137 with Std.Breaker
+/// (v0.30.0).
 pub const EXPECTED_MODULES: u64 = 137;
 
 /// `(passed, assertions, detail)`. One assertion per module checked.

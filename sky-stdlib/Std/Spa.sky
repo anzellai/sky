@@ -124,7 +124,7 @@ type AppConfig model msg
 
 -- | A client-side route, produced by `route` and registered with `withRoutes`.
 -- Opaque — its runtime shape (`rt.spaRoute`) is an implementation detail.
--- `page` is the type of the page the route gives (v0.29.14): [`withRoutes`]
+-- `page` is the type of the page the route gives (v0.30.0): [`withRoutes`]
 -- and [`withNotFound`] tie it to the model's `page` field.
 type Route page
     = Route_OPAQUE
