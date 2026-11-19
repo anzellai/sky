@@ -1,0 +1,63 @@
+-- gate: reject
+-- defect: a routing helper held in a let-bound record hid the routed page type
+-- rust: reject [E2001] at the field's use, naming the model's `page` field
+--
+-- Found 2026-11-19 (v0.29.14). A record of lambdas is a syntactic value, so
+-- the let generalises it. The tie of the field's body must reach each use.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Inc
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text model.title
+
+
+app =
+    let
+        helpers =
+            { pages =
+                \routes missing a ->
+                    a |> App.withRoutes routes |> App.withNotFound missing
+            }
+    in
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> helpers.pages [ App.route "/" "home" ] "missing"
+
+
+main =
+    App.run app

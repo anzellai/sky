@@ -1,9 +1,11 @@
 -- gate: accept
 -- pairs: reject/corpus/routed_page_through_generic_helper.sky
+-- pairs: reject/corpus/routed_page_let_local_helper.sky
 --
 -- The accept side of the routed page type rule (v0.29.14): a generic routing
--- helper, a raw `Live.config` and a raw `Spa.withRoutes` whose pages have the
--- type of the model's `page` field are accepted.
+-- helper, a routing helper bound in a let, a raw `Live.config` and a raw
+-- `Spa.withRoutes` whose pages have the type of the model's `page` field are
+-- accepted.
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
@@ -55,6 +57,22 @@ withPages routes missing a =
 
 
 app =
+    App.app
+        { init = init
+        , update = update
+        , view = uiView
+        , subscriptions = \_ -> Sub.none
+        }
+        |> withPages
+               [ App.route "/" Dashboard, App.routeParam "/item/:id" Detail ]
+               Missing
+
+
+appLocal =
+    let
+        withPages routes missing a =
+            a |> App.withRoutes routes |> App.withNotFound missing
+    in
     App.app
         { init = init
         , update = update

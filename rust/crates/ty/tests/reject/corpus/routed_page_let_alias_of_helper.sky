@@ -1,0 +1,65 @@
+-- gate: reject
+-- defect: a let alias of a generic routing helper hid the routed page type
+-- rust: reject [E2001] at the alias's use, naming the model's `page` field
+--
+-- Found 2026-11-19 (v0.29.14). `pages = withPages` is a syntactic value, so
+-- the let generalises it. The tie made at the reference to the top-level
+-- helper has a generic model, and it must reach each use of `pages`.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Inc
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text model.title
+
+
+withPages routes missing a =
+    a |> App.withRoutes routes |> App.withNotFound missing
+
+
+app =
+    let
+        pages =
+            withPages
+    in
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> pages [ App.route "/" "home" ] "missing"
+
+
+main =
+    App.run app

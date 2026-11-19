@@ -203,12 +203,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   model's `page` field has type `Route`". A model with no `page` field is
   unchanged. This closes the routed half of the route-less fix above. The
   check follows a routing helper that is generic in the model (each caller
-  is checked), and covers the raw `Live.config`, `Spa.withRoutes` and
-  `Spa.withNotFound`. As defence in depth, the runtime no longer panics on
-  every request when a page of the wrong type reaches it: Sky.Live, the
-  Sky.Spa server render and the Sky.Spa client report the mismatch once, in
-  Sky words (`[E2001] The routes give a page of type …`), stop the process,
-  and never write the page. A page of one enum type is no longer converted
+  is checked), also when the helper is bound in a `let` (a function, a
+  lambda, an alias or a record field, at any depth: each use of the let
+  binding is checked with its own model), and covers the raw `Live.config`,
+  `Spa.withRoutes` and `Spa.withNotFound`. As defence in depth, the runtime
+  no longer panics on every request when a page of the wrong type reaches
+  it: Sky.Live, the Sky.Spa server render and the Sky.Spa client report the
+  mismatch once, in Sky words (`[E2001] The routes give a page of type …`),
+  stop the process, and never write the page. A page of one enum type is no longer converted
   silently into a field of another enum type.
 - Sky.Spa: a routed `web:app` app with no server arm did not serve its deep
   routes. Its backend was static-only, so `GET /about` was the Go file

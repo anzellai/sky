@@ -722,7 +722,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 104,
+      "expected_assertions": 109,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -744,7 +744,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 177,
+      "expected_assertions": 182,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
