@@ -136,19 +136,26 @@ pub struct WorldDecls {
     /// helper is checked at each caller.
     pub routed_page_carriers: HashSet<DefId>,
     /// A user def is in [`World::routed_page_carriers`]: the program sets
-    /// routes or a navigation hook, so every served app is tied
-    /// ([`crate::obligations::program_ties_page`]).
+    /// routes or a navigation hook. The rule for a runner use with no def
+    /// under inference ([`crate::obligations::ties_served_app`]).
     pub routed_page_user_carriers: bool,
+    /// The user defs whose runner uses are tied (the served tie,
+    /// [`crate::obligations::ties_served_app`]): every user carrier and
+    /// every user def that a carrier reaches. A runner use in any other def
+    /// serves an app with no routes and no navigation hook.
+    pub routed_page_served_defs: HashSet<DefId>,
     /// The raw route APIs that tie a page type to the model's `page` field at
     /// their own use (`Live.config`, `Spa.withRoutes`, `Spa.withNotFound`,
     /// `Live.withOnNavigate`, `Spa.withOnNavigate`).
     pub routed_page_apis: HashMap<DefId, crate::obligations::RoutedApi>,
     /// The `Std.App` runners that serve an app (`run`, `serve` and the
-    /// target runners). Each use ties the served app's page type to its
-    /// model's `page` field ([`crate::obligations`] `PageTie`, `served`).
+    /// target runners). Each use in a served def
+    /// ([`World::routed_page_served_defs`]) ties the served app's page type
+    /// to its model's `page` field ([`crate::obligations`] `PageTie`, `served`).
     /// This is the guarantee of the routed page check: every served app
-    /// passes through a runner, and the model type there must be known, so
-    /// a helper of any shape that sets the routes is covered.
+    /// that can have routes or a navigation hook passes through a tied
+    /// runner use, and the model type there must be known, so a helper of
+    /// any shape that sets the routes is covered.
     pub routed_page_runners: HashSet<DefId>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,

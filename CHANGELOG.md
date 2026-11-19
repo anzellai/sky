@@ -26,10 +26,15 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   the routes' page type for that field. A program whose routes give another
   type (a `String` page, another custom type) built before and then failed on
   every request; it is now `[E2001]` at `App.withRoutes`, or where the app is
-  served (`App.run`, `App.serve` or a target runner). In a program that sets
-  routes, a function that serves an app whose model type it does not know
-  (`serve parts = App.app parts |> … |> App.run`) is refused: give it a type
-  annotation with the model type (`docs/migration/v0.29.md`).
+  served (`App.run`, `App.serve` or a target runner). The check at the
+  served app is decided for each served app: a runner use is checked when
+  its function reaches `App.withRoutes` or `App.withOnNavigate`, or when
+  such a function uses it. Where the served app can have routes, a function
+  that serves an app whose model type it does not know (`serve parts =
+  App.app parts |> … |> App.run`) is refused: give it a type annotation
+  with the model type (`docs/migration/v0.29.md`). A served app with no
+  routes and no navigation function is not checked, also when another
+  entry, another module or an unused helper of the project sets them.
 - An app with `App.withOnNavigate`, `Live.withOnNavigate` or
   `Spa.withOnNavigate` whose model has a `page` field must give the
   navigation function an argument of that field's type, with or without
@@ -37,8 +42,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   each navigation, so a program whose function took another type built and
   then failed or used a wrong value. It is now `[E2001]` at
   `withOnNavigate`. In such an app the `App.withNotFound` page must have the
-  field's type too, also with no routes. A program that sets routes or a
-  navigation function must serve its app where the model type is known (see
+  field's type too, also with no routes. An app that has routes or a
+  navigation function must be served where its model type is known (see
   the line above).
 - `Std.Admission` and `Std.Breaker` are new stdlib modules, and a stdlib
   module name is reserved. A project module with one of these names
@@ -244,7 +249,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   served app: at each use of `App.run`, `App.serve` and the target runners
   (`runLive`, `runLiveWindow`, `runSpa`, `runTui`, `runCli`, `runWebview`),
   the app's page type is tied to its model's `page` field, and the model type
-  must be known there. The type of the served app carries the routes' page
+  must be known there. This tie is decided for each served app: a runner use
+  is tied when its function reaches `App.withRoutes` or `App.withOnNavigate`,
+  or when such a function uses it. A route-less app served beside a routed
+  entry, a module or an unused helper that sets routes is not tied. The type of the served app carries the routes' page
   type through every helper, so a helper of any shape is covered: one hidden
   in a user custom type, in a record field of one, or in another module (a
   helper in a custom type passed `sky check` and stopped at run time before).
@@ -264,8 +272,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   used a wrong value. A route-less `Std.App` app was not checked at all,
   and the raw APIs tied only their routes and NotFound page. The checker now
   ties the function's argument to the model's `page` field at each
-  `withOnNavigate`, and a program that sets a navigation function has its
-  served app checked as a routed one is.
+  `withOnNavigate`, and a served app that has a navigation function is
+  checked as a routed one is.
 - A project module under the `Sky.` or `Std.` root (`module Sky.Pages`) was
   checked as if it were the standard library, because the checker decided
   "stdlib" by the module name. A routing helper in such a module escaped the

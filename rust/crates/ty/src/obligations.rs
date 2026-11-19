@@ -150,6 +150,7 @@ fn seed_routed_page(world: &mut World, db: &dyn SkyDb) {
         .filter(|d| world.value_sigs.contains_key(d))
         .collect();
     world.routed_page_carriers = std::collections::HashSet::new();
+    world.routed_page_served_defs = std::collections::HashSet::new();
     extend_routed_page_carriers(world, db);
 }
 
@@ -219,7 +220,9 @@ fn routing_def(db: &dyn SkyDb, module: &str, name: &str) -> Option<base::DefId> 
 const PAGE_CARRIER_SEEDS: &[&str] = &["withRoutes", "withOnNavigate"];
 
 /// Add to the routed page carriers every user def of `db`'s module set whose
-/// body reaches a carrier. Additive, so the shared-world path runs it again
+/// body reaches a carrier, and to the served defs
+/// ([`World::routed_page_served_defs`]) every user carrier and every def it
+/// reaches. Additive, so the shared-world path runs it again
 /// over a case's own modules (a body-derived pass, see
 /// `World::extend_query_bodies`) on top of the base world's carriers; the
 /// whole-program path reaches the same set.
@@ -257,20 +260,51 @@ pub(crate) fn extend_routed_page_carriers(world: &mut World, db: &dyn SkyDb) {
         }
     }
     world.routed_page_user_carriers |= carriers.iter().any(|d| !seeds.contains(d));
+    // The served defs: each user carrier and every user def it reaches. A
+    // runner use in such a def may serve an app that carries routes or a
+    // navigation hook: the carrier builds the app there, or passes it (or
+    // a function that serves it) to a def it reaches.
+    let edges: std::collections::HashMap<base::DefId, &Vec<base::DefId>> =
+        user.iter().map(|(d, calls)| (*d, calls)).collect();
+    let mut served = std::mem::take(&mut world.routed_page_served_defs);
+    let mut stack: Vec<base::DefId> = edges
+        .keys()
+        .copied()
+        .filter(|d| carriers.contains(d))
+        .chain(served.iter().copied())
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    while let Some(d) = stack.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        served.insert(d);
+        if let Some(calls) = edges.get(&d) {
+            stack.extend(calls.iter().copied());
+        }
+    }
+    world.routed_page_served_defs = served;
     world.routed_page_carriers = carriers;
 }
 
-/// Does a user def of the program reach `App.withRoutes` or
-/// `App.withOnNavigate`? The routed page carriers are those two builders
-/// and the user defs that reach them ([`extend_routed_page_carriers`]). The
-/// routes and the navigation hook of an `App` are set only by these
-/// builders (its constructor is opaque). The runtime writes the model's
-/// `page` field only for an app with routes, and reads it only for an app
-/// with routes or a navigation hook. So a program with no such def serves
-/// an app whose model `page` field the runtime never touches, and its
-/// served app is not tied (its `App.withNotFound` page may have any type).
-pub(crate) fn program_ties_page(world: &World) -> bool {
-    world.routed_page_user_carriers
+/// Is the runner use in `def` tied (the served tie, [`PageTie::served`])?
+/// The routes and the navigation hook of an `App` are set only by
+/// `App.withRoutes` and `App.withOnNavigate` (its constructor is opaque).
+/// The runtime writes the model's `page` field only for an app with routes,
+/// and reads it only for an app with routes or a navigation hook. So the
+/// check is decided per served app: a runner use is tied when its def is a
+/// served def ([`World::routed_page_served_defs`]), that is a def that
+/// reaches a carrier (the app it serves may be built there) or a def that a
+/// carrier reaches (the app may be passed to it). A runner use in any other
+/// def serves an app with no routes and no navigation hook, whatever other
+/// entries, modules or unused helpers of the program set, and its
+/// `App.withNotFound` page may have any type. With no def under inference
+/// (no `self_def`), the program-wide rule applies.
+pub(crate) fn ties_served_app(world: &World, def: Option<base::DefId>) -> bool {
+    match def {
+        Some(d) => world.routed_page_served_defs.contains(&d),
+        None => world.routed_page_user_carriers,
+    }
 }
 
 /// Runtime handles (A-1/A-1b): an id into a table of one running process.
