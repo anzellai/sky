@@ -106,10 +106,14 @@ func TestAdmission_BadOriginIs403NotAnAdmissionRefusal(t *testing.T) {
 	route, _, entered, release, _ := blockingRoute(func(s string, h any) any { return Server_rpc(s, h) }, "POST /_rpc/Save")
 	mux, _ := serverRouteMux([]any{route})
 	h := CSRFMiddleware(mux)
-	go rpcJSONPost(h, "http://app.example")
+	// The first RPC must finish before the test returns: its slot release
+	// reads the gate that useAdmission's cleanup puts back.
+	done := make(chan struct{})
+	go func() { rpcJSONPost(h, "http://app.example"); close(done) }()
 	waitEntered(t, entered)
-	defer close(release)
 	rec := rpcJSONPost(h, "https://evil.example")
+	close(release)
+	<-done
 	if rec.Code != http.StatusForbidden || rec.Header().Get("Retry-After") != "" {
 		t.Fatalf("foreign origin under load: status=%d Retry-After=%q, want 403 and none", rec.Code, rec.Header().Get("Retry-After"))
 	}
