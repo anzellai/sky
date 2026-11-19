@@ -112,9 +112,12 @@ pub(crate) fn app_page_or_model_is_generic(t: &crate::Ty) -> bool {
 }
 
 /// A stdlib module: its routing plumbing is generic in the model, and the
-/// user's use of it is what the checker ties.
+/// user's use of it is what the checker ties. Decided by origin
+/// ([`crate::variance::is_stdlib_module`]): a project module named
+/// `Sky.Pages` is app code, so its routing helper is a carrier and its body
+/// is tied strictly.
 fn is_stdlib_module(name: &str) -> bool {
-    name.starts_with("Std.") || name.starts_with("Sky.")
+    crate::variance::is_stdlib_module(name)
 }
 
 /// Pass 4 (v0.29.14): the routing defs of [`PageTie`]. The carriers are

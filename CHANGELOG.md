@@ -234,6 +234,15 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   mismatch once, in Sky words (`[E2001] The routes give a page of type …`),
   stop the process, and never write the page. A page of one enum type is no longer converted
   silently into a field of another enum type.
+- A project module under the `Sky.` or `Std.` root (`module Sky.Pages`) was
+  checked as if it were the standard library, because the checker decided
+  "stdlib" by the module name. A routing helper in such a module escaped the
+  routed page check above: an app with `String` pages and a `Route` model
+  passed `sky check`, built, and stopped at run time with `[E2001]`. A
+  `coerce : Int -> any` in such a module also stayed an unchecked cast. The
+  checker now decides it by origin: a module is the stdlib only when it is a
+  file of `sky-stdlib/`. A project module is app code whatever its name, and
+  it is checked like any other. No module name is newly refused.
 - Sky.Spa: a routed `web:app` app with no server arm did not serve its deep
   routes. Its backend was static-only, so `GET /about` was the Go file
   server's plain 404 and `GET /` had no first paint. The backend now

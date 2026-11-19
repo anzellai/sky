@@ -1111,8 +1111,10 @@ impl World {
     /// `a -> a`, and `f : Int -> any; f x = x` exports `Int -> Int` (the old D1
     /// pin, which only covered a monomorphic result, is the special case).
     ///
-    /// Stdlib modules are skipped (kernel + `Std.`/`Sky.` namespaces): stdlib
-    /// signatures keep per-occurrence `any`, and the CAST gate audits them.
+    /// Stdlib modules are skipped (the files of `sky-stdlib/`, by origin, not by
+    /// name: a project module `Std.Coerce` is filled like any app module):
+    /// stdlib signatures keep per-occurrence `any`, and the CAST gate audits
+    /// them.
     ///
     /// A fill can depend on another def's fill (a body calling a sibling whose
     /// annotation has `any`), so the pass repeats until no fill changes. It
@@ -1122,10 +1124,7 @@ impl World {
         let mut targets: Vec<(DefId, Scheme, crate::retained_body::RetainedBody)> = Vec::new();
         for m in db.module_ids() {
             let mname = db.module_name(m).to_string();
-            if KERNEL_MODULES.iter().any(|(p, _)| *p == mname)
-                || mname.starts_with("Std.")
-                || mname.starts_with("Sky.")
-            {
+            if crate::variance::is_stdlib_module(&mname) {
                 continue;
             }
             let resolved = db.resolve(m);

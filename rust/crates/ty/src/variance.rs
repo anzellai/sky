@@ -147,13 +147,16 @@ pub const COVARIANT_STDLIB: &[&str] = &[
     "Attribute",
 ];
 
-/// Is `module` part of the stdlib (a kernel pseudo-module, `Sky.*` or `Std.*`)?
+/// Is the registered module `module` part of the stdlib?
+///
+/// Decided by origin: the module is one of the files of `sky-stdlib/`
+/// ([`hir::is_stdlib_module_name`]). A name prefix is not an origin. A project
+/// module `Sky.Pages` or `Std.Pages` is app code, and so is an app module that
+/// shares a kernel alias (`module Jobs`): a kernel pseudo-module is never a
+/// registered module. Every soundness decision of the checker that treats the
+/// stdlib differently from app code reads this one predicate.
 pub fn is_stdlib_module(module: &str) -> bool {
-    module.starts_with("Sky.")
-        || module.starts_with("Std.")
-        || hir::KERNEL_MODULES
-            .iter()
-            .any(|(path, pseudo)| *path == module || *pseudo == module)
+    hir::is_stdlib_module_name(module)
 }
 
 /// The variance of every parameter of every type constructor the checker

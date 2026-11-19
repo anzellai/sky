@@ -199,3 +199,117 @@ runRouter (Router f) a =\n    f a\n";
         "OVER-EAGER — a cross-module routing helper with the model's page type was REJECTED:\n{text}"
     );
 }
+
+/// Build stdlib + the project module `a` + `Main`, check BOTH (as `sky check`
+/// does: every project module is checked), and return the type errors and
+/// their rendered text.
+fn type_errors_for_program(root: &Path, a: (&str, &str), main: &str) -> (usize, String) {
+    let stdlib = load_stdlib(root);
+    assert!(!stdlib.is_empty(), "stdlib failed to load");
+    let mut db = SourceDb::new();
+    for (n, parse) in &stdlib {
+        db.add_module(n, parse.clone());
+    }
+    let a_mid = db.add_module(a.0, syntax::parse(a.1, base::FileId(0)));
+    let main_mid = db.add_module("Main", syntax::parse(main, base::FileId(0)));
+    let out = ty::check_modules(&db, &[a_mid, main_mid]);
+    let text = out
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (out.type_errors, text)
+}
+
+/// A project routing helper in a module under the `Sky.` / `Std.` namespace
+/// (v0.29.14). The stdlib is the modules of `sky-stdlib/`, not every module
+/// whose name starts with `Std.` or `Sky.`: the project may define a new name
+/// there (`module_ownership`), and such a module is app code. Before the fix
+/// the checker classified it by its name, so the helper was not a routed page
+/// carrier, the served app was not tied, and the program failed at run time.
+const PAGES: &str = "module NAME exposing (withPages)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\n\n\
+withPages routes missing a =\n    a |> App.withRoutes routes |> App.withNotFound missing\n";
+
+const PAGES_MAIN: &str = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.App as App\n\
+import Std.Ui as Ui exposing (Element)\n\
+import NAME as Pages\n\n\
+type Route\n    = Dashboard\n    | Missing\n\n\
+type alias Model =\n    { page : Route, title : String }\n\n\
+type Msg\n    = Inc\n\n\n\
+init : () -> ( Model, Cmd Msg )\n\
+init () =\n    ( { page = Dashboard, title = \"t\" }, Cmd.none )\n\n\n\
+update : Msg -> Model -> ( Model, Cmd Msg )\n\
+update msg model =\n    ( model, Cmd.none )\n\n\n\
+view : Model -> Element Msg\n\
+view model =\n    Ui.text model.title\n\n\n\
+app =\n    App.app { init = init, update = update, view = view, subscriptions = \\_ -> Sub.none }\
+\n        |> Pages.withPages [ App.route \"/\" HOME ] MISSING\n\n\n\
+main =\n    App.run app\n";
+
+#[test]
+fn a_routing_helper_in_a_project_module_under_the_stdlib_namespaces_is_checked() {
+    let root = repo_root();
+    for name in ["Sky.Pages", "Std.Pages", "Usr.Pages"] {
+        let pages = PAGES.replace("NAME", name);
+        let main = PAGES_MAIN
+            .replace("NAME", name)
+            .replace("HOME", "\"home\"")
+            .replace("MISSING", "\"missing\"");
+        let (errs, text) = type_errors_for_program(&root, (name, &pages), &main);
+        assert!(
+            errs > 0 && text.contains("model's `page` field"),
+            "SOUNDNESS HOLE — a routing helper in the project module {name} gave `String` \
+             pages to a model whose `page` field is a `Route`, and the app was ACCEPTED \
+             ({errs} errors):\n{text}"
+        );
+    }
+}
+
+#[test]
+fn a_routing_helper_in_a_project_module_under_the_stdlib_namespaces_accepts_the_page_type() {
+    let root = repo_root();
+    for name in ["Sky.Pages", "Std.Pages", "Usr.Pages"] {
+        let pages = PAGES.replace("NAME", name);
+        let main = PAGES_MAIN
+            .replace("NAME", name)
+            .replace("HOME", "Dashboard")
+            .replace("MISSING", "Missing");
+        let (errs, text) = type_errors_for_program(&root, (name, &pages), &main);
+        assert_eq!(
+            errs, 0,
+            "OVER-EAGER — a routing helper in the project module {name} with the model's \
+             page type was REJECTED:\n{text}"
+        );
+    }
+}
+
+/// The `any` result fill (`sig.rs`, D1) reaches every project module. A
+/// project module named under `Std.` used to keep `Int -> any` as a cast.
+#[test]
+fn an_any_result_in_a_project_module_under_the_stdlib_namespaces_is_pinned() {
+    let root = repo_root();
+    for name in ["Std.Coerce", "Sky.Coerce", "Usr.Coerce"] {
+        let coerce = format!(
+            "module {name} exposing (coerce)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\n\n\
+             coerce : Int -> any\ncoerce x =\n    x\n"
+        );
+        let main = format!(
+            "module Main exposing (bad)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import {name} exposing (coerce)\n\n\n\
+             bad : String\nbad =\n    coerce 1\n"
+        );
+        let (errs, text) = type_errors_for_program(&root, (name, &coerce), &main);
+        assert!(
+            errs > 0,
+            "SOUNDNESS HOLE — `coerce : Int -> any` in the project module {name} cast an \
+             `Int` to a `String`, and the program was ACCEPTED:\n{text}"
+        );
+    }
+}
