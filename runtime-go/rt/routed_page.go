@@ -14,7 +14,6 @@ package rt
 
 import (
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -24,12 +23,11 @@ import (
 // made once per process.
 var routedPageFailed atomic.Bool
 
-// routedPageFatal reports a routed page mismatch and stops the process. A
-// test replaces it.
-var routedPageFatal = func(msg string) {
-	fmt.Fprintln(os.Stderr, msg)
-	os.Exit(1)
-}
+// routedPageFatal reports a routed page mismatch and stops the process
+// (routedPageStop: rt.ExitProcess on a server, so an `--embed` app's
+// PostgreSQL is stopped first; a log line in a browser tab, which cannot
+// exit). A test replaces it.
+var routedPageFatal = routedPageStop
 
 // writeRoutedPage returns model with its `page` field set to page, or model
 // unchanged (after the one report) when the field cannot hold page.
