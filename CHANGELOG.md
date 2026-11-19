@@ -27,14 +27,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   type (a `String` page, another custom type) built before and then failed on
   every request; it is now `[E2001]` at `App.withRoutes`, or where the app is
   served (`App.run`, `App.serve` or a target runner). The check at the
-  served app is decided for each served app: a runner use is checked when
-  its function reaches `App.withRoutes` or `App.withOnNavigate`, or when
-  such a function uses it. Where the served app can have routes, a function
-  that serves an app whose model type it does not know (`serve parts =
-  App.app parts |> … |> App.run`) is refused: give it a type annotation
-  with the model type (`docs/migration/v0.29.md`). A served app with no
-  routes and no navigation function is not checked, also when another
-  entry, another module or an unused helper of the project sets them.
+  served app is decided for each top-level function that serves an app,
+  not for each app: a runner use is checked when its function reaches
+  `App.withRoutes` or `App.withOnNavigate`, or when such a function uses
+  it. Where the served app can have routes, a function that serves an app
+  whose model type it does not know (`serve parts = App.app parts |> … |>
+  App.run`) is refused: give it a type annotation with the model type
+  (`docs/migration/v0.29.md`). A served app with no routes and no
+  navigation function is not checked when the function that serves it
+  neither reaches those builders nor is used by a function that does.
+  Another entry, another module or an unused helper of the project that
+  sets them does not change this.
 - An app with `App.withOnNavigate`, `Live.withOnNavigate` or
   `Spa.withOnNavigate` whose model has a `page` field must give the
   navigation function an argument of that field's type, with or without
@@ -45,6 +48,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   field's type too, also with no routes. An app that has routes or a
   navigation function must be served where its model type is known (see
   the line above).
+- A route-less app (no `App.withRoutes`, no `App.withOnNavigate`) is now
+  checked when it is served in a function that reaches `App.withRoutes` or
+  `App.withOnNavigate`, or in a function that such a function uses: its
+  model's `page` field must have the type of its `App.withNotFound` page.
+  `main = App.serve admin |> Task.andThen (\_ -> App.run site)`, with a
+  routed `site` and a route-less `admin` whose `page : String` field meets
+  `App.withNotFound 404`, was accepted by v0.29.12 and is now `[E2001]` at
+  `App.serve admin`. A `serveAdmin` function that `main` uses is checked
+  too, because `main` reaches `App.withRoutes`. Give the `page` field the
+  NotFound page's type (`page : Int`), or give the field another name
+  (`docs/migration/v0.29.md`).
 - `Std.Admission` and `Std.Breaker` are new stdlib modules, and a stdlib
   module name is reserved. A project module with one of these names
   (`module Std.Breaker`), which v0.29.13 accepted, is now refused. Rename the
@@ -65,6 +79,15 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   exports it. A program that imports two of them with `exposing (..)` and
   writes a bare `routeParam` gets `[E1012]`: write `App.routeParam`,
   `Live.routeParam` or `Spa.routeParam`.
+- More new exports can clash with a name of your own under `exposing (..)`,
+  as `timeout` and `routeParam` do: `Std.Sub` exports `viewport`,
+  `onBreakpoint` and `onQuery`, `Sky.Core.Task` exports `remaining`,
+  `Sky.Core.Http` exports `withMinRemaining` and `Std.App` exports
+  `withAdmission`. A program that imports such a module and a project
+  module that exports the same name, both with `exposing (..)`, and writes
+  the bare name gets `[E1012]` (v0.29.12 accepted it). Qualify the name
+  (`Screen.viewport`, `Sub.viewport`), or give one of the two imports an
+  explicit exposing list (`docs/migration/v0.29.md`).
 - An unqualified type name that no module declares is now `[E1001]
   Undefined name` at the name. Before, it was accepted as an opaque type.
   A common case is a test file with `main : Program`: no module declares
@@ -249,10 +272,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   served app: at each use of `App.run`, `App.serve` and the target runners
   (`runLive`, `runLiveWindow`, `runSpa`, `runTui`, `runCli`, `runWebview`),
   the app's page type is tied to its model's `page` field, and the model type
-  must be known there. This tie is decided for each served app: a runner use
-  is tied when its function reaches `App.withRoutes` or `App.withOnNavigate`,
-  or when such a function uses it. A route-less app served beside a routed
-  entry, a module or an unused helper that sets routes is not tied. The type of the served app carries the routes' page
+  must be known there. This tie is decided for each top-level function that
+  serves an app, not for each app: a runner use is tied when its function
+  reaches `App.withRoutes` or `App.withOnNavigate`, or when such a function
+  uses it, so a route-less app served in such a function is tied too (see
+  "⚠ Breaking changes"). A route-less app served from a function outside
+  that set is not tied, also beside another entry, a module or an unused
+  helper that sets routes. The type of the served app carries the routes' page
   type through every helper, so a helper of any shape is covered: one hidden
   in a user custom type, in a record field of one, or in another module (a
   helper in a custom type passed `sky check` and stopped at run time before).
