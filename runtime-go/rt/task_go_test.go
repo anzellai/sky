@@ -196,21 +196,28 @@ func TestGoSky_ClearsStampsWhenDone(t *testing.T) {
 			}
 		})
 	})
+	// A goroutine clears its stamps in its deferred calls, after fn closed
+	// `done`: the trace stamp first, then the session stamp. So wait for
+	// both, not only the trace stamps, or a slow runner sees a session
+	// stamp that is still about to be cleared.
+	sessionStamps := func() int {
+		n := 0
+		liveSessionByGoroutine.Range(func(_, v any) bool {
+			if v == sess {
+				n++
+			}
+			return true
+		})
+		return n
+	}
 	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && goroutineCtxSize() > before {
+	for time.Now().Before(deadline) && (goroutineCtxSize() > before || sessionStamps() != 0) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if n := goroutineCtxSize(); n > before {
 		t.Fatalf("trace stamps leaked: %d before, %d after", before, n)
 	}
-	n := 0
-	liveSessionByGoroutine.Range(func(_, v any) bool {
-		if v == sess {
-			n++
-		}
-		return true
-	})
-	if n != 0 {
+	if n := sessionStamps(); n != 0 {
 		t.Fatalf("%d session stamps leaked", n)
 	}
 }
