@@ -1338,9 +1338,10 @@ run =
     runTui
 
 
--- | Lower an [`App`] [`Route`] to a `Sky.Live` route. `Live.route` erases its
--- page arg, so a static page and a `:param` constructor (`String -> page`) both
--- pass through — Live applies the constructor to the captured segment at match.
+-- | Lower an [`App`] [`Route`] to a `Sky.Live` route. A static page goes
+-- through `Live.route` and a `:param` constructor (`String -> page`) through
+-- `Live.routeParam` — Live applies the constructor to the captured segment at
+-- match. Both keep the page type.
 liveRoute_ r =
     case r of
 
@@ -1348,7 +1349,7 @@ liveRoute_ r =
             Live.route path page_
 
         RouteParam path make ->
-            Live.route path make
+            Live.routeParam path make
 
         RouteApi path handler ->
             Live.api path handler
@@ -1359,7 +1360,7 @@ liveRoute_ r =
 -- maps the app's routes through it. A raw [`api`] endpoint yields a
 -- `Spa.serverRoute`: the client knows the path is the backend's, so a link to it
 -- is a full navigation even when a page route also matches it.
-spaRoute : Route page -> List Spa.Route
+spaRoute : Route page -> List (Spa.Route page)
 spaRoute r =
     case r of
 
@@ -1367,7 +1368,7 @@ spaRoute r =
             [ Spa.route path page_ ]
 
         RouteParam path make ->
-            [ Spa.route path make ]
+            [ Spa.routeParam path make ]
 
         RouteApi path _ ->
             [ Spa.serverRoute path ]

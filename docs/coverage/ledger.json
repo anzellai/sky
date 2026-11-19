@@ -722,7 +722,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 99,
+      "expected_assertions": 104,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -1017,7 +1017,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3282,
+    "stdlib_entries": 3284,
     "stdlib_modules": 137,
     "surfaces_covered": 196,
     "surfaces_covered_pct": 95.1,
@@ -20661,7 +20661,7 @@
           ]
         },
         "Std.Live": {
-          "count": 32,
+          "count": 33,
           "symbols": [
             "AppConfig",
             "Route",
@@ -20670,6 +20670,7 @@
             "api",
             "endSession",
             "lifecycle",
+            "routeParam",
             "serve",
             "stop",
             "withAnalytics",
@@ -20766,7 +20767,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 28,
+          "count": 29,
           "symbols": [
             "AppConfig",
             "Route",
@@ -20777,6 +20778,7 @@
             "returnedScrolls",
             "route",
             "routeInt",
+            "routeParam",
             "rpc",
             "rpcHold",
             "rpcScrollHold",
@@ -21074,8 +21076,8 @@
           ]
         }
       },
-      "count": 874,
-      "pct_of_denominator": 26.6
+      "count": 876,
+      "pct_of_denominator": 26.7
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -22194,7 +22196,7 @@
           ]
         },
         "Std.Live": {
-          "count": 35,
+          "count": 36,
           "symbols": [
             "AppConfig",
             "Route",
@@ -22206,6 +22208,7 @@
             "endSession",
             "lifecycle",
             "route",
+            "routeParam",
             "serve",
             "stop",
             "withAnalytics",
@@ -22309,7 +22312,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 28,
+          "count": 29,
           "symbols": [
             "AppConfig",
             "Route",
@@ -22320,6 +22323,7 @@
             "returnedScrolls",
             "route",
             "routeInt",
+            "routeParam",
             "rpc",
             "rpcHold",
             "rpcScrollHold",
@@ -22637,7 +22641,7 @@
           ]
         }
       },
-      "count": 987,
+      "count": 989,
       "pct_of_denominator": 30.1
     }
   },
@@ -24590,7 +24594,7 @@
       "refs_generous": 211,
       "refs_qualified": 197,
       "role": "FlowTest",
-      "sky_files": 180,
+      "sky_files": 181,
       "sky_toml_sections": []
     },
     {

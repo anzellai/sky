@@ -320,9 +320,10 @@ fn kernels() -> Vec<Kernel> {
             module: "Std.Live",
             alias: "Live",
             ty: "Route",
-            ty_args: "",
-            extra_imports: &["import Std.Ui as Ui"],
-            construct: |i| format!("Live.route \"/p{i}\" (\\_ -> Ui.text \"x\")"),
+            // `Live.Route page` (v0.29.14): the page type the route gives.
+            ty_args: " ()",
+            extra_imports: &[],
+            construct: |i| format!("Live.route \"/p{i}\" ()"),
             fixed: true,
         },
         // Std.Ui.Element — VNode-backed, a different kernel rep. Unknown whether

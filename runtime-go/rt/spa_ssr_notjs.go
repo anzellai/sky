@@ -144,7 +144,7 @@ func Spa_ssrResolveModel(routesV, notFound, model, path any) any {
 		}
 		page = notFound
 	}
-	return RecordUpdate(model, map[string]any{"Page": page})
+	return writeRoutedPage(model, page)
 }
 
 // Spa_ssrStatus is the `Ffi.kernel "Spa_ssrStatus"` alias the generated

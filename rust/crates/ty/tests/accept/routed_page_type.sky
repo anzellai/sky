@@ -1,0 +1,97 @@
+-- gate: accept
+-- pairs: reject/corpus/routed_page_through_generic_helper.sky
+--
+-- The accept side of the routed page type rule (v0.29.14): a generic routing
+-- helper, a raw `Live.config` and a raw `Spa.withRoutes` whose pages have the
+-- type of the model's `page` field are accepted.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Html as Html exposing (Html)
+import Std.Live as Live
+import Std.Spa as Spa
+import Std.Ui as Ui exposing (Element)
+
+type Route
+    = Dashboard
+    | Detail String
+    | Missing
+
+type alias Model =
+    { page : Route
+    , title : String
+    }
+
+type Msg
+    = Inc
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Dashboard, title = "t" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( model, Cmd.none )
+
+
+uiView : Model -> Element Msg
+uiView model =
+    Ui.text model.title
+
+
+view : Model -> Html Msg
+view model =
+    Html.text model.title
+
+
+withPages routes missing a =
+    a |> App.withRoutes routes |> App.withNotFound missing
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = uiView
+        , subscriptions = \_ -> Sub.none
+        }
+        |> withPages
+               [ App.route "/" Dashboard, App.routeParam "/item/:id" Detail ]
+               Missing
+
+
+live =
+    Live.config
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        , routes =
+            [ Live.route "/" Dashboard, Live.routeParam "/item/:id" Detail ]
+        , notFound = Missing
+        }
+
+
+spa =
+    Spa.config
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> Spa.withRoutes
+               [ Spa.route "/" Dashboard
+               , Spa.routeParam "/item/:id" Detail
+               , Spa.serverRoute "/api"
+               ]
+        |> Spa.withNotFound Missing
+
+
+main =
+    App.run app

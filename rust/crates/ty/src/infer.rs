@@ -109,7 +109,7 @@ pub struct Infer<'a> {
     /// recursion is monomorphic, so the self-call shares the def's type rather
     /// than instantiating a fresh polymorphic copy (which would split e.g.
     /// `SkyResult[any,any]` vs `SkyResult[any,[]any]` in an accumulator helper).
-    self_def: Option<DefId>,
+    pub(crate) self_def: Option<DefId>,
     /// Whether to consult the pass-3 INFERRED schemes (`World::inferred_sigs`)
     /// at a `Res::Def` call site. `true` only for the lowerer's typed table
     /// (result pinning) — the accept-parity check (M3) leaves it `false` so a
@@ -2366,7 +2366,32 @@ impl<'a> Infer<'a> {
         }
     }
 
+    /// [`Self::infer_res_plain`], then (v0.29.14, CHECK-ONLY) the routed page
+    /// ties of a use of a routing def (`crate::obligations::PageTie`).
     fn infer_res(&mut self, res: Res) -> TyVarId {
+        let def = match &res {
+            Res::Def(d) if !self.use_inferred && self.self_def != Some(*d) => Some(*d),
+            _ => None,
+        };
+        let t = self.infer_res_plain(res);
+        if let Some(d) = def {
+            // A carrier whose `App` page and model are concrete in its scheme
+            // (`app = App.app … |> App.withRoutes …`) was checked in its own
+            // body; only one generic in them is tied here.
+            let generic = self
+                .world
+                .caller_scheme(&d)
+                .is_none_or(|s| crate::obligations::app_page_or_model_is_generic(&s.ty));
+            if self.world.routed_page_carriers.contains(&d) && generic {
+                self.tie_app_nodes(t);
+            } else if let Some(&api) = self.world.routed_page_apis.get(&d) {
+                self.tie_routed_api(api, t);
+            }
+        }
+        t
+    }
+
+    fn infer_res_plain(&mut self, res: Res) -> TyVarId {
         match res {
             Res::Local(id) => {
                 // A generalised let-bound function: a fresh instance per use.
@@ -2383,22 +2408,6 @@ impl<'a> Infer<'a> {
             Res::Def(def) => {
                 if let Some(&shared) = self.provisional_defs.get(&def) {
                     return shared;
-                }
-
-                // v0.29.14 — CHECK-ONLY. `App.withRoutes`: the runtime writes
-                // the routed page into the model's `page` field, so the routes'
-                // page type is tied to that field once the model is known
-                // (`crate::obligations::PageTie`).
-                if !self.use_inferred
-                    && self.self_def != Some(def)
-                    && self.world.routed_page_def == Some(def)
-                {
-                    if let Some(s) = self.world.value_sigs.get(&def) {
-                        let s = s.clone();
-                        let inst = self.instantiate(&s);
-                        self.tie_routed_page(inst);
-                        return inst;
-                    }
                 }
 
                 // v0.27.0 qualified bounds — CHECK-ONLY. A def whose scheme

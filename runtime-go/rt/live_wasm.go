@@ -438,7 +438,7 @@ func spaApplyURL(path string) {
 		}
 		page = spaNotFound
 	}
-	spaModel = RecordUpdate(spaModel, map[string]any{"Page": page})
+	spaModel = writeRoutedPage(spaModel, page)
 }
 
 // spaPrePaintNavigate runs onNavigate(model.Page) through the guarded update

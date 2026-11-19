@@ -3461,10 +3461,19 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
         }
         None => (String::new(), String::new()),
     };
+    // The client router writes the NotFound page into the model's `page`
+    // field only for an app with routes (`spaApplyURL`), and the checker ties
+    // `Spa.withNotFound`'s page to that field (v0.29.14). A route-less app's
+    // `page` field is the user's own, of any type, so its client config gets
+    // no `Spa.withNotFound`; the binding stays for the backend's server render.
     let (not_found_binding, not_found_line) = match &fields.not_found {
         Some(n) => (
             format!("spaNotFound_ =\n    ({n})\n\n\n"),
-            "\n            |> Spa.withNotFound spaNotFound_".to_string(),
+            if fields.routes.is_some() {
+                "\n            |> Spa.withNotFound spaNotFound_".to_string()
+            } else {
+                String::new()
+            },
         ),
         None => (String::new(), String::new()),
     };

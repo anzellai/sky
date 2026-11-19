@@ -73,6 +73,94 @@ pub(crate) struct PageTie {
     pub page: TyVarId,
     pub model: TyVarId,
     pub span: Option<Span>,
+    /// A raw route API in a user module: a model still unknown at the end of
+    /// the def is refused (no caller can check it).
+    pub strict: bool,
+}
+
+/// A raw route API whose use ties a page to the model's `page` field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoutedApi {
+    /// `Live.config { …, routes : List (Route page), notFound : page }`.
+    LiveConfig,
+    /// `Spa.withRoutes : List (Route page) -> AppConfig model msg -> …`.
+    SpaRoutes,
+    /// `Spa.withNotFound : page -> AppConfig model msg -> …`.
+    SpaNotFound,
+}
+
+/// Does a scheme type hold an `App f s page model msg key` whose page or
+/// model has a type variable? Only then can a use of it meet a model its own
+/// body did not check.
+pub(crate) fn app_page_or_model_is_generic(t: &crate::Ty) -> bool {
+    use crate::Ty;
+    match t {
+        Ty::App(n, args) => {
+            (n.as_str() == "Std.App.App"
+                && args.len() == 6
+                && (!args[2].free_vars().is_empty() || !args[3].free_vars().is_empty()))
+                || args.iter().any(app_page_or_model_is_generic)
+        }
+        Ty::Fun(a, b) => app_page_or_model_is_generic(a) || app_page_or_model_is_generic(b),
+        Ty::Tuple(vs) => vs.iter().any(app_page_or_model_is_generic),
+        Ty::Record(fs, _) => fs.iter().any(|(_, f)| app_page_or_model_is_generic(f)),
+        _ => false,
+    }
+}
+
+/// A stdlib module: its routing plumbing is generic in the model, and the
+/// user's use of it is what the checker ties.
+fn is_stdlib_module(name: &str) -> bool {
+    name.starts_with("Std.") || name.starts_with("Sky.")
+}
+
+/// Pass 4 (v0.29.14): the routing defs of [`PageTie`]. The carriers are
+/// `Std.App.withRoutes` and every user def whose body reaches a carrier (a
+/// fixpoint over the call graph), so a generic helper is checked at its
+/// callers. The raw APIs tie at their own use.
+fn seed_routed_page(world: &mut World, db: &dyn SkyDb) {
+    let def_of = |module: &str, name: &str| {
+        let m = db.module_by_name(module)?;
+        Some(db.intern_def(m, &Name::new(name), hir::DefKind::Value))
+    };
+    let mut apis = std::collections::HashMap::new();
+    for (module, name, api) in [
+        ("Std.Live", "config", RoutedApi::LiveConfig),
+        ("Std.Spa", "withRoutes", RoutedApi::SpaRoutes),
+        ("Std.Spa", "withNotFound", RoutedApi::SpaNotFound),
+    ] {
+        if let Some(d) = def_of(module, name).filter(|d| world.value_sigs.contains_key(d)) {
+            apis.insert(d, api);
+        }
+    }
+    let mut carriers = std::collections::HashSet::new();
+    if let Some(d) = def_of("Std.App", "withRoutes").filter(|d| world.value_sigs.contains_key(d)) {
+        carriers.insert(d);
+        let mut user = Vec::new();
+        for m in db.module_ids() {
+            if is_stdlib_module(db.module_name(m)) {
+                continue;
+            }
+            let resolved = db.resolve(m);
+            for (def, body) in &resolved.bodies {
+                user.push((*def, callees(body).0));
+            }
+        }
+        loop {
+            let mut changed = false;
+            for (d, calls) in &user {
+                if !carriers.contains(d) && calls.iter().any(|c| carriers.contains(c)) {
+                    carriers.insert(*d);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+    world.routed_page_carriers = carriers;
+    world.routed_page_apis = apis;
 }
 
 /// Runtime handles (A-1/A-1b): an id into a table of one running process.
@@ -253,26 +341,106 @@ impl Infer<'_> {
         self.cur_span = saved;
     }
 
-    /// Record a [`PageTie`] for one use of `Std.App.withRoutes`, whose
-    /// instance is `inst` (`List (Route page) -> App f s page model msg key ->
-    /// …`).
-    pub(crate) fn tie_routed_page(&mut self, inst: TyVarId) {
-        let Content::Structure(FlatTy::Fun(_, rest)) = self.uf.content(inst) else {
-            return;
-        };
-        let Content::Structure(FlatTy::Fun(app, _)) = self.uf.content(rest) else {
-            return;
-        };
-        let Content::Structure(FlatTy::App(_, args)) = self.uf.content(app) else {
-            return;
-        };
-        if let [_, _, page, model, _, _] = args[..] {
-            self.page_ties.push(PageTie {
-                page,
-                model,
-                span: self.cur_span,
-            });
+    /// Tie every `Std.App.App f s page model msg key` in `inst`, the instance
+    /// of a use of a routing def (`App.withRoutes`, or a user def that reaches
+    /// it). A generic helper keeps the tie out of its own scheme; its callers
+    /// are checked here, where the model is known.
+    pub(crate) fn tie_app_nodes(&mut self, inst: TyVarId) {
+        let mut seen = std::collections::HashSet::new();
+        let mut tied = std::collections::HashSet::new();
+        let mut stack = vec![inst];
+        while let Some(v) = stack.pop() {
+            let r = self.uf.find(v);
+            if !seen.insert(r) {
+                continue;
+            }
+            match self.uf.content(r) {
+                Content::Structure(FlatTy::App(n, args)) => {
+                    if n.as_str() == "Std.App.App" {
+                        if let [_, _, page, model, _, _] = args[..] {
+                            let key = (self.uf.find(page), self.uf.find(model));
+                            if tied.insert(key) {
+                                self.page_ties.push(PageTie {
+                                    page,
+                                    model,
+                                    span: self.cur_span,
+                                    strict: false,
+                                });
+                            }
+                        }
+                    }
+                    stack.extend(args);
+                }
+                Content::Structure(FlatTy::Fun(a, b)) => stack.extend([a, b]),
+                Content::Structure(FlatTy::Tuple(vs)) => stack.extend(vs),
+                Content::Structure(FlatTy::Record(fs, ext)) => {
+                    stack.extend(fs.values().copied());
+                    stack.extend(ext);
+                }
+                _ => {}
+            }
         }
+    }
+
+    /// The `(argument, result)` of a function type, if `t` is one.
+    fn fun_parts(&mut self, t: TyVarId) -> Option<(TyVarId, TyVarId)> {
+        match self.uf.content(t) {
+            Content::Structure(FlatTy::Fun(a, b)) => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    /// The first argument of a nominal type application, if `t` is one.
+    fn first_arg(&mut self, t: TyVarId) -> Option<TyVarId> {
+        match self.uf.content(t) {
+            Content::Structure(FlatTy::App(_, args)) => args.first().copied(),
+            _ => None,
+        }
+    }
+
+    /// Tie the page and the model of a use of a raw route API (`inst` is its
+    /// instance). In a user module the tie is strict: a model that is still
+    /// unknown at the end of the def is refused, because `AppConfig model msg`
+    /// carries no page type a caller could check.
+    pub(crate) fn tie_routed_api(&mut self, api: RoutedApi, inst: TyVarId) {
+        let found = (|| {
+            let (arg, rest) = self.fun_parts(inst)?;
+            match api {
+                RoutedApi::LiveConfig => {
+                    let page = match self.uf.content(arg) {
+                        Content::Structure(FlatTy::Record(fs, ext)) => {
+                            let (fs, _) = self.uf.normalize_record(fs, ext);
+                            *fs.get(&Name::new("notFound"))?
+                        }
+                        _ => return None,
+                    };
+                    Some((page, self.first_arg(rest)?))
+                }
+                RoutedApi::SpaRoutes => {
+                    let route = self.first_arg(arg)?;
+                    let page = self.first_arg(route)?;
+                    let (cfg, _) = self.fun_parts(rest)?;
+                    Some((page, self.first_arg(cfg)?))
+                }
+                RoutedApi::SpaNotFound => {
+                    let (cfg, _) = self.fun_parts(rest)?;
+                    Some((arg, self.first_arg(cfg)?))
+                }
+            }
+        })();
+        let Some((page, model)) = found else {
+            return;
+        };
+        let strict = self
+            .self_def
+            .and_then(|d| self.db.def_loc(d))
+            .is_some_and(|l| !is_stdlib_module(self.db.module_name(l.module)));
+        self.page_ties.push(PageTie {
+            page,
+            model,
+            span: self.cur_span,
+            strict,
+        });
     }
 
     /// Decide each [`PageTie`] whose model type is known: a record with a
@@ -306,6 +474,21 @@ impl Infer<'_> {
                 }
                 Content::Flex | Content::FlexSuper(_) if !fin => {
                     kept.push(tie);
+                    continue;
+                }
+                Content::Flex | Content::FlexSuper(_) | Content::Rigid(_) if tie.strict => {
+                    self.errors.push(TypeError {
+                        message: "The routed page type cannot be checked here: the model type is \
+                                  not known in this function.\n\nThe app writes the routed page \
+                                  into the model's `page` field on every request, so the checker \
+                                  must see the model type where the routes are set. Give this \
+                                  function a type annotation with the app's model type, or use \
+                                  `App.withRoutes`, whose routes the checker follows through \
+                                  helpers."
+                            .to_string(),
+                        span: tie.span,
+                        code: "E2001",
+                    });
                     continue;
                 }
                 _ => continue,
@@ -547,12 +730,7 @@ fn with_bounds(scheme: &Scheme, bounds: &[(Name, SuperType)]) -> Scheme {
 /// Pass 4 (with the other static seeds): the bounded overrides of
 /// [`ENCODABLE_APIS`].
 pub(crate) fn seed_bound_overrides(world: &mut World, db: &dyn SkyDb) {
-    if let Some(m) = db.module_by_name("Std.App") {
-        let def = db.intern_def(m, &Name::new("withRoutes"), hir::DefKind::Value);
-        if world.value_sigs.contains_key(&def) {
-            world.routed_page_def = Some(def);
-        }
-    }
+    seed_routed_page(world, db);
     for (module, name, var) in ENCODABLE_APIS {
         let Some(m) = db.module_by_name(module) else {
             continue;
@@ -605,7 +783,7 @@ fn callees(body: &hir::Body) -> (Vec<base::DefId>, Vec<(String, String)>) {
 impl World {
     /// The scheme a check-path caller of `d` instantiates (mirrors the order
     /// of `Infer::infer_res`).
-    fn caller_scheme(&self, d: &base::DefId) -> Option<&Scheme> {
+    pub(crate) fn caller_scheme(&self, d: &base::DefId) -> Option<&Scheme> {
         self.bound_check_sigs
             .get(d)
             .or_else(|| self.any_result_check_sigs.get(d))

@@ -1767,7 +1767,7 @@ func applyRouteWithParams(app *liveApp, model any, urlPath string) (any, any) {
 	for _, rt := range app.routes {
 		if params, ok := matchRoute(rt.path, urlPath); ok {
 			page := fillRoutePage(rt.page, params)
-			model := RecordUpdate(model, map[string]any{"Page": page})
+			model := writeRoutedPage(model, page)
 			return model, buildRouteParamsDict(rt.path, params)
 		}
 	}
@@ -1778,7 +1778,7 @@ func applyRouteWithParams(app *liveApp, model any, urlPath string) (any, any) {
 	// (v0.29.14). An unknown path on such an app still answers 404
 	// (matchAnyRoute), with the app's own view.
 	if app.notFound != nil && len(app.routes) > 0 {
-		return RecordUpdate(model, map[string]any{"Page": app.notFound}),
+		return writeRoutedPage(model, app.notFound),
 			buildRouteParamsDict("", nil)
 	}
 	return model, buildRouteParamsDict("", nil)

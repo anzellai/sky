@@ -77,6 +77,7 @@ module Std.Spa exposing
     , app
     , config
     , route
+    , routeParam
     , routeInt
     , serverRoute
     , withRoutes
@@ -123,7 +124,9 @@ type AppConfig model msg
 
 -- | A client-side route, produced by `route` and registered with `withRoutes`.
 -- Opaque — its runtime shape (`rt.spaRoute`) is an implementation detail.
-type Route
+-- `page` is the type of the page the route gives (v0.29.14): [`withRoutes`]
+-- and [`withNotFound`] tie it to the model's `page` field.
+type Route page
     = Route_OPAQUE
 
 
@@ -162,12 +165,18 @@ app =
     Ffi.kernel "Spa_app"
 
 
--- | `route path page` — register a client-side page route. `path` may contain
--- `:param` segments (`/thing/:id`); a captured segment is passed to the page
--- value if it is a constructor (`ThingPage : String -> Page`). Put literal
--- routes before `:param` patterns (declaration order matters).
-route : String -> page -> Route
+-- | `route path page` — register a client-side page route. Put literal
+-- routes before `:param` patterns (declaration order matters). For a `:param`
+-- pattern (`/thing/:id`), use [`routeParam`].
+route : String -> page -> Route page
 route =
+    Ffi.kernel "Spa_route"
+
+
+-- | `routeParam path make` — a route whose `:param` segment is passed to
+-- `make` (`ThingPage : String -> Page`).
+routeParam : String -> (String -> page) -> Route page
+routeParam =
     Ffi.kernel "Spa_route"
 
 
@@ -185,7 +194,7 @@ route =
 --
 -- (The runtime cannot see the constructor's parameter type under the erased ABI,
 -- so the Int-ness is declared here at the route rather than inferred.)
-routeInt : String -> (Int -> page) -> Route
+routeInt : String -> (Int -> page) -> Route page
 routeInt =
     Ffi.kernel "Spa_routeInt"
 
@@ -195,7 +204,7 @@ routeInt =
 -- client: a link to it is a full browser navigation even when a client route
 -- would also match it, so a sign-out or an OAuth link reaches the server. A path
 -- no client route matches is a full navigation anyway.
-serverRoute : String -> Route
+serverRoute : String -> Route page
 serverRoute =
     Ffi.kernel "Spa_serverRoute"
 
@@ -203,7 +212,7 @@ serverRoute =
 -- | Register the client-side routes. The runtime resolves `location.pathname`
 -- against them on mount, on an intercepted internal-link click, and on
 -- Back/Forward, setting the model's `page` field to the matched route's page.
-withRoutes : List Route -> AppConfig model msg -> AppConfig model msg
+withRoutes : List (Route page) -> AppConfig model msg -> AppConfig model msg
 withRoutes =
     Ffi.kernel "Spa_withRoutes"
 

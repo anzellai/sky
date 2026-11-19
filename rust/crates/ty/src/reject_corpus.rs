@@ -156,7 +156,10 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// for an unqualified type name that no module declares.
 /// **99 since v0.29.14**: `routed_page_not_model_page_type.sky` pins `[E2001]`
 /// for routes whose page type is not the model's `page` field type.
-pub const EXPECTED_CORPUS_FILES: usize = 99;
+/// **104 since v0.29.14**: the routed page type through a generic helper, a
+/// raw `Live.config`, a raw `Spa.withRoutes` / `Spa.withNotFound`, and a raw
+/// routing helper generic in the model.
+pub const EXPECTED_CORPUS_FILES: usize = 104;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -189,7 +192,8 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// **50 since v0.29.0** (the two `regex_*.sky` files).
 /// **51 since v0.29.14** (`undefined_type_in_record_alias.sky`).
 /// **52 since v0.29.14** (`routed_page_not_model_page_type.sky`).
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 52;
+/// **57 since v0.29.14** (the five other `routed_page_*.sky` files).
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 57;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

@@ -27,6 +27,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   type (a `String` page, another custom type) built before and then failed on
   every request; it is now `[E2001]` at `App.withRoutes`
   (`docs/migration/v0.29.md`).
+- `Std.Live.Route` and `Std.Spa.Route` take the page type: `Route page`. An
+  annotation `List Live.Route` becomes `List (Live.Route Page)`. A `:param`
+  route uses the new `Live.routeParam` / `Spa.routeParam` (a constructor
+  passed to `Live.route` is now a page of a function type). `Live.config`,
+  `Spa.withRoutes` and `Spa.withNotFound` tie the page type to the model's
+  `page` field (`[E2001]`), and a raw routing helper whose model type is not
+  known is refused: annotate it with the model type.
 
 ### Added
 
@@ -190,7 +197,15 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   the routes' page type to the model's `page` field at `App.withRoutes`, and
   a mismatch is `[E2001]`: "The routes give pages of type `String`, but the
   model's `page` field has type `Route`". A model with no `page` field is
-  unchanged. This closes the routed half of the route-less fix above.
+  unchanged. This closes the routed half of the route-less fix above. The
+  check follows a routing helper that is generic in the model (each caller
+  is checked), and covers the raw `Live.config`, `Spa.withRoutes` and
+  `Spa.withNotFound`. As defence in depth, the runtime no longer panics on
+  every request when a page of the wrong type reaches it: Sky.Live, the
+  Sky.Spa server render and the Sky.Spa client report the mismatch once, in
+  Sky words (`[E2001] The routes give a page of type …`), stop the process,
+  and never write the page. A page of one enum type is no longer converted
+  silently into a field of another enum type.
 - Sky.Spa: a routed `web:app` app with no server arm did not serve its deep
   routes. Its backend was static-only, so `GET /about` was the Go file
   server's plain 404 and `GET /` had no first paint. The backend now
