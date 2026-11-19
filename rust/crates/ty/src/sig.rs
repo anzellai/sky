@@ -1588,7 +1588,7 @@ impl World {
         ];
 
         // `Sky.Test.runMain` ends in `System.exit`, so its result is free
-        // (`main : Program` and `main : Task Error ()` both call it). A
+        // (`main : Task Error ()` calls it). A
         // check-only seed, so the emitted Go is unchanged.
         let test_specs: Vec<(&str, Ty)> =
             vec![("runMain", fun(list(Ty::app("Sky.Test.Test", vec![])), a()))];

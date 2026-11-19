@@ -305,6 +305,6 @@ maybeToResult m =
             Err "nothing"
 
 
-main : Program
+main : Task Error ()
 main =
     Test.runMain tests

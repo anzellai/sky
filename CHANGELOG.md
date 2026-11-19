@@ -228,7 +228,9 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   became an opaque type: an unused alias compiled, and a used one failed with
   `type mismatch: CardView vs record` at a use site. `sky check` now reports
   `[E1001] Undefined name: CardView` at the name. A type that some module
-  declares, or a kernel type such as `Dict`, is accepted as before.
+  declares, or a kernel type such as `Dict`, is accepted as before. A test
+  file's `main : Program` (no module declares `Program`) is now refused the
+  same way: write `main : Task Error ()`.
 - Sky.Spa: a second entry built the wrong backend, silently. `sky build
   src/Other.sky --target web:app` in a project that also has `src/Main.sky`
   wrote the generated entry as `module Main` at `src/Main.sky`, and then the

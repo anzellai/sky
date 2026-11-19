@@ -502,6 +502,6 @@ tests =
     ]
 
 
-main : Program
+main : Task Error ()
 main =
     Test.runMain tests
