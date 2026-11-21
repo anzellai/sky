@@ -813,9 +813,16 @@ conformance suite `JsonObjectKeysConformanceTest`):
   `Encode.dict` keeps both members when its key function maps two keys to one
   text, and every decoder then refuses the object.
 
-The remaining gap: a `Dict Float v` (or a Char or Bool key) under `Codec.auto`
-is an object keyed by the key text, while `Codec.dict Codec.float cv` writes
-the pairs array. The law above covers String, Int and enum keys only.
+* **Every scalar key.** The law holds for String, Int, Float, Bool, Char
+  (`Codec.char`) and enum keys. The key text is the runtime's one text of the
+  key (`dictJSONKey` / `dictFloatKeyText`): a Float in Go's shortest `%v`
+  form, -0 written as `"0"`, NaN as `"NaN"`, the infinities as `"+Inf"` /
+  `"-Inf"`. These are valid JSON member names, so no key is refused on write.
+  `-0.0 == 0.0`, so the two are one Dict key, and every NaN is one Dict key:
+  the Dict holds one entry for each, and the JSON writes that entry once.
+  `Codec.dict` reads each key in its one text only. A Dict key is always one of these scalars (the
+  compiler refuses a composite key, `[E2008]`), so only a key codec with no
+  scalar description (a `lazy`, a `taggedUnion`) keeps the pairs array.
 
 ### 2.10a `Sky.Core.Process` streaming and `Std.Watch` (v0.27.0)
 

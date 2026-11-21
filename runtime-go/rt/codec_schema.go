@@ -93,10 +93,22 @@ func codecSchemaTyped(t reflect.Type, declared string, snake bool, depth int) co
 		if kind, val, ok := codecDeclaredDict(declared); ok && isSkyDictType(t) {
 			vt := reflect.Zero(t).Interface().(skyDictAny).dictValueType()
 			s := codecSchemaTyped(vt, val, snake, depth+1)
-			if kind == 'i' {
+			switch kind {
+			case 'i', 'c':
+				// An Int key, and a Char key (its code point).
 				return codecSchema{
-					json:  `{"type":"object","additionalProperties":` + s.json + `,"propertyNames":{"pattern":"^(0|-?[1-9][0-9]*)$"}}`,
+					json:  `{"type":"object","additionalProperties":` + s.json + `,"propertyNames":{"pattern":"` + codecIntKeyPattern + `"}}`,
 					exact: false,
+				}
+			case 'f':
+				return codecSchema{
+					json:  `{"type":"object","additionalProperties":` + s.json + `,"propertyNames":{"pattern":"` + codecFloatKeyPattern + `"}}`,
+					exact: false,
+				}
+			case 'b':
+				return codecSchema{
+					json:  `{"type":"object","additionalProperties":` + s.json + `,"propertyNames":{"enum":["false","true"]}}`,
+					exact: s.exact,
 				}
 			}
 			return codecSchema{json: `{"type":"object","additionalProperties":` + s.json + `}`, exact: s.exact}

@@ -215,7 +215,7 @@ decoder only to make a test pass. See AGENTS.md "JSON decoding is strict".
 Every decoder now refuses JSON text that repeats a key in one object (the
 error names the key and its path). If a test or a partner payload fails with
 `duplicate key`, fix the producer; do not strip the key before decoding.
-`Codec.dict` with `string` / `int` / `enum` keys now writes a JSON object, not
+`Codec.dict` with a scalar key (String, Int, Float, Bool, Char, enum) now writes a JSON object, not
 a `[key, value]` pairs array, and still reads the pairs. A client outside Sky
 that reads that JSON must read the object. Read an object with unknown keys
 with `Decode.dict` or `Decode.keyValuePairs`, not with a hand-written walk.

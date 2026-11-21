@@ -519,7 +519,8 @@ tests =
                   ]
                   [ schemaText shapeCodec
                   , schemaText (Codec.result Codec.string Codec.int)
-                  , schemaText (Codec.dict Codec.float Codec.int)
+                  , schemaText
+                        (Codec.dict (Codec.lazy (\_ -> Codec.int)) Codec.int)
                   , schemaText Codec.error
                   , schemaText
                         (Codec.object identity

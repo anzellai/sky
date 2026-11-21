@@ -50,6 +50,7 @@ module Std.Codec exposing
     , int
     , float
     , bool
+    , char
     , decimal
     , moneyIn
     , moneyObject
@@ -271,59 +272,70 @@ renderSchema node =
 
 -- The schema of a `dict`. The object form is the map `Codec.auto` writes for
 -- a `Dict` field (`{"type":"object","additionalProperties":…}`), with the
--- key text pinned for Int keys (a pattern) and enum keys (the names). An Int
--- key's pattern does not bound its size, so that schema is not exact.
+-- key text pinned by `propertyNames`: a pattern for Int (and Char) keys and
+-- Float keys, the names for enum and Bool keys. A pattern does not bound the
+-- size of a key, and the Float one admits spellings the reader refuses, so
+-- those schemas are not exact. `Codec.auto` writes the same schema for a
+-- `Dict` field (runtime `codecSchemaTyped`).
 dictSchema : DictKeys -> SchemaNode -> JsonSchema -> JsonSchema
 dictSchema keys key values =
-    let
-        base =
+    case keys of
+
+        KeyPairs ->
+            { schema = E.object [], exact = False }
+
+        KeyText ->
+            { schema =
+                E.object
+                    [ ( "type", E.string "object" )
+                    , ( "additionalProperties", values.schema )
+                    ]
+            , exact = values.exact
+            }
+
+        KeyInt ->
+            mapSchema values ( "pattern", E.string intKeyPattern ) False
+
+        KeyFloat ->
+            mapSchema values ( "pattern", E.string floatKeyPattern ) False
+
+        KeyBool ->
+            mapSchema
+                values
+                ( "enum", E.list E.string [ "false", "true" ] )
+                values.exact
+
+        KeyEnum ->
+            mapSchema
+                values
+                ( "enum", schemaPart "enum" (renderSchema key).schema )
+                values.exact
+
+
+mapSchema : JsonSchema -> ( String, Value ) -> Bool -> JsonSchema
+mapSchema values names exact =
+    { schema =
+        E.object
             [ ( "type", E.string "object" )
             , ( "additionalProperties", values.schema )
+            , ( "propertyNames", E.object [ names ] )
             ]
-    in
-        case keys of
-
-            KeyPairs ->
-                { schema = E.object [], exact = False }
-
-            KeyText ->
-                { schema = E.object base, exact = values.exact }
-
-            KeyInt ->
-                { schema =
-                    E.object
-                        (base
-                            ++ [ ( "propertyNames"
-                                 , E.object
-                                       [ ( "pattern", E.string intKeyPattern ) ]
-                                 )
-                               ])
-                , exact = False
-                }
-
-            KeyEnum ->
-                { schema =
-                    E.object
-                        (base
-                            ++ [ ( "propertyNames"
-                                 , E.object
-                                       [ ( "enum"
-                                         , schemaPart
-                                               "enum"
-                                               (renderSchema key).schema
-                                         )
-                                       ]
-                                 )
-                               ])
-                , exact = values.exact
-                }
+    , exact = exact
+    }
 
 
 -- The text of an Int key: the decimal a `dict` writes and reads (no sign
--- before 0, no leading zero).
+-- before 0, no leading zero). A Char key is its code point in this text.
 intKeyPattern : String
 intKeyPattern =
     "^(0|-?[1-9][0-9]*)$"
+
+
+-- The shape of a Float key's text (Go's shortest `%v` form: "1.5", "1e+21",
+-- "NaN", "+Inf"). The reader takes only the one text of each Float.
+floatKeyPattern : String
+floatKeyPattern =
+    "^(NaN|[+-]Inf|-?[0-9]+(\\.[0-9]+)?(e[+-][0-9]+)?)$"
 
 
 -- The text a `decimal` reads: digits with an optional `-` and one `.`, no
@@ -852,6 +864,38 @@ bool =
         }
 
 
+-- | Codec for a `Char` (v0.31.0) — its code point as a JSON number (`'a'` is
+-- `97`), the JSON `Codec.auto` writes for a `Char` field; INTEGER column. It
+-- reads an integer from 0 to 1114111 (0x10FFFF). As a `dict` key it is the
+-- code point's decimal text (`"97"`), as under `Codec.auto`.
+char : Codec Char
+char =
+    Codec
+        { enc = \c -> E.int (Char.toCode c)
+        , dec = D.andThen charOfCode D.int
+        , shp = SScalar CInt
+        , sch = SnType "integer"
+        , zro = \_ -> Just (E.int 0)
+        , fzr = \_ -> []
+        , fck = \_ -> []
+        , vck = []
+        , vcs = []
+        , jsn = \_ -> Nothing
+        , prb = []
+        }
+
+
+charOfCode : Int -> Decoder Char
+charOfCode n =
+    if n >= 0 && n <= 1114111 then
+        D.succeed (Char.fromCode n)
+
+    else
+        D.fail
+            ("expected a Char code point from 0 to 1114111, got "
+                ++ String.fromInt n)
+
+
 -- | Codec for a `Std.Decimal` (v0.29.2, opt-in) — an exact decimal column.
 --
 -- JSON: the canonical string, `"12.5"` (trailing zeros are dropped, so
@@ -1277,12 +1321,15 @@ result (Codec ce) (Codec ca) =
 --
 -- The JSON form depends on the key codec (since v0.31.0):
 --
--- * `string`, `int` or an `enum` (and a `map` of one of these): a JSON
---   object. A String key is the member name, an Int key its decimal text
---   (`"10"`, `"-3"`), an enum key its name. The members are sorted byte-wise
---   by that text (`"10"` before `"9"`).
--- * any other key codec (`float`, a tuple, a record): a JSON array of
---   `[key, value]` pairs in Dict order, as before.
+-- * a scalar key codec (`string`, `int`, `float`, `bool`, `char`, an `enum`,
+--   and a `map` of one of these): a JSON object. The member name is the key
+--   text `Codec.auto` writes: a String as it is, an Int in decimal (`"10"`,
+--   `"-3"`), a Float in Go's shortest form (`"1.5"`, `"2"`, `"1e+21"`,
+--   `"NaN"`, `"+Inf"`), a Bool as `"true"` / `"false"`, a Char as its code
+--   point (`"97"`), an enum value as its name. The members are sorted
+--   byte-wise by that text (`"10"` before `"9"`).
+-- * a key codec whose description is not one of these (a `lazy`, a
+--   `taggedUnion`): a JSON array of `[key, value]` pairs in Dict order.
 --
 -- The object is byte for byte the JSON `Codec.auto` writes for a record
 -- field of the same `Dict` type, so the two codecs agree on the wire:
@@ -1291,15 +1338,18 @@ result (Codec ce) (Codec ca) =
 --     -- {"10":"b","9":"a"}
 --
 -- The decoder reads both forms, so JSON written by Sky v0.30 and earlier (the
--- pairs array in a database row, a file, a saved model) still reads. An Int
--- key is read strictly: `"10"` reads, `"010"`, `"+10"`, `"1e1"` and `"10.0"`
--- are an `Err`. An error names the key: `at ["x"]: expected Int, got String`.
--- Two members that read as one Dict key (a `map` key codec that changes case,
--- say) are an `Err`, never a lost entry.
+-- pairs array in a database row, a file, a saved model) still reads. A key is
+-- read strictly, in its one text only: `"010"`, `"+10"` and `"1e1"` are not
+-- an Int key, `"1.50"`, `"-0"` and `"Inf"` are not a Float key, `"True"` is
+-- not a Bool key. An error names the key: `at ["x"]: expected Int, got
+-- String`. Two members that read as one Dict key (a `map` key codec that
+-- changes case, say) are an `Err`, never a lost entry. -0 and 0 are one Dict
+-- key (written `"0"`), and every NaN is one Dict key (written `"NaN"`).
 --
 -- The JSON Schema of the object form is `"type": "object"` with the values'
--- schema as `additionalProperties`, a `propertyNames` pattern for Int keys and
--- the names for enum keys. The pairs form has the open schema `{}`.
+-- schema as `additionalProperties`, and `propertyNames`: a pattern for Int,
+-- Char and Float keys, the names for enum and Bool keys. The pairs form has
+-- the open schema `{}`.
 dict : Codec comparable -> Codec v -> Codec (Dict comparable v)
 dict (Codec ck) (Codec cv) =
     let
@@ -1342,6 +1392,8 @@ dict (Codec ck) (Codec cv) =
 type DictKeys
     = KeyText
     | KeyInt
+    | KeyFloat
+    | KeyBool
     | KeyEnum
     | KeyPairs
 
@@ -1353,8 +1405,15 @@ dictKeysOf sch =
         SnType "string" ->
             KeyText
 
+        -- `int`, and `char`, whose JSON is the code point.
         SnType "integer" ->
             KeyInt
+
+        SnType "number" ->
+            KeyFloat
+
+        SnType "boolean" ->
+            KeyBool
 
         -- The payload is not read here: a function in a stdlib custom type
         -- costs a runtime narrowing to read (doc 14), and `dictSchema` takes
@@ -1385,6 +1444,21 @@ dictKeyText keys kv =
                 Err _ ->
                     E.encode 0 kv
 
+        KeyFloat ->
+            floatKeyTextK kv
+
+        KeyBool ->
+            case D.decodeValue D.bool kv of
+
+                Ok True ->
+                    "true"
+
+                Ok False ->
+                    "false"
+
+                Err _ ->
+                    E.encode 0 kv
+
         _ ->
             case D.decodeValue D.string kv of
 
@@ -1397,6 +1471,20 @@ dictKeyText keys kv =
 
                 Err _ ->
                     E.encode 0 kv
+
+
+-- The text of a Float key, as `Codec.auto` writes it (runtime
+-- `dictFloatKeyText`: Go's shortest form, -0 as "0").
+floatKeyTextK : Value -> String
+floatKeyTextK =
+    Ffi.kernel "Codec_floatKeyText"
+
+
+-- The Float a member name stands for, when the name is that Float's one
+-- text; JSON null otherwise.
+floatKeyValueK : String -> Value
+floatKeyValueK =
+    Ffi.kernel "Codec_floatKeyValue"
 
 
 dictTagByte : String
@@ -1425,6 +1513,30 @@ dictKeyValue keys name =
                     Err
                         ("expected an Int key in its decimal text (\"10\", \"-3\"), got "
                             ++ E.encode 0 (E.string name))
+
+        KeyFloat ->
+            let
+                v = floatKeyValueK name
+            in
+                if v == E.null then
+                    Err
+                        ("expected a Float key in its one text (\"1.5\", \"2\", \"1e+21\", \"NaN\"), got "
+                            ++ E.encode 0 (E.string name))
+
+                else
+                    Ok v
+
+        KeyBool ->
+            if name == "true" then
+                Ok (E.bool True)
+
+            else if name == "false" then
+                Ok (E.bool False)
+
+            else
+                Err
+                    ("expected a Bool key (\"true\" or \"false\"), got "
+                        ++ E.encode 0 (E.string name))
 
         _ ->
             if String.startsWith (dictTagByte ++ "s") name then
@@ -3851,8 +3963,12 @@ mapKeyKind : Value -> String
 mapKeyKind p =
     case jsonField "pattern" p of
 
-        Just _ ->
-            "int"
+        Just pattern ->
+            if pattern == E.string floatKeyPattern then
+                "float"
+
+            else
+                "int"
 
         Nothing ->
             case jsonField "enum" p of
@@ -3868,6 +3984,9 @@ mapKeyNoun : String -> String
 mapKeyNoun kind =
     if kind == "int" then
         "Int keys"
+
+    else if kind == "float" then
+        "Float keys"
 
     else if kind == "enum" then
         "enum keys"
@@ -4228,6 +4347,13 @@ mapKeyError names k =
                     Just
                         ("the key \"" ++ k
                             ++ "\" is not an Int in its decimal text")
+
+        else if kind == "float" then
+            if floatKeyValueK k == E.null then
+                Just ("the key \"" ++ k ++ "\" is not a Float in its one text")
+
+            else
+                Nothing
 
         else if kind == "enum" then
             if memberOf k (schemaNames names) then

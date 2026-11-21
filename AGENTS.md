@@ -112,7 +112,7 @@ Core syntax you must get right:
   `Decode.lazy` / `Codec.lazy` name a recursive decoder or codec (v0.31.0).
   JSON text that repeats a key in one object is an `Err` naming the key, in
   every decoder (`Codec`, `Codec.auto`, Sky.Spa, a Store JSON column), since
-  v0.31.0. `Codec.dict` with `string` / `int` / `enum` keys writes a JSON
+  v0.31.0. `Codec.dict` with a scalar key (String, Int, Float, Bool, Char, enum) writes a JSON
   object, byte for byte what `Codec.auto` writes, and still reads the older
   `[key, value]` pairs array.
 - No custom operators, no `where` clauses (use `let`), no higher-kinded types (HM only).

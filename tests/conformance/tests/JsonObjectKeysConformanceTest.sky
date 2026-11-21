@@ -13,6 +13,7 @@ import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Task as Task
+import Sky.Core.Math as Math
 import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.Json.Encode as Encode exposing (Value)
 import Sky.Core.Json.Decode as Decode exposing (Decoder)
@@ -87,6 +88,50 @@ boxCodec =
         (Codec.object BoxFields |> Codec.field "tag" .tag Codec.string
             |> Codec.field "v0" .v0 (Codec.dict Codec.string Codec.int)
             |> Codec.buildObject)
+
+-- Float, Bool and Char keys, and a Char field, under both codecs.
+type alias ScalarKeys =
+    { fl : Dict Float Int
+    , bo : Dict Bool String
+    , ch : Dict Char Int
+    , c : Char
+    }
+
+
+scalarSample : ScalarKeys
+scalarSample =
+    { fl =
+        Dict.fromList
+            [ ( 2.0, 1 )
+            , ( 1.5, 2 )
+            , ( 1.0e21, 3 )
+            , ( 1.0e-7, 4 )
+            , ( 1.23456789e8, 5 )
+            , ( 0.0, 7 )
+            , ( Math.nan, 8 )
+            , ( Math.inf, 9 )
+            , ( 0.1, 10 )
+            , ( negate Math.inf, 11 )
+            ]
+    , bo = Dict.fromList [ ( True, "yes" ), ( False, "no" ) ]
+    , ch = Dict.fromList [ ( 'a', 1 ), ( '日', 2 ) ]
+    , c = 'z'
+    }
+
+
+scalarAuto : Codec ScalarKeys
+scalarAuto =
+    Codec.auto { fl = Dict.empty, bo = Dict.empty, ch = Dict.empty, c = 'a' }
+
+
+scalarHand : Codec ScalarKeys
+scalarHand =
+    Codec.object ScalarKeys
+        |> Codec.field "fl" .fl (Codec.dict Codec.float Codec.int)
+        |> Codec.field "bo" .bo (Codec.dict Codec.bool Codec.string)
+        |> Codec.field "ch" .ch (Codec.dict Codec.char Codec.int)
+        |> Codec.field "c" .c Codec.char
+        |> Codec.buildObject
 
 type alias Rec =
     { names : Dict String Int
@@ -419,13 +464,111 @@ pureTests =
                         (Dict.fromList [ ( "red", 1 ), ( "Blue", 2 ) ])
                   ))
     , Test.test
-          "Codec.dict: a Float key keeps the [key, value] pairs form"
+          "Codec.dict: a key codec with no scalar schema (a lazy codec) keeps the pairs form"
           (\_ ->
               Test.equal
-                  "[[1.5,\"x\"],[2,\"y\"]]"
+                  "[[1,\"x\"],[2,\"y\"]]"
                   (Codec.toJson
-                      (Codec.dict Codec.float Codec.string)
-                      (Dict.fromList [ ( 2.0, "y" ), ( 1.5, "x" ) ])))
+                      (Codec.dict (Codec.lazy (\_ -> Codec.int)) Codec.string)
+                      (Dict.fromList [ ( 2, "y" ), ( 1, "x" ) ])))
+    , Test.test
+          "law: Float, Bool and Char keys write the bytes Codec.auto writes"
+          (\_ ->
+              Test.equal
+                  (Codec.toJson scalarAuto scalarSample)
+                  (Codec.toJson scalarHand scalarSample))
+    , Test.test
+          "law: Float, Bool and Char keys: the documented text, and each codec reads the other"
+          (\_ ->
+              Test.equal
+                  ( "{\"fl\":{\"+Inf\":9,\"-Inf\":11,\"0\":7,\"0.1\":10,\"1.23456789e+08\":5,\"1.5\":2,\"1e+21\":3,\"1e-07\":4,\"2\":1,\"NaN\":8},\"bo\":{\"false\":\"no\",\"true\":\"yes\"},\"ch\":{\"26085\":2,\"97\":1},\"c\":122}"
+                  , Ok True
+                  , Ok True
+                  )
+                  ( Codec.toJson scalarHand scalarSample
+                  , Codec.fromJson
+                        scalarAuto
+                        (Codec.toJson scalarHand scalarSample)
+                        |> Result.map (\x -> x == scalarSample)
+                  , Codec.fromJson
+                        scalarHand
+                        (Codec.toJson scalarAuto scalarSample)
+                        |> Result.map (\x -> x == scalarSample)
+                  ))
+    , Test.test
+          "Float keys: -0 and 0 are one Dict key, written 0"
+          (\_ ->
+              let
+                  d =
+                      Dict.fromList [ ( negate 0.0, "neg" ), ( 0.0, "pos" ) ]
+              in
+                  Test.equal
+                      ( 1, "{\"0\":\"pos\"}" )
+                      ( Dict.size d
+                      , Codec.toJson (Codec.dict Codec.float Codec.string) d
+                      ))
+    , Test.test
+          "Float keys: read in their one text only"
+          (\_ ->
+              Test.equal
+                  [ True, True, True, True, True, True ]
+                  (List.map
+                      (\k ->
+                          isErrWith
+                              "key: expected a Float key"
+                              (Codec.fromJson
+                                  (Codec.dict Codec.float Codec.int)
+                                  ("{\"" ++ k ++ "\":1}")))
+                      [ "1.50", "-0", "Inf", "1e21", "+1.5", "x" ]))
+    , Test.test
+          "Bool and Char keys: read in their one text only"
+          (\_ ->
+              Test.equal
+                  ( True, True, True )
+                  ( isErrWith
+                        "key: expected a Bool key"
+                        (Codec.fromJson
+                            (Codec.dict Codec.bool Codec.int)
+                            "{\"True\":1}")
+                  , isErrWith
+                        "key: expected an Int key"
+                        (Codec.fromJson
+                            (Codec.dict Codec.char Codec.int)
+                            "{\"097\":1}")
+                  , isErrWith
+                        "key: "
+                        (Codec.fromJson
+                            (Codec.dict Codec.char Codec.int)
+                            "{\"1114112\":1}")
+                  ))
+    , Test.test
+          "jsonSchema: Float, Bool and Char keys give the schema Codec.auto gives"
+          (\_ ->
+              let
+                  fields = [ "fl", "bo", "ch", "c" ]
+                  part codec name =
+                      case Decode.decodeValue
+                               (Decode.at [ "properties", name ] Decode.value)
+                               (Codec.jsonSchema codec).schema of
+
+                          Ok v ->
+                              normal v
+
+                          Err e ->
+                              errorToString e
+              in
+                  Test.equal
+                      (List.map (part scalarAuto) fields)
+                      (List.map (part scalarHand) fields))
+    , Test.test
+          "Codec.char: a code point both ways"
+          (\_ ->
+              Test.equal
+                  ( "97", Ok 'a', True )
+                  ( Codec.toJson Codec.char 'a'
+                  , Codec.fromJson Codec.char "97"
+                  , isErrWith "code point" (Codec.fromJson Codec.char "-1")
+                  ))
     , Test.test
           "Codec.dict: the pairs form of Sky v0.30 still reads"
           (\_ ->
@@ -568,7 +711,8 @@ pureTests =
                   [ (Codec.jsonSchema (Codec.dict Codec.string Codec.int)).exact
                   , (Codec.jsonSchema (Codec.dict Codec.int Codec.int)).exact
                   , (Codec.jsonSchema (Codec.dict colourKey Codec.int)).exact
-                  , (Codec.jsonSchema (Codec.dict Codec.float Codec.int)).exact
+                  , (Codec.jsonSchema
+                        (Codec.dict (Codec.lazy (\_ -> Codec.int)) Codec.int)).exact
                   ])
     , Test.test
           "jsonSchema: the pairs form stays the open schema"
@@ -577,7 +721,8 @@ pureTests =
                   "{}"
                   (Encode.encode
                       0
-                      (Codec.jsonSchema (Codec.dict Codec.float Codec.int)).schema))
+                      (Codec.jsonSchema
+                          (Codec.dict (Codec.lazy (\_ -> Codec.int)) Codec.int)).schema))
     , Test.test
           "jsonSchema: Codec.dict and Codec.auto give the same schema for each Dict field"
           (\_ ->
@@ -648,7 +793,8 @@ pureTests =
                         (Codec.zeroJson (Codec.dict Codec.int Codec.int))
                   , Maybe.map
                         (Encode.encode 0)
-                        (Codec.zeroJson (Codec.dict Codec.float Codec.int))
+                        (Codec.zeroJson
+                            (Codec.dict (Codec.lazy (\_ -> Codec.int)) Codec.int))
                   ))
     , Test.test
           "toXml / fromXml: the entry shape is unchanged and round-trips the object form"

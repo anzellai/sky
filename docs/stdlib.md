@@ -1564,17 +1564,24 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   never a silent `Nothing`. A `Codec.object` field must be present, a
   `Maybe` included (`null` for `Nothing`).
   `Codec.dict keyCodec valueCodec` encodes a `Dict` as a JSON object when the
-  key codec is `Codec.string`, `Codec.int` or a `Codec.enum` (v0.31.0): a
-  String key is the member name, an Int key its decimal text (`"10"`), an enum
-  key its name, members sorted byte-wise. This is byte for byte the JSON
-  `Codec.auto` writes for a record field of the same `Dict` type. Any other key
-  codec (`Codec.float`, a tuple) keeps the JSON array of `[key, value]` pairs
-  (v0.27). The decoder reads both forms, so rows and files written by v0.30
-  and earlier still read. An Int key is read strictly (`"010"`, `"+1"`, `"1e1"`
-  are an `Err`), an error names the key (`at ["x"]: …`), and two members that
-  read as one key are an `Err`. The schema of the object form is
+  key codec is a scalar (v0.31.0): `Codec.string`, `Codec.int`,
+  `Codec.float`, `Codec.bool`, `Codec.char` or a `Codec.enum`. The member name
+  is the key text `Codec.auto` writes: a String as it is, an Int in decimal
+  (`"10"`), a Float in Go's shortest form (`"1.5"`, `"2"`, `"1e+21"`, `"NaN"`,
+  `"+Inf"`), a Bool as `"true"` / `"false"`, a Char as its code point
+  (`"97"`), an enum value as its name. Members are sorted byte-wise. This is
+  byte for byte the JSON `Codec.auto` writes for a record field of the same
+  `Dict` type. A key codec that is not one of these (a `lazy`, a `taggedUnion`) keeps the
+  JSON array of `[key, value]` pairs (v0.27). The decoder reads both forms,
+  so rows and files written by v0.30 and earlier still read. A key is read in
+  its one text only (`"010"`, `"1.50"`, `"-0"`, `"Inf"`, `"True"` are an
+  `Err`), an error names the key (`at ["x"]: …`), and two members that read
+  as one key are an `Err`. -0 and 0 are one Dict key (v0.31.0), and every NaN
+  is one. The schema of the object form is
   `{"type":"object","additionalProperties":…}`, with a `propertyNames` pattern
-  for Int keys and the names for enum keys. `Codec.lazy (\_ -> codec)` (v0.31.0)
+  for Int, Char and Float keys and the names for enum and Bool keys.
+  `Codec.char` (v0.31.0) is a `Char` as its code point, as `Codec.auto`
+  writes a `Char` field. `Codec.lazy (\_ -> codec)` (v0.31.0)
   is a codec that names itself, for a recursive type (`Json.Decode.lazy` for
   codecs; an open schema, a JSON text column). `Codec.value`
   (v0.29.2) is a raw `Json.Value`, as it is both ways (a JSON text column, the
