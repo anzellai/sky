@@ -219,7 +219,7 @@ func (app *liveApp) deliverSubMsg(sess *liveSession, msg any) {
 	var snap frameSnapshot
 	var patches []Patch
 	var haveFrame bool
-	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() {
+	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() || sess.docDirty {
 		snap = sess.prepareDispatchFrameSnapshot(body)
 		sess.lastShippedBody = body
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {

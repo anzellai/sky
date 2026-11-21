@@ -107,6 +107,14 @@ throwaway local directory while the user believes it is talking to the server
 they named. If you are handed a DSN, do not add `--embed` "to be safe" — pick
 the tier the user asked for.
 
+### The page language goes on `<html>`, not on the view
+
+When the user asks for a page language or a right-to-left layout, set it with
+`App.withDocument` (`Std.Html.Document`: `lang`, `dir`, `class`, `data`,
+`translate`), computed from the model. Do not add a `lang` attribute to the
+root view element: assistive technology and browser translation do not read
+it as the document language. See AGENTS.md "Document language".
+
 ### A slow build in CI is usually a cold cache
 
 When a CI build of this project is slow, check the cache first, not the code:

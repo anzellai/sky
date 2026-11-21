@@ -45,7 +45,7 @@ cost in a `Cost:` line in `sky doc`.
 `Std.Bundle`; `Std.Ui` with `Std.Ui.Animation`, `Background`, `Border`,
 `Canvas`, `Chart`, `Events`, `Font`, `Grid`, `Input`, `Keyed`, `Lazy`,
 `Region`, `Responsive`, `Terminal`, `Transform` and `Transition`; `Std.Html`
-with `Std.Html.Attributes` and `Std.Html.Events`; `Std.Css`;
+with `Std.Html.Attributes`, `Std.Html.Events` and `Std.Html.Document`; `Std.Css`;
 `Std.Live.Console` and `Std.Live.Head`.
 
 **HTTP servers.** `Sky.Http.Server`, `Sky.Http.Server.Stream`,

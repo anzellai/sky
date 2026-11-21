@@ -38,6 +38,7 @@ module Std.Live exposing
     , api
     , lifecycle
     , withHead
+    , withDocument
     , withConsoleAuth
     , withConsoleAuthModel
     , withOnNavigate
@@ -68,6 +69,7 @@ module Std.Live exposing
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Std.Html exposing (Html)
+import Std.Html.Document as Document
 
 -- | The built Sky.Live app configuration. Opaque — produced by `config`,
 -- refined by the `withX` builders, consumed by `app`. Phantom `model` /
@@ -191,6 +193,16 @@ lifecycle =
 withHead : (model -> List (Html msg)) -> AppConfig model msg -> AppConfig model msg
 withHead =
     Ffi.kernel "Live_withHead"
+
+
+-- | Set the attributes of the root `<html>` element from the model (`lang`,
+-- `dir`, `class`, `data-*`, `translate`; see `Std.Html.Document`). The first
+-- page writes them. When an update changes them, the runtime sends the new set
+-- to the browser with that update, and the browser sets them on the document
+-- with no page reload. An update that does not change them sends nothing.
+withDocument : (model -> List Document.Attribute) -> AppConfig model msg -> AppConfig model msg
+withDocument =
+    Ffi.kernel "Live_withDocument"
 
 
 -- | Gate the `/_sky/console` mount — `consoleAuth req` returns the

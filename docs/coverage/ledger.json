@@ -806,7 +806,7 @@
       "tier": "T1"
     },
     "stdlib-bodies": {
-      "expected_assertions": 137,
+      "expected_assertions": 138,
       "falsifier_mutation": "stdlib-bodies.record-missing-field",
       "falsifier_proven": true,
       "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
@@ -1017,13 +1017,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3284,
-    "stdlib_modules": 137,
+    "stdlib_entries": 3295,
+    "stdlib_modules": 138,
     "surfaces_covered": 196,
-    "surfaces_covered_pct": 95.1,
-    "surfaces_equal": 15,
+    "surfaces_covered_pct": 94.7,
+    "surfaces_equal": 16,
     "surfaces_stronger": 191,
-    "surfaces_total": 206,
+    "surfaces_total": 207,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -15220,6 +15220,22 @@
     {
       "category": "stdlib",
       "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Html.Document public API",
+      "id": "stdlib.Std.Html.Document",
+      "verdict": "equal"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
         "class": "Falsified",
         "evidence": [
           {
@@ -19630,7 +19646,7 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 8,
+      "count": 9,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
@@ -19638,10 +19654,11 @@
         "Std.Cli",
         "Std.Db.Migrate",
         "Std.Db.Table",
+        "Std.Html.Document",
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 5.8
+      "pct_of_denominator": 6.5
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -19649,7 +19666,7 @@
       "modules": []
     },
     "surfaces_with_zero_new_cover": {
-      "count": 9,
+      "count": 10,
       "surfaces": [
         "cli.console",
         "cli.console-serve",
@@ -19658,6 +19675,7 @@
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Cli",
         "stdlib.Std.Db.Table",
+        "stdlib.Std.Html.Document",
         "stdlib.Std.Tui",
         "stdlib.Std.Webview"
       ]
@@ -20241,7 +20259,7 @@
           ]
         },
         "Std.App": {
-          "count": 22,
+          "count": 23,
           "symbols": [
             "BaseConfig",
             "DesktopOpts",
@@ -20263,6 +20281,7 @@
             "terminalDefaults",
             "withAppUrl",
             "withBase",
+            "withDocument",
             "withPersistExclude",
             "withSessionLifetime"
           ]
@@ -20616,6 +20635,18 @@
             "target"
           ]
         },
+        "Std.Html.Document": {
+          "count": 7,
+          "symbols": [
+            "Attribute",
+            "Direction",
+            "class",
+            "data",
+            "dir",
+            "lang",
+            "translate"
+          ]
+        },
         "Std.Html.Events": {
           "count": 17,
           "symbols": [
@@ -20661,7 +20692,7 @@
           ]
         },
         "Std.Live": {
-          "count": 33,
+          "count": 34,
           "symbols": [
             "AppConfig",
             "Route",
@@ -20678,6 +20709,7 @@
             "withAuthSliding",
             "withConsoleAuth",
             "withConsoleAuthModel",
+            "withDocument",
             "withDurable",
             "withEmbedded",
             "withGuard",
@@ -20767,7 +20799,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 29,
+          "count": 30,
           "symbols": [
             "AppConfig",
             "Route",
@@ -20786,6 +20818,7 @@
             "scrollRpcScope",
             "serverRoute",
             "withClientCrypto",
+            "withDocument",
             "withGuard",
             "withHead",
             "withHoldFree",
@@ -21026,11 +21059,12 @@
           ]
         },
         "Std.Webview": {
-          "count": 7,
+          "count": 8,
           "symbols": [
             "AppCfg",
             "WindowCfg",
             "app",
+            "appWithDocument",
             "defaultWindow",
             "url",
             "withSize",
@@ -21076,8 +21110,8 @@
           ]
         }
       },
-      "count": 876,
-      "pct_of_denominator": 26.7
+      "count": 887,
+      "pct_of_denominator": 26.9
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21719,7 +21753,7 @@
           ]
         },
         "Std.App": {
-          "count": 25,
+          "count": 26,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -21744,6 +21778,7 @@
             "terminalDefaults",
             "withAppUrl",
             "withBase",
+            "withDocument",
             "withPersistExclude",
             "withSessionLifetime"
           ]
@@ -22144,6 +22179,18 @@
             "width"
           ]
         },
+        "Std.Html.Document": {
+          "count": 7,
+          "symbols": [
+            "Attribute",
+            "Direction",
+            "class",
+            "data",
+            "dir",
+            "lang",
+            "translate"
+          ]
+        },
         "Std.Html.Events": {
           "count": 22,
           "symbols": [
@@ -22196,7 +22243,7 @@
           ]
         },
         "Std.Live": {
-          "count": 36,
+          "count": 37,
           "symbols": [
             "AppConfig",
             "Route",
@@ -22216,6 +22263,7 @@
             "withAuthSliding",
             "withConsoleAuth",
             "withConsoleAuthModel",
+            "withDocument",
             "withDurable",
             "withEmbedded",
             "withGuard",
@@ -22312,7 +22360,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 29,
+          "count": 30,
           "symbols": [
             "AppConfig",
             "Route",
@@ -22331,6 +22379,7 @@
             "scrollRpcScope",
             "serverRoute",
             "withClientCrypto",
+            "withDocument",
             "withGuard",
             "withHead",
             "withHoldFree",
@@ -22591,11 +22640,12 @@
           ]
         },
         "Std.Webview": {
-          "count": 7,
+          "count": 8,
           "symbols": [
             "AppCfg",
             "WindowCfg",
             "app",
+            "appWithDocument",
             "defaultWindow",
             "url",
             "withSize",
@@ -22641,8 +22691,8 @@
           ]
         }
       },
-      "count": 989,
-      "pct_of_denominator": 30.1
+      "count": 1000,
+      "pct_of_denominator": 30.3
     }
   },
   "units": [

@@ -159,6 +159,12 @@ func Spa_withOnNavigate(fn, cfg any) any { return spaCfgSet(cfg, "OnNavigate", f
 // builder chain.
 func Spa_withHead(fn, cfg any) any { return spaCfgSet(cfg, "Head", fn) }
 
+// Spa_withDocument stores the `model -> List Document.Attribute` builder of
+// the root <html> attributes under "Document" (document_attrs.go). The SSR
+// backend writes them on the first paint; the wasm client applies them at boot
+// and after each render whose set differs from the last one it applied.
+func Spa_withDocument(fn, cfg any) any { return spaCfgSet(cfg, "Document", fn) }
+
 // Spa_withModelDecoder stores the `String -> Result Error model` decoder under
 // "ModelDecoder". The wasm client applies it to the SSR-embedded `#sky-model`
 // JSON blob to reconstruct the TYPED initial model (design §4.5), booting from

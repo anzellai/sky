@@ -227,6 +227,13 @@ type liveSession struct {
 	handlerGens     []handlerGen
 	dispatchBase    string
 	dispatchScrolls []liveScrollDelivery // transient, current dispatch only; under mu
+	// docAttrs — the <html> attributes of the last render (Live.withDocument,
+	// live_document.go); docKnown — the app has a document function and the
+	// set was computed; docDirty — the set changed and no dispatch frame has
+	// carried it yet. Derived from the model, never persisted. Under mu.
+	docAttrs []docAttr
+	docKnown bool
+	docDirty bool
 	// lastDispatchErr — ref of the last classified dispatch panic, read
 	// (and cleared) by handleEvent so the acting tab shows a banner.
 	lastDispatchErr string
@@ -692,6 +699,9 @@ func (s *liveSession) commitRender(vn *VNode, body string) {
 	if len(body) > s.lastBodyLen {
 		s.lastBodyLen = len(body)
 	}
+	// The <html> attributes are computed once per render, beside the body
+	// (live_document.go).
+	s.refreshDoc()
 }
 
 // ingestInputState absorbs the client's dirty-input snapshot into
@@ -816,6 +826,13 @@ type frameSnapshot struct {
 	view    string
 	base    string
 	scrolls []liveScrollDelivery
+	// doc — the session's <html> attributes when docKnown (the app has a
+	// document function); docChanged — this dispatch changed them. A
+	// full-body frame carries doc whenever it is known; a delta frame only
+	// when it changed (live_document.go).
+	doc        []docAttr
+	docKnown   bool
+	docChanged bool
 }
 
 // prepareFrameSnapshot captures (seq, body, ackInputs) under sess.mu so
@@ -844,6 +861,8 @@ func (s *liveSession) prepareFrameSnapshot(body string) frameSnapshot {
 		ackInputs: ackInputsForPrevTree(s),
 		view:      s.viewID,
 		base:      s.dispatchBase,
+		doc:       s.docAttrs,
+		docKnown:  s.docKnown,
 	}
 }
 
@@ -868,6 +887,8 @@ func (s *liveSession) prepareFrameSnapshotWithGlobalSeq(body string, globalSeq i
 		ackInputs: ackInputsForPrevTree(s),
 		view:      s.viewID,
 		base:      s.dispatchBase,
+		doc:       s.docAttrs,
+		docKnown:  s.docKnown,
 	}
 }
 
@@ -896,6 +917,9 @@ func encodeSSEFrameFromSnapshot(snap frameSnapshot) string {
 	}
 	if len(snap.scrolls) != 0 {
 		frame["scrolls"] = snap.scrolls
+	}
+	if snap.docKnown {
+		frame["doc"] = docWire(snap.doc)
 	}
 	b, err := json.Marshal(frame)
 	if err != nil {
@@ -999,6 +1023,9 @@ type patchesEventEnvelope struct {
 	View      string               `json:"view,omitempty"`
 	Base      string               `json:"base,omitempty"`
 	Scrolls   []liveScrollDelivery `json:"scrolls,omitempty"`
+	// Doc is the "doc" operation: the whole new set of <html> attributes,
+	// present only when this render changed it (live_document.go).
+	Doc *[]docAttr `json:"doc,omitempty"`
 }
 
 // encodePatchesEventFromSnapshot serialises a frameSnapshot + patches
@@ -1029,6 +1056,10 @@ func encodePatchesEventFromSnapshot(snap frameSnapshot, patches []Patch) string 
 		View:      snap.view,
 		Base:      snap.base,
 		Scrolls:   snap.scrolls,
+	}
+	if snap.docKnown && snap.docChanged {
+		d := docWire(snap.doc)
+		env.Doc = &d
 	}
 	b, err := json.Marshal(env)
 	if err != nil {
@@ -1102,6 +1133,10 @@ type liveApp struct {
 	// navigation that already triggers a sky-nav fetch +
 	// full-body patch + history push).
 	head any
+	// document : model -> List Document.Attribute — optional
+	// (Live.withDocument). The attributes of the root <html> element,
+	// computed on each render and sent when they change (live_document.go).
+	document any
 	// consoleAuth : Request -> Task Error (Maybe Identity) — optional.
 	// When the embedded console mounts in `app`-mode (env
 	// SKY_CONSOLE_AUTH=app), the framework calls this callback BEFORE
@@ -2729,6 +2764,11 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	initialView := sess.viewID
 	initialSeq := sess.nextLocalSeq()
 	initialScrolls := sess.takeDispatchScrolls()
+	// The page carries the <html> attributes (start tag + config block), so
+	// no later frame needs to send this set again (live_document.go).
+	sess.takeDocChange()
+	pageDocAttrs := sess.docStartTag()
+	pageDoc := sess.docCfg()
 	pageWidths := sess.viewportWidths
 	pageWantsWidth := sess.viewportWants
 	app.persistSession(sess)
@@ -2820,7 +2860,9 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	if !routed && app.notFound != nil {
 		w.WriteHeader(http.StatusNotFound)
 	}
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s%s</head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", liveBaseStyleTag, baseMeta, headExtra, body, livePageScriptsWithViewport(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken, initialScrolls, pageWidths, pageWantsWidth), devBanner)
+	// pageDocAttrs is "" for an app with no Live.withDocument, so the page is
+	// byte-identical to the page before the feature (live_document.go).
+	fmt.Fprintf(w, "<!DOCTYPE html><html%s><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s%s</head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", pageDocAttrs, liveBaseStyleTag, baseMeta, headExtra, body, livePageScriptsWithDoc(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken, initialScrolls, pageWidths, pageWantsWidth, pageDoc), devBanner)
 }
 
 // renderAppHead invokes the optional `head : Model -> List (Html
@@ -3131,6 +3173,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		respSeq := sess.nextLocalSeq()
 		respAck := ackInputsForPrevTree(sess)
 		view := sess.viewID
+		body = appendLiveDocMetadata(body, sess.docKnown, sess.docAttrs)
 		sess.mu.Unlock()
 		writeEventHTML(w, respSeq, respAck, body, view)
 		return
@@ -3280,6 +3323,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		respSeq := sess.nextLocalSeq()
 		respAck := ackInputsForPrevTree(sess)
 		view := sess.viewID
+		body = appendLiveDocMetadata(body, sess.docKnown, sess.docAttrs)
 		sess.mu.Unlock()
 		w.Header().Set("X-Sky-Status", "desync")
 		writeEventHTML(w, respSeq, respAck, body, view) // also sets X-Sky-Live: 1
@@ -3338,6 +3382,10 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	respSeq := sess.nextLocalSeq()
 	respAck := ackInputsForPrevTree(sess)
 	respScrolls := sess.takeDispatchScrolls()
+	// The <html> attributes after this update (live_document.go): sent to
+	// the acting tab in this reply and to the other tabs in the broadcast.
+	respDocChanged := sess.takeDocChange()
+	respDoc, respDocKnown := sess.docAttrs, sess.docKnown
 	// The breakpoint widths after this update, so a client learns a
 	// Sub.onBreakpoint leaf that appeared (or changed) with this event.
 	if len(sess.viewportWidths) > 0 {
@@ -3388,12 +3436,17 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// tab dispatch runs no extra diff/marshal. ackInputs is left nil:
 	// this frame is not a response to any observer tab's input, so it
 	// must not retire their dirty flags.
-	if body2 != "" && sess.hasSSEConnOtherThan(req.Tab) {
+	if (body2 != "" || respDocChanged) && sess.hasSSEConnOtherThan(req.Tab) {
 		var bpatches []Patch
 		if prev != nil && newTree != nil {
 			bpatches = liveDiff(prev, newTree, nil)
 		}
-		bsnap := frameSnapshot{seq: respSeq, body: body2, view: newView, base: baseView}
+		bbody := body2
+		if bbody == "" {
+			bbody = sess.lastComputedBody
+		}
+		bsnap := frameSnapshot{seq: respSeq, body: bbody, view: newView, base: baseView,
+			doc: respDoc, docKnown: respDocKnown, docChanged: respDocChanged}
 		sess.fanOutFrame(chooseSSEFrame(bsnap, prev, bpatches), req.Tab)
 	}
 
@@ -3401,8 +3454,13 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// view (no-op update). Reply with an empty patch list so the
 	// client acknowledges the event without the server shipping a
 	// redundant HTML frame.
+	var replyDoc *[]docAttr
+	if respDocKnown && respDocChanged {
+		d := docWire(respDoc)
+		replyDoc = &d
+	}
 	if body2 == "" {
-		writeEventJSONView(w, respSeq, req.Seq, respAck, nil, newView, baseView, dispatchErr, respScrolls)
+		writeEventJSONDoc(w, respSeq, req.Seq, respAck, nil, newView, baseView, dispatchErr, respScrolls, replyDoc)
 		return
 	}
 	// When we have a prior tree we can reply with a minimal patch set
@@ -3426,11 +3484,11 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if prev != nil && newTree != nil {
 		patches := liveDiff(prev, newTree, clientStateFromRequest(req.InputState))
 		if !patchesAreFullReplace(patches) {
-			writeEventJSONView(w, respSeq, req.Seq, respAck, patches, newView, baseView, dispatchErr, respScrolls)
+			writeEventJSONDoc(w, respSeq, req.Seq, respAck, patches, newView, baseView, dispatchErr, respScrolls, replyDoc)
 			return
 		}
 	}
-	writeEventHTML(w, respSeq, respAck, body2, newView, respScrolls)
+	writeEventHTML(w, respSeq, respAck, appendLiveDocMetadata(body2, respDocKnown, respDoc), newView, respScrolls)
 }
 
 // writeEventJSON emits the structured /_sky/event response envelope:
@@ -3447,6 +3505,16 @@ func writeEventJSON(w http.ResponseWriter, seq, respondingTo int64, ackInputs ma
 // them only on top of that render). errRef, when set, is the ref of a
 // classified dispatch panic the client shows as a banner (L12).
 func writeEventJSONView(w http.ResponseWriter, seq, respondingTo int64, ackInputs map[string]int64, patches []Patch, view, base, errRef string, scrolls ...[]liveScrollDelivery) {
+	var s []liveScrollDelivery
+	if len(scrolls) != 0 {
+		s = scrolls[0]
+	}
+	writeEventJSONDoc(w, seq, respondingTo, ackInputs, patches, view, base, errRef, s, nil)
+}
+
+// writeEventJSONDoc is writeEventJSONView plus the "doc" operation: the new
+// set of <html> attributes when this event changed it (live_document.go).
+func writeEventJSONDoc(w http.ResponseWriter, seq, respondingTo int64, ackInputs map[string]int64, patches []Patch, view, base, errRef string, scrolls []liveScrollDelivery, doc *[]docAttr) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Sky-Live", "1")
 	payload := map[string]any{
@@ -3471,8 +3539,11 @@ func writeEventJSONView(w http.ResponseWriter, seq, respondingTo int64, ackInput
 	if errRef != "" {
 		payload["error"] = errRef
 	}
-	if len(scrolls) != 0 && len(scrolls[0]) != 0 {
-		payload["scrolls"] = scrolls[0]
+	if len(scrolls) != 0 {
+		payload["scrolls"] = scrolls
+	}
+	if doc != nil {
+		payload["doc"] = *doc
 	}
 	_ = json.NewEncoder(w).Encode(payload)
 }
@@ -3580,7 +3651,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	var snap frameSnapshot
 	var patches []Patch
 	var haveFrame bool
-	if (body2 != "" && body2 != prevShipped) || sess.hasDispatchScrolls() {
+	if (body2 != "" && body2 != prevShipped) || sess.hasDispatchScrolls() || sess.docDirty {
 		snap = sess.prepareDispatchFrameSnapshot(body2)
 		sess.lastShippedBody = body2
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
@@ -4353,7 +4424,7 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	var snap frameSnapshot
 	var patches []Patch
 	var haveFrame bool
-	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() {
+	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() || sess.docDirty {
 		snap = sess.prepareDispatchFrameSnapshot(body)
 		sess.lastShippedBody = body
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
@@ -4667,7 +4738,7 @@ func (app *liveApp) timeEveryDispatch(sess *liveSession, toMsg any, t time.Time,
 	// interval, amplifying contention on busy sessions. Advancing
 	// lastShippedBody stays under the lock so the next tick's prevShipped read
 	// sees the up-to-date value.
-	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() {
+	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() || sess.docDirty {
 		snap = sess.prepareDispatchFrameSnapshot(body)
 		sess.lastShippedBody = body
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
@@ -4886,7 +4957,7 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 	var snap frameSnapshot
 	var patches []Patch
 	var haveFrame bool
-	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() {
+	if (body != "" && body != prevShipped) || sess.hasDispatchScrolls() || sess.docDirty {
 		// Stamp the broadcast event's globalSeq onto the snapshot so
 		// the SSE envelope carries it. The client guards on
 		// __skyLastAppliedGlobalSeq independently of the per-session

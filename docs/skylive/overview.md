@@ -272,6 +272,21 @@ worse UX than the page just keeping working through a flaky connection.
 That's why the SSE banner + retry queue exist: the durable Model is the
 whole point.
 
+## The document language — `<html lang>` and `dir`
+
+`App.withDocument` (`Live.withDocument` for an app that uses `Std.Live`
+directly) sets the attributes of the root `<html>` element from the model
+(`Std.Html.Document`: `lang`, `dir`, `class`, `data`, `translate`). The first
+page writes them in its `<html>` start tag. After each update the runtime
+computes the set once and compares it with the set of the render before. When
+it changed, the frame of that update carries a `doc` operation with the whole
+new set, and the client sets it on `document.documentElement` with no page
+reload. When it did not change, the frame carries nothing for it. A frame that
+carries the whole view (a full body, a resync, a navigation to another tab)
+also carries the whole set, so a tab that missed a frame converges. The client
+only changes the attributes it set, so runtime markers stay. An app with no
+`withDocument` gets the page exactly as before (a bare `<html>`).
+
 ## The base CSS reset and your own stylesheets
 
 Every Sky.Live, Sky.Spa and desktop page starts with a small CSS reset. It

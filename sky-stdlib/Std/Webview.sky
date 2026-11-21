@@ -24,10 +24,20 @@
 -- alwaysOnTop / transparent / decorated windows, voice intents,
 -- Windows / Linux smoke testing (the runtime is build-tagged for
 -- all three OSes; v0.1 only validates macOS).
-module Std.Webview exposing (app, url, WindowCfg, AppCfg, defaultWindow, withTitle, withSize)
+module Std.Webview exposing
+    ( app
+    , appWithDocument
+    , url
+    , WindowCfg
+    , AppCfg
+    , defaultWindow
+    , withTitle
+    , withSize
+    )
 
 import Sky.Ffi as Ffi
 import Std.Html exposing (Html)
+import Std.Html.Document as Document
 
 -- | Window configuration. Closed record for v0.1 (better HM error
 -- messages) — open record to absorb optional fields (alwaysOnTop,
@@ -95,6 +105,16 @@ type alias AppCfg model msg =
 app : AppCfg model msg -> Task Error ()
 app =
     Ffi.kernel "Webview_app"
+
+
+-- | `appWithDocument documentFor cfg` — `app`, and the window's page sets the
+-- attributes of its root `<html>` element from the model (`lang`, `dir`,
+-- `class`, `data-*`, `translate`; see `Std.Html.Document`). The first page
+-- writes them, and an update that changes them sets them on the open page.
+-- `App.withDocument` uses it for a `Std.App` app run with `App.runWebview`.
+appWithDocument : (model -> List Document.Attribute) -> AppCfg model msg -> Task Error ()
+appWithDocument =
+    Ffi.kernel "Webview_appWithDocument"
 
 
 -- | Open a native desktop window that LOADS AN EXISTING WEB APP at `url`,

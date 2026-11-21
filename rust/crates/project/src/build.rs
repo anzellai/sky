@@ -1013,6 +1013,7 @@ fn assemble_and_emit_loaded(
                     "withNotFound",
                     "withOnNavigate",
                     "withHead",
+                    "withDocument",
                     "withModelDecoder",
                     "withModelEncoder",
                     "withPersistProtectedFields",

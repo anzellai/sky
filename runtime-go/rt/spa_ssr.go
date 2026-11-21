@@ -108,6 +108,17 @@ func SpaSSRPageSettled(headHTML, bodyHTML, wasmName, modelJSON, settled string) 
 const spaSSRNoScriptCSS = `<noscript><style>html[data-sky-hydrating]{cursor:auto}` +
 	`html[data-sky-hydrating]::before,html[data-sky-hydrating]::after{display:none}</style></noscript>`
 
+// spaSSRHtmlOpen is the <html> start tag of an SSR page. lang="en" is the
+// default for an app with no Spa.withDocument; Spa_ssrWithDocument replaces
+// the whole tag with the app's attributes (document_attrs.go).
+const spaSSRHtmlOpen = `<html lang="en" data-sky-hydrating="1">`
+
+// spaSSRHtmlOpenWith is the <html> start tag with the app's attributes. The
+// runtime's own data-sky-hydrating marker always follows them.
+func spaSSRHtmlOpenWith(attrs []docAttr) string {
+	return `<html` + renderDocAttrs(withDefaultLang(attrs)) + ` data-sky-hydrating="1">`
+}
+
 func SpaSSRPageSeeded(headHTML, bodyHTML, wasmName, modelJSON, settled string, seedFields []string) string {
 	var b strings.Builder
 	b.WriteString(`<!doctype html>` + "\n")
@@ -115,7 +126,7 @@ func SpaSSRPageSeeded(headHTML, bodyHTML, wasmName, modelJSON, settled string, s
 	// cursor + top bar, liveBaseCSS) until the wasm client boots and hydrates,
 	// then clears it (spaClearHydratingMarker). Without it a click on the
 	// server-rendered DOM before the (heavy) wasm loads is silently dead.
-	b.WriteString(`<html lang="en" data-sky-hydrating="1">` + "\n")
+	b.WriteString(spaSSRHtmlOpen + "\n")
 	b.WriteString(`<head>`)
 	b.WriteString(`<meta charset="utf-8">`)
 	b.WriteString(`<meta name="viewport" content="width=device-width, initial-scale=1">`)

@@ -155,6 +155,7 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 		guard:              fieldOrNil(cfg, "Guard"),
 		persistExclude:     spaStringList(fieldOrNil(cfg, "PersistExclude")),
 		head:               fieldOrNil(cfg, "Head"),
+		document:           fieldOrNil(cfg, "Document"),
 		consoleAuth:        fieldOrNil(cfg, "ConsoleAuth"),
 		onNavigate:         fieldOrNil(cfg, "OnNavigate"),
 		analyticsPageViews: analyticsPageViewsFromCfg(cfg),

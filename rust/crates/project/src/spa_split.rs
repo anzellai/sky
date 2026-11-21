@@ -10111,6 +10111,12 @@ fn gen_backend(
     let has_synth_head = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaHead_"));
+    // The `<html>` attribute builder (`App.withDocument`): the synthesis emits
+    // `spaDocument_` (a `[]` default when the app sets none). The SSR page
+    // writes its attributes through `Spa_ssrWithDocument`.
+    let has_synth_document = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaDocument_"));
     // Per-route SSR (design §4.1): the App→Spa synthesis emits named
     // `spaRoutes_` / `spaNotFound_` bindings (main.rs synthesize_spa_source) so
     // the SSR handler can resolve the REQUEST path to the route's page
@@ -10954,6 +10960,12 @@ fn gen_backend(
              spaSsrRenderBody : any -> String\n\
              spaSsrRenderBody =\n\
              \x20   SpaFfi_.kernel \"Spa_ssrRenderBody\"\n\n\n\
+             -- The page's `<html>` attributes from `App.withDocument`\n\
+             -- (runtime-go/rt/document_attrs.go): checked, HTML-escaped, and\n\
+             -- `lang=\"en\"` when the app sets no lang.\n\
+             spaSsrWithDocument : any -> model -> String -> String\n\
+             spaSsrWithDocument =\n\
+             \x20   SpaFfi_.kernel \"Spa_ssrWithDocument\"\n\n\n\
              -- A page route (runtime-go/rt/spa_ssr_notjs.go, Spa_pageRoute): a GET\n\
              -- that takes the CSRF middleware, so the page's POST forms carry the\n\
              -- `__sky_csrf` field, and a native form POST to the page answers 303\n\
@@ -11288,6 +11300,12 @@ fn gen_backend(
         } else {
             ""
         };
+        // `App.withDocument`: write the route's `<html>` attributes on the page.
+        let with_document = if has_synth_document {
+            "spaSsrWithDocument spaDocument_ resolved <| "
+        } else {
+            ""
+        };
         handlers.push_str(&format!(
             "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
              -- run init, seed it from the request (withRequest), resolve the path to\n\
@@ -11306,7 +11324,7 @@ fn gen_backend(
              \x20   in\n\
              \x20   SpaTask_.succeed\n\
              \x20       ({with_status}SpaServer_.html\n\
-             \x20           ({ssr_page}\n\
+             \x20           ({with_document}{ssr_page}\n\
              \x20               (\"<meta name=\\\"sky-wire\\\" content=\\\"{wire_hash}\\\">\" ++ spaAiEngineMeta_ ++ spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\
              \x20               spaWasmName\n\
