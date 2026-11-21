@@ -4072,7 +4072,7 @@ pub const KERNEL_MEMBERS_EXPECTED: u64 = 116;
 /// `sky-stdlib/Std/Office/Xlsx.sky` and `Std/Office/Docx.sky`. 402 -> 403:
 /// `sky-stdlib/Std/Image/Canvas.sky`. 403 -> 401: `examples/simple` and
 /// `examples/test_pkg` removed in the v0.29.0 repo tidy.
-pub const FMT_CLEAN_EXPECTED: u64 = 411; // 407 -> 411 in v0.31.0: sky-stdlib/Std/I18n.sky, Std/I18n/Format.sky, examples/78-i18n-booking/src/Main.sky, tests/Std/I18nTest.sky; 405 -> 407 in v0.30.0, measured by the `fmt-clean` gate: sky-stdlib/Std/Admission.sky and Std/Breaker.sky; 401 -> 405: examples/77-demo-expenses (three src modules, one tests suite)
+pub const FMT_CLEAN_EXPECTED: u64 = 410; // 407 -> 410 in v0.31.0: sky-stdlib/Std/I18n.sky, Std/I18n/Format.sky, examples/78-i18n-booking/src/Main.sky; 405 -> 407 in v0.30.0, measured by the `fmt-clean` gate: sky-stdlib/Std/Admission.sky and Std/Breaker.sky; 401 -> 405: examples/77-demo-expenses (three src modules, one tests suite)
 
 /// Every tracked `.sky` file in scope is already `sky fmt`-clean.
 pub fn fmt_clean(ctx: &GateCtx) -> GateOutcome {

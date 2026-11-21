@@ -31,6 +31,11 @@ func codecAutoRefusedWrite() map[string]any {
 		"Std_Decimal_Decimal": decimalBox(long.Mul(long)),
 		"Std_Money_Money":     canonicalMoneyFixture(long.Mul(long), "GBP"),
 		"Std_Money_Currency":  sqlCodeToCurrency("zz"),
+		// The writer writes any tag and any argument kind; the reader refuses
+		// a tag with other characters and a kind Std.I18n does not make.
+		"Std_I18n_Locale": SkyADT{SkyOwner: skyI18nLocaleOwner, SkyName: i18nLocaleCtor, Fields: []any{"bad tag!"}},
+		"Std_I18n_Text": SkyADT{SkyOwner: skyI18nTextOwner, SkyName: i18nTextMessage,
+			Fields: []any{"k", []any{SkyTuple3{V0: "a", V1: "x", V2: "b"}}}},
 	}
 }
 
@@ -89,9 +94,11 @@ func TestCodecAutoReaderNamesAreAllReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	inventory := map[string]struct{ owner, alias string }{
-		"skyDecimalOwner":  {skyDecimalOwner, "Std_Decimal_Decimal"},
-		"skyMoneyOwner":    {skyMoneyOwner, "Std_Money_Money"},
-		"skyCurrencyOwner": {skyCurrencyOwner, "Std_Money_Currency"},
+		"skyDecimalOwner":    {skyDecimalOwner, "Std_Decimal_Decimal"},
+		"skyMoneyOwner":      {skyMoneyOwner, "Std_Money_Money"},
+		"skyCurrencyOwner":   {skyCurrencyOwner, "Std_Money_Currency"},
+		"skyI18nTextOwner":   {skyI18nTextOwner, "Std_I18n_Text"},
+		"skyI18nLocaleOwner": {skyI18nLocaleOwner, "Std_I18n_Locale"},
 	}
 	refused := codecAutoRefusedWrite()
 	for owner := range owners {

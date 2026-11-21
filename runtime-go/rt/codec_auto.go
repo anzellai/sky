@@ -1018,12 +1018,11 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 			return reflect.ValueOf(cur).Convert(gt), nil
 		}
 		// Std.I18n's Text and Locale (codec_i18n.go).
-		if owner := codecAutoDeclaredOwner(declaredType); isI18nOwner(owner) {
-			adt, err := codecI18nDecode(raw, owner)
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			return reflect.ValueOf(adt).Convert(gt), nil
+		switch codecAutoDeclaredOwner(declaredType) {
+		case skyI18nTextOwner:
+			return codecI18nDecodeValue(gt, raw, skyI18nTextOwner)
+		case skyI18nLocaleOwner:
+			return codecI18nDecodeValue(gt, raw, skyI18nLocaleOwner)
 		}
 	}
 	// A custom type's value — the tagged `{"tag":<name>,"v0":…}` the encoder

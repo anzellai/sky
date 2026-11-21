@@ -171,6 +171,15 @@ func codecI18nDecode(raw any, owner string) (SkyADT, error) {
 	return SkyADT{SkyOwner: owner, Tag: 0, SkyName: i18nTextMessage, Fields: []any{key, args}}, nil
 }
 
+// codecI18nDecodeValue reads a Text or a Locale into the declared Go type.
+func codecI18nDecodeValue(gt reflect.Type, raw any, owner string) (reflect.Value, error) {
+	adt, err := codecI18nDecode(raw, owner)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	return reflect.ValueOf(adt).Convert(gt), nil
+}
+
 // i18nPlausibleTag accepts the characters of a BCP 47 tag. Std.I18n parses
 // the tag again where it uses it.
 func i18nPlausibleTag(s string) bool {

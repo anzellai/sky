@@ -257,6 +257,8 @@ var codecAutoReadable = map[string]bool{
 	"Std_Decimal_Decimal": true,
 	"Std_Money_Money":     true,
 	"Std_Money_Currency":  true,
+	"Std_I18n_Text":       true,
+	"Std_I18n_Locale":     true,
 }
 
 // codecDeclaredElem is the declared type inside a declared List, Maybe or
