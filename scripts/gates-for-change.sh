@@ -204,6 +204,20 @@ while IFS= read -r f; do
         rust/Cargo.toml | rust/Cargo.lock | rust/rust-toolchain.toml)
             add 20 "cargo test --workspace" "(cd rust && cargo test --workspace)"
             needs_compiler ;;
+        runtime-go/rt/i18n/* | runtime-go/rt/i18n_* | runtime-go/rt/codec_i18n*)
+            # Std.I18n: every CLDR locale (sky_cldr_all), the js/wasm parity
+            # test, the race detector; then the runtime as a whole.
+            add 20 "go test -race -tags sky_cldr_all ./rt/i18n/..." \
+                "(cd runtime-go && go test -race -tags sky_cldr_all -count=1 ./rt/i18n/...)"
+            add 20 "go test ./rt/... (-p 1)" "(cd runtime-go && go test -p 1 -count=1 ./rt/...)"
+            needs_compiler
+            web_e2e ;;
+        tools/cldr-gen/*)
+            # The CLDR generator: a regeneration matches the committed tables.
+            add 20 "go test ./tools/cldr-gen (CLDR tables regenerate byte for byte)" \
+                "(cd tools/cldr-gen && go test -count=1 ./...)"
+            add 20 "go test -race -tags sky_cldr_all ./rt/i18n/..." \
+                "(cd runtime-go && go test -race -tags sky_cldr_all -count=1 ./rt/i18n/...)" ;;
         runtime-go/rt/spa* | runtime-go/rt/*wasm*)
             add 20 "go test ./rt/... (-p 1)" "(cd runtime-go && go test -p 1 -count=1 ./rt/...)"
             needs_compiler
