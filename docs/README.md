@@ -66,6 +66,11 @@ images on the server, v0.29.0) and `Std.Qr`.
 `Std.Crypto.Kdf`, `Std.Crypto.Noise` and `Std.Crypto.Cpace`; `Std.Decimal` and
 `Std.Money`.
 
+**Languages.** `Std.I18n` (locales, CLDR plural rules, checked message
+catalogues, `Text` in models) and `Std.I18n.Format` (numbers, money, dates,
+lists, relative time from CLDR), v0.31.0. See [i18n.md](i18n.md) and the
+catalogue errors in [errors/i18n-catalogues.md](errors/i18n-catalogues.md).
+
 **Effects and operations.** `Std.Durable`, `Std.Jobs`, `Std.PubSub`,
 `Std.Sync`, `Std.Breaker` (a circuit breaker, v0.30.0), `Std.Watch`, `Std.Email`, `Std.Time`, `Std.System`, `Std.Config`,
 `Std.Log`, `Std.Trace` and `Std.Analytics`.

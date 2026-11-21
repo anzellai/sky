@@ -159,6 +159,7 @@ The same `view : Model -> Element Msg` paints to the DOM, to terminal cells and 
 - **Data.** `Std.Db` on SQLite or PostgreSQL with the same code, one `Std.Codec` for JSON, XML and tables, and file-based migrations. `sky build --embed` puts PostgreSQL inside your binary, and an app plus its database fits in 1 GB. [Std.Db](docs/skydb/overview.md) · [Sizing](docs/perf/sizing.md)
 - **Files and documents.** `Std.Office.Xlsx` and `Std.Office.Docx` read and write Excel and Word files. `Std.Xml` and `Std.Zip` read hostile input safely. `Std.Image` and `Std.Image.Canvas` resize, re-encode and draw images on the server. [Stdlib](docs/stdlib.md)
 - **Auth, money and crypto.** `Std.Auth` (bcrypt, JWT, roles), `Std.Money` on exact decimals, and XChaCha20, Ed25519, X25519 and Noise sessions for encryption and signatures.
+- **Languages.** `Std.I18n` and `Std.I18n.Format`: locales, CLDR plural rules, MessageFormat 2.0 messages in JSON catalogues that `sky check` validates, and CLDR number, money, date, list and relative-time formatting. The binary carries the data of the locales you list only. [Internationalisation](docs/i18n.md)
 - **Durable workflows.** `Std.Durable` runs multi-step processes that survive a restart. [Design](docs/design/durable-execution.md)
 - **AI.** `Std.Ai`: swappable providers (OpenAI, any compatible endpoint, or a managed local model), durable agents, a policy firewall, cost tracing in `Std.Money`, datasets, evals, a model registry, LoRA training, GPU serving and on-device models. [Guides](docs/ai/)
 - **Tooling.** `sky fmt`, `sky test` (with function and `case`-arm coverage: `sky test --coverage`, `sky coverage report`), `sky fuzz`, `sky watch`, an LSP, `sky doc` for the live API, and an OpenAPI spec from your source with `sky doc --api openapi`. [CLI](docs/tooling/cli.md)
@@ -166,7 +167,7 @@ The same `view : Model -> Element Msg` paints to the DOM, to terminal cells and 
 
 ## Real examples
 
-There are 74 projects in [`examples/`](examples/). Start with these:
+There are 75 projects in [`examples/`](examples/). Start with these:
 
 | Example | What it shows |
 |---|---|
@@ -175,6 +176,7 @@ There are 74 projects in [`examples/`](examples/). Start with these:
 | [`13-skyshop`](examples/13-skyshop) | A shop with Stripe and Firebase through `sky add` |
 | [`60-spa-todos`](examples/60-spa-todos) | One app on web, desktop, iOS and Android |
 | [`26-ui-showcase`](examples/26-ui-showcase) | Every `Std.Ui` element |
+| [`78-i18n-booking`](examples/78-i18n-booking) | One page in English, Chinese, Arabic and a pseudo-locale, with checked catalogues |
 | [`23-tui-todo`](examples/23-tui-todo) | A terminal todo app |
 | [`65-metadata-service`](examples/65-metadata-service) | A stateless JSON API |
 | [`66-slack-agent`](examples/66-slack-agent) | A durable Slack bot behind a policy firewall |
