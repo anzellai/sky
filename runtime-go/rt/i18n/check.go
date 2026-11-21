@@ -144,7 +144,11 @@ func Check(cfg CheckConfig) CheckResult {
 	}
 
 	// Folders and files.
-	root := filepath.Join(cfg.Root, cfg.Catalogues)
+	// A generated Sky.Spa half names the project's folder by an absolute path.
+	root := cfg.Catalogues
+	if !filepath.IsAbs(root) {
+		root = filepath.Join(cfg.Root, root)
+	}
 	dirs, err := os.ReadDir(root)
 	if err != nil {
 		c.diag(CodeFile, cfg.Catalogues, "the catalogue folder %s cannot be read: %v (create it with one folder per locale, or set [i18n] catalogues)", cfg.Catalogues, err)

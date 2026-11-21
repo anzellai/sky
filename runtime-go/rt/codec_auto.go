@@ -494,6 +494,10 @@ func codecAutoEncodeTypedMemoAt(rv reflect.Value, declaredType string, snake boo
 	if codecAutoDeclaredOwnerMemoAt(declaredType, snapshot, ownerMemo) == skyCurrencyOwner {
 		return codecAutoCurrencyCodeExpected(rv)
 	}
+	// Std.I18n's Text and Locale (codec_i18n.go).
+	if owner := codecAutoDeclaredOwnerMemoAt(declaredType, snapshot, ownerMemo); isI18nOwner(owner) {
+		return codecI18nEncode(rv, owner)
+	}
 	if declaredType != "" {
 		if _, val, ok := codecDeclaredDict(declaredType); ok && rv.IsValid() && rv.CanInterface() {
 			if d, ok := rv.Interface().(skyDictAny); ok {
@@ -1012,6 +1016,14 @@ func codecAutoDecodeTypedW(gt reflect.Type, declaredType string, raw any, snake 
 				return reflect.Value{}, fmt.Errorf("Codec.auto: %v", err)
 			}
 			return reflect.ValueOf(cur).Convert(gt), nil
+		}
+		// Std.I18n's Text and Locale (codec_i18n.go).
+		if owner := codecAutoDeclaredOwner(declaredType); isI18nOwner(owner) {
+			adt, err := codecI18nDecode(raw, owner)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			return reflect.ValueOf(adt).Convert(gt), nil
 		}
 	}
 	// A custom type's value — the tagged `{"tag":<name>,"v0":…}` the encoder

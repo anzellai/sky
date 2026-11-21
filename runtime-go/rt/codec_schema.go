@@ -79,6 +79,10 @@ func codecSchemaTyped(t reflect.Type, declared string, snake bool, depth int) co
 			return codecDecimalSchema()
 		case skyMoneyOwner:
 			return codecMoneySchema()
+		case skyI18nLocaleOwner:
+			return codecSchema{json: `{"type":"string"}`, exact: true}
+		case skyI18nTextOwner:
+			return codecSchema{json: `{"type":"object","properties":{"key":{"type":"string"},"args":{"type":"array","items":{"type":"array","items":{"type":"string"},"minItems":3,"maxItems":3}},"verbatim":{"type":"string"}}}`, exact: true}
 		}
 		if inner, ok := strings.CutPrefix(declared, "rt.SkyMaybe["); ok && isSkyMaybeType(t) {
 			if jv, ok := t.FieldByName("JustValue"); ok {

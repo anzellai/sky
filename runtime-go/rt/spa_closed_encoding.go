@@ -288,7 +288,7 @@ func (c *spaClosedEncodeContext) encode(value, old reflect.Value, prior *spaClos
 	// Use the invocation's pinned owner metadata, never a live registry read.
 	kind, inner := spaClosedAtomic, ""
 	owner := codecAutoDeclaredOwnerAt(declared, c.epoch)
-	if owner != skyDecimalOwner && owner != skyMoneyOwner && owner != skyCurrencyOwner {
+	if owner != skyDecimalOwner && owner != skyMoneyOwner && owner != skyCurrencyOwner && !isI18nOwner(owner) {
 		kind, inner = spaClosedDispatch(value, declared)
 	}
 	if kind == spaClosedUnsupported {
