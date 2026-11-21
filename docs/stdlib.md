@@ -684,12 +684,20 @@ There is no global rate table: build `Rates` where the rates come from (config, 
 import Std.Time as Stime
 ```
 
-Embedded `time/tzdata`, so it works in containers without
-`/usr/share/zoneinfo`. **Note** the import alias `Stime` rather
-than `Time` — the kernel `Time` already owns that name. Zones are
-IANA strings (`"UTC"`, `"America/New_York"`, `"Asia/Tokyo"`); a bad
-zone name returns `Err Error`. Timestamps are unix-millis `Int`,
-matching `Time.unixMillis`. 32 entries.
+The full IANA time zone database is embedded (`time/tzdata`) in every
+Sky binary: the server, a CLI, and the Sky.Spa wasm client in a browser,
+which has no zone files. Use it. Do not keep your own table of zones or
+offsets. **Note** the import alias `Stime` rather than `Time`: the kernel
+`Time` already owns that name. Zones are IANA strings (`"UTC"`,
+`"America/New_York"`, `"Asia/Tokyo"`). They are case-sensitive, the empty
+name is UTC, and `"Local"` is refused (it is the host's zone, not an IANA
+name). Every `Err` is `InvalidInput` with the domain `"time"` and the code
+`UnknownZone`, `InvalidDate`, `NonexistentLocalTime` or
+`AmbiguousLocalTime`. Timestamps are unix-millis `Int`, matching
+`Time.unixMillis`.
+
+The embedded data adds about 390 KB to a wasm client (about 60 KB after
+brotli). The name list adds about 25 KB (about 4 KB after brotli).
 
 | Surface | Signature / behaviour |
 |---|---|
@@ -705,7 +713,14 @@ matching `Time.unixMillis`. 32 entries.
 | `isLeapYear y` | `Int -> Bool` |
 | `daysInMonth y m` | `Int -> Int -> Int` (handles leap Feb) |
 | `diffDays` / `diffHours` / `diffMinutes` / `diffSeconds` | `Int -> Int -> Int` (millis → unit) |
-| `fromParts zone y m d h mi s` | `... -> Result Error Int` — construct from components |
+| `fromParts zone y m d h mi s` | `... -> Result Error Int`. The instant of a local time. An `Err` for a date not in the calendar (31 April, 29 February in a common year), a field out of range (year 1 to 9999, hour 0 to 23, minute and second 0 to 59), a local time the clocks skip (`NonexistentLocalTime`) and one they repeat (`AmbiguousLocalTime`, the message gives both instants). It is `fromPartsWith Reject` (v0.31.0) |
+| `Disambiguation` | `Compatible \| Earlier \| Later \| Reject`, as in JavaScript Temporal. For a repeated local time, `Compatible` and `Earlier` give the earlier instant, `Later` the later one. For a skipped local time, `Compatible` and `Later` move it forward by the gap (01:30 in a 01:00 to 02:00 gap gives 02:30), `Earlier` moves it back (00:30). `Reject` is an `Err` |
+| `fromPartsWith d zone y m d h mi s` | `Disambiguation -> String -> Int -> Int -> Int -> Int -> Int -> Int -> Result Error Int`. `fromParts` with a rule for a skipped or repeated local time. Calendar errors stay `Err` |
+| `Parts` | `{ year, month, day, hour, minute, second, millisecond, weekday, offsetMinutes : Int, abbreviation : String }`. `weekday` is ISO (1 Monday to 7 Sunday). `offsetMinutes` is east positive, and drops the seconds of a local mean time offset before about 1900 |
+| `toParts zone ms` / `toPartsUtc ms` | `String -> Int -> Result Error Parts` / `Int -> Parts`. Every part of a local time in one call |
+| `isZone name` | `String -> Bool`. True for a name the other functions accept: a canonical name or a link (`"UTC"`, `"Asia/Calcutta"`). Exact case. False for `""` and `"Local"` |
+| `zones` | `List String`. The canonical IANA names, sorted (`"Etc/UTC"` is in it, its link `"UTC"` is not). Made from the tzdata of the Go version Sky builds with |
+| `nextTransition zone ms` / `previousTransition zone ms` | `String -> Int -> Result Error (Maybe Int)`. The next instant after `ms` (the last before `ms`) at which the zone's offset or abbreviation changes, to the millisecond. `Nothing` when there is none within 50 years. Both are strict, so a call on the result moves on |
 | `zoneOffset zone ms` / `zoneName zone ms` | zone metadata at that instant |
 | `utc` | `String` — the `"UTC"` constant |
 
@@ -2233,6 +2248,7 @@ TZ-awareness:
 | `startOfDay` / `endOfDay` | `startOfDayUtc` / `endOfDayUtc` |
 | `startOfWeek` / `startOfMonth` / `endOfMonth` | `startOfWeekUtc` / `startOfMonthUtc` / `endOfMonthUtc` |
 | `startOfYear` / `endOfYear` | `startOfYearUtc` / `endOfYearUtc` |
+| `toParts` | `toPartsUtc : Int -> Parts` |
 
 The UTC variants plug `"UTC"` (always-valid IANA zone) at the call
 site, so the `Result Error _` wrap collapses to the bare value.

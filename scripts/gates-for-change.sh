@@ -292,6 +292,11 @@ while IFS= read -r f; do
             add 58 "stdlib conformance" "scripts/conformance.sh" ;;
         scripts/doc-examples.sh)
             add 62 "live-docs examples" "scripts/doc-examples.sh" ;;
+        tools/gen-time-zones/*)
+            # The generator of runtime-go/rt/time_zone_names.go. The rt test
+            # TestTimeZoneNames_MatchToolchainData checks its output.
+            add 20 "go vet tools/gen-time-zones" "(cd tools/gen-time-zones && go vet .)"
+            add 20 "go test ./rt/... (-p 1)" "(cd runtime-go && go test -p 1 -count=1 ./rt/...)" ;;
         scripts/*)
             add 21 "script gates (time bounds, fresh compiler)" \
                 "(cd rust && cargo test -p xtask --test scripts_bound_time_portably --test gates_measure_a_fresh_compiler)" ;;

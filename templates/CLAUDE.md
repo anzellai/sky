@@ -291,6 +291,17 @@ thumbnails with `Std.Image.Canvas` (`blank` or `fromImage`, shapes, `paste`
 with a mask, `text` with `Canvas.defaultFont` or `loadFont`, then `encode`).
 Do not shell out to ImageMagick or Pillow.
 
+### Dates and time zones: use Std.Time
+
+`Std.Time` has the full IANA time zone database. It is embedded in every Sky
+binary, on the server and in the Sky.Spa client. Use it, and never keep your
+own table of zones or offsets. `zones` lists the zone names and
+`isZone` checks one. `toParts zone ms` gives every part of a local
+time. `fromParts` refuses 31 April, and it refuses a local time that
+the clocks skip or repeat. Choose an instant for those with
+`fromPartsWith Compatible` (or `Earlier`, `Later`, `Reject`). A
+scheduler finds the next offset change with `nextTransition`.
+
 ### Excel and Word files: use Std.Office.Xlsx and Std.Office.Docx
 
 Read and write `.xlsx` with `Std.Office.Xlsx` and `.docx` with

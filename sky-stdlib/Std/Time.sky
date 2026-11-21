@@ -10,6 +10,15 @@
 -- companion (v0.15.48+) — `dayOfWeekUtc` / `startOfDayUtc` /
 -- `yearUtc` etc. return `Int -> Int` so server-internal callers
 -- don't thread `Result.withDefault 0` for the UTC happy path.
+--
+-- The full IANA time zone database is embedded in every Sky binary: the
+-- server, the CLI and the Sky.Spa wasm client in a browser. Use it. Do not
+-- keep your own table of zones or offsets. `zones` lists the zone names,
+-- `isZone` checks a name, `toParts` gives a local time in one call,
+-- `fromParts` / `fromPartsWith` make an instant from a local time (with an
+-- explicit rule for the hour the clocks skip or repeat), and
+-- `nextTransition` / `previousTransition` find when a zone's offset
+-- changes, for a scheduler.
 module Std.Time exposing
     ( inZone
     , formatInZone
@@ -40,6 +49,15 @@ module Std.Time exposing
     , diffMinutes
     , diffSeconds
     , fromParts
+    , Disambiguation(..)
+    , fromPartsWith
+    , Parts
+    , toParts
+    , toPartsUtc
+    , isZone
+    , zones
+    , nextTransition
+    , previousTransition
     , zoneOffset
     , zoneName
     , utc
@@ -67,7 +85,12 @@ module Std.Time exposing
 -- day boundaries.
 --
 -- Zones are IANA strings: "UTC", "America/New_York", "Asia/Tokyo".
--- Invalid zone names return `Err Error`.
+-- Invalid zone names return `Err Error`. Names are case-sensitive
+-- ("europe/london" is an `Err` that names "Europe/London"). The empty name
+-- is UTC. "Local" is refused, because it is the host's zone and not an IANA
+-- name. Every `Err` from this module is `InvalidInput` with the domain
+-- "time" and a code: "UnknownZone", "InvalidDate", "NonexistentLocalTime"
+-- or "AmbiguousLocalTime" (`Error.domain`).
 --
 -- Layer 3 design: thin Sky-source wrappers around the
 -- `Ffi.callPure` boundary into runtime-go/rt/time_zones.go.
@@ -231,6 +254,27 @@ diffSeconds a b =
 
 
 -- ─── Construction from parts ───────────────────────────────────
+{-| The instant (Unix ms) of a local time in a zone: `fromParts zone year
+month day hour minute second`. It is `fromPartsWith Reject`.
+
+It refuses, with an `Err`:
+
+  - a date that is not in the calendar: 31 April, 29 February in a year
+    that is not a leap year, a month outside 1 to 12;
+  - a field out of range: a year outside 1 to 9999, an hour outside 0 to
+    23, a minute or a second outside 0 to 59 (there are no leap seconds);
+  - a local time that does not exist in the zone, because the clocks go
+    forward over it (code "NonexistentLocalTime"). 01:30 on 29 March 2026
+    in "Europe/London" is one;
+  - a local time that exists twice in the zone, because the clocks go back
+    over it (code "AmbiguousLocalTime"). 01:30 on 25 October 2026 in
+    "Europe/London" is one. The message gives both instants.
+
+Use `fromPartsWith` to choose an instant for the last two cases.
+
+    fromParts "Europe/London" 2026 7 1 9 0 0
+    -- Ok 1782892800000 (08:00 UTC)
+-}
 fromParts : String -> Int -> Int -> Int -> Int -> Int -> Int -> Result Error Int
 fromParts zone y m d h mins s =
     Ffi.callPure
@@ -243,6 +287,163 @@ fromParts zone y m d h mins s =
         , Ffi.toAny mins
         , Ffi.toAny s
         ]
+
+{-| What `fromPartsWith` does with a local time that does not exist (a gap:
+the clocks go forward) or that exists twice (an overlap: the clocks go
+back). The four options are the ones of JavaScript Temporal, with the same
+meaning:
+
+  - `Compatible`: the earlier instant of an overlap. For a gap, the local
+    time moved forward by the length of the gap (01:30 in a gap from 01:00
+    to 02:00 gives 02:30). Most calendar programs do this.
+  - `Earlier`: the earlier instant of an overlap. For a gap, the local time
+    moved back by the length of the gap (01:30 gives 00:30).
+  - `Later`: the later instant of an overlap. For a gap, the same as
+    `Compatible`.
+  - `Reject`: an `Err` for both. `fromParts` does this.
+
+A local time that exists once gives the same instant for all four.
+-}
+type Disambiguation
+    = Compatible
+    | Earlier
+    | Later
+    | Reject
+
+
+disambiguationIndex : Disambiguation -> Int
+disambiguationIndex d =
+    case d of
+
+        Compatible ->
+            0
+
+        Earlier ->
+            1
+
+        Later ->
+            2
+
+        Reject ->
+            3
+
+
+{-| `fromParts` with an explicit rule for a local time in a gap or an
+overlap (see `Disambiguation`). The calendar checks of `fromParts` still
+apply: 31 April is an `Err` for every rule.
+
+    fromPartsWith Compatible "Europe/London" 2026 3 29 1 30 0
+    -- Ok 1774747800000: 02:30 BST, because the clocks skip 01:00 to 02:00
+    fromPartsWith Later "America/New_York" 2026 11 1 1 30 0
+    -- Ok 1793514600000: 01:30 EST, the second 01:30 of that day
+-}
+fromPartsWith : Disambiguation -> String -> Int -> Int -> Int -> Int -> Int -> Int -> Result Error Int
+fromPartsWith disambiguation zone y m d h mins s =
+    Ffi.callPure
+        "Time_fromPartsWith"
+        [ Ffi.toAny (disambiguationIndex disambiguation)
+        , Ffi.toAny zone
+        , Ffi.toAny y
+        , Ffi.toAny m
+        , Ffi.toAny d
+        , Ffi.toAny h
+        , Ffi.toAny mins
+        , Ffi.toAny s
+        ]
+
+-- ─── Parts of a local time ──────────────────────────────────────
+{-| All parts of an instant as a local time in a zone. `weekday` is ISO:
+1 is Monday and 7 is Sunday. `offsetMinutes` is the zone's offset from UTC
+at that instant, east positive (60 for BST, -300 for EST, 630 for Lord Howe
+in winter). Local mean time before about 1900 can have an offset with
+seconds: `offsetMinutes` drops them (towards zero), and `zoneOffset` gives
+the offset in seconds. `abbreviation` is the zone's short name at that
+instant ("BST", "EST"), or the offset ("+1030") where the zone has no name.
+-}
+type alias Parts =
+    { year : Int
+    , month : Int
+    , day : Int
+    , hour : Int
+    , minute : Int
+    , second : Int
+    , millisecond : Int
+    , weekday : Int
+    , offsetMinutes : Int
+    , abbreviation : String
+    }
+
+
+{-| The local time of an instant (Unix ms) in a zone, all parts in one call.
+An unknown zone is an `Err`.
+
+    toParts "Europe/London" 1782905696789
+    -- Ok { year = 2026, month = 7, day = 1, hour = 12, minute = 34,
+    --      second = 56, millisecond = 789, weekday = 3,
+    --      offsetMinutes = 60, abbreviation = "BST" }
+-}
+toParts : String -> Int -> Result Error Parts
+toParts zone ms =
+    Ffi.callPure "Time_toParts" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+{-| `toParts` in UTC. It cannot fail. -}
+toPartsUtc : Int -> Parts
+toPartsUtc ms =
+    Ffi.callPure "Time_toPartsUtc" [ Ffi.toAny ms ]
+
+
+-- ─── Zone names ─────────────────────────────────────────────────
+{-| True when the other functions of this module accept the name as a zone:
+a canonical IANA name ("Europe/London", "Etc/UTC") or a link to one ("UTC",
+"GMT", "Asia/Calcutta", "US/Eastern"). The check is exact and
+case-sensitive. The empty name is not a zone (the other functions read it
+as UTC), and "Local" is not a zone. Use it to check a zone that a user or a
+file gives.
+-}
+isZone : String -> Bool
+isZone name =
+    Ffi.callPure "Time_isZone" [ Ffi.toAny name ]
+
+
+{-| The canonical IANA zone names, sorted: the zones of the embedded
+database (for example "Africa/Abidjan", "Europe/London", "Etc/UTC"). Link
+names are other names for a zone ("UTC", "GMT", "Asia/Calcutta",
+"US/Eastern"). They are not in the list, but `isZone` and every function of
+this module accept them. "Factory" is not in the list. Use the list for a
+zone picker. It comes from the IANA data of the Go version that Sky builds
+with.
+-}
+zones : List String
+zones =
+    Ffi.callPure "Time_zones" []
+
+
+-- ─── Transitions ────────────────────────────────────────────────
+{-| The next instant (Unix ms) after `ms` at which the zone's UTC offset or
+abbreviation changes: the first millisecond of the new offset. `Nothing`
+when there is no change in the 50 years (of 365.2425 days) after `ms`, as
+for "Asia/Shanghai" or "UTC". A scheduler uses it to know when "09:00
+local" moves against UTC. Times outside the years 1 to 9999 are not
+searched.
+
+    nextTransition "Europe/London" 1767225600000
+    -- Ok (Just 1774746000000): 2026-03-29 01:00 UTC
+-}
+nextTransition : String -> Int -> Result Error (Maybe Int)
+nextTransition zone ms =
+    Ffi.callPure "Time_nextTransition" [ Ffi.toAny zone, Ffi.toAny ms ]
+
+
+{-| The last instant (Unix ms) before `ms` at which the zone's UTC offset or
+abbreviation changed. `Nothing` when there is no change in the 50 years
+before `ms`. The result is always before `ms`, so a call on its own result
+gives the change before it. To find when the offset in effect at `ms`
+started, call it with `ms + 1`.
+-}
+previousTransition : String -> Int -> Result Error (Maybe Int)
+previousTransition zone ms =
+    Ffi.callPure "Time_previousTransition" [ Ffi.toAny zone, Ffi.toAny ms ]
 
 
 -- ─── Zone discovery ────────────────────────────────────────────
