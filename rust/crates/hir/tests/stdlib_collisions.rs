@@ -140,6 +140,19 @@ const EXPECTED_COLLISIONS: &[&str] = &[
 /// qualifies it. Listed so the set is reviewed, and so a rename that would
 /// avoid a clash is considered before the release rather than after.
 const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
+    // v0.31.0: Std.I18n and Std.I18n.Format. The argument builders are named
+    // for the value they carry (`I18n.decimal`, `I18n.money`), as the codecs
+    // and decoders are; `I18n.key` / `language` / `script` are the CLDR and
+    // BCP 47 words; `Medium` is the CLDR format length and `Other` the CLDR
+    // plural category. They are new modules, so no existing program changes;
+    // a program reads them qualified (`import Std.I18n as I18n`).
+    "ctor Medium",
+    "ctor Other",
+    "value decimal",
+    "value key",
+    "value language",
+    "value money",
+    "value script",
     // v0.30.0: Std.Admission names its hook's answer `Decision` (as
     // Std.Ai.Policy does for its firewall) and its refusal delay builder
     // `withRetryAfter` (as Sky.Core.Error does for an error's delay). It is a

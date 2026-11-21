@@ -1,0 +1,345 @@
+module Std.I18nTest exposing (tests)
+
+-- Std.I18n and Std.I18n.Format (v0.31.0) in a project with no [i18n]
+-- section: the default and only locale is "en", the catalogue is empty, and
+-- the program carries the CLDR data of root and English only. Plural rules
+-- are present for every language.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Std.Codec as Codec
+import Std.Decimal as Dec
+import Std.I18n as I18n exposing (Direction(..), Locale, PluralCategory(..), Text)
+import Std.I18n.Format as Format
+import Std.Money as Money exposing (Currency(..))
+import Sky.Test as Test exposing (Test)
+
+
+loc : String -> Locale
+loc s =
+    I18n.locale s |> Result.withDefault I18n.defaultLocale
+
+
+en : Locale
+en =
+    loc "en"
+
+type alias Notice =
+    { id : Int
+    , text : Text
+    }
+
+
+errorCode : Result Error a -> String
+errorCode r =
+    case r of
+
+        Err e ->
+            Error.failureOf e |> Maybe.map Error.failureCode
+                |> Maybe.withDefault "no domain"
+
+        Ok _ ->
+            "ok"
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.I18n locales"
+          [ Test.test
+                "a tag is canonicalised"
+                (\_ ->
+                    Test.equal
+                        (Ok "zh-Hant-HK")
+                        (I18n.locale "zh-hant-hk" |> Result.map I18n.tag))
+          , Test.test
+                "a deprecated code is replaced"
+                (\_ ->
+                    Test.equal
+                        (Ok "he")
+                        (I18n.locale "iw" |> Result.map I18n.tag))
+          , Test.test
+                "a malformed tag is an InvalidLocale error"
+                (\_ ->
+                    Test.equal
+                        "InvalidLocale"
+                        (errorCode (I18n.locale "en--GB")))
+          , Test.test
+                "the likely script of zh-HK is Hant"
+                (\_ -> Test.equal "Hant" (I18n.script (loc "zh-HK")))
+          , Test.test
+                "the likely script of zh-CN is Hans"
+                (\_ -> Test.equal "Hans" (I18n.script (loc "zh-CN")))
+          , Test.test
+                "region"
+                (\_ ->
+                    Test.equal
+                        [ Just "HK", Nothing ]
+                        [ I18n.region (loc "zh-Hant-HK")
+                        , I18n.region (loc "fr")
+                        ])
+          , Test.test
+                "language"
+                (\_ -> Test.equal "zh" (I18n.language (loc "zh-Hant-HK")))
+          , Test.test
+                "Arabic is right to left"
+                (\_ ->
+                    Test.equal
+                        [ Rtl, Rtl, Ltr ]
+                        [ I18n.direction (loc "ar")
+                        , I18n.direction (loc "he")
+                        , I18n.direction (loc "en-GB")
+                        ])
+          , Test.test
+                "the chain of zh-HK ends in the default"
+                (\_ ->
+                    Test.equal
+                        [ "zh-HK", "zh-Hant-HK", "zh-Hant", "en" ]
+                        (List.map I18n.tag (I18n.fallbacks (loc "zh-HK"))))
+          , Test.test
+                "no [i18n]: the default is en"
+                (\_ ->
+                    Test.equal
+                        ( "en", [ "en" ] )
+                        ( I18n.tag I18n.defaultLocale
+                        , List.map I18n.tag I18n.locales
+                        ))
+          , Test.test
+                "negotiate"
+                (\_ ->
+                    Test.equal
+                        "zh-Hans"
+                        (I18n.tag
+                            (I18n.negotiate
+                                [ loc "en-GB", loc "zh-Hans" ]
+                                "zh-CN,zh;q=0.9,en;q=0.8")))
+          , Test.test
+                "negotiate with no fit gives the first"
+                (\_ ->
+                    Test.equal
+                        "en-GB"
+                        (I18n.tag (I18n.negotiate [ loc "en-GB", loc "fr" ] "ja")))
+          ]
+    , Test.suite
+          "Std.I18n plural rules"
+          [ Test.test
+                "English"
+                (\_ ->
+                    Test.equal
+                        [ Other, One, Other ]
+                        (List.map (I18n.plural en) [ 0, 1, 2 ]))
+          , Test.test
+                "Arabic"
+                (\_ ->
+                    Test.equal
+                        [ Zero, One, Two, Few, Many, Other ]
+                        (List.map
+                            (I18n.plural (loc "ar"))
+                            [ 0, 1, 2, 3, 11, 100 ]))
+          , Test.test
+                "Chinese"
+                (\_ ->
+                    Test.equal
+                        [ Other, Other ]
+                        (List.map (I18n.plural (loc "zh-Hans")) [ 1, 2 ]))
+          , Test.test
+                "Polish"
+                (\_ ->
+                    Test.equal
+                        [ One, Few, Many, Few ]
+                        (List.map (I18n.plural (loc "pl")) [ 1, 2, 5, 22 ]))
+          , Test.test
+                "a visible fraction digit is Other in English"
+                (\_ ->
+                    Test.equal
+                        Other
+                        (I18n.pluralDecimal en (Dec.fromMinor 1 10)))
+          , Test.test
+                "English ordinals"
+                (\_ ->
+                    Test.equal
+                        [ One, Two, Few, Other, Other ]
+                        (List.map (I18n.ordinal en) [ 1, 2, 3, 4, 11 ]))
+          ]
+    , Test.suite
+          "Std.I18n messages"
+          [ Test.test
+                "a key with no message shows the marker"
+                (\_ -> Test.equal "⟦shop.title⟧" (I18n.t en "shop.title" []))
+          , Test.test
+                "verbatim text renders as it is"
+                (\_ -> Test.equal "Ada" (I18n.render en (I18n.verbatim "Ada")))
+          , Test.test
+                "textKey"
+                (\_ ->
+                    Test.equal
+                        [ Just "a.b", Nothing ]
+                        [ I18n.textKey (I18n.key "a.b")
+                        , I18n.textKey (I18n.verbatim "x")
+                        ])
+          , Test.test
+                "an override wins and formats its arguments"
+                (\_ ->
+                    I18n.overrides
+                        [ { locale = en
+                          , key = "basket"
+                          , message = "{count} items cost {total}"
+                          }
+                        ]
+                        |> Result.map
+                               (\ov ->
+                                   I18n.tWith
+                                       ov
+                                       en
+                                       "basket"
+                                       [ ( "count", I18n.int 1200 )
+                                       , ( "total"
+                                         , I18n.money
+                                               (Money.fromMinor GBP 123450)
+                                         )
+                                       ])
+                        |> Test.equal (Ok "1,200 items cost £1,234.50"))
+          , Test.test
+                "an override selects a plural form"
+                (\_ ->
+                    I18n.overrides
+                        [ { locale = en
+                          , key = "n"
+                          , message =
+                              ".input {$count :number}\n.match $count\none {{one item}}\n* {{{count} items}}"
+                          }
+                        ]
+                        |> Result.map
+                               (\ov ->
+                                   List.map
+                                       (\n ->
+                                           I18n.tWith
+                                               ov
+                                               (loc "en-GB")
+                                               "n"
+                                               [ ( "count", I18n.int n ) ])
+                                       [ 1, 2 ])
+                        |> Test.equal (Ok [ "one item", "2 items" ]))
+          , Test.test
+                "an override that does not parse is an InvalidMessage error"
+                (\_ ->
+                    Test.equal
+                        "InvalidMessage"
+                        (errorCode
+                            (I18n.overrides
+                                [ { locale = en
+                                  , key = "k"
+                                  , message = "Hello {name"
+                                  }
+                                ])))
+          , Test.test
+                "an unknown function in an override is refused"
+                (\_ ->
+                    Test.equal
+                        "InvalidMessage"
+                        (errorCode
+                            (I18n.overrides
+                                [ { locale = en
+                                  , key = "k"
+                                  , message = "{$d :datetime}"
+                                  }
+                                ])))
+          , Test.test
+                "a Text survives Codec.auto"
+                (\_ ->
+                    let
+                        codec =
+                            Codec.auto { id = 0, text = I18n.verbatim "" }
+                        notice =
+                            { id = 7
+                            , text =
+                                I18n.text
+                                    "shop.added"
+                                    [ ( "item", I18n.string "tea" )
+                                    , ( "n", I18n.int 2 )
+                                    ]
+                            }
+                    in
+                        Codec.toJson codec notice |> Codec.fromJson codec
+                            |> Test.equal (Ok notice))
+          ]
+    , Test.suite
+          "Std.I18n.Format"
+          [ Test.test
+                "int"
+                (\_ -> Test.equal (Ok "-1,234,567") (Format.int en (-1234567)))
+          , Test.test
+                "decimal rounds half to even"
+                (\_ ->
+                    Test.equal
+                        (Ok "2.002")
+                        (Format.decimal en (Dec.fromMinor 4 20015)))
+          , Test.test
+                "percent"
+                (\_ ->
+                    Test.equal
+                        (Ok "12.5%")
+                        (Format.percent en (Dec.fromMinor 3 125)))
+          , Test.test
+                "money"
+                (\_ ->
+                    Test.equal
+                        (Ok "£1,234.50")
+                        (Format.money en (Money.fromMinor GBP 123450)))
+          , Test.test
+                "money in a zero-digit currency"
+                (\_ ->
+                    Test.equal
+                        (Ok "¥1,200")
+                        (Format.money en (Money.fromMajor JPY 1200)))
+          , Test.test
+                "date"
+                (\_ ->
+                    Test.equal
+                        (Ok "Tuesday, November 17, 2026")
+                        (Format.date en Format.Full "2026-11-17"))
+          , Test.test
+                "a date that does not exist"
+                (\_ ->
+                    Test.equal
+                        "InvalidDate"
+                        (errorCode (Format.date en Format.Short "2026-02-30")))
+          , Test.test
+                "time in a zone"
+                (\_ ->
+                    Test.equal
+                        (Ok "10:05:09\u{202F}PM GMT+8")
+                        (Format.time en Format.Long "Asia/Shanghai" 1794924309000))
+          , Test.test
+                "list"
+                (\_ ->
+                    Test.equal
+                        (Ok "a, b, or c")
+                        (Format.list en Format.Or [ "a", "b", "c" ]))
+          , Test.test
+                "relative auto"
+                (\_ ->
+                    Test.equal
+                        (Ok "yesterday")
+                        (Format.relative en Format.Auto Format.Days (-1)))
+          , Test.test
+                "relative numeric"
+                (\_ ->
+                    Test.equal
+                        (Ok "in 3 hours")
+                        (Format.relative en Format.Always Format.Hours 3))
+          , Test.test
+                "a locale that is not compiled in is an error"
+                (\_ ->
+                    Test.equal
+                        "LocaleNotCompiled"
+                        (errorCode (Format.int (loc "zh-Hans") 1)))
+          , Test.test
+                "a locale CLDR does not know is an error"
+                (\_ ->
+                    Test.equal
+                        "UnknownLocale"
+                        (errorCode (Format.int (loc "tlh") 1)))
+          ]
+    ]

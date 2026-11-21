@@ -1,0 +1,231 @@
+-- | Std.I18n.Format — numbers, money, dates, lists and relative time for a
+-- locale, from CLDR data.
+--
+--     Format.money loc price                       -- Ok "£1,234.50"
+--     Format.date loc Format.Medium "2026-11-17"   -- Ok "17 Nov 2026"
+--     Format.list loc Format.And [ "a", "b", "c" ] -- Ok "a, b and c"
+--     Format.relative loc Format.Auto Format.Days -1   -- Ok "yesterday"
+--
+-- The data comes from CLDR (the version is in docs/i18n.md). A program
+-- carries the data of root and English, and of the locales `[i18n] locales`
+-- in sky.toml names, with their CLDR parents. A locale whose data the
+-- program does not carry is an `Err` (domain "i18n", code
+-- "LocaleNotCompiled") whose message names the sky.toml fix. It never falls
+-- back to English in silence. A tag CLDR has no data for is code
+-- "UnknownLocale".
+--
+-- Numbers round half to even, as CLDR and ICU do. Times show their zone as
+-- a GMT offset in the locale's form ("GMT+8"). The server and a Sky.Spa
+-- client run the same code on the same data, so they give the same text.
+module Std.I18n.Format exposing
+    ( Style(..)
+    , ListStyle(..)
+    , RelativeUnit(..)
+    , Numeric(..)
+    , int
+    , decimal
+    , percent
+    , money
+    , date
+    , time
+    , dateTime
+    , list
+    , relative
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Ffi as Ffi
+import Std.Decimal as Dec exposing (Decimal)
+import Std.I18n as I18n exposing (Locale)
+import Std.Money as Money exposing (Money)
+
+-- | The length of a date or time format, as CLDR names them.
+-- In en-GB: `Short` "17/11/2026", `Medium` "17 Nov 2026",
+-- `Long` "17 November 2026", `Full` "Tuesday, 17 November 2026".
+type Style
+    = Short
+    | Medium
+    | Long
+    | Full
+
+-- | The kind of list: "a, b and c" (`And`), "a, b or c" (`Or`), or a list
+-- of measures "3 kg, 20 g" (`Unit`).
+type ListStyle
+    = And
+    | Or
+    | Unit
+
+-- | The unit of a relative time.
+type RelativeUnit
+    = Seconds
+    | Minutes
+    | Hours
+    | Days
+    | Weeks
+    | Months
+    | Years
+
+-- | `Always` gives a number ("1 day ago"). `Auto` uses the locale's words for
+-- -1, 0 and 1 when it has them ("yesterday", "today", "tomorrow").
+type Numeric
+    = Always
+    | Auto
+
+
+number : String -> Locale -> String -> Result Error String
+number kind loc payload =
+    Ffi.callPure
+        "I18n_formatNumber"
+        [ Ffi.toAny kind, Ffi.toAny (I18n.tag loc), Ffi.toAny payload ]
+
+
+-- | A whole number with the locale's digits and grouping: "1,234",
+-- "1.234" (de), "12,34,567" (hi).
+int : Locale -> Int -> Result Error String
+int loc n =
+    number "int" loc (String.fromInt n)
+
+
+-- | A decimal with up to three fraction digits: "1,234.5", "1 234,5" (fr).
+decimal : Locale -> Decimal -> Result Error String
+decimal loc d =
+    number "decimal" loc (Dec.toString d)
+
+
+-- | A ratio as a percentage, up to three fraction digits: 0.125 gives
+-- "12.5%" (en), "12,5 %" (de).
+percent : Locale -> Decimal -> Result Error String
+percent loc d =
+    number "percent" loc (Dec.toString d)
+
+
+-- | An amount with the locale's currency pattern and symbol, rounded to the
+-- currency's digits: "£1,234.50", "US$5.00" (en-GB), "1.234,50 €" (de),
+-- "JP¥1,200". A currency CLDR has no symbol for shows its code.
+money : Locale -> Money -> Result Error String
+money loc m =
+    number
+        "money"
+        loc
+        (Money.currencyCode (Money.currency m) ++ " "
+            ++ Dec.toString (Money.amount m))
+
+
+styleName : Style -> String
+styleName s =
+    case s of
+
+        Short ->
+            "short"
+
+        Medium ->
+            "medium"
+
+        Long ->
+            "long"
+
+        Full ->
+            "full"
+
+
+-- | A calendar date "YYYY-MM-DD". `Err` (code "InvalidDate") for a date
+-- that does not exist.
+date : Locale -> Style -> String -> Result Error String
+date loc style iso =
+    Ffi.callPure
+        "I18n_formatDate"
+        [ Ffi.toAny (I18n.tag loc), Ffi.toAny (styleName style), Ffi.toAny iso ]
+
+
+-- | `time loc style zone ms` — the time of day of a moment (Unix
+-- milliseconds) in an IANA zone: "14:05" (en-GB `Short`), "2:05 PM"
+-- (en-US). `Err` (code "InvalidDate") for an unknown zone.
+time : Locale -> Style -> String -> Int -> Result Error String
+time loc style zone ms =
+    Ffi.callPure
+        "I18n_formatTime"
+        [ Ffi.toAny "time"
+        , Ffi.toAny (I18n.tag loc)
+        , Ffi.toAny (styleName style)
+        , Ffi.toAny zone
+        , Ffi.toAny ms
+        ]
+
+
+-- | The date and the time of a moment in a zone, joined as the locale joins
+-- them: "17 Nov 2026, 14:05:09" (en-GB `Medium`).
+dateTime : Locale -> Style -> String -> Int -> Result Error String
+dateTime loc style zone ms =
+    Ffi.callPure
+        "I18n_formatTime"
+        [ Ffi.toAny "dateTime"
+        , Ffi.toAny (I18n.tag loc)
+        , Ffi.toAny (styleName style)
+        , Ffi.toAny zone
+        , Ffi.toAny ms
+        ]
+
+
+-- | Items joined with the locale's list pattern: "a, b and c" (en-GB),
+-- "a, b, and c" (en-US), "a、b和c" (zh-Hans).
+list : Locale -> ListStyle -> List String -> Result Error String
+list loc style items =
+    let
+        name : String
+        name =
+            case style of
+
+                And ->
+                    "standard"
+
+                Or ->
+                    "or"
+
+                Unit ->
+                    "unit"
+    in
+        Ffi.callPure
+            "I18n_formatList"
+            [ Ffi.toAny (I18n.tag loc), Ffi.toAny name, Ffi.toAny items ]
+
+
+-- | `relative loc numeric unit n` — n units from now: -2 `Days` is
+-- "2 days ago", 3 `Hours` is "in 3 hours", and with `Auto`, -1 `Days` is
+-- "yesterday".
+relative : Locale -> Numeric -> RelativeUnit -> Int -> Result Error String
+relative loc numeric unit n =
+    let
+        u : String
+        u =
+            case unit of
+
+                Seconds ->
+                    "second"
+
+                Minutes ->
+                    "minute"
+
+                Hours ->
+                    "hour"
+
+                Days ->
+                    "day"
+
+                Weeks ->
+                    "week"
+
+                Months ->
+                    "month"
+
+                Years ->
+                    "year"
+    in
+        Ffi.callPure
+            "I18n_formatRelative"
+            [ Ffi.toAny (I18n.tag loc)
+            , Ffi.toAny u
+            , Ffi.toAny n
+            , Ffi.toAny (numeric == Auto)
+            ]

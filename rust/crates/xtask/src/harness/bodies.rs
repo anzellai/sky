@@ -3423,7 +3423,11 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///
 /// 1351 + 16 = 1367: `Std/BreakerTest` (v0.30.0 `Std.Breaker`: opens after
 /// N, the refusal, a non-counting error, trials, concurrent counts).
-pub const SKY_SUITES_EXPECTED: u64 = 1367;
+///
+/// 1367 + 39 = 1406: `Std/I18nTest` (v0.31.0 `Std.I18n` / `Std.I18n.Format`:
+/// locales, plural rules, overrides, a `Text` through `Codec.auto`, CLDR
+/// formatting, and the LocaleNotCompiled refusal).
+pub const SKY_SUITES_EXPECTED: u64 = 1406;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
@@ -4062,7 +4066,7 @@ pub const KERNEL_MEMBERS_EXPECTED: u64 = 116;
 /// `sky-stdlib/Std/Office/Xlsx.sky` and `Std/Office/Docx.sky`. 402 -> 403:
 /// `sky-stdlib/Std/Image/Canvas.sky`. 403 -> 401: `examples/simple` and
 /// `examples/test_pkg` removed in the v0.29.0 repo tidy.
-pub const FMT_CLEAN_EXPECTED: u64 = 407; // 405 -> 407 in v0.30.0, measured by the `fmt-clean` gate: sky-stdlib/Std/Admission.sky and Std/Breaker.sky; 401 -> 405: examples/77-demo-expenses (three src modules, one tests suite)
+pub const FMT_CLEAN_EXPECTED: u64 = 411; // 407 -> 411 in v0.31.0: sky-stdlib/Std/I18n.sky, Std/I18n/Format.sky, examples/78-i18n-booking/src/Main.sky, tests/Std/I18nTest.sky; 405 -> 407 in v0.30.0, measured by the `fmt-clean` gate: sky-stdlib/Std/Admission.sky and Std/Breaker.sky; 401 -> 405: examples/77-demo-expenses (three src modules, one tests suite)
 
 /// Every tracked `.sky` file in scope is already `sky fmt`-clean.
 pub fn fmt_clean(ctx: &GateCtx) -> GateOutcome {
