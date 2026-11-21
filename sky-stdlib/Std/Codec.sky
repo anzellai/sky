@@ -257,7 +257,7 @@ renderSchema node =
             { schema = E.object [], exact = False }
 
         SnDict sk sv ->
-            dictSchema (dictKeysOf sk) (renderSchema sv)
+            dictSchema (dictKeysOf sk) sk (renderSchema sv)
 
         SnDecimal ->
             { schema =
@@ -273,8 +273,8 @@ renderSchema node =
 -- a `Dict` field (`{"type":"object","additionalProperties":…}`), with the
 -- key text pinned for Int keys (a pattern) and enum keys (the names). An Int
 -- key's pattern does not bound its size, so that schema is not exact.
-dictSchema : DictKeys -> JsonSchema -> JsonSchema
-dictSchema keys values =
+dictSchema : DictKeys -> SchemaNode -> JsonSchema -> JsonSchema
+dictSchema keys key values =
     let
         base =
             [ ( "type", E.string "object" )
@@ -301,16 +301,16 @@ dictSchema keys values =
                 , exact = False
                 }
 
-            KeyEnum names ->
+            KeyEnum ->
                 { schema =
                     E.object
                         (base
                             ++ [ ( "propertyNames"
                                  , E.object
                                        [ ( "enum"
-                                         , E.list
-                                               identity
-                                               (stringValues (names ()))
+                                         , schemaPart
+                                               "enum"
+                                               (renderSchema key).schema
                                          )
                                        ]
                                  )
@@ -1342,7 +1342,7 @@ dict (Codec ck) (Codec cv) =
 type DictKeys
     = KeyText
     | KeyInt
-    | KeyEnum (() -> List String)
+    | KeyEnum
     | KeyPairs
 
 
@@ -1356,8 +1356,11 @@ dictKeysOf sch =
         SnType "integer" ->
             KeyInt
 
-        SnEnum names ->
-            KeyEnum names
+        -- The payload is not read here: a function in a stdlib custom type
+        -- costs a runtime narrowing to read (doc 14), and `dictSchema` takes
+        -- the names from the key's rendered schema instead.
+        SnEnum _ ->
+            KeyEnum
 
         _ ->
             KeyPairs
