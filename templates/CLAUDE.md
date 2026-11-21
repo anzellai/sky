@@ -210,6 +210,16 @@ each JSON input once after the upgrade. Where a lenient fallback is intended,
 write it out (`Decode.oneOf [ dec, Decode.succeed default ]`); do not loosen a
 decoder only to make a test pass. See AGENTS.md "JSON decoding is strict".
 
+### After an upgrade to v0.31.0, check JSON with repeated keys and Dict wire shapes
+
+Every decoder now refuses JSON text that repeats a key in one object (the
+error names the key and its path). If a test or a partner payload fails with
+`duplicate key`, fix the producer; do not strip the key before decoding.
+`Codec.dict` with `string` / `int` / `enum` keys now writes a JSON object, not
+a `[key, value]` pairs array, and still reads the pairs. A client outside Sky
+that reads that JSON must read the object. Read an object with unknown keys
+with `Decode.dict` or `Decode.keyValuePairs`, not with a hand-written walk.
+
 ### After an upgrade to v0.28.0, read the migration guide first
 
 Sky's `docs/migration/v0.28.md` (in the Sky repository) lists every change.

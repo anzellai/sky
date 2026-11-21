@@ -248,10 +248,12 @@ tests =
           (\_ -> Test.err (Decode.decodeString Decode.int "1e400"))
     -- ─── adversarial JSON structure ────────────────────────────────
     , Test.test
-          "duplicate object keys: last value wins (pinned behavior)"
+          "duplicate object keys: refused, naming the key (I-JSON, since v0.31.0)"
           (\_ ->
               Test.equal
-                  (Ok 2)
+                  (Err
+                      (Error.decode
+                          "JSON parse error: duplicate key \"a\" in the top-level object (a JSON object may not repeat a key)"))
                   (Decode.decodeString
                       (Decode.field "a" Decode.int)
                       "{\"a\":1,\"a\":2}"))
@@ -518,10 +520,12 @@ tests =
                       (Decode.field "n" Decode.int)
                       (Encode.object [ ( "n", Encode.float 1.5 ) ])))
     , Test.test
-          "decodeValue: a key given twice keeps its last value"
+          "decodeValue: a key given twice is refused, as decodeString refuses the text"
           (\_ ->
               Test.equal
-                  (Ok 2)
+                  (Err
+                      (Error.decode
+                          "Json.Decode.decodeValue: duplicate key \"k\" in the top-level object (a JSON object may not repeat a key)"))
                   (Decode.decodeValue
                       (Decode.field "k" Decode.int)
                       (Encode.object

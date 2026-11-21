@@ -783,6 +783,40 @@ Algebraic correctness for these is uncontroversial. Effect-tier
 modules inherit Task's contract (failure surfaced; never panics in
 well-typed code).
 
+### 2.10j JSON objects with arbitrary keys and the Dict wire law (v0.31.0)
+
+**Invariants**, each with its test (`runtime-go/rt/json_duplicate_keys_test.go`;
+conformance suite `JsonObjectKeysConformanceTest`):
+
+* **One parse rule for every decoder.** JSON text that repeats a key in one
+  object is an `Err` naming the key and the path of its object
+  (`jsonParseDocument` → `jsonCheckDuplicateKeys`). `Decode.decodeString`,
+  `Codec.fromJson`, `Codec.auto`, a Sky.Spa payload and a `Std.Db.Store` JSON
+  column all parse there. `decodeValue` refuses an `Encode.object` that gives
+  a key twice, so `decodeValue d v == decodeString d (Encode.encode 0 v)`
+  still holds.
+* **Bounded depth.** Every decoder reads at most 10000 nested arrays and
+  objects (the parser's limit for text, `jsonMaxDepth` for a `Value`), so a
+  recursive decoder (`Decode.lazy`, `Codec.lazy`) gives an `Err` on deep
+  input, never a stack overflow.
+* **Key order.** `keyValuePairs`, `dict`, `Encode.dict`, `Codec.dict` and
+  `Codec.auto` use byte-wise key order. A decoded object keeps no key order.
+* **The Dict wire law.** For a `Dict k v` with String, Int or enum keys,
+  `Codec.toJson (Codec.dict ck cv) d` is byte for byte the JSON a `Codec.auto`
+  record field of the same type writes, at any depth (nested dicts, dicts in a
+  `List`, a `Maybe` or a variant payload), and each codec reads the other's
+  JSON. The schemas match (`{"type":"object","additionalProperties":…}`, a
+  `propertyNames` pattern for Int keys).
+* **No lost entry.** `Codec.dict` reads both its object form and the older
+  `[key, value]` pairs form. An Int key is read strictly (the decimal text
+  only). Two members or pairs that read as one Dict key are an `Err`.
+  `Encode.dict` keeps both members when its key function maps two keys to one
+  text, and every decoder then refuses the object.
+
+The remaining gap: a `Dict Float v` (or a Char or Bool key) under `Codec.auto`
+is an object keyed by the key text, while `Codec.dict Codec.float cv` writes
+the pairs array. The law above covers String, Int and enum keys only.
+
 ### 2.10a `Sky.Core.Process` streaming and `Std.Watch` (v0.27.0)
 
 **Invariants**, each with its test (`runtime-go/rt/process_spawn_test.go`,

@@ -114,19 +114,21 @@ func TestJsonDecodeValue_AgreesWithDecodeStringOfEncode(t *testing.T) {
 	}
 }
 
-// A duplicate key in an Encode.object keeps its LAST value, as the parser
-// does for the encoded text.
-func TestJsonDecodeValue_DuplicateKeyLastWins(t *testing.T) {
+// A duplicate key in an Encode.object is refused, as the parser refuses the
+// encoded text (v0.31.0; before, both kept the LAST value silently).
+func TestJsonDecodeValue_DuplicateKeyRefused(t *testing.T) {
 	v := JsonEnc_object([]any{
 		SkyTuple2{V0: "k", V1: JsonEnc_int(1)},
 		SkyTuple2{V0: "k", V1: JsonEnc_int(2)},
 	})
-	if got := AsInt(decodeValueOK(t, JsonDec_field("k", JsonDec_int()), v)); got != 2 {
-		t.Fatalf("duplicate key: got %d, want the last value 2", got)
+	if r := JsonDec_decodeValue(JsonDec_field("k", JsonDec_int()), v); !isErr(r) ||
+		!strings.Contains(extractErrMsg(r), `duplicate key "k"`) {
+		t.Fatalf("decodeValue: got %v, want a duplicate-key Err", r)
 	}
 	text := AsString(JsonEnc_encode(0, v))
-	if got := AsInt(decodeOK(t, JsonDec_field("k", JsonDec_int()), text)); got != 2 {
-		t.Fatalf("decodeString of %s: got %d, want 2", text, got)
+	if r := JsonDec_decodeString(JsonDec_field("k", JsonDec_int()), text); !isErr(r) ||
+		!strings.Contains(extractErrMsg(r), `duplicate key "k"`) {
+		t.Fatalf("decodeString of %s: got %v, want a duplicate-key Err", text, r)
 	}
 }
 

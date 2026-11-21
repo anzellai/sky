@@ -107,6 +107,14 @@ Core syntax you must get right:
 - **JSON**: `Pipeline.optional name dec default` gives `default` only when the
   field is absent or `null`; a present value `dec` rejects is an `Err` (since
   v0.27.12). `Decode.nullable` / `Decode.maybe` / `Decode.null` are as in Elm.
+  An object with keys not known in advance reads with `Decode.dict` /
+  `Decode.keyValuePairs` (byte-wise key order) and writes with `Encode.dict`;
+  `Decode.lazy` / `Codec.lazy` name a recursive decoder or codec (v0.31.0).
+  JSON text that repeats a key in one object is an `Err` naming the key, in
+  every decoder (`Codec`, `Codec.auto`, Sky.Spa, a Store JSON column), since
+  v0.31.0. `Codec.dict` with `string` / `int` / `enum` keys writes a JSON
+  object, byte for byte what `Codec.auto` writes, and still reads the older
+  `[key, value]` pairs array.
 - No custom operators, no `where` clauses (use `let`), no higher-kinded types (HM only).
 
 **Collection costs (v0.29.0) — every `List` / `Dict` / `Set` / `Array` /

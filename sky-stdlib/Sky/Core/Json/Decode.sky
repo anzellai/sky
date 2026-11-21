@@ -15,6 +15,9 @@ module Sky.Core.Json.Decode exposing
     , at
     , index
     , list
+    , keyValuePairs
+    , dict
+    , lazy
     , map
     , andThen
     , succeed
@@ -31,6 +34,7 @@ module Sky.Core.Json.Decode exposing
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Dict exposing (Dict)
 
 
 -- ─── Primitive decoders ────────────────────────────────────────────
@@ -81,6 +85,17 @@ value =
 -- | Run a decoder against a JSON string. The string must hold ONE JSON
 -- document: whitespace may follow it, other text is an `Err`
 -- (`decodeString int "3 x"` is an `Err`, not `Ok 3`).
+--
+-- An object that repeats a key is an `Err` that names the key and the path
+-- of its object, at any depth and whatever the decoder reads (since v0.31.0):
+-- `{"a":1,"a":2}` is refused, not read as `{"a":2}`. This is the I-JSON rule
+-- (RFC 7493). Two keys are the same key when their text is the same after
+-- escapes are read, so `"a"` and `"a"` are a repeat. `Std.Codec`, a
+-- Sky.Spa message and a `Std.Db.Store` JSON column read JSON through this
+-- parser and refuse a repeated key too.
+--
+--     Decode.decodeString (Decode.field "a" Decode.int) "{\"a\":1,\"a\":2}"
+--     -- Err: duplicate key "a" in the top-level object
 decodeString : Decoder a -> String -> Result Error a
 decodeString =
     Ffi.kernel "JsonDec_decodeString"
@@ -94,8 +109,8 @@ decodeString =
 -- The `Value` is read exactly as `decodeString` reads the text
 -- `Encode.encode 0` writes for it, so
 -- `decodeValue d v == decodeString d (Encode.encode 0 v)`: an `Encode.int` is a
--- number `int` accepts, and a key an `Encode.object` gives twice keeps its
--- last value.
+-- number `int` accepts, and a key an `Encode.object` gives twice is an `Err`
+-- (since v0.31.0), as `decodeString` refuses the text.
 --
 --     Decode.decodeString (Decode.field "meta" Decode.value) input
 --         |> Result.andThen (Decode.decodeValue (Decode.field "id" Decode.int))
@@ -127,6 +142,59 @@ index =
 list : Decoder a -> Decoder (List a)
 list =
     Ffi.kernel "JsonDec_list"
+
+
+-- | Decode a JSON object whose keys are not known in advance (a map of
+-- names to values) into a list of `( key, value )` pairs. Every value must
+-- satisfy the decoder.
+--
+-- The pairs come in byte-wise key order (`"B"` before `"a"`), not in the
+-- order of the text. This is the same order contract as `value`: a decoded
+-- object keeps no key order.
+--
+-- A value the decoder refuses is an `Err` that names its key:
+-- `at ["b"]: expected Int, got String`. Inside a field the path grows, as for
+-- `field`: `at .scores["b"]: expected Int, got String`. A key is always
+-- written in quotes, so it never reads as a field name.
+--
+--     Decode.decodeString (Decode.keyValuePairs Decode.int) "{\"b\":2,\"a\":1}"
+--         == Ok [ ( "a", 1 ), ( "b", 2 ) ]
+keyValuePairs : Decoder a -> Decoder (List ( String, a ))
+keyValuePairs =
+    Ffi.kernel "JsonDec_keyValuePairs"
+
+
+-- | Decode a JSON object into a `Dict` keyed by its member names. Every value
+-- must satisfy the decoder. Errors name the key, as for `keyValuePairs`.
+--
+--     Decode.decodeString (Decode.dict Decode.int) "{\"a\":1,\"b\":2}"
+--         == Ok (Dict.fromList [ ( "a", 1 ), ( "b", 2 ) ])
+--
+-- A JSON object never repeats a key: `decodeString` refuses text that does,
+-- so each member is one entry of the Dict.
+dict : Decoder a -> Decoder (Dict String a)
+dict =
+    Ffi.kernel "JsonDec_dict"
+
+
+-- | A decoder made when it runs. Use it for a recursive structure, where a
+-- decoder must name itself: a tree, a comment with replies.
+--
+--     type Tree = Node Int (List Tree)
+--
+--     tree : Decoder Tree
+--     tree =
+--         Decode.map2 Node
+--             (Decode.field "value" Decode.int)
+--             (Decode.field "children" (Decode.list (Decode.lazy (\_ -> tree))))
+--
+-- The function is called each time the decoder runs. The recursion is as deep
+-- as the JSON, and every decoder reads at most 10000 nested arrays and objects
+-- (`decodeString` refuses deeper text, `decodeValue` a deeper Value), so deep
+-- input is an `Err`, never a stack overflow.
+lazy : (() -> Decoder a) -> Decoder a
+lazy =
+    Ffi.kernel "JsonDec_lazy"
 
 
 -- ─── Combinators ───────────────────────────────────────────────────

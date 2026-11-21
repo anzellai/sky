@@ -61,6 +61,7 @@ module Std.Codec exposing
     , dict
     , error
     , map
+    , lazy
     , object
     , field
     , inline
@@ -84,6 +85,7 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Char as Char
 import Std.Xml as Xml exposing (Node)
 import Std.Xml.Encode as XE
 import Std.Decimal as Dec exposing (Decimal)
@@ -150,8 +152,9 @@ type alias CodecPayload a =
 
 -- | The JSON Schema of the JSON a codec reads and writes. `exact` is `True`
 -- when the schema pins down every value; it is `False` when a part is the
--- open schema `{}` (a `taggedUnion`, a `result`, a `dict`, a `Json.Value`
--- field, `Codec.error`), which the codec's decoder still checks.
+-- open schema `{}` (a `taggedUnion`, a `result`, a `dict` in its pairs form, a
+-- `Json.Value` field, `Codec.error`), or a `dict` with Int keys (its pattern
+-- does not bound the size of a key). The codec's decoder still checks it.
 type alias JsonSchema =
     { schema : Value
     , exact : Bool
@@ -243,17 +246,18 @@ renderSchema node =
         SnOpen ->
             { schema = E.object [], exact = False }
 
-        -- A union, a result and a dict are JSON arrays a schema cannot pin
-        -- down: open, as before they had nodes of their own (the nodes exist
-        -- for `toXml` / `fromXml`).
+        -- A union, a result and a dict in its pairs form are JSON arrays a
+        -- schema cannot pin down: open, as before they had nodes of their
+        -- own (the nodes exist for `toXml` / `fromXml`). A dict in its object
+        -- form is a map (`dictSchema`).
         SnUnion _ ->
             { schema = E.object [], exact = False }
 
         SnResult _ _ ->
             { schema = E.object [], exact = False }
 
-        SnDict _ _ ->
-            { schema = E.object [], exact = False }
+        SnDict sk sv ->
+            dictSchema (dictKeysOf sk) (renderSchema sv)
 
         SnDecimal ->
             { schema =
@@ -263,6 +267,63 @@ renderSchema node =
                     ]
             , exact = True
             }
+
+
+-- The schema of a `dict`. The object form is the map `Codec.auto` writes for
+-- a `Dict` field (`{"type":"object","additionalProperties":…}`), with the
+-- key text pinned for Int keys (a pattern) and enum keys (the names). An Int
+-- key's pattern does not bound its size, so that schema is not exact.
+dictSchema : DictKeys -> JsonSchema -> JsonSchema
+dictSchema keys values =
+    let
+        base =
+            [ ( "type", E.string "object" )
+            , ( "additionalProperties", values.schema )
+            ]
+    in
+        case keys of
+
+            KeyPairs ->
+                { schema = E.object [], exact = False }
+
+            KeyText ->
+                { schema = E.object base, exact = values.exact }
+
+            KeyInt ->
+                { schema =
+                    E.object
+                        (base
+                            ++ [ ( "propertyNames"
+                                 , E.object
+                                       [ ( "pattern", E.string intKeyPattern ) ]
+                                 )
+                               ])
+                , exact = False
+                }
+
+            KeyEnum names ->
+                { schema =
+                    E.object
+                        (base
+                            ++ [ ( "propertyNames"
+                                 , E.object
+                                       [ ( "enum"
+                                         , E.list
+                                               identity
+                                               (stringValues (names ()))
+                                         )
+                                       ]
+                                 )
+                               ])
+                , exact = values.exact
+                }
+
+
+-- The text of an Int key: the decimal a `dict` writes and reads (no sign
+-- before 0, no leading zero).
+intKeyPattern : String
+intKeyPattern =
+    "^(0|-?[1-9][0-9]*)$"
 
 
 -- The text a `decimal` reads: digits with an optional `-` and one `.`, no
@@ -410,7 +471,8 @@ shape (Codec c) =
 -- | The JSON of the codec's zero value, when the codec knows one. For an
 -- `auto` / `autoCamel` / `autoWith` codec it is the encoded blank record (the
 -- witness). For a `buildObject` codec it is an object of every field's zero:
--- `""`, `0`, `false`, `null` for `maybe`, `[]` for `list` and `dict`, and the
+-- `""`, `0`, `false`, `null` for `maybe`, `[]` for `list`, `{}` or `[]` for
+-- `dict` (its object or its pairs form), and the
 -- first name of an `enum`. A `taggedUnion`, a `result` and `error` know none,
 -- and nor does an object with such a field: a partial object would not
 -- decode. This is the zero of the WHOLE value, as a nested field needs it.
@@ -1209,41 +1271,244 @@ result (Codec ce) (Codec ca) =
             }
 
 
--- | Codec for a `Dict k v` given codecs for the key and the value. Encodes as a
--- JSON array of `[key, value]` pairs in key order, so any comparable key type
--- round-trips (a JSON object could hold only `String` keys); stored as a JSON
--- TEXT blob on the DB side. A Sky.Spa model or message field of type
+-- | Codec for a `Dict k v` given codecs for the key and the value. Stored as
+-- a JSON TEXT blob on the DB side. A Sky.Spa model or message field of type
 -- `Dict k v` crosses the wire through it with no hand-written codec.
+--
+-- The JSON form depends on the key codec (since v0.31.0):
+--
+-- * `string`, `int` or an `enum` (and a `map` of one of these): a JSON
+--   object. A String key is the member name, an Int key its decimal text
+--   (`"10"`, `"-3"`), an enum key its name. The members are sorted byte-wise
+--   by that text (`"10"` before `"9"`).
+-- * any other key codec (`float`, a tuple, a record): a JSON array of
+--   `[key, value]` pairs in Dict order, as before.
+--
+-- The object is byte for byte the JSON `Codec.auto` writes for a record
+-- field of the same `Dict` type, so the two codecs agree on the wire:
+--
+--     Codec.toJson (Codec.dict Codec.int Codec.string) (Dict.fromList [ ( 9, "a" ), ( 10, "b" ) ])
+--     -- {"10":"b","9":"a"}
+--
+-- The decoder reads both forms, so JSON written by Sky v0.30 and earlier (the
+-- pairs array in a database row, a file, a saved model) still reads. An Int
+-- key is read strictly: `"10"` reads, `"010"`, `"+10"`, `"1e1"` and `"10.0"`
+-- are an `Err`. An error names the key: `at ["x"]: expected Int, got String`.
+-- Two members that read as one Dict key (a `map` key codec that changes case,
+-- say) are an `Err`, never a lost entry.
+--
+-- The JSON Schema of the object form is `"type": "object"` with the values'
+-- schema as `additionalProperties`, a `propertyNames` pattern for Int keys and
+-- the names for enum keys. The pairs form has the open schema `{}`.
 dict : Codec comparable -> Codec v -> Codec (Dict comparable v)
 dict (Codec ck) (Codec cv) =
-    Codec
-        { enc =
-            \d ->
-                E.list
-                    (\( k, v ) -> E.list identity [ ck.enc k, cv.enc v ])
-                    (Dict.toList d)
-        , dec =
-            D.map
-                Dict.fromList
+    let
+        keys = dictKeysOf ck.sch
+        dec = dictDecoder keys ck.dec cv.dec
+    in
+        Codec
+            { enc =
+                case keys of
+
+                    KeyPairs ->
+                        \d ->
+                            E.list
+                                (\( k, v ) ->
+                                    E.list identity [ ck.enc k, cv.enc v ])
+                                (Dict.toList d)
+
+                    _ ->
+                        E.dict (\k -> dictKeyText keys (ck.enc k)) cv.enc
+            , dec = dec
+            , shp = SBlob
+            , sch = SnDict ck.sch cv.sch
+            , zro =
+                case keys of
+
+                    KeyPairs ->
+                        \_ -> Just (E.list identity [])
+
+                    _ ->
+                        \_ -> Just (E.object [])
+            , fzr = \_ -> []
+            , fck = \_ -> []
+            , vck = checkIf (hasCheck ck.vck || hasCheck cv.vck) dec
+            , vcs = []
+            , jsn = \_ -> Nothing
+            , prb = ck.prb ++ cv.prb
+            }
+
+-- How `dict` writes its keys, read from the key codec's description.
+type DictKeys
+    = KeyText
+    | KeyInt
+    | KeyEnum (() -> List String)
+    | KeyPairs
+
+
+dictKeysOf : SchemaNode -> DictKeys
+dictKeysOf sch =
+    case sch of
+
+        SnType "string" ->
+            KeyText
+
+        SnType "integer" ->
+            KeyInt
+
+        SnEnum names ->
+            KeyEnum names
+
+        _ ->
+            KeyPairs
+
+
+-- The member name of a key whose JSON (from the key codec) is `kv`. A String
+-- key that starts with the byte 0x01 is written with the escape `Codec.auto`
+-- writes for it (0x01 `s` before the key), so the two codecs give the same
+-- bytes, and `dictKeyValue` removes it again. A key the codec writes as
+-- something else (an enum value with no name) is written as its JSON text,
+-- which the decoder refuses.
+dictKeyText : DictKeys -> Value -> String
+dictKeyText keys kv =
+    case keys of
+
+        KeyInt ->
+            case D.decodeValue D.int kv of
+
+                Ok n ->
+                    String.fromInt n
+
+                Err _ ->
+                    E.encode 0 kv
+
+        _ ->
+            case D.decodeValue D.string kv of
+
+                Ok s ->
+                    if String.startsWith dictTagByte s then
+                        dictTagByte ++ "s" ++ s
+
+                    else
+                        s
+
+                Err _ ->
+                    E.encode 0 kv
+
+
+dictTagByte : String
+dictTagByte =
+    String.fromChar (Char.fromCode 1)
+
+
+-- The key codec's JSON for a member name, or why the name is not a key.
+dictKeyValue : DictKeys -> String -> Result String Value
+dictKeyValue keys name =
+    case keys of
+
+        KeyInt ->
+            case String.toInt name of
+
+                Just n ->
+                    if String.fromInt n == name then
+                        Ok (E.int n)
+
+                    else
+                        Err
+                            ("expected an Int key in its decimal text (\"10\", \"-3\"), got "
+                                ++ E.encode 0 (E.string name))
+
+                Nothing ->
+                    Err
+                        ("expected an Int key in its decimal text (\"10\", \"-3\"), got "
+                            ++ E.encode 0 (E.string name))
+
+        _ ->
+            if String.startsWith (dictTagByte ++ "s") name then
+                Ok (E.string (String.dropLeft 2 name))
+
+            else
+                Ok (E.string name)
+
+
+-- The reader of `dict`: the JSON object, or the `[key, value]` pairs array
+-- of Sky v0.30 and earlier. A key codec that has no object form reads only
+-- the pairs.
+dictDecoder : DictKeys -> Decoder comparable -> Decoder v -> Decoder (Dict comparable v)
+dictDecoder keys kdec vdec =
+    let
+        pairs =
+            D.andThen
+                (\entries -> dictBuild "a [key, value] pair" entries)
                 (D.list
-                    (D.map2
-                        (\k v -> ( k, v ))
-                        (D.index 0 ck.dec)
-                        (D.index 1 cv.dec)))
-        , shp = SBlob
-        , sch = SnDict ck.sch cv.sch
-        , zro = \_ -> Just (E.list identity [])
-        , fzr = \_ -> []
-        , fck = \_ -> []
-        , vck =
-            checkIf
-                (hasCheck ck.vck || hasCheck cv.vck)
-                (D.list
-                    (D.map2 (\_ _ -> ()) (D.index 0 ck.dec) (D.index 1 cv.dec)))
-        , vcs = []
-        , jsn = \_ -> Nothing
-        , prb = ck.prb ++ cv.prb
-        }
+                    (D.map2 (\k v -> ( k, v )) (D.index 0 kdec) (D.index 1 vdec)))
+    in
+        case keys of
+
+            KeyPairs ->
+                pairs
+
+            _ ->
+                D.andThen
+                    (\isArray ->
+                        if isArray then
+                            pairs
+
+                        else
+                            D.andThen
+                                (\members -> dictMembers keys kdec members [])
+                                (D.keyValuePairs vdec))
+                    (D.oneOf
+                        [ D.map (\_ -> True) (D.list (D.succeed ()))
+                        , D.succeed False
+                        ])
+
+
+-- Each member's key read by the key codec. Tail recursive, so a large object
+-- runs at a constant stack.
+dictMembers : DictKeys -> Decoder comparable -> List ( String, v ) -> List ( comparable, v ) -> Decoder (Dict comparable v)
+dictMembers keys kdec members acc =
+    case members of
+
+        [] ->
+            dictBuild "a member" (List.reverse acc)
+
+        ( name, v ) :: rest ->
+            case dictKeyValue keys name of
+
+                Err msg ->
+                    D.fail (dictKeyAt name msg)
+
+                Ok kv ->
+                    case D.decodeValue kdec kv of
+
+                        Ok k ->
+                            dictMembers keys kdec rest (( k, v ) :: acc)
+
+                        Err e ->
+                            D.fail (dictKeyAt name (Error.toString e))
+
+
+-- An error at a key, in the path form the decoders use (`at ["x"]: …`).
+dictKeyAt : String -> String -> String
+dictKeyAt name msg =
+    "at [" ++ E.encode 0 (E.string name) ++ "]: key: " ++ msg
+
+
+-- The Dict of the entries, or an `Err` when two entries have one key: no
+-- entry is dropped without an error.
+dictBuild : String -> List ( comparable, v ) -> Decoder (Dict comparable v)
+dictBuild what entries =
+    let
+        d = Dict.fromList entries
+    in
+        if Dict.size d == List.length entries then
+            D.succeed d
+
+        else
+            D.fail
+                ("Codec.dict: two entries read as the same Dict key (" ++ what
+                    ++ " repeats a key)")
 
 
 -- | The canonical codec for the stdlib `Error` type — the ONE wire contract for
@@ -1447,6 +1712,50 @@ map to from (Codec c) =
         , jsn = \_ -> Nothing
         , prb = c.prb
         }
+
+
+-- | A codec made when it is used, for a recursive type: a codec that must
+-- name itself (a tree, a comment with replies). It is `Json.Decode.lazy` for
+-- codecs.
+--
+--     type Tree = Tree Int (List Tree)
+--
+--     tree : Codec Tree
+--     tree =
+--         Codec.object Tree
+--             |> Codec.field "value" (\(Tree v _) -> v) Codec.int
+--             |> Codec.field "children" (\(Tree _ kids) -> kids) (Codec.list (Codec.lazy (\_ -> tree)))
+--             |> Codec.buildObject
+--
+-- The function is called each time the codec encodes or decodes, never when
+-- the codec is built, so the definition above does not loop. Use it only
+-- where the type recurses, and give the codec a top-level name (as `tree`
+-- above), so each call returns the same codec. The JSON is the
+-- JSON of the codec the function gives. Deep input is an `Err`, never a stack
+-- overflow: a decoder reads at most 10000 nested arrays and objects.
+--
+-- What a lazy codec cannot know without calling the function, it leaves open:
+-- its JSON Schema is the open `{}` (not exact), `toXml` writes it as JSON
+-- text, it is a JSON TEXT column on the DB side (`SBlob`), `problems` does not
+-- see into it, and a `Std.Db.Store` write checks it with its decoder.
+lazy : (() -> Codec a) -> Codec a
+lazy make =
+    let
+        dec = D.lazy (\_ -> (payloadOf (make ())).dec)
+    in
+        Codec
+            { enc = \x -> (payloadOf (make ())).enc x
+            , dec = dec
+            , shp = SBlob
+            , sch = SnOpen
+            , zro = \_ -> (payloadOf (make ())).zro ()
+            , fzr = \_ -> []
+            , fck = \_ -> []
+            , vck = checkIf True dec
+            , vcs = []
+            , jsn = \_ -> Nothing
+            , prb = []
+            }
 
 -- ── Records (object builder) ─────────────────────────────────────────────────
 -- | Intermediate builder for a record codec. `a` is the record type; `b` is the
@@ -2700,14 +3009,12 @@ xmlElem name sch v =
                 name
                 []
                 (List.map
-                    (\pair ->
+                    (\( key, value ) ->
                         XE.element
                             "entry"
                             []
-                            [ xmlElem "key" sk (valueAt 0 pair)
-                            , xmlElem "value" sv (valueAt 1 pair)
-                            ])
-                    (valueList v))
+                            [ xmlElem "key" sk key, xmlElem "value" sv value ])
+                    (dictEntries v))
 
         SnOpen ->
             XE.element name [] [ XE.text (E.encode 0 v) ]
@@ -2810,6 +3117,20 @@ scalarText v =
 
                 Err _ ->
                     E.encode 0 v
+
+
+-- The entries of a `dict`'s JSON, in either form: the members of an object
+-- (each key as a JSON string, whose text `toXml` writes as is) or the
+-- `[key, value]` pairs of an array.
+dictEntries : Value -> List ( Value, Value )
+dictEntries v =
+    case D.decodeValue (D.keyValuePairs D.value) v of
+
+        Ok members ->
+            List.map (\( k, x ) -> ( E.string k, x )) members
+
+        Err _ ->
+            List.map (\pair -> ( valueAt 0 pair, valueAt 1 pair )) (valueList v)
 
 
 valueIsNull : Value -> Bool
@@ -3391,9 +3712,12 @@ isNullaryTag tag variants =
 --   `Int` and `Bool` read only themselves;
 -- * an enum reads an enum whose names are all its own names;
 -- * a list compares its items, a record each of its fields (every target
---   field must be in the source), a `Dict` under `auto` its values;
+--   field must be in the source), a `Dict` (under `auto`, or a `dict` in its
+--   object form) its keys and its values: String keys read any keys, Int and
+--   enum keys only their own kind;
 -- * a part the schema leaves open (`{}`: a `taggedUnion`, a `result`, a
---   `dict`, a `Json.Value` field, `Codec.error`) reads anything, except under
+--   `dict` in its pairs form, a `Json.Value` field, `Codec.error`) reads
+--   anything, except under
 --   a `Maybe`: there it reads only an open part.
 --
 --     Codec.schemaFitError
@@ -3469,18 +3793,84 @@ fitSchema under t s =
                 (fitSchema under (schemaPart "items" t) (schemaPart "items" s))
 
         else if tk == "map" then
-            within
-                "a Dict value"
-                (fitSchema
-                    under
-                    (schemaPart "additionalProperties" t)
-                    (schemaPart "additionalProperties" s))
+            orElse
+                (mapKeysFit
+                    (schemaPart "propertyNames" t)
+                    (schemaPart "propertyNames" s))
+                (within
+                    "a Dict value"
+                    (fitSchema
+                        under
+                        (schemaPart "additionalProperties" t)
+                        (schemaPart "additionalProperties" s)))
 
         else if tk == "object" then
             fieldsFit under t s (schemaNames (schemaPart "required" t))
 
         else
             Nothing
+
+
+-- The keys of a map: String keys read any key text, Int keys read only Int
+-- keys, enum keys read only enum keys whose names are all their own.
+mapKeysFit : Value -> Value -> Maybe String
+mapKeysFit t s =
+    let
+        tk = mapKeyKind t
+        sk = mapKeyKind s
+    in
+        if tk == "text" then
+            Nothing
+
+        else if tk /= sk then
+            Just
+                ("the source's Dict keys are " ++ mapKeyNoun sk
+                    ++ ", which do not read as "
+                    ++ mapKeyNoun tk)
+
+        else if tk == "enum" then
+            case missingName (schemaNames t) (schemaNames s) of
+
+                "" ->
+                    Nothing
+
+                n ->
+                    Just
+                        ("the source Dict key \"" ++ n
+                            ++ "\" is not one of the target's key names")
+
+        else
+            Nothing
+
+
+-- "int" for a `propertyNames` pattern, "enum" for its names, "text" for none.
+mapKeyKind : Value -> String
+mapKeyKind p =
+    case jsonField "pattern" p of
+
+        Just _ ->
+            "int"
+
+        Nothing ->
+            case jsonField "enum" p of
+
+                Just _ ->
+                    "enum"
+
+                Nothing ->
+                    "text"
+
+
+mapKeyNoun : String -> String
+mapKeyNoun kind =
+    if kind == "int" then
+        "Int keys"
+
+    else if kind == "enum" then
+        "enum keys"
+
+    else
+        "String keys"
 
 
 -- Every target field is in the source, and reads its values.
@@ -3568,7 +3958,13 @@ schemaValueError schema v =
                     v
 
             else
-                Nothing
+                case D.decodeValue (D.keyValuePairs D.value) v of
+
+                    Ok members ->
+                        membersError schema members
+
+                    Err _ ->
+                        expectedSchema schema text
 
         else if scalarIs kind text then
             Nothing
@@ -3785,6 +4181,62 @@ itemsError item values =
 
         x :: rest ->
             orElse (schemaValueError item x) (itemsError item rest)
+
+
+-- Each member of a map: its key against `propertyNames`, its value against
+-- `additionalProperties`.
+membersError : Value -> List ( String, Value ) -> Maybe String
+membersError schema members =
+    case members of
+
+        [] ->
+            Nothing
+
+        ( k, x ) :: rest ->
+            orElse
+                (orElse
+                    (mapKeyError (schemaPart "propertyNames" schema) k)
+                    (within
+                        ("the key \"" ++ k ++ "\"")
+                        (schemaValueError
+                            (schemaPart "additionalProperties" schema)
+                            x)))
+                (membersError schema rest)
+
+
+mapKeyError : Value -> String -> Maybe String
+mapKeyError names k =
+    let
+        kind = mapKeyKind names
+    in
+        if kind == "int" then
+            case String.toInt k of
+
+                Just n ->
+                    if String.fromInt n == k then
+                        Nothing
+
+                    else
+                        Just
+                            ("the key \"" ++ k
+                                ++ "\" is not an Int in its decimal text")
+
+                Nothing ->
+                    Just
+                        ("the key \"" ++ k
+                            ++ "\" is not an Int in its decimal text")
+
+        else if kind == "enum" then
+            if memberOf k (schemaNames names) then
+                Nothing
+
+            else
+                Just
+                    ("the key \"" ++ k ++ "\" is not one of the names "
+                        ++ String.join ", " (schemaNames names))
+
+        else
+            Nothing
 
 
 objectValueError : Value -> List String -> Value -> Maybe String

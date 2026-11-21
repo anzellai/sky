@@ -444,6 +444,38 @@ func JsonEnc_object(pairs any) any {
 	return JsonValue{raw: obj}
 }
 
+// JsonEnc_dict : (k -> String) -> (v -> Value) -> Dict k v -> Value — a Dict
+// as a JSON object. The members are sorted byte-wise by the key text, the
+// order `Codec.auto` writes a Dict field in, so the two give the same bytes.
+//
+// Two keys the key function maps to one string both stay in the object, in
+// Dict order (a stable sort). No entry is dropped: `encode` writes the key
+// twice, and every Sky decoder refuses that object (a repeated key), so the
+// collision is an error at the reader, never a silent loss.
+func JsonEnc_dict(keyFn any, valFn any, d any) any {
+	entries := asList(Dict_toList(d))
+	type member struct {
+		k string
+		v any
+	}
+	members := make([]member, len(entries))
+	for i, e := range entries {
+		t := AsTuple2(e)
+		k := AsString(SkyCall(keyFn, t.V0))
+		v := SkyCall(valFn, t.V1)
+		if jv, ok := v.(JsonValue); ok {
+			v = jv.raw
+		}
+		members[i] = member{k, v}
+	}
+	sort.SliceStable(members, func(i, j int) bool { return members[i].k < members[j].k })
+	obj := jsonOrderedObject{keys: make([]string, len(members)), vals: make([]any, len(members))}
+	for i, m := range members {
+		obj.keys[i], obj.vals[i] = m.k, m.v
+	}
+	return JsonValue{raw: obj}
+}
+
 // JsonEnc_raw : String -> Result Error Value — embed JSON text that is
 // already serialised (a stored document, a third-party payload) as a Value
 // without decoding it into Sky types first. The text is validated with
@@ -547,8 +579,10 @@ func jsonPrefixError(result any, segment string) any {
 	// Otherwise wrap as a fresh "at <segment>: <msg>".
 	const atPrefix = "at "
 	if strings.HasPrefix(msg, atPrefix) {
-		// Find the colon that ends the path.
-		i := strings.Index(msg, ": ")
+		// Find the colon that ends the path. A key segment (`["a: b"]`) is a
+		// quoted JSON string that can hold ": " itself, so the search skips
+		// quoted text.
+		i := jsonPathEnd(msg, len(atPrefix))
 		if i > 0 {
 			pathPart := msg[len(atPrefix):i]
 			rest := msg[i:] // includes ": "
@@ -556,6 +590,34 @@ func jsonPrefixError(result any, segment string) any {
 		}
 	}
 	return Err[any, any](ErrDecode(atPrefix + segment + ": " + msg))
+}
+
+// jsonPathEnd is the index of the ": " that ends the path of an
+// "at <path>: <message>" decode error, or -1. Text inside double quotes (a
+// key segment) is skipped, with its backslash escapes.
+func jsonPathEnd(msg string, from int) int {
+	inQuote := false
+	for i := from; i < len(msg); i++ {
+		c := msg[i]
+		if inQuote {
+			switch c {
+			case '\\':
+				i++
+			case '"':
+				inQuote = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inQuote = true
+		case ':':
+			if i+1 < len(msg) && msg[i+1] == ' ' {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 // extractErrMsg — helper to read the human-readable body of an
@@ -673,6 +735,11 @@ func jsonParseDocument(s string) (any, error) {
 	if _, err := dec.Token(); err != io.EOF {
 		return nil, fmt.Errorf("unexpected text after the JSON value at offset %d", dec.InputOffset())
 	}
+	// A repeated key in one object is refused (json_duplicate_keys.go): the
+	// tree above kept only its last value, with no error.
+	if err := jsonCheckDuplicateKeys(s); err != nil {
+		return nil, err
+	}
 	return raw, nil
 }
 
@@ -681,7 +748,7 @@ func jsonParseDocument(s string) (any, error) {
 // `Json.Encode` tree, an `Encode.raw` document) without writing it out as
 // text first. The Value is read exactly as `decodeString` would read the text
 // `Encode.encode 0` writes for it: an `Encode.object` is an object (a
-// duplicate key keeps its last value, as in the parser), an `Encode.int` is a
+// repeated key is refused, as the parser refuses it), an `Encode.int` is a
 // number `int` accepts, an `Encode.raw` document is parsed. So
 // `decodeValue d v == decodeString d (Encode.encode 0 v)` for every Value
 // `encode` can write. A NaN or infinite Float, which `encode` cannot write,
@@ -701,9 +768,32 @@ func JsonDec_decodeValue(decoder any, value any) any {
 // jsonDecodeTreeOf converts a Json.Value tree to the tree jsonParseDocument
 // produces, so every decoder sees one shape whichever way the value was made.
 func jsonDecodeTreeOf(v any) (any, error) {
+	return jsonDecodeTreeAt(v, 0)
+}
+
+// jsonMaxDepth is the deepest nesting of arrays and objects a decoder reads.
+// It is the limit encoding/json's parser applies to text, so a Value built in
+// memory meets the same limit as the text `encode` writes for it, and a
+// recursive decoder (`Decode.lazy`) never recurses deeper than this.
+const jsonMaxDepth = 10000
+
+func jsonTooDeep() error {
+	return fmt.Errorf("the Value nests arrays and objects deeper than %d", jsonMaxDepth)
+}
+
+// jsonDupUnder adds a path segment to a duplicate-key error that comes up from
+// a child, so the error names the object's full path.
+func jsonDupUnder(err error, segment string) error {
+	if d, ok := err.(*jsonDuplicateKeyError); ok {
+		d.path = segment + d.path
+	}
+	return err
+}
+
+func jsonDecodeTreeAt(v any, depth int) (any, error) {
 	switch x := v.(type) {
 	case JsonValue:
-		return jsonDecodeTreeOf(x.raw)
+		return jsonDecodeTreeAt(x.raw, depth)
 	case nil, string, bool, float64, json.Number:
 		return x, nil
 	case codecJustNull:
@@ -718,33 +808,49 @@ func jsonDecodeTreeOf(v any) (any, error) {
 	case json.RawMessage:
 		return jsonParseDocument(string(x))
 	case []any:
+		if depth >= jsonMaxDepth {
+			return nil, jsonTooDeep()
+		}
 		out := make([]any, len(x))
 		for i, it := range x {
-			t, err := jsonDecodeTreeOf(it)
+			t, err := jsonDecodeTreeAt(it, depth+1)
 			if err != nil {
-				return nil, err
+				return nil, jsonDupUnder(err, "["+strconv.Itoa(i)+"]")
 			}
 			out[i] = t
 		}
 		return out, nil
 	case map[string]any:
+		if depth >= jsonMaxDepth {
+			return nil, jsonTooDeep()
+		}
 		out := make(map[string]any, len(x))
 		for k, it := range x {
-			t, err := jsonDecodeTreeOf(it)
+			t, err := jsonDecodeTreeAt(it, depth+1)
 			if err != nil {
-				return nil, err
+				return nil, jsonDupUnder(err, jsonPathField(k))
 			}
 			out[k] = t
 		}
 		return out, nil
 	case jsonOrderedObject:
+		if depth >= jsonMaxDepth {
+			return nil, jsonTooDeep()
+		}
 		out := make(map[string]any, len(x.keys))
 		for i, k := range x.keys {
-			t, err := jsonDecodeTreeOf(x.vals[i])
-			if err != nil {
-				return nil, err
+			// A key the object gives twice (`Encode.object` with a repeated
+			// key, `Encode.dict` whose key function maps two keys to one
+			// string) is refused, as the parser refuses the text `encode`
+			// writes for it.
+			if _, dup := out[k]; dup {
+				return nil, &jsonDuplicateKeyError{key: k}
 			}
-			out[k] = t // a later duplicate wins, as when the text is parsed
+			t, err := jsonDecodeTreeAt(x.vals[i], depth+1)
+			if err != nil {
+				return nil, jsonDupUnder(err, jsonPathField(k))
+			}
+			out[k] = t
 		}
 		return out, nil
 	}
@@ -948,6 +1054,79 @@ func JsonDec_list(inner any) any {
 			}
 		}
 		return Ok[any, any](out)
+	}}
+}
+
+// jsonObjectEntries runs inner on each member of a JSON object, in byte-wise
+// key order (the order `Encode.encode` writes a decoded object in, so the
+// first failing member does not depend on Go's map order). A failure names
+// the key in its path: `at ["x"]: expected Int, got String`.
+func jsonObjectEntries(inner any, v any) ([]string, []any, any) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, nil, Err[any, any](ErrDecode("expected Object, got " + jsonValueKind(v)))
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	vals := make([]any, len(keys))
+	for i, k := range keys {
+		r := runDec(inner, m[k])
+		if isErr(r) {
+			return nil, nil, jsonPrefixError(r, jsonPathKey(k))
+		}
+		vals[i] = okVal(r)
+	}
+	return keys, vals, nil
+}
+
+// JsonDec_keyValuePairs : Decoder a -> Decoder (List ( String, a )) — every
+// member of a JSON object, as (key, value) pairs in byte-wise key order.
+func JsonDec_keyValuePairs(inner any) any {
+	return JsonDecoder{run: func(v any) any {
+		keys, vals, errR := jsonObjectEntries(inner, v)
+		if errR != nil {
+			return errR
+		}
+		out := make([]any, len(keys))
+		for i, k := range keys {
+			out[i] = SkyTuple2{V0: k, V1: vals[i]}
+		}
+		return Ok[any, any](out)
+	}}
+}
+
+// JsonDec_dict : Decoder a -> Decoder (Dict String a) — a JSON object as a
+// Dict keyed by its member names.
+func JsonDec_dict(inner any) any {
+	return JsonDecoder{run: func(v any) any {
+		keys, vals, errR := jsonObjectEntries(inner, v)
+		if errR != nil {
+			return errR
+		}
+		pairs := make([]any, len(keys))
+		for i, k := range keys {
+			pairs[i] = SkyTuple2{V0: k, V1: vals[i]}
+		}
+		return Ok[any, any](Dict_fromList(pairs))
+	}}
+}
+
+// JsonDec_lazy : (() -> Decoder a) -> Decoder a — a decoder made when it
+// runs, so a recursive decoder (a tree, a comment thread) can name itself.
+// The thunk is called each time the decoder runs. The depth of the recursion
+// is the depth of the JSON, which the parser and decodeValue bound
+// (jsonMaxDepth), so it cannot grow the Go stack past that.
+func JsonDec_lazy(thunk any) any {
+	return JsonDecoder{run: func(v any) any {
+		d := SkyCall(thunk, struct{}{})
+		dd, ok := d.(JsonDecoder)
+		if !ok {
+			return Err[any, any](ErrDecode("Json.Decode.lazy: the function did not give a decoder"))
+		}
+		return dd.run(v)
 	}}
 }
 

@@ -555,6 +555,7 @@ case Dec.decodeString (Dec.field "name" Dec.string) payload of
 | `Enc.null` | `Value` |
 | `Enc.list` | `(a -> Value) -> List a -> Value` |
 | `Enc.object` | `List (String, Value) -> Value` |
+| `Enc.dict` | `(k -> String) -> (v -> Value) -> Dict k v -> Value` — a `Dict` as a JSON object, members sorted byte-wise by the key text (v0.31.0) |
 | `Enc.encode` | `Int -> Value -> String` (indent param) |
 | `Enc.raw` | `String -> Result Error Value` — embed JSON text that is already serialised; invalid text is `Err InvalidInput` |
 
@@ -567,6 +568,9 @@ case Dec.decodeString (Dec.field "name" Dec.string) payload of
 | `Dec.field` | `String -> Decoder a -> Decoder a` |
 | `Dec.index` | `Int -> Decoder a -> Decoder a` |
 | `Dec.list` | `Decoder a -> Decoder (List a)` |
+| `Dec.keyValuePairs` | `Decoder a -> Decoder (List (String, a))` — every member of an object, in byte-wise key order (v0.31.0) |
+| `Dec.dict` | `Decoder a -> Decoder (Dict String a)` — an object keyed by its member names (v0.31.0) |
+| `Dec.lazy` | `(() -> Decoder a) -> Decoder a` — a decoder that names itself, for a recursive structure (v0.31.0) |
 | `Dec.map`, `Dec.map2`...`Dec.map5` | combine |
 | `Dec.andThen` | dependent decoders |
 | `Dec.succeed` / `Dec.fail` | constant decoders |
@@ -583,6 +587,43 @@ writes its text as it came. A `Dec.value` result does NOT keep the key order of
 its source: its objects are written back with their keys sorted byte-wise at
 every depth (`{"b":1,"a":2}` becomes `{"a":2,"b":1}`), and whitespace is not
 kept. Keep text whose exact bytes matter (a signed payload) with `Enc.raw`.
+`Dec.keyValuePairs` and `Dec.dict` follow the same contract: the pairs come
+in byte-wise key order, not in the order of the text.
+
+**Objects with keys you do not know in advance** (v0.31.0). A map of names
+to values reads with `Dec.dict` (or `Dec.keyValuePairs` for a list) and
+writes with `Enc.dict`. An error names the key in quotes, after the path of
+its field: `at .scores["bob"]: expected Int, got String`.
+
+```elm
+scores : Dec.Decoder (Dict String Int)
+scores =
+    Dec.field "scores" (Dec.dict Dec.int)
+
+writeScores : Dict String Int -> Enc.Value
+writeScores d =
+    Enc.object [ ( "scores", Enc.dict identity Enc.int d ) ]
+```
+
+`Enc.dict` writes the members sorted byte-wise by the key text (`"10"` before
+`"9"`), the order `Codec.dict` and `Codec.auto` use. Give it a key function
+that maps different keys to different text. When two keys map to one text,
+both members stay in the `Value` and every Sky decoder refuses the object, so
+no entry is lost without an error.
+
+**Recursive structures.** `Dec.lazy (\_ -> tree)` lets a decoder name itself.
+Every decoder reads at most 10000 nested arrays and objects: `decodeString`
+refuses deeper text and `decodeValue` a deeper `Value`, so a recursive decoder
+gives an `Err` on deep input, never a stack overflow.
+
+**A repeated key is refused** (v0.31.0, breaking). JSON text with a key that
+one object gives twice (`{"a":1,"a":2}`) is an `Err` that names the key and
+the path of its object, at any depth and whatever the decoder reads:
+`duplicate key "a" in the object at .items[2]`. This is the I-JSON rule
+(RFC 7493). The text `"a"` and `"a"` is one key. Before v0.31.0 the last
+value was kept with no error. The rule is at the parser, so `Codec.fromJson`,
+`Codec.auto`, a Sky.Spa message, a `Std.Db.Store` JSON column and
+`Dec.decodeValue` (of an `Enc.object` that gives a key twice) follow it too.
 
 For long records use the pipeline form:
 
@@ -1522,8 +1563,20 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   or a bad element of a `List (Maybe a)` is an `Err` naming where it failed,
   never a silent `Nothing`. A `Codec.object` field must be present, a
   `Maybe` included (`null` for `Nothing`).
-  `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
-  `[key, value]` pairs, so any comparable key round-trips. `Codec.value`
+  `Codec.dict keyCodec valueCodec` encodes a `Dict` as a JSON object when the
+  key codec is `Codec.string`, `Codec.int` or a `Codec.enum` (v0.31.0): a
+  String key is the member name, an Int key its decimal text (`"10"`), an enum
+  key its name, members sorted byte-wise. This is byte for byte the JSON
+  `Codec.auto` writes for a record field of the same `Dict` type. Any other key
+  codec (`Codec.float`, a tuple) keeps the JSON array of `[key, value]` pairs
+  (v0.27). The decoder reads both forms, so rows and files written by v0.30
+  and earlier still read. An Int key is read strictly (`"010"`, `"+1"`, `"1e1"`
+  are an `Err`), an error names the key (`at ["x"]: …`), and two members that
+  read as one key are an `Err`. The schema of the object form is
+  `{"type":"object","additionalProperties":…}`, with a `propertyNames` pattern
+  for Int keys and the names for enum keys. `Codec.lazy (\_ -> codec)` (v0.31.0)
+  is a codec that names itself, for a recursive type (`Json.Decode.lazy` for
+  codecs; an open schema, a JSON text column). `Codec.value`
   (v0.29.2) is a raw `Json.Value`, as it is both ways (a JSON text column, the
   open schema `{}`): `Codec.list Codec.value` carries a `List Json.Value`
   field whatever the blank holds (`Codec.auto` reads one only when its blank
