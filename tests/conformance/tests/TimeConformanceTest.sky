@@ -213,8 +213,10 @@ tests =
         (\_ -> Test.equal (Ok "EDT") (T.zoneName "America/New_York" (mk 2021 7 1 12 0 0)))
     , Test.test "zoneOffset UTC -> 0"
         (\_ -> Test.equal (Ok 0) (T.zoneOffset "UTC" (mk 2021 7 1 12 0 0)))
-    , Test.test "DST spring-forward gap hour (2021-03-14 02:30 NY) does not error -> Ok"
-        (\_ -> Test.ok (T.fromParts "America/New_York" 2021 3 14 2 30 0))
+    , Test.test "DST spring-forward gap hour (2021-03-14 02:30 NY) does not exist -> Err (v0.31.0)"
+        (\_ -> Test.err (T.fromParts "America/New_York" 2021 3 14 2 30 0))
+    , Test.test "the same gap hour with fromPartsWith Compatible -> 03:30 EDT (07:30 UTC)"
+        (\_ -> Test.equal (Ok (mk 2021 3 14 7 30 0)) (T.fromPartsWith T.Compatible "America/New_York" 2021 3 14 2 30 0))
 
       -- ── Sky.Core.Time formatting of a known UTC epoch (deterministic) ──
     , Test.test "formatISO8601: 2021-01-01T00:00:00Z"

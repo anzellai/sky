@@ -1,0 +1,153 @@
+module StdTimeEdgesTest exposing (main, tests)
+
+-- Std.Time at the edges, through the typed Sky surface: invalid calendar
+-- input, local times in a gap or an overlap with each Disambiguation, the
+-- Parts record, isZone / zones, and nextTransition / previousTransition.
+-- The Go tests in runtime-go/rt/time_zone_edges_test.go cover the kernels.
+-- This suite proves that the Sky types (the Disambiguation index, the Parts
+-- record, `Maybe Int`, `List String`) reach the program intact.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error
+import Sky.Core.List as List
+import Std.Time as T exposing (Disambiguation(..))
+import Sky.Test as Test exposing (Test)
+
+
+utcMs : Int -> Int -> Int -> Int -> Int -> Int
+utcMs y m d h mi =
+    Result.withDefault (-1) (T.fromParts "UTC" y m d h mi 0)
+
+
+code : Result Error.Error a -> String
+code r =
+    case r of
+
+        Ok _ ->
+            "Ok"
+
+        Err e ->
+            case Error.failureOf e of
+
+                Just f ->
+                    Error.failureDomain f ++ "/" ++ Error.failureCode f
+
+                Nothing ->
+                    "no domain"
+
+
+tests : List Test
+tests =
+    [ -- ── Calendar validation ──
+      Test.test "29 February 2024 (leap year) -> Ok"
+        (\_ -> Test.ok (T.fromParts "UTC" 2024 2 29 0 0 0))
+    , Test.test "29 February 2023 (not a leap year) -> InvalidDate"
+        (\_ -> Test.equal "time/InvalidDate" (code (T.fromParts "UTC" 2023 2 29 0 0 0)))
+    , Test.test "29 February 2100 (century, not a leap year) -> InvalidDate"
+        (\_ -> Test.equal "time/InvalidDate" (code (T.fromParts "UTC" 2100 2 29 0 0 0)))
+    , Test.test "31 February -> InvalidDate (it gave 3 March before)"
+        (\_ -> Test.equal "time/InvalidDate" (code (T.fromParts "UTC" 2026 2 31 0 0 0)))
+    , Test.test "31 April -> InvalidDate for every Disambiguation"
+        (\_ ->
+            Test.equal [ "time/InvalidDate", "time/InvalidDate", "time/InvalidDate", "time/InvalidDate" ]
+                (List.map (\d -> code (T.fromPartsWith d "Europe/London" 2026 4 31 12 0 0)) [ Compatible, Earlier, Later, Reject ])
+        )
+    , Test.test "year 0 -> InvalidDate"
+        (\_ -> Test.equal "time/InvalidDate" (code (T.fromParts "UTC" 0 1 1 0 0 0)))
+
+      -- ── Gaps (the clocks go forward) ──
+    , Test.test "London 2026-03-29 01:30 does not exist -> NonexistentLocalTime"
+        (\_ -> Test.equal "time/NonexistentLocalTime" (code (T.fromParts "Europe/London" 2026 3 29 1 30 0)))
+    , Test.test "London gap: Compatible and Later give 02:30 BST, Earlier 00:30 GMT"
+        (\_ ->
+            Test.equal [ Ok (utcMs 2026 3 29 1 30), Ok (utcMs 2026 3 29 0 30), Ok (utcMs 2026 3 29 1 30) ]
+                (List.map (\d -> T.fromPartsWith d "Europe/London" 2026 3 29 1 30 0) [ Compatible, Earlier, Later ])
+        )
+    , Test.test "New York gap 2026-03-08 02:30: Compatible 03:30 EDT, Earlier 01:30 EST"
+        (\_ ->
+            Test.equal [ Ok (utcMs 2026 3 8 7 30), Ok (utcMs 2026 3 8 6 30) ]
+                (List.map (\d -> T.fromPartsWith d "America/New_York" 2026 3 8 2 30 0) [ Compatible, Earlier ])
+        )
+    , Test.test "Pacific/Apia skipped all of 2011-12-30 (a 24-hour gap)"
+        (\_ ->
+            Test.equal [ "time/NonexistentLocalTime", "Ok" ]
+                [ code (T.fromParts "Pacific/Apia" 2011 12 30 12 0 0), code (T.fromParts "Pacific/Apia" 2011 12 31 0 0 0) ]
+        )
+    , Test.test "Apia gap: Compatible gives 2011-12-31 12:00 (+14)"
+        (\_ -> Test.equal (Ok (utcMs 2011 12 30 22 0)) (T.fromPartsWith Compatible "Pacific/Apia" 2011 12 30 12 0 0))
+
+      -- ── Overlaps (the clocks go back) ──
+    , Test.test "London 2026-10-25 01:30 occurs twice -> AmbiguousLocalTime"
+        (\_ -> Test.equal "time/AmbiguousLocalTime" (code (T.fromParts "Europe/London" 2026 10 25 1 30 0)))
+    , Test.test "London overlap: Compatible and Earlier give BST, Later GMT"
+        (\_ ->
+            Test.equal [ Ok (utcMs 2026 10 25 0 30), Ok (utcMs 2026 10 25 0 30), Ok (utcMs 2026 10 25 1 30) ]
+                (List.map (\d -> T.fromPartsWith d "Europe/London" 2026 10 25 1 30 0) [ Compatible, Earlier, Later ])
+        )
+    , Test.test "New York overlap 2026-11-01 01:30: Earlier EDT, Later EST"
+        (\_ ->
+            Test.equal [ Ok (utcMs 2026 11 1 5 30), Ok (utcMs 2026 11 1 6 30) ]
+                (List.map (\d -> T.fromPartsWith d "America/New_York" 2026 11 1 1 30 0) [ Earlier, Later ])
+        )
+    , Test.test "Lord_Howe 30-minute overlap 2026-04-05 01:45: +11 then +10:30"
+        (\_ ->
+            Test.equal [ Ok (utcMs 2026 4 4 14 45), Ok (utcMs 2026 4 4 15 15) ]
+                (List.map (\d -> T.fromPartsWith d "Australia/Lord_Howe" 2026 4 5 1 45 0) [ Earlier, Later ])
+        )
+    , Test.test "Lord_Howe overlap with Reject -> AmbiguousLocalTime"
+        (\_ -> Test.equal "time/AmbiguousLocalTime" (code (T.fromPartsWith Reject "Australia/Lord_Howe" 2026 4 5 1 45 0)))
+
+      -- ── Before 1970 ──
+    , Test.test "London 1960-06-01 12:00 BST is a negative instant"
+        (\_ -> Test.equal (Ok (-302446800000)) (T.fromParts "Europe/London" 1960 6 1 12 0 0))
+    , Test.test "toPartsUtc -1 is 1969-12-31 23:59:59.999, a Wednesday"
+        (\_ ->
+            Test.equal { year = 1969, month = 12, day = 31, hour = 23, minute = 59, second = 59, millisecond = 999, weekday = 3, offsetMinutes = 0, abbreviation = "UTC" }
+                (T.toPartsUtc (-1))
+        )
+
+      -- ── toParts ──
+    , Test.test "toParts London summer: BST, +60 minutes"
+        (\_ ->
+            Test.equal (Ok { year = 2026, month = 7, day = 1, hour = 12, minute = 34, second = 56, millisecond = 789, weekday = 3, offsetMinutes = 60, abbreviation = "BST" })
+                (T.toParts "Europe/London" 1782905696789)
+        )
+    , Test.test "toParts Lord_Howe winter: +630 minutes"
+        (\_ -> Test.equal (Ok 630) (Result.map .offsetMinutes (T.toParts "Australia/Lord_Howe" (utcMs 2026 7 1 0 0))))
+    , Test.test "toParts unknown zone -> UnknownZone"
+        (\_ -> Test.equal "time/UnknownZone" (code (T.toParts "Not/AZone" 0)))
+
+      -- ── Zone names ──
+    , Test.test "isZone: canonical names and links -> True"
+        (\_ -> Test.equal [ True, True, True, True ] (List.map T.isZone [ "Europe/London", "Etc/UTC", "UTC", "Asia/Calcutta" ]))
+    , Test.test "isZone: empty, Local, wrong case, unknown -> False"
+        (\_ -> Test.equal [ False, False, False, False ] (List.map T.isZone [ "", "Local", "europe/london", "Mars/Olympus_Mons" ]))
+    , Test.test "zones holds canonical names, not links"
+        (\_ ->
+            Test.equal [ True, True, False, False ]
+                (List.map (\n -> List.member n T.zones) [ "Europe/London", "Etc/UTC", "UTC", "Asia/Calcutta" ])
+        )
+    , Test.test "zones is long and sorted"
+        (\_ -> Test.equal True (List.length T.zones > 300 && List.sort T.zones == T.zones))
+
+      -- ── Transitions ──
+    , Test.test "nextTransition London from 2026-01-01 -> 2026-03-29 01:00 UTC"
+        (\_ -> Test.equal (Ok (Just 1774746000000)) (T.nextTransition "Europe/London" 1767225600000))
+    , Test.test "previousTransition London just after it -> the same instant"
+        (\_ -> Test.equal (Ok (Just 1774746000000)) (T.previousTransition "Europe/London" 1774746000001))
+    , Test.test "nextTransition New York 2007: the new rule (11 March)"
+        (\_ -> Test.equal (Ok (Just (utcMs 2007 3 11 7 0))) (T.nextTransition "America/New_York" (utcMs 2007 1 1 0 0)))
+    , Test.test "nextTransition Lord_Howe: the 30-minute change"
+        (\_ -> Test.equal (Ok (Just (utcMs 2026 4 4 15 0))) (T.nextTransition "Australia/Lord_Howe" (utcMs 2026 1 1 0 0)))
+    , Test.test "nextTransition Asia/Shanghai -> Nothing (no change since 1991)"
+        (\_ -> Test.equal (Ok Nothing) (T.nextTransition "Asia/Shanghai" (utcMs 2026 1 1 0 0)))
+    , Test.test "previousTransition Asia/Shanghai -> 1991-09-14 17:00 UTC"
+        (\_ -> Test.equal (Ok (Just (utcMs 1991 9 14 17 0))) (T.previousTransition "Asia/Shanghai" (utcMs 2026 1 1 0 0)))
+    , Test.test "nextTransition unknown zone -> UnknownZone"
+        (\_ -> Test.equal "time/UnknownZone" (code (T.nextTransition "Not/AZone" 0)))
+    ]
+
+
+main : Task Error.Error ()
+main =
+    Test.runMain tests

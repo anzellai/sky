@@ -15,11 +15,13 @@ package rt
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	// Embedded IANA tzdata so LoadLocation works without
-	// /usr/share/zoneinfo on the host. Adds ~450 KB to binary;
-	// worth it for containers / scratch images / Windows.
+	// /usr/share/zoneinfo on the host: containers, scratch images,
+	// Windows, and the Sky.Spa wasm client in a browser, which has
+	// no file system. See time_zone_edges.go for the size it adds.
 	_ "time/tzdata"
 )
 
@@ -31,25 +33,53 @@ func daysInMonthFor(year int, m time.Month) int {
 	return time.Date(year, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
-// loadZone wraps time.LoadLocation with a clearer error message
-// when the IANA name is unknown. Empty zone falls back to UTC.
+// loadZone resolves an IANA zone name. The empty name is UTC. The name
+// "Local" is refused: it is the host's zone, not an IANA name, so the same
+// program would give different answers on different hosts. A name that
+// differs from a known name only in case ("europe/london") is refused too:
+// a case-insensitive file system (macOS) would load it from the host's zone
+// files, but the embedded data and a Linux host would not, so the program
+// would work on one host and fail on another. Loaded zones are cached
+// (a *time.Location is immutable and safe to share).
 func loadZone(name string) (*time.Location, error) {
 	if name == "" {
 		return time.UTC, nil
+	}
+	if loc, ok := zoneCache.Load(name); ok {
+		return loc.(*time.Location), nil
+	}
+	if name == "Local" {
+		return nil, fmt.Errorf("unknown IANA zone %q: \"Local\" is the host's zone, not an IANA name. Give the zone name, for example \"Europe/London\"", name)
+	}
+	if !knownZone(name) {
+		if canon, ok := zoneFoldIndex()[strings.ToLower(name)]; ok {
+			return nil, fmt.Errorf("unknown IANA zone %q: zone names are case-sensitive. Did you mean %q?", name, canon)
+		}
 	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {
 		return nil, fmt.Errorf("unknown IANA zone %q: %v", name, err)
 	}
+	zoneCache.Store(name, loc)
 	return loc, nil
+}
+
+// zoneError is the Err for a zone name that loadZone refused: InvalidInput
+// with the domain "time", the code "UnknownZone" and the attribute "zone".
+func zoneError(name string, err error) any {
+	return Err[any, any](ErrDomain(errKindInvalidInput, err.Error(), DomainFailure{
+		Domain: "time", Code: timeCodeUnknownZone, RetryAfterMs: -1,
+		Attrs: [][2]string{{"zone", name}},
+	}))
 }
 
 // withZone is the common pattern: parse zone, build time, hand to a
 // callback. Centralises the load-and-err shape.
 func withZone(zone any, ms any, fn func(t time.Time, loc *time.Location) any) any {
-	loc, err := loadZone(fmt.Sprintf("%v", zone))
+	name := fmt.Sprintf("%v", zone)
+	loc, err := loadZone(name)
 	if err != nil {
-		return Err[any, any](ErrInvalidInput(err.Error()))
+		return zoneError(name, err)
 	}
 	t := time.UnixMilli(int64(AsInt(ms))).In(loc)
 	return fn(t, loc)
@@ -381,29 +411,15 @@ func init() {
 	// ── Construction from parts ─────────────────────────────────
 
 	// fromParts : String -> Int -> Int -> Int -> Int -> Int -> Int -> Result Error Int
-	// zone year month day hour minute second → Unix-ms
-	// All ranges validated; out-of-range returns Err.
+	// zone year month day hour minute second -> Unix ms. It is
+	// fromPartsWith Reject: an invalid date, a local time that does not
+	// exist (a gap) and a local time that exists twice (an overlap) are
+	// each an Err. See time_zone_edges.go.
 	RegisterPure("Time_fromParts", func(args []any) any {
 		if len(args) < 7 {
 			return Err[any, any](ErrInvalidInput("Time.fromParts: missing args"))
 		}
-		loc, err := loadZone(fmt.Sprintf("%v", args[0]))
-		if err != nil {
-			return Err[any, any](ErrInvalidInput(err.Error()))
-		}
-		year := AsInt(args[1])
-		month := AsInt(args[2])
-		day := AsInt(args[3])
-		hour := AsInt(args[4])
-		minute := AsInt(args[5])
-		second := AsInt(args[6])
-		if month < 1 || month > 12 || day < 1 || day > 31 ||
-			hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
-			second < 0 || second > 59 {
-			return Err[any, any](ErrInvalidInput("Time.fromParts: out-of-range field"))
-		}
-		t := time.Date(year, time.Month(month), day, hour, minute, second, 0, loc)
-		return Ok[any, any](int(t.UnixMilli()))
+		return timeFromParts("Time.fromParts", disambReject, args[0], args[1:7])
 	})
 
 	// ── Zone discovery ──────────────────────────────────────────
