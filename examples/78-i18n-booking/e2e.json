@@ -1,0 +1,39 @@
+{
+    "kind": "live",
+    "port": 8078,
+    "startupWaitMs": 2000,
+    "steps": [
+        {
+            "name": "English (en-GB)",
+            "method": "GET",
+            "path": "/",
+            "expectStatus": 200,
+            "expectBodyContains": ["Your booking", "3 nights", "Total: £1,234.50", "Arrival: 17 Nov 2026", "breakfast, spa and parking"],
+            "expectStderrAbsent": ["panic:", "sky.Unreachable"]
+        },
+        {
+            "name": "Simplified Chinese (zh-Hans)",
+            "method": "GET",
+            "path": "/zh",
+            "expectStatus": 200,
+            "expectBodyContains": ["您的预订", "3 晚", "总价：£1,234.50", "入住日期：2026年11月17日", "breakfast、spa和parking"],
+            "expectStderrAbsent": ["panic:", "sky.Unreachable"]
+        },
+        {
+            "name": "Arabic falls back to en-GB for the keys it lacks",
+            "method": "GET",
+            "path": "/ar",
+            "expectStatus": 200,
+            "expectBodyContains": ["حجزك", "3 ليالٍ", "Arrival: 17 Nov 2026"],
+            "expectStderrAbsent": ["panic:", "sky.Unreachable"]
+        },
+        {
+            "name": "pseudo-locale en-XA",
+            "method": "GET",
+            "path": "/xa",
+            "expectStatus": 200,
+            "expectBodyContains": ["[Ýöûŕ ƀööķíñĝ"],
+            "expectStderrAbsent": ["panic:", "sky.Unreachable"]
+        }
+    ]
+}

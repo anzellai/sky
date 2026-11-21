@@ -59,6 +59,8 @@ var exitAuditAllowed = map[string]string{
 	"child_signal.go": "the second-signal force exit runs only while no signal owner is registered, and an embedded " +
 		"database's supervisor is always one (installSignalHandler runs whenever a supervisor starts), so there is no " +
 		"database to stop; its first signal leaves through ExitProcess",
+	"i18n/skyi18ncheck/main.go": "the build-time catalogue checker, its own program that the compiler runs during " +
+		"sky check / sky build; it is never linked into an app and never starts an embedded database",
 }
 
 // exitAuditBanned are the process-ending members, per package. syscall.Exit is

@@ -1898,6 +1898,8 @@ fn stage_std_app_derived(project_dir: &Path, out_root: &Path) -> Result<PathBuf,
         // is rewritten absolute (`path_deps::absolutize_manifest`).
         let staged = std::fs::read_to_string(&toml_src)
             .map(|t| project::path_deps::absolutize_manifest(&t, project_dir))
+            // `[i18n] catalogues` is relative to this project too.
+            .map(|t| project::i18n::absolutize_manifest(&t, project_dir))
             .and_then(|t| std::fs::write(out_root.join("sky.toml"), t));
         if let Err(e) = staged {
             eprintln!("sky build: stage sky.toml: {e}");

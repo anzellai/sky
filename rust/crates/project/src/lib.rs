@@ -50,6 +50,7 @@ pub mod go_jobs;
 mod go_tool_metadata;
 #[cfg(test)]
 mod harvest_identity_tests;
+pub mod i18n;
 /// Available memory and the per-project peak records (`go_jobs`, the Sky.Spa
 /// leg plan).
 pub mod memory;

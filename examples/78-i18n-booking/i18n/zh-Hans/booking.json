@@ -1,0 +1,12 @@
+{
+  "booking.title": "您的预订",
+  "booking.greeting": "{name}，您好",
+  "booking.nights": { "=0": "未预订住宿", "other": "{count} 晚" },
+  "booking.total": "总价：{price}",
+  "booking.arrival": "入住日期：{day}",
+  "booking.extras": "包含：{items}",
+  "booking.reminder": "我们会在{when}发送提醒。",
+  "booking.added": "{room}已加入购物篮。",
+  "booking.add": "添加套房",
+  "booking.language": "语言"
+}

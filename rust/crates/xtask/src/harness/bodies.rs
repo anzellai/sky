@@ -942,7 +942,10 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **896 since the v0.30.0 `breaker` Family-S surface** (+2: the nominal
 /// and failure cases of `Std.Breaker`).
-pub const CORPUS_EXPECTED: u64 = 896;
+///
+/// **898 since the v0.31.0 `i18n` Family-S surface** (+2: the nominal and
+/// failure cases of `Std.I18n` / `Std.I18n.Format`).
+pub const CORPUS_EXPECTED: u64 = 898;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -1049,7 +1052,10 @@ pub const CORPUS_EXPECTED: u64 = 896;
 ///
 /// **732 since the v0.30.0 `breaker` Family-S surface** (+2, both built
 /// and run).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 732;
+///
+/// **734 since the v0.31.0 `i18n` Family-S surface** (+2, both built and
+/// run).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 734;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -1096,7 +1102,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// still identical (137 shared, one full-rebuild fallback). This is a tier-only
 /// exact-count ratchet — it drifted undetected because only the release/T1
 /// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
-pub const SHARED_WORLD_EXPECTED: u64 = 191; // 191 in v0.30.0, measured by the `shared-world` gate: +5 reject files routed_page_routeless_on_navigate_record.sky, routed_page_routeless_on_navigate_int.sky, routed_page_routeless_on_navigate_string.sky, routed_page_raw_live_on_navigate.sky, routed_page_raw_spa_on_navigate.sky ([E2001], the `withOnNavigate` page has the model's page type); 186 in v0.30.0, measured by the `shared-world` gate: +4 reject files routed_page_custom_type_helper.sky, routed_page_custom_type_helper_unannotated.sky, routed_page_custom_type_record_field.sky, routed_page_served_by_generic_helper.sky ([E2001], the check at the served app); 182 in v0.30.0, measured by the `shared-world` gate: +5 reject files routed_page_let_local_helper.sky, routed_page_let_lambda_helper.sky, routed_page_let_alias_of_helper.sky, routed_page_let_record_helper.sky, routed_page_nested_let_helper.sky ([E2001], a routing helper bound in a let); 177 in v0.30.0, measured by the `shared-world` gate: +6 reject files routed_page_not_model_page_type.sky, routed_page_through_generic_helper.sky, routed_page_raw_generic_helper.sky, routed_page_raw_live.sky, routed_page_raw_spa_routes.sky, routed_page_raw_spa_not_found.sky ([E2001], a routed page has the model's page type); 171 in v0.30.0, measured by the `shared-world` gate: +1 reject file undefined_type_in_record_alias.sky; 170: +1 reject file ui_html_takes_html.sky ([E2001], `Ui.html` takes an `Html msg`, v0.29.11); 169: +1 dir examples/77-demo-expenses; 168 in v0.29.0 repo tidy: -2 dirs examples/simple and examples/test_pkg (removed);  170 in v0.29.0 batch C: +4 reject files value_cycle_top_level.sky, value_cycle_in_let.sky ([E1018]), regex_invalid_literal.sky ([E2014]), regex_pattern_string_form.sky ([E2001]); 166 at the merge of v0.27.18 into the v0.28.0 branch: 164 + 2 reject files constructor_clash_expression.sky + constructor_clash_pattern.sky ([E1017]); measured 164 by the `shared-world` gate at the merge of v0.28.0 phases 4 and 5: +1 dir examples/74-ai-cloud; measured 163 by the `shared-world` gate in v0.28.0 phase 5: +1 dir examples/75-ai-everywhere; measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
+pub const SHARED_WORLD_EXPECTED: u64 = 192; // 192 in v0.31.0, measured by the `shared-world` gate: +1 dir examples/78-i18n-booking; 191 in v0.30.0, measured by the `shared-world` gate: +5 reject files routed_page_routeless_on_navigate_record.sky, routed_page_routeless_on_navigate_int.sky, routed_page_routeless_on_navigate_string.sky, routed_page_raw_live_on_navigate.sky, routed_page_raw_spa_on_navigate.sky ([E2001], the `withOnNavigate` page has the model's page type); 186 in v0.30.0, measured by the `shared-world` gate: +4 reject files routed_page_custom_type_helper.sky, routed_page_custom_type_helper_unannotated.sky, routed_page_custom_type_record_field.sky, routed_page_served_by_generic_helper.sky ([E2001], the check at the served app); 182 in v0.30.0, measured by the `shared-world` gate: +5 reject files routed_page_let_local_helper.sky, routed_page_let_lambda_helper.sky, routed_page_let_alias_of_helper.sky, routed_page_let_record_helper.sky, routed_page_nested_let_helper.sky ([E2001], a routing helper bound in a let); 177 in v0.30.0, measured by the `shared-world` gate: +6 reject files routed_page_not_model_page_type.sky, routed_page_through_generic_helper.sky, routed_page_raw_generic_helper.sky, routed_page_raw_live.sky, routed_page_raw_spa_routes.sky, routed_page_raw_spa_not_found.sky ([E2001], a routed page has the model's page type); 171 in v0.30.0, measured by the `shared-world` gate: +1 reject file undefined_type_in_record_alias.sky; 170: +1 reject file ui_html_takes_html.sky ([E2001], `Ui.html` takes an `Html msg`, v0.29.11); 169: +1 dir examples/77-demo-expenses; 168 in v0.29.0 repo tidy: -2 dirs examples/simple and examples/test_pkg (removed);  170 in v0.29.0 batch C: +4 reject files value_cycle_top_level.sky, value_cycle_in_let.sky ([E1018]), regex_invalid_literal.sky ([E2014]), regex_pattern_string_form.sky ([E2001]); 166 at the merge of v0.27.18 into the v0.28.0 branch: 164 + 2 reject files constructor_clash_expression.sky + constructor_clash_pattern.sky ([E1017]); measured 164 by the `shared-world` gate at the merge of v0.28.0 phases 4 and 5: +1 dir examples/74-ai-cloud; measured 163 by the `shared-world` gate in v0.28.0 phase 5: +1 dir examples/75-ai-everywhere; measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -3423,7 +3429,11 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///
 /// 1351 + 16 = 1367: `Std/BreakerTest` (v0.30.0 `Std.Breaker`: opens after
 /// N, the refusal, a non-counting error, trials, concurrent counts).
-pub const SKY_SUITES_EXPECTED: u64 = 1367;
+///
+/// 1367 + 39 = 1406: `Std/I18nTest` (v0.31.0 `Std.I18n` / `Std.I18n.Format`:
+/// locales, plural rules, overrides, a `Text` through `Codec.auto`, CLDR
+/// formatting, and the LocaleNotCompiled refusal).
+pub const SKY_SUITES_EXPECTED: u64 = 1406;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
@@ -4062,7 +4072,7 @@ pub const KERNEL_MEMBERS_EXPECTED: u64 = 116;
 /// `sky-stdlib/Std/Office/Xlsx.sky` and `Std/Office/Docx.sky`. 402 -> 403:
 /// `sky-stdlib/Std/Image/Canvas.sky`. 403 -> 401: `examples/simple` and
 /// `examples/test_pkg` removed in the v0.29.0 repo tidy.
-pub const FMT_CLEAN_EXPECTED: u64 = 407; // 405 -> 407 in v0.30.0, measured by the `fmt-clean` gate: sky-stdlib/Std/Admission.sky and Std/Breaker.sky; 401 -> 405: examples/77-demo-expenses (three src modules, one tests suite)
+pub const FMT_CLEAN_EXPECTED: u64 = 410; // 407 -> 410 in v0.31.0: sky-stdlib/Std/I18n.sky, Std/I18n/Format.sky, examples/78-i18n-booking/src/Main.sky; 405 -> 407 in v0.30.0, measured by the `fmt-clean` gate: sky-stdlib/Std/Admission.sky and Std/Breaker.sky; 401 -> 405: examples/77-demo-expenses (three src modules, one tests suite)
 
 /// Every tracked `.sky` file in scope is already `sky fmt`-clean.
 pub fn fmt_clean(ctx: &GateCtx) -> GateOutcome {

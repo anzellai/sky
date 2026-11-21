@@ -765,6 +765,49 @@ brotli). The name list adds about 25 KB (about 4 KB after brotli).
 | `zoneOffset zone ms` / `zoneName zone ms` | zone metadata at that instant |
 | `utc` | `String` — the `"UTC"` constant |
 
+### `Std.I18n` — locales, plural rules and messages (v0.31.0)
+
+```elm
+import Std.I18n as I18n exposing (Locale, Text)
+import Std.I18n.Format as Format
+```
+
+Locales and catalogues come from `[i18n]` in `sky.toml`. `sky check` checks
+every catalogue (E5001 to E5008). Everything is pure and runs the same on the
+server and in a Sky.Spa client. Import it qualified: names such as `int`,
+`list` and `string` are short. The guide is [i18n.md](i18n.md).
+
+| Surface | Signature / behaviour |
+|---|---|
+| `locale s` | `String -> Result Error Locale` — parse and canonicalise ("zh-hant-hk" is "zh-Hant-HK") |
+| `tag` / `language` / `script` | `Locale -> String` — `script` gives the likely script ("zh-HK" is "Hant") |
+| `region` | `Locale -> Maybe String` |
+| `direction` | `Locale -> Direction` (`Ltr` / `Rtl`) |
+| `fallbacks` | `Locale -> List Locale` — the CLDR chain, then the default locale |
+| `negotiate supported header` | `List Locale -> String -> Locale` — `Accept-Language` matching |
+| `defaultLocale` / `locales` | `Locale` / `List Locale` — from `[i18n]`, else "en" |
+| `plural` / `ordinal` | `Locale -> Int -> PluralCategory` (`Zero One Two Few Many Other`) |
+| `pluralDecimal` | `Locale -> Decimal -> PluralCategory` |
+| `t loc key args` | `Locale -> String -> List ( String, Arg ) -> String` |
+| `text key args` / `key k` / `verbatim s` | build a `Text` to store and render later |
+| `render loc txt` | `Locale -> Text -> String` |
+| `textKey` | `Text -> Maybe String` |
+| `string` `int` `decimal` `money` `percent` `time` `date` `list` | build an `Arg` |
+| `overrides` | `List Override -> Result Error Overrides` — extra messages that win (`tWith`, `renderWith`) |
+
+### `Std.I18n.Format` — CLDR formatting (v0.31.0)
+
+| Surface | Signature / behaviour |
+|---|---|
+| `int` / `decimal` / `percent` / `money` | `Locale -> … -> Result Error String` ("1,234", "12,34,567" in hi, "£1,234.50", "1.234,50 €" in de) |
+| `date loc style iso` | `Locale -> Style -> String -> Result Error String` (`Short Medium Long Full`) |
+| `time` / `dateTime` | `Locale -> Style -> String -> Int -> Result Error String` — zone and Unix ms |
+| `list` | `Locale -> ListStyle -> List String -> Result Error String` (`And Or Unit`) |
+| `relative` | `Locale -> Numeric -> RelativeUnit -> Int -> Result Error String` (`Always` / `Auto`) |
+
+A locale whose CLDR data the program does not carry is an `Err` (domain
+"i18n", code "LocaleNotCompiled") that names the `sky.toml` fix.
+
 ---
 
 ## Effects (`Task Error a`)

@@ -314,8 +314,33 @@ fn code_title(code: &str) -> &'static str {
         "E2014" => "INVALID REGEX",
         "E3001" => "MISSING PATTERNS",
         "E4005" => "CODEGEN ERROR",
+        // E5xxx: the Std.I18n catalogue check (docs/errors/i18n-catalogues.md).
+        // The codes are the runtime checker's (`runtime-go/rt/i18n/check.go`).
+        "E5001" => "I18N CONFIG",
+        "E5002" => "UNKNOWN LOCALE",
+        "E5003" => "CATALOGUE FILE",
+        "E5004" => "MESSAGE SYNTAX",
+        "E5005" => "UNKNOWN MESSAGE FUNCTION",
+        "E5006" => "KEY NOT IN DEFAULT LOCALE",
+        "E5007" => "UNKNOWN PLACEHOLDER",
+        "E5008" => "PLURAL CATEGORIES",
         _ => "ERROR",
     }
+}
+
+/// Render a diagnostic that has a file location but no Sky source span (a
+/// catalogue file, `sky.toml`): the header rule, the message, and a `See:`
+/// line when a document explains the code.
+pub fn render_located(code: &str, loc: Option<&str>, message: &str, see: Option<&str>) -> String {
+    let mut out = header_line(code_title(code), loc, code);
+    out.push_str("\n\n");
+    out.push_str(message);
+    if let Some(see) = see {
+        out.push_str("\n\nSee: ");
+        out.push_str(see);
+    }
+    out.push('\n');
+    out
 }
 
 /// `-- TITLE -------------------------------- path:line:col`, padded to

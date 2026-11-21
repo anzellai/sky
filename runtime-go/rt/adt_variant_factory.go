@@ -264,7 +264,7 @@ func registerCodecDeclaredOwner(declared, owner string) {
 
 func codecAutoDeclaredReadable(declared string) bool {
 	switch codecAutoDeclaredOwner(declared) {
-	case skyDecimalOwner, skyMoneyOwner, skyCurrencyOwner:
+	case skyDecimalOwner, skyMoneyOwner, skyCurrencyOwner, skyI18nTextOwner, skyI18nLocaleOwner:
 		return true
 	default:
 		return false

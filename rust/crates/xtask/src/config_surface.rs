@@ -478,6 +478,9 @@ const KEY_READERS: &[(&str, bool)] = &[
     ("sky_toml_section_key", true),
     ("sky_toml_flag", true),
     ("toml_value", true),
+    // `[i18n]` (Std.I18n, project/src/i18n.rs): the build-time reader that
+    // also joins a multi-line array.
+    ("i18n_toml_value", true),
 ];
 
 /// Crates whose code runs with no app binary in existence.

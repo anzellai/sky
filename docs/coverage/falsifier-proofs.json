@@ -296,7 +296,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1795124445
+      "proven_at_unix": 1795302116
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -448,15 +448,15 @@
       "proven_at_unix": 1795123538
     },
     "corpus-manifest": {
-      "inputs_files": 182,
-      "inputs_hash": "0563d02e617e689dcc42abad84325de17be2fa01",
+      "inputs_files": 184,
+      "inputs_hash": "6027f2cd66f1339a7bb3a9ca6e3a66912e39693d",
       "mutation": "corpus-manifest.drift",
       "mutations": [
         "corpus-manifest.drift"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795123559
+      "proven_at_unix": 1795302116
     },
     "corpus-reject": {
       "inputs_files": 182,

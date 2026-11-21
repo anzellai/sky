@@ -281,6 +281,18 @@ make a test pass.
   in `.env.test`. A project whose `.env` names a database runs `sky test` in
   test mode, so outbound HTTP is mocked and fails closed without a fixture.
 
+### Translated text: Std.I18n catalogues, checked by the build
+
+Put every user-facing string in `i18n/<locale>/*.json` and render it with
+`I18n.t` or a stored `I18n.Text`. When `sky check` reports E5001 to E5008, fix
+the catalogue the message names (`docs/errors/i18n-catalogues.md` in the Sky
+repository): add the missing plural form, rename the placeholder to the one
+the default locale uses, add the key to the default locale first. Do not
+delete a message or a plural form to make the check pass. A new locale goes
+into `[i18n] locales` in `sky.toml`; a `LocaleNotCompiled` error at run time
+means it is missing there. Do not call a translation service on your own:
+ask the user who writes each language.
+
 ### XML and ZIP input is hostile: use Std.Xml and Std.Zip
 
 Read XML with `Std.Xml.parse` / `Std.Xml.Decode` (or `Codec.fromXml`) and
