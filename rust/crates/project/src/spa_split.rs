@@ -6090,10 +6090,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // build bakes into the binary (`[database]` above all: without it a
     // database-backed app's backend answered every read with "no path given").
     let runtime_sections = emit_backend_runtime_sections(project_dir);
+    // `[i18n]` goes into BOTH halves: the server renders the first paint and
+    // the wasm client re-renders it, so both embed the same catalogue and the
+    // same CLDR data (the catalogue folder made absolute, i18n.rs).
+    let i18n_section = crate::i18n::spa_section(project_dir);
     write(
         "backend/sky.toml",
         &format!(
-            "{}{dep_sections}{live_store}{runtime_sections}",
+            "{}{dep_sections}{live_store}{runtime_sections}{i18n_section}",
             sky_toml(&format!("{proj_name}-backend"), "backend", &entry_rel)
         ),
         &mut files,
@@ -6101,7 +6105,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     write(
         "frontend/sky.toml",
         &format!(
-            "{}wire = \"{wire_hash}\"\n{dep_sections}",
+            "{}wire = \"{wire_hash}\"\n{dep_sections}{i18n_section}",
             sky_toml(&format!("{proj_name}-frontend"), "frontend", &entry_rel)
         ),
         &mut files,
