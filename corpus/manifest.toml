@@ -5202,7 +5202,7 @@ witness    = "value"
 axes       = { edge = "nominal", surface = "i18n" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "zh-Hant-HK|Zero,One,Two,Few,Many,Other|One,Two,Few,Other|£1,234.50|-1,234,567|a, b, and c|1 item|2 items"
+stdout     = "zh-Hant-HK|Zero,One,Two,Few,Many,Other;One,Two,Few,Other|£1,234.50;-1,234,567;a, b, and c|1 item;2 items"
 
 [[case]]
 id         = "stdlib_edge/failure-i18n"

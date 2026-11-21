@@ -4865,17 +4865,17 @@ fn i18n_battery(edge: &str) -> Vec<Check> {
             s(
                 &["I18n.plural", "I18n.ordinal"],
                 "i18nPlurals",
-                "Zero,One,Two,Few,Many,Other|One,Two,Few,Other",
+                "Zero,One,Two,Few,Many,Other;One,Two,Few,Other",
             ),
             s(
                 &["Format.money", "Format.int", "Format.list"],
                 "i18nFormats",
-                "£1,234.50|-1,234,567|a, b, and c",
+                "£1,234.50;-1,234,567;a, b, and c",
             ),
             s(
                 &["I18n.overrides", "I18n.tWith", "I18n.int"],
                 "i18nOverride",
-                "1 item|2 items",
+                "1 item;2 items",
             ),
         ],
         "failure" => vec![
@@ -7355,13 +7355,13 @@ catName c =
 i18nPlurals : String
 i18nPlurals =
     String.join "," (List.map (\n -> catName (I18n.plural (loc "ar") n)) [ 0, 1, 2, 3, 11, 100 ])
-        ++ "|"
+        ++ ";"
         ++ String.join "," (List.map (\n -> catName (I18n.ordinal (loc "en") n)) [ 1, 2, 3, 4 ])
 
 
 i18nFormats : String
 i18nFormats =
-    String.join "|"
+    String.join ";"
         [ Format.money (loc "en") (Money.fromMinor Money.GBP 123450) |> orE
         , Format.int (loc "en") -1234567 |> orE
         , Format.list (loc "en") Format.And [ "a", "b", "c" ] |> orE
@@ -7371,7 +7371,7 @@ i18nFormats =
 i18nOverride : String
 i18nOverride =
     I18n.overrides [ { locale = loc "en", key = "n", message = ".input {$count :number}\n.match $count\none {{{count} item}}\n* {{{count} items}}" } ]
-        |> Result.map (\ov -> String.join "|" (List.map (\n -> I18n.tWith ov (loc "en") "n" [ ( "count", I18n.int n ) ]) [ 1, 2 ]))
+        |> Result.map (\ov -> String.join ";" (List.map (\n -> I18n.tWith ov (loc "en") "n" [ ( "count", I18n.int n ) ]) [ 1, 2 ]))
         |> orE
 
 

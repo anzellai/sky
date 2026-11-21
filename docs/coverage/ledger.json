@@ -662,7 +662,7 @@
       "tier": "T1"
     },
     "fmt-clean": {
-      "expected_assertions": 411,
+      "expected_assertions": 410,
       "falsifier_mutation": "fmt-clean.unformat-a-tracked-file",
       "falsifier_proven": true,
       "summary": "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ and templates/ is already `sky fmt`-clean",
