@@ -1,0 +1,11 @@
+name = "i18n-booking"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[i18n]
+locales = ["en-GB", "zh-Hans", "ar", "en-XA"]
+default = "en-GB"
+catalogues = "i18n"

@@ -582,9 +582,10 @@ pub static GATES: &[Gate] = &[
                 // Std.Image.Canvas surface (+2 cases, 842 → 844), and the
                 // v0.29.6 generic_fn_record_slot stratum (+48 cases, 844 → 892),
                 // and the v0.30.0 deadline surface (+2 cases, 892 → 894),
-                // and the v0.30.0 breaker surface (+2 cases, 894 → 896).
-                from: "n_min = 896",
-                to: "n_min = 897",
+                // and the v0.30.0 breaker surface (+2 cases, 894 → 896),
+                // and the v0.31.0 i18n surface (+2 cases, 896 → 898).
+                from: "n_min = 898",
+                to: "n_min = 899",
             },
         }]),
         body: bodies::corpus_manifest,

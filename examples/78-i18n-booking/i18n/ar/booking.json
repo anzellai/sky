@@ -1,0 +1,13 @@
+{
+  "booking.title": "حجزك",
+  "booking.greeting": "مرحبًا {name}",
+  "booking.nights": {
+    "zero": "لا ليالٍ",
+    "one": "ليلة واحدة",
+    "two": "ليلتان",
+    "few": "{count} ليالٍ",
+    "many": "{count} ليلة",
+    "other": "{count} ليلة"
+  },
+  "booking.total": "المجموع: {price}"
+}

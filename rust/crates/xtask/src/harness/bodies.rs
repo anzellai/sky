@@ -942,7 +942,10 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **896 since the v0.30.0 `breaker` Family-S surface** (+2: the nominal
 /// and failure cases of `Std.Breaker`).
-pub const CORPUS_EXPECTED: u64 = 896;
+///
+/// **898 since the v0.31.0 `i18n` Family-S surface** (+2: the nominal and
+/// failure cases of `Std.I18n` / `Std.I18n.Format`).
+pub const CORPUS_EXPECTED: u64 = 898;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -1049,7 +1052,10 @@ pub const CORPUS_EXPECTED: u64 = 896;
 ///
 /// **732 since the v0.30.0 `breaker` Family-S surface** (+2, both built
 /// and run).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 732;
+///
+/// **734 since the v0.31.0 `i18n` Family-S surface** (+2, both built and
+/// run).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 734;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
