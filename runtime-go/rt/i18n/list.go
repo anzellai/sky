@@ -2,6 +2,7 @@ package i18n
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -25,13 +26,16 @@ func FormatList(l Locale, style ListStyle, items []string) (string, error) {
 	}
 	get := func(part string) string { return d.get("list." + string(style) + "." + part) }
 	sub := func(p, a, b string) string { return strings.NewReplacer("{0}", a, "{1}", b).Replace(p) }
+	// The two-item and end patterns join the last item: their conjunction
+	// can depend on how that item starts (contextualPattern).
+	last := func(p, a, b string) string { return sub(contextualPattern(l.Language, p, b), a, b) }
 	switch len(items) {
 	case 0:
 		return "", nil
 	case 1:
 		return items[0], nil
 	case 2:
-		return sub(get("2"), items[0], items[1]), nil
+		return last(get("2"), items[0], items[1]), nil
 	case 3:
 		if p := get("3"); p != "" {
 			return strings.NewReplacer("{0}", items[0], "{1}", items[1], "{2}", items[2]).Replace(p), nil
@@ -39,11 +43,48 @@ func FormatList(l Locale, style ListStyle, items []string) (string, error) {
 	}
 	// end over the last two, middle inward, start over the first.
 	n := len(items)
-	acc := sub(get("end"), items[n-2], items[n-1])
+	acc := last(get("end"), items[n-2], items[n-1])
 	for i := n - 3; i >= 1; i-- {
 		acc = sub(get("middle"), items[i], acc)
 	}
 	return sub(get("start"), items[0], acc), nil
+}
+
+// The contextual list rules of ICU's ListFormatter (listformatter.cpp), the
+// same set and the same conditions (ASCII letters in either case), tested on
+// the item that follows the conjunction:
+//
+//   - Spanish "y" is "e" before an /i/ sound: an item that starts with "i",
+//     or is "hi", or starts with "hi" and a letter other than "a" or "e"
+//     ("hielo" and "hiato" keep "y").
+//   - Spanish "o" is "u" before an /o/ sound: an item that starts with "o",
+//     "ho" or "8", or is "11" or starts with "11 ".
+//   - Hebrew "ו" is "ו-" before an item that does not start with a Hebrew
+//     letter.
+//
+// ICU applies a rule only where the locale's pattern is exactly the plain
+// form, so a pattern CLDR changes is never rewritten.
+var (
+	spanishECondition   = regexp.MustCompile(`(?s)^([iI].*|[hH][iI]|[hH][iI][^aAeE].*)$`)
+	spanishUCondition   = regexp.MustCompile(`(?s)^(([oO]|[hH][oO]|8).*|11( .*)?)$`)
+	hebrewDashCondition = regexp.MustCompile(`(?s)^[^\p{Hebrew}].*$`)
+)
+
+func contextualPattern(lang, pattern, next string) string {
+	switch lang {
+	case "es":
+		switch {
+		case pattern == "{0} y {1}" && spanishECondition.MatchString(next):
+			return "{0} e {1}"
+		case pattern == "{0} o {1}" && spanishUCondition.MatchString(next):
+			return "{0} u {1}"
+		}
+	case "he":
+		if pattern == "{0} \u05d5{1}" && hebrewDashCondition.MatchString(next) {
+			return "{0} \u05d5-{1}"
+		}
+	}
+	return pattern
 }
 
 // RelUnit is a relative-time unit.
