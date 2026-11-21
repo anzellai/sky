@@ -1079,7 +1079,16 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// but asserted by none, gained the `deadline` surface (`Task.timeout`,
 /// `Task.remaining`).
 /// Net (v0.30.0): 75 + 1 (Std.Admission) - 1 (Sky.Core.Task) = 75.
-pub const DARK_MODULE_CEILING: usize = 75;
+///
+/// Raised 75 -> 76 (v0.31.0): the new `Std.Html.Document`. Its `Attribute` is
+/// opaque and Sky has no reader for it: the values exist only to be written on
+/// the root `<html>` element, which a Sky program cannot observe. Its
+/// behaviour is covered where it happens, by
+/// `runtime-go/rt/document_attrs_test.go` (BCP 47 check, data-name rules,
+/// last-wins, escaping), `live_document_test.go`, `spa_ssr_document_test.go`,
+/// `webview_document_test.go`, `live_doc_client_test.go` and the browser
+/// gate `scripts/document-e2e.sh` (Sky.Live and web:app), not here.
+pub const DARK_MODULE_CEILING: usize = 76;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
