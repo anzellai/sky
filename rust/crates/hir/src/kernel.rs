@@ -838,7 +838,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
     (
         "JsonEnc",
         &[
-            "string", "int", "float", "bool", "null", "list", "object", "encode", "raw",
+            "string", "int", "float", "bool", "null", "list", "object", "encode", "raw", "dict",
         ],
     ),
     (
@@ -867,6 +867,9 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "map3",
             "map4",
             "map5",
+            "keyValuePairs",
+            "dict",
+            "lazy",
         ],
     ),
     (

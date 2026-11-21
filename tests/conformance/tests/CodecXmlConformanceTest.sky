@@ -506,7 +506,7 @@ tests =
                             "<o:order xmlns:o=\"urn:o\"><o:id>A-1</o:id><o:customer>Ada</o:customer><o:lines sku=\"x\"><o:qty>2</o:qty></o:lines><o:lines><o:sku>y</o:sku><o:qty>1</o:qty></o:lines><o:paid>0</o:paid></o:order>"
                       ))
     , Test.test
-          "jsonSchema of a union, result, dict and error is unchanged"
+          "jsonSchema of a union, result, dict in its pairs form and error is open"
           (\_ ->
               Test.equal
                   [ ( "{}", False )
@@ -519,7 +519,8 @@ tests =
                   ]
                   [ schemaText shapeCodec
                   , schemaText (Codec.result Codec.string Codec.int)
-                  , schemaText (Codec.dict Codec.string Codec.int)
+                  , schemaText
+                        (Codec.dict (Codec.lazy (\_ -> Codec.int)) Codec.int)
                   , schemaText Codec.error
                   , schemaText
                         (Codec.object identity

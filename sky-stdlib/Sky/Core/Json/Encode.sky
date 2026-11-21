@@ -2,10 +2,22 @@
 --
 -- Builds a `Value` (opaque JSON tree) one piece at a time.  Call
 -- `encode indent value` at the end to serialise to a `String`.
-module Sky.Core.Json.Encode exposing (string, int, float, bool, null, list, object, encode, raw)
+module Sky.Core.Json.Encode exposing
+    ( string
+    , int
+    , float
+    , bool
+    , null
+    , list
+    , object
+    , dict
+    , encode
+    , raw
+    )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Dict exposing (Dict)
 
 
 -- | Encode a string as a JSON string value.
@@ -48,10 +60,37 @@ list =
     Ffi.kernel "JsonEnc_list"
 
 
--- | Encode a `[(key, value)]` list as a JSON object.
+-- | Encode a `[(key, value)]` list as a JSON object. The members keep the
+-- order of the list. Give each key once: a key the list gives twice is written
+-- twice, and every Sky decoder refuses that object.
 object : List ( String, Value ) -> Value
 object =
     Ffi.kernel "JsonEnc_object"
+
+
+-- | Encode a `Dict` as a JSON object. The first function gives the key text
+-- of each key, the second the value. This is Elm's `Json.Encode.dict`.
+--
+--     Encode.encode 0 (Encode.dict identity Encode.int (Dict.fromList [ ( "b", 2 ), ( "a", 1 ) ]))
+--         == "{\"a\":1,\"b\":2}"
+--
+--     Encode.encode 0 (Encode.dict String.fromInt Encode.string (Dict.fromList [ ( 10, "ten" ), ( 9, "nine" ) ]))
+--         == "{\"10\":\"ten\",\"9\":\"nine\"}"
+--
+-- The members are sorted byte-wise by the key text (`"10"` before `"9"`,
+-- `"B"` before `"a"`), the order `Codec.auto` and `Codec.dict` write a `Dict`
+-- in, so all three give the same bytes.
+--
+-- Give a key function that maps different keys to different text. When two
+-- keys map to the same text (`String.toLower` over `"A"` and `"a"`), no entry
+-- is dropped: both members stay in the `Value`, in Dict order, and `encode`
+-- writes the key twice. Every Sky decoder refuses that object (`decodeString`
+-- and `decodeValue` refuse a repeated key), so the collision shows as an error
+-- where the JSON is read, never as a lost entry. A reader outside Sky can keep
+-- only one of the two, so do not rely on this.
+dict : (k -> String) -> (v -> Value) -> Dict k v -> Value
+dict =
+    Ffi.kernel "JsonEnc_dict"
 
 
 -- | `encode indent value` — serialise to a JSON string.  `indent`

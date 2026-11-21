@@ -9,11 +9,11 @@
   "removals_accounted": 94,
   "stdlib": {
     "_source": "api/symbols.json, via project::render_doc_site_export (the `sky doc --export` code path)",
-    "entries": 3284,
+    "entries": 3290,
     "explicit_exposing": {
-      "entries": 3106,
+      "entries": 3112,
       "modules": 134,
-      "unfiltered_entries": 5048
+      "unfiltered_entries": 5076
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
@@ -29,29 +29,29 @@
     "types": 436,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 5226,
-      "hidden_by_exposing": 1942,
-      "types": 605,
-      "values": 4621
+      "entries": 5254,
+      "hidden_by_exposing": 1964,
+      "types": 606,
+      "values": 4648
     },
-    "values": 2848
+    "values": 2854
   },
   "tests": {
     "_note": "a CASE is one `Test.test` leaf. An ASSERTION is one call to Test.{equal,notEqual,ok,err,expectErrorKind,isTrue,isFalse,fail}. `Test.pass` is VACUOUS and excluded from `assertions`; `assertion_calls_incl_pass` is the looser reading, reported so the two are never confused.",
     "conformance": {
-      "assertion_calls_incl_pass": 2165,
-      "assertions": 2159,
+      "assertion_calls_incl_pass": 2220,
+      "assertions": 2214,
       "by_assertion_fn": {
-        "equal": 1722,
+        "equal": 1776,
         "err": 133,
         "expectErrorKind": 62,
-        "fail": 43,
+        "fail": 44,
         "isFalse": 49,
         "isTrue": 110,
         "notEqual": 24,
         "ok": 16
       },
-      "cases": 2245,
+      "cases": 2300,
       "vacuous_pass": 6
     },
     "examples": {

@@ -5789,7 +5789,22 @@ func encodeDictKey(k any) string {
 		}
 		return s
 	}
+	if kind == dictKeyFloat {
+		return string([]byte{dictKeyTagByte, 'f'}) + dictFloatKeyText(reflect.ValueOf(k).Float())
+	}
 	return string([]byte{dictKeyTagByte, dictKeyKindLetter(kind)}) + fmt.Sprintf("%v", k)
+}
+
+// dictFloatKeyText is the text of a Float Dict key: Go's `%v`, with -0 written
+// as 0. `-0.0 == 0.0` in Sky, so the two are one Dict key (before v0.31.0
+// they were two, and `Dict.get 0.0` missed an entry stored under -0.0). NaN
+// is "NaN" and the infinities "+Inf" / "-Inf", so every NaN key is one key.
+// Codec.auto and Codec.dict write this text as the JSON object key.
+func dictFloatKeyText(f float64) string {
+	if f == 0 {
+		f = 0 // -0 == 0, so this makes -0 the positive zero
+	}
+	return fmt.Sprintf("%v", f)
 }
 
 // decodeTaggedDictKey inverts encodeDictKey. `ok=false` means the key carries no

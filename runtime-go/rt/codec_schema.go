@@ -86,6 +86,33 @@ func codecSchemaTyped(t reflect.Type, declared string, snake bool, depth int) co
 				return codecSchema{json: `{"anyOf":[` + s.json + `,{"type":"null"}]}`, exact: s.exact}
 			}
 		}
+		// A Dict: the map schema, with the values' declared type, and for an
+		// Int key the pattern of its decimal text. `Codec.dict Codec.int cv`
+		// writes the same schema (Std/Codec.sky, dictSchema), as it writes
+		// the same JSON.
+		if kind, val, ok := codecDeclaredDict(declared); ok && isSkyDictType(t) {
+			vt := reflect.Zero(t).Interface().(skyDictAny).dictValueType()
+			s := codecSchemaTyped(vt, val, snake, depth+1)
+			switch kind {
+			case 'i', 'c':
+				// An Int key, and a Char key (its code point).
+				return codecSchema{
+					json:  `{"type":"object","additionalProperties":` + s.json + `,"propertyNames":{"pattern":"` + codecIntKeyPattern + `"}}`,
+					exact: false,
+				}
+			case 'f':
+				return codecSchema{
+					json:  `{"type":"object","additionalProperties":` + s.json + `,"propertyNames":{"pattern":"` + codecFloatKeyPattern + `"}}`,
+					exact: false,
+				}
+			case 'b':
+				return codecSchema{
+					json:  `{"type":"object","additionalProperties":` + s.json + `,"propertyNames":{"enum":["false","true"]}}`,
+					exact: s.exact,
+				}
+			}
+			return codecSchema{json: `{"type":"object","additionalProperties":` + s.json + `}`, exact: s.exact}
+		}
 		if elem, ok := strings.CutPrefix(declared, "[]"); ok && t.Kind() == reflect.Slice {
 			s := codecSchemaTyped(t.Elem(), elem, snake, depth+1)
 			return codecSchema{json: `{"type":"array","items":` + s.json + `}`, exact: s.exact}

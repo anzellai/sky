@@ -37,6 +37,16 @@ use std::path::{Path, PathBuf};
 /// A new entry here is a decision, not a formality: prefer a name that does not
 /// collide. The failure message lists the module pairs for each name.
 const EXPECTED_COLLISIONS: &[&str] = &[
+    // v0.31.0: Json.Decode.dict / Json.Encode.dict (Elm's names) and
+    // Std.Codec.dict, which already existed. A program that exposes two of
+    // Json.Decode, Json.Encode and Std.Codec with `(..)` and uses the bare
+    // name gets `[E1012]`. Breaking line in the v0.31.0 CHANGELOG.
+    "value dict",
+    // v0.31.0: Json.Decode.lazy and Std.Codec.lazy (Elm's name), beside
+    // Task.lazy and Std.Ui.Lazy.lazy. A program that exposes two of these
+    // modules with `(..)` and uses the bare name gets `[E1012]`. Breaking
+    // line in the v0.31.0 CHANGELOG.
+    "value lazy",
     // v0.30.0: Task.timeout, the deadline combinator (the name the request
     // asked for, beside Task.loop / Task.forever). Sky.Core.Error already
     // exports the value `timeout : Error`; a program that exposes
