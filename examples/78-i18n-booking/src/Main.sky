@@ -175,6 +175,7 @@ appDef =
                , App.route "/xa" PseudoPage
                ]
         |> App.withNotFound EnglishPage
+        |> App.withDocument (\model -> I18n.document (localeOf model.page))
         |> App.withConfig (App.WebConfig { App.webDefaults | port = 8078 })
 
 

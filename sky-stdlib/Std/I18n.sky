@@ -62,6 +62,7 @@ module Std.I18n exposing
     , script
     , region
     , direction
+    , document
     , fallbacks
     , negotiate
     , defaultLocale
@@ -95,6 +96,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Ffi as Ffi
 import Std.Decimal as Dec exposing (Decimal)
+import Std.Html.Document as Document
 import Std.Money as Money exposing (Money)
 
 -- ─── Locales ─────────────────────────────────────────────────────
@@ -171,6 +173,27 @@ direction (Locale__Internal s) =
         else
             Ltr
 
+
+-- | The `lang` and `dir` attributes of the root `<html>` element for a
+-- locale. Give it to `App.withDocument`:
+--
+--     app
+--         |> App.withDocument (\model -> I18n.document model.locale)
+--
+-- A language switch in the model then changes the page language and the
+-- text direction with no page reload.
+document : Locale -> List Document.Attribute
+document loc =
+    [ Document.lang (tag loc)
+    , Document.dir
+        (case direction loc of
+            Rtl ->
+                Document.Rtl
+
+            Ltr ->
+                Document.Ltr
+        )
+    ]
 
 -- | The lookup chain of a locale: the locale, its CLDR parents, then the
 -- app's default locale. "zh-HK" gives zh-HK, zh-Hant-HK, zh-Hant, then the
