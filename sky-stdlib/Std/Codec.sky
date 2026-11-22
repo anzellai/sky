@@ -1492,8 +1492,9 @@ dictTagByte =
     String.fromChar (Char.fromCode 1)
 
 
--- The key codec's JSON for a member name, or why the name is not a key.
-dictKeyValue : DictKeys -> String -> Result String Value
+-- The key codec's JSON for a member name, or `Nothing` when the name is not
+-- the key's one text. `dictKeyExpected` says what the text must be.
+dictKeyValue : DictKeys -> String -> Maybe Value
 dictKeyValue keys name =
     case keys of
 
@@ -1502,48 +1503,59 @@ dictKeyValue keys name =
 
                 Just n ->
                     if String.fromInt n == name then
-                        Ok (E.int n)
+                        Just (E.int n)
 
                     else
-                        Err
-                            ("expected an Int key in its decimal text (\"10\", \"-3\"), got "
-                                ++ E.encode 0 (E.string name))
+                        Nothing
 
                 Nothing ->
-                    Err
-                        ("expected an Int key in its decimal text (\"10\", \"-3\"), got "
-                            ++ E.encode 0 (E.string name))
+                    Nothing
 
         KeyFloat ->
             let
                 v = floatKeyValueK name
             in
                 if v == E.null then
-                    Err
-                        ("expected a Float key in its one text (\"1.5\", \"2\", \"1e+21\", \"NaN\"), got "
-                            ++ E.encode 0 (E.string name))
+                    Nothing
 
                 else
-                    Ok v
+                    Just v
 
         KeyBool ->
             if name == "true" then
-                Ok (E.bool True)
+                Just (E.bool True)
 
             else if name == "false" then
-                Ok (E.bool False)
+                Just (E.bool False)
 
             else
-                Err
-                    ("expected a Bool key (\"true\" or \"false\"), got "
-                        ++ E.encode 0 (E.string name))
+                Nothing
 
         _ ->
             if String.startsWith (dictTagByte ++ "s") name then
-                Ok (E.string (String.dropLeft 2 name))
+                Just (E.string (String.dropLeft 2 name))
 
             else
-                Ok (E.string name)
+                Just (E.string name)
+
+
+-- What a member name must be for a key codec, for the error of a name that
+-- is not a key.
+dictKeyExpected : DictKeys -> String
+dictKeyExpected keys =
+    case keys of
+
+        KeyInt ->
+            "expected an Int key in its decimal text (\"10\", \"-3\")"
+
+        KeyFloat ->
+            "expected a Float key in its one text (\"1.5\", \"2\", \"1e+21\", \"NaN\")"
+
+        KeyBool ->
+            "expected a Bool key (\"true\" or \"false\")"
+
+        _ ->
+            "expected a key"
 
 
 -- The reader of `dict`: the JSON object, or the `[key, value]` pairs array
@@ -1591,10 +1603,14 @@ dictMembers keys kdec members acc =
         ( name, v ) :: rest ->
             case dictKeyValue keys name of
 
-                Err msg ->
-                    D.fail (dictKeyAt name msg)
+                Nothing ->
+                    D.fail
+                        (dictKeyAt
+                            name
+                            (dictKeyExpected keys ++ ", got "
+                                ++ E.encode 0 (E.string name)))
 
-                Ok kv ->
+                Just kv ->
                     case D.decodeValue kdec kv of
 
                         Ok k ->

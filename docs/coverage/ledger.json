@@ -412,7 +412,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2373,
+      "expected_assertions": 2374,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -734,7 +734,7 @@
       "tier": "T1"
     },
     "roundtrip": {
-      "expected_assertions": 226,
+      "expected_assertions": 227,
       "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
