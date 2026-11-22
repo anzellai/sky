@@ -4007,7 +4007,11 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// (`surfaces_total` 203 -> 206): `cli.coverage` (`sky test --coverage`,
 /// `sky fuzz --coverage`), `stdlib.Std.Admission` and `stdlib.Std.Breaker`,
 /// each covered by its own tests and recorded in `docs/coverage/ledger.md`.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 210;
+/// 210 -> 213 in v0.31.0, measured by the `coverage-ledger` gate
+/// (`surfaces_total` 206 -> 209): `stdlib.Std.I18n`, `stdlib.Std.I18n.Format`
+/// and `stdlib.Std.Html.Document`, covered by the I18n tests and conformance,
+/// the Go document tests and the `i18n-e2e` / `document-e2e` browser gates.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 213;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 206 |
-| covered by the new corpus (>= Asserted) | 196 |
-| verdict `stronger` | 191 |
+| surfaces | 209 |
+| covered by the new corpus (>= Asserted) | 199 |
+| verdict `stronger` | 194 |
 | verdict `equal` | 15 |
 | verdict `weaker` | 0 |
-| corpus units | 159 |
-| stdlib modules (denominator) | 137 |
-| stdlib entries (denominator) | 3290 |
+| corpus units | 161 |
+| stdlib modules (denominator) | 140 |
+| stdlib entries (denominator) | 3362 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 8 | 5.8% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 989 | 30.1% |
-| symbols unreferenced under the generous rule | 876 | 26.6% |
+| stdlib modules imported by nothing | 8 | 5.7% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 1013 | 30.1% |
+| symbols unreferenced under the generous rule | 895 | 26.6% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 0 | — |
 
 ### Surfaces with zero new cover
@@ -56,17 +56,18 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 26 |
-| stdlib modules owned by exactly one unit of any role | 19 |
-| sky.toml sections owned by exactly one unit | 2 |
+| stdlib modules owned by exactly one `examples/*` | 28 |
+| stdlib modules owned by exactly one unit of any role | 20 |
+| sky.toml sections owned by exactly one unit | 3 |
 | **lost if `examples/` retired** — modules | **0** |
-| **lost if `examples/` retired** — config sections | **1** |
+| **lost if `examples/` retired** — config sections | **2** |
 
 ### Config sections lost if `examples/` is retired
 
 | section | sole owner |
 |---|---|
 | `[analytics]` | `examples/52-blog-analytics` |
+| `[i18n]` | `examples/78-i18n-booking` |
 
 ## Weaker surfaces — the open coverage debt
 
@@ -238,7 +239,10 @@ None.
 | `stdlib.Std.Email` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Html.Document` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Html.Events` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.I18n` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.I18n.Format` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Image` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Image.Canvas` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Jobs` | stdlib | None | Falsified | stronger |

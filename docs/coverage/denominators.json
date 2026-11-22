@@ -9,11 +9,11 @@
   "removals_accounted": 94,
   "stdlib": {
     "_source": "api/symbols.json, via project::render_doc_site_export (the `sky doc --export` code path)",
-    "entries": 3290,
+    "entries": 3362,
     "explicit_exposing": {
-      "entries": 3112,
-      "modules": 134,
-      "unfiltered_entries": 5076
+      "entries": 3184,
+      "modules": 137,
+      "unfiltered_entries": 5157
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
@@ -25,25 +25,25 @@
       ],
       "modules": 3
     },
-    "modules": 137,
-    "types": 436,
+    "modules": 140,
+    "types": 451,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 5254,
-      "hidden_by_exposing": 1964,
-      "types": 606,
-      "values": 4648
+      "entries": 5335,
+      "hidden_by_exposing": 1973,
+      "types": 621,
+      "values": 4714
     },
-    "values": 2854
+    "values": 2911
   },
   "tests": {
     "_note": "a CASE is one `Test.test` leaf. An ASSERTION is one call to Test.{equal,notEqual,ok,err,expectErrorKind,isTrue,isFalse,fail}. `Test.pass` is VACUOUS and excluded from `assertions`; `assertion_calls_incl_pass` is the looser reading, reported so the two are never confused.",
     "conformance": {
-      "assertion_calls_incl_pass": 2220,
-      "assertions": 2214,
+      "assertion_calls_incl_pass": 2253,
+      "assertions": 2247,
       "by_assertion_fn": {
-        "equal": 1776,
-        "err": 133,
+        "equal": 1808,
+        "err": 134,
         "expectErrorKind": 62,
         "fail": 44,
         "isFalse": 49,
@@ -51,7 +51,7 @@
         "notEqual": 24,
         "ok": 16
       },
-      "cases": 2300,
+      "cases": 2333,
       "vacuous_pass": 6
     },
     "examples": {
