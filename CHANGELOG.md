@@ -11,6 +11,123 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.31.0 — translated text, time zones, JSON objects with any keys and the page language (2026-11-22)
+
+### ⚠ Breaking changes
+
+- `Codec.dict` with a scalar key codec (`Codec.string`, `Codec.int`,
+  `Codec.float`, `Codec.bool`, `Codec.char`, `Codec.enum`) now writes a JSON
+  object, not an array of `[key, value]` pairs. The object is byte for byte
+  the JSON that `Codec.auto` writes for a record field of the same `Dict`
+  type. The decoder still reads the pairs array, so rows, files and saved
+  data from earlier versions still read. A reader outside Sky that reads this
+  JSON must read the object (`docs/migration/v0.31.md`).
+- JSON text that repeats a key in one object is now an error in every
+  decoder: `Json.Decode`, `Codec.fromJson`, `Codec.auto`, Sky.Spa messages
+  and `Std.Db.Store` JSON columns. The error names the key and its path.
+  Before, the last value was kept with no error. This follows RFC 7493
+  (I-JSON). Fix the producer so that it writes each key once.
+- `-0` and `0` are now one key in every `Dict Float`. A `Dict` that held
+  entries under both now holds one entry, the one inserted last.
+- `Time.fromParts` now returns `Err` for a date that is not in the calendar
+  (31 April, 29 February in a common year). Before, `fromParts "UTC" 2026 2
+  31 …` gave 3 March. It also returns `Err` for a local time that the clocks
+  skip or repeat. The error names the zone and the local time and points to
+  `Time.fromPartsWith`. To keep the old answer for a skipped or repeated
+  time, write `fromPartsWith Compatible`.
+- A zone name in the wrong case is now refused (`"europe/london"`), and so
+  is `"Local"`. Write the exact IANA name.
+- New stdlib names can give `[E1012]` when a program exposes two modules
+  that have the name with `(..)` and uses the bare name: `dict`, `lazy`,
+  `char` (`Json.Decode`, `Json.Encode`, `Std.Codec`), `Compatible`,
+  `Earlier`, `Later`, `Reject`, `Parts`, `zones` (`Std.Time`), and
+  `withDocument` (`Std.App`, `Std.Live`, `Std.Spa`). Write the qualified
+  name. The new modules `Std.I18n`, `Std.I18n.Format` and
+  `Std.Html.Document` also share names with older modules (`decimal`,
+  `money`, `key`, `language`, `script`, `document`, `Medium`, `Other`,
+  `lang`, `dir`, `class`, `translate`). Import them qualified.
+
+### Added
+
+- `Std.I18n` and `Std.I18n.Format`: translated text for Sky apps.
+  - `Std.I18n` gives typed locales (`locale`, `negotiate`, `fallbacks`),
+    CLDR plural rules and messages from JSON catalogues.
+  - `Std.I18n.Format` formats numbers, percentages, money, dates, times,
+    lists and relative time for a locale.
+  - List the locales in `sky.toml` under `[i18n]` (`locales`, `default`,
+    `catalogues`) and put the messages in `i18n/<locale>/*.json`.
+  - `sky check` and `sky build` check every catalogue. A problem stops the
+    build with a code from E5001 to E5008, with the file and the line
+    (`docs/errors/i18n-catalogues.md`).
+  - Messages use a subset of Unicode MessageFormat 2.0. `{name}` is the same
+    as `{$name}`. A JSON object of plural categories selects by `count`.
+  - Keep a `Text` in the model, not a sentence. `Codec.auto`, the session
+    store and Sky.Spa carry it with no codec of your own.
+  - The data comes from CLDR 49.0.0. The binary carries the data of the
+    listed locales only. A program that does not use the modules does not
+    grow.
+  - The server and a Sky.Spa client give the same text for the same value.
+    Sky does not use the browser `Intl` API.
+  - `I18n.document locale` gives the `lang` and `dir` attributes of the page
+    for `App.withDocument`.
+  - See `docs/i18n.md` and `examples/78-i18n-booking`.
+- `App.withDocument` sets the attributes of the root `<html>` element from
+  the model: `lang`, `dir`, `class`, `data-*` and `translate`
+  (`Std.Html.Document`). Screen readers, browser translation, hyphenation
+  and `:lang()` CSS read the page language from `<html>`. Every web target
+  writes the attributes on the first page. A language switch changes them
+  with no page reload. Sky.Live sends a changed set with the update that
+  changed it, and sends nothing when the set is the same. A `lang` that is
+  not a well-formed BCP 47 tag is not written and is logged once. A `data`
+  name that starts with `sky-` is not written. A Sky.Spa page with no `lang`
+  keeps `lang="en"`. An app with no `withDocument` renders as before.
+  `Live.withDocument`, `Spa.withDocument` and `Webview.appWithDocument` give
+  the same feature to apps that use those layers directly.
+- `Json.Decode.keyValuePairs`, `Json.Decode.dict` and `Json.Decode.lazy`
+  read a JSON object whose keys you do not know in advance, and a recursive
+  structure. The pairs come in byte-wise key order. An error names the key:
+  `at .scores["bob"]: expected Int, got String`. Deep input is an error,
+  never a stack overflow.
+- `Json.Encode.dict` writes a `Dict` as a JSON object, with the members
+  sorted byte-wise by the key text.
+- `Codec.lazy` is a codec for a recursive type. `Codec.char` writes a `Char`
+  as its code point, as `Codec.auto` does.
+- `Std.Time` has the full IANA time zone database (tzdata 2025c), embedded
+  in every Sky binary, on the server and in the Sky.Spa client.
+  - `zones` lists the canonical zone names. `isZone` checks a name.
+  - `toParts zone ms` gives all parts of a local time in one record: date,
+    time, milliseconds, ISO weekday, offset in minutes and abbreviation.
+    `toPartsUtc` cannot fail.
+  - `fromPartsWith` takes a `Disambiguation`: `Compatible`, `Earlier`,
+    `Later` or `Reject`, with the meaning of JavaScript Temporal.
+  - `nextTransition` and `previousTransition` give the instant at which a
+    zone's offset changes. They give `Nothing` when there is no change
+    within 50 years.
+  - Every `Std.Time` error has the domain `"time"` and a code
+    (`UnknownZone`, `InvalidDate`, `NonexistentLocalTime`,
+    `AmbiguousLocalTime`).
+
+### Fixed
+
+- The Sky.Live client loads the document client with its core, so a page
+  that changes its `<html>` attributes needs no second script.
+- The falsifier harness rebuilds `xtask` after a mutation whose build ran
+  over its budget. Before, a later plain gate run could use a binary built
+  from the mutated source.
+
+### Migration
+
+Read `docs/migration/v0.31.md`. In short:
+
+1. Qualify a bare `dict`, `lazy`, `char`, `zones`, `withDocument` or a
+   `Std.Time` constructor that `[E1012]` names.
+2. Change `Time.fromParts` to `Time.fromPartsWith Compatible` where a local
+   time can fall in a clock change and the old answer is wanted.
+3. Write zone names in their exact case. Replace `"Local"` with a real zone.
+4. Update a non-Sky reader of `Codec.dict` JSON to read an object.
+5. Fix a producer that writes a JSON key twice.
+6. Move `lang` and `dir` from the root view element to `App.withDocument`.
+
 ## v0.30.0 — timeouts, a circuit breaker, admission control and test coverage (2026-11-19)
 
 ### ⚠ Breaking changes

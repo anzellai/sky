@@ -159,7 +159,7 @@ The same `view : Model -> Element Msg` paints to the DOM, to terminal cells and 
 - **Data.** `Std.Db` on SQLite or PostgreSQL with the same code, one `Std.Codec` for JSON, XML and tables, and file-based migrations. `sky build --embed` puts PostgreSQL inside your binary, and an app plus its database fits in 1 GB. [Std.Db](docs/skydb/overview.md) · [Sizing](docs/perf/sizing.md)
 - **Files and documents.** `Std.Office.Xlsx` and `Std.Office.Docx` read and write Excel and Word files. `Std.Xml` and `Std.Zip` read hostile input safely. `Std.Image` and `Std.Image.Canvas` resize, re-encode and draw images on the server. [Stdlib](docs/stdlib.md)
 - **Auth, money and crypto.** `Std.Auth` (bcrypt, JWT, roles), `Std.Money` on exact decimals, and XChaCha20, Ed25519, X25519 and Noise sessions for encryption and signatures.
-- **Languages.** `Std.I18n` and `Std.I18n.Format`: locales, CLDR plural rules, MessageFormat 2.0 messages in JSON catalogues that `sky check` validates, and CLDR number, money, date, list and relative-time formatting. The binary carries the data of the locales you list only. [Internationalisation](docs/i18n.md)
+- **Languages.** `Std.I18n` and `Std.I18n.Format`: locales, CLDR plural rules, MessageFormat 2.0 messages in JSON catalogues that `sky check` validates, and CLDR number, money, date, list and relative-time formatting. The binary carries the data of the locales you list only. `App.withDocument` sets the page `lang` and `dir` on `<html>`. `Std.Time` has the full IANA zone database, with explicit handling of clock changes. [Internationalisation](docs/i18n.md)
 - **Durable workflows.** `Std.Durable` runs multi-step processes that survive a restart. [Design](docs/design/durable-execution.md)
 - **AI.** `Std.Ai`: swappable providers (OpenAI, any compatible endpoint, or a managed local model), durable agents, a policy firewall, cost tracing in `Std.Money`, datasets, evals, a model registry, LoRA training, GPU serving and on-device models. [Guides](docs/ai/)
 - **Tooling.** `sky fmt`, `sky test` (with function and `case`-arm coverage: `sky test --coverage`, `sky coverage report`), `sky fuzz`, `sky watch`, an LSP, `sky doc` for the live API, and an OpenAPI spec from your source with `sky doc --api openapi`. [CLI](docs/tooling/cli.md)
@@ -184,7 +184,7 @@ There are 75 projects in [`examples/`](examples/). Start with these:
 
 ## Status
 
-> **Status: v0.30.x, pre-1.0.** A minor version can include breaking changes.
+> **Status: v0.31.x, pre-1.0.** A minor version can include breaking changes.
 > Each one is listed in the [CHANGELOG](CHANGELOG.md) with a migration guide
 > under [`docs/migration/`](docs/migration/), and `sky upgrade` shows it. See
 > [VERSIONING.md](VERSIONING.md) and the

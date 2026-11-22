@@ -43,7 +43,7 @@ silent corruption* — the property a service actually needs.
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
 Haskell compiler, once its byte-for-byte differential oracle, was removed from
 the tree in v0.29.0 (`docs/history/legacy-compilers.md`; tag `v0.28.1` is the
-last that has it). Current line: **v0.30.x**.
+last that has it). Current line: **v0.31.x**.
 
 Decimal places and computed exponents are bounded to -100000 through 100000.
 Outside this range they fail as `NumericOverflow`. `Money.allocate` requires
@@ -165,6 +165,15 @@ keeps its `int` / `float` / `bool` key type; a callback is typed from the Go
 signature, result included; an integer out of range across the boundary is an
 `Err`; and a Sky value where Go wants an interface is `[E2013]`. See
 `docs/ffi/boundary-philosophy.md`.
+
+**Upgrading a v0.30 project?** `docs/migration/v0.31.md` lists every change,
+split into loud, loud at run time and silent. Among them: `Codec.dict` with a
+scalar key writes a JSON object (it still reads the old pairs array), a JSON
+key two times in one object is refused, `Time.fromParts` refuses an invalid
+date and a local time the clocks skip or repeat (`fromPartsWith Compatible`
+keeps the old answer), zone names are exact and `"Local"` is refused, and new
+names (`dict`, `lazy`, `char`, `zones`, `withDocument`, the `Std.Time`
+`Disambiguation` constructors) can be `[E1012]` under `exposing (..)`.
 
 **Upgrading a v0.29 project?** `docs/migration/v0.30.md` lists every change,
 split into loud (fails to compile, the error shows the fix) and silent. Among
@@ -1003,7 +1012,7 @@ before assuming a limitation still holds.
 | Internationalisation — `Std.I18n`, `Std.I18n.Format`, catalogues, CLDR data | `docs/i18n.md`, `docs/errors/i18n-catalogues.md` (`sky doc Std.I18n`); example `examples/78-i18n-booking` |
 | Observability / console | `docs/observability.md` |
 | Getting started | `docs/getting-started.md`, `README.md` |
-| Upgrading between minors | `docs/migration/v0.27.md`, `v0.28.md`, `v0.29.md`, `v0.30.md` (loud / loud at run time / silent) |
+| Upgrading between minors | `docs/migration/v0.27.md`, `v0.28.md`, `v0.29.md`, `v0.30.md`, `v0.31.md` (loud / loud at run time / silent) |
 | Sizing: memory, CPU, sessions | `docs/perf/sizing.md` |
 
 ## The test corpus — two layers, and where `examples/` now sits
