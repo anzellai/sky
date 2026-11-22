@@ -214,6 +214,7 @@ pub const SURFACE: Axis = Axis::new(
         "imagecanvas",
         "deadline",
         "breaker",
+        "i18n",
     ],
 );
 

@@ -37,6 +37,16 @@ use std::path::{Path, PathBuf};
 /// A new entry here is a decision, not a formality: prefer a name that does not
 /// collide. The failure message lists the module pairs for each name.
 const EXPECTED_COLLISIONS: &[&str] = &[
+    // v0.31.0: Json.Decode.dict / Json.Encode.dict (Elm's names) and
+    // Std.Codec.dict, which already existed. A program that exposes two of
+    // Json.Decode, Json.Encode and Std.Codec with `(..)` and uses the bare
+    // name gets `[E1012]`. Breaking line in the v0.31.0 CHANGELOG.
+    "value dict",
+    // v0.31.0: Json.Decode.lazy and Std.Codec.lazy (Elm's name), beside
+    // Task.lazy and Std.Ui.Lazy.lazy. A program that exposes two of these
+    // modules with `(..)` and uses the bare name gets `[E1012]`. Breaking
+    // line in the v0.31.0 CHANGELOG.
+    "value lazy",
     // v0.30.0: Task.timeout, the deadline combinator (the name the request
     // asked for, beside Task.loop / Task.forever). Sky.Core.Error already
     // exports the value `timeout : Error`; a program that exposes
@@ -132,6 +142,13 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     // v0.27.20: Std.Email.withHeader (#300). Sky.Core.Http, Sky.Http.Server,
     // Std.Csv and the Server kernel already export `withHeader`.
     "value withHeader",
+    // v0.31.0: App.withDocument / Live.withDocument / Spa.withDocument (the
+    // root <html> attributes), named like the withHead builders beside them.
+    // A program that exposes two of Std.App, Std.Live and Std.Spa with
+    // `(..)` and uses a bare `withDocument` gets `[E1012]`; the fix is the
+    // qualified `App.withDocument`. Std.Live and Std.Spa are deprecated for
+    // direct use, so such a program is rare.
+    "value withDocument",
 ];
 
 /// Names a module NEW in this release shares with a module that existed
@@ -140,6 +157,28 @@ const EXPECTED_COLLISIONS: &[&str] = &[
 /// qualifies it. Listed so the set is reviewed, and so a rename that would
 /// avoid a clash is considered before the release rather than after.
 const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
+    // v0.31.0: Std.I18n and Std.I18n.Format. The argument builders are named
+    // for the value they carry (`I18n.decimal`, `I18n.money`), as the codecs
+    // and decoders are; `I18n.key` / `language` / `script` are the CLDR and
+    // BCP 47 words; `Medium` is the CLDR format length and `Other` the CLDR
+    // plural category. They are new modules, so no existing program changes;
+    // a program reads them qualified (`import Std.I18n as I18n`).
+    "ctor Medium",
+    "ctor Other",
+    "value decimal",
+    "value key",
+    "value language",
+    "value money",
+    "value script",
+    // v0.31.0: Std.Html.Document names its attributes for the HTML
+    // attributes they write (`lang`, `dir`, `class`, `translate`), as
+    // Std.Html.Attributes does. It is a new module, so no existing program
+    // changes; a program reads it qualified (`import Std.Html.Document as
+    // Document`).
+    "value class",
+    "value dir",
+    "value lang",
+    "value translate",
     // v0.30.0: Std.Admission names its hook's answer `Decision` (as
     // Std.Ai.Policy does for its firewall) and its refusal delay builder
     // `withRetryAfter` (as Sky.Core.Error does for an error's delay). It is a

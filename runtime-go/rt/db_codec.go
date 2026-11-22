@@ -1275,8 +1275,14 @@ func rowValToJsonRaw(raw any, present bool, kind, col string) (any, error) {
 		// 9223372036854775807 as a float out of Int range, which made the
 		// whole table unreadable (v0.29.2 fifth Judge, found by the
 		// generative codec test).
-		if v, err := jsonParseDocument(s); err == nil {
+		v, err := jsonParseDocument(s)
+		if err == nil {
 			return v, nil
+		}
+		// A repeated key is refused as every decoder refuses it, and the
+		// error names the key, not only "does not read as JSON".
+		if d, ok := err.(*jsonDuplicateKeyError); ok {
+			return nil, fmt.Errorf("Store: column %q holds JSON that is not valid here: %v", col, d)
 		}
 	case "decimal":
 		// PostgreSQL NUMERIC text ("12.30"), the canonical text Sky writes

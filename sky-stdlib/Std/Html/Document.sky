@@ -1,0 +1,104 @@
+-- | Std.Html.Document — typed attributes for the root `<html>` element.
+--
+-- Screen readers, browser translation, hyphenation and `:lang()` CSS read the
+-- language of the document from `<html lang>`, and a right-to-left page sets
+-- `<html dir>`. Set them from the model with `App.withDocument` (or
+-- `Live.withDocument` / `Spa.withDocument` for an app that uses those layers
+-- directly):
+--
+--     import Std.Html.Document as Document
+--
+--     app =
+--         App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+--             |> App.withNotFound NotFound
+--             |> App.withDocument documentFor
+--
+--     documentFor : Model -> List Document.Attribute
+--     documentFor model =
+--         [ Document.lang model.locale
+--         , Document.dir (if model.locale == "ar" then Document.Rtl else Document.Ltr)
+--         ]
+--
+-- Every web target writes them. Sky.Live writes them on the first page and
+-- sends a changed set to the browser with the next update, with no page
+-- reload. The Sky.Spa server writes them on the first paint and the client
+-- sets them after each update that changes them. The desktop window writes
+-- them. A terminal target ignores them.
+--
+-- Rules:
+--
+--   - Only the attributes of this module can be set. There is no free-form
+--     attribute name.
+--   - A `lang` value must be a well-formed BCP 47 tag (`"en"`, `"fr-CA"`,
+--     `"zh-Hant-TW"`). A value that is not is not written. The app logs it
+--     once at WARN level. It never stops the app.
+--   - A `data` name must use only `a-z`, `0-9`, `-`, `_` and `.`, and must
+--     not start with `sky-`. The runtime uses `data-sky-*` names for its own
+--     markers. A name that breaks this rule is not written, and is logged
+--     once.
+--   - When the list sets one attribute more than one time, the last value
+--     wins.
+--   - Every value is HTML-escaped.
+--   - On Sky.Spa, a page whose list has no `lang` gets `lang="en"`, as before.
+module Std.Html.Document exposing (Attribute, Direction(..), lang, dir, class, data, translate)
+
+import Sky.Core.Prelude exposing (..)
+
+-- | One attribute of the `<html>` element. Make it with the functions of
+-- this module.
+type Attribute
+    = Attribute String String
+
+-- | The text direction of the document: left to right, right to left, or
+-- found from the text by the browser.
+type Direction
+    = Ltr
+    | Rtl
+    | Auto
+
+
+-- | `lang tag` — the language of the document, a BCP 47 tag such as `"en"`,
+-- `"en-GB"` or `"ar"`. A tag that is not well formed is not written.
+lang : String -> Attribute
+lang tag =
+    Attribute "lang" tag
+
+
+-- | `dir direction` — the text direction of the document.
+dir : Direction -> Attribute
+dir direction =
+    case direction of
+
+        Ltr ->
+            Attribute "dir" "ltr"
+
+        Rtl ->
+            Attribute "dir" "rtl"
+
+        Auto ->
+            Attribute "dir" "auto"
+
+
+-- | `class names` — the class list of `<html>`, for example a theme class
+-- that page CSS reads (`html.dark`).
+class : String -> Attribute
+class names =
+    Attribute "class" names
+
+
+-- | `data name value` — writes `data-<name>="<value>"`. `data "theme" "dark"`
+-- writes `data-theme="dark"`. A name that starts with `sky-` is not written.
+data : String -> String -> Attribute
+data name value =
+    Attribute ("data-" ++ name) value
+
+
+-- | `translate allowed` — `False` tells browser translation tools not to
+-- translate the page (`translate="no"`).
+translate : Bool -> Attribute
+translate allowed =
+    if allowed then
+        Attribute "translate" "yes"
+
+    else
+        Attribute "translate" "no"

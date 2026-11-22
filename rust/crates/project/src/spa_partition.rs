@@ -260,6 +260,10 @@ const KNOWN_PURE_KERNELS: &[&str] = &[
     "Decimal",
     "Compression",
     "DbDec",
+    // v0.31.0: Std.I18n / Std.I18n.Format (`I18n_*`, runtime-go/rt/i18n_kernels.go):
+    // pure locale, plural, message and CLDR formatting kernels. They build for
+    // wasm, and a client view must format as the server's first paint did.
+    "I18n",
     "Spa",
     // `Std.Html` rendering helpers called as `Ffi.callPure "<name>"` (no
     // family prefix): pure string builders for a view.

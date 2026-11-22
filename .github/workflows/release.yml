@@ -1656,11 +1656,17 @@ jobs:
         run: CGO_ENABLED=1 bash ../scripts/ci/go-test-shard.sh 1/2 ./rt/... -- -race -timeout 20m -count=1
       # Every Go test package under tools/ runs here
       # (workflows_parse.rs::every_go_test_package_under_tools_runs_in_ci).
-      - name: tools Go tests (sky-ffi-inspect, skyliveload)
+      - name: tools Go tests (sky-ffi-inspect, skyliveload, cldr-gen)
         run: |
           set -euo pipefail
           (cd "$GITHUB_WORKSPACE/tools/sky-ffi-inspect" && CGO_ENABLED=0 go test ./... -count=1)
           (cd "$GITHUB_WORKSPACE/tools/skyliveload" && CGO_ENABLED=0 go test ./... -count=1)
+          (cd "$GITHUB_WORKSPACE/tools/cldr-gen" && CGO_ENABLED=0 go test ./... -count=1)
+      # Std.I18n with every CLDR locale compiled in (sky_cldr_all), under the
+      # race detector, with the js/wasm parity test (node is set up above).
+      - name: rt/i18n with every CLDR locale
+        working-directory: runtime-go
+        run: CGO_ENABLED=1 go test -race -tags sky_cldr_all ./rt/i18n/... -count=1 -timeout 20m
 
   # gate-race-2 — shard 2/2 of the race run of the rt tests (see gate-race-1).
   # The integration-tagged store tests and the tools tests run in gate-race-1.
@@ -1761,6 +1767,9 @@ jobs:
       - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
         timeout-minutes: 5
         run: scripts/ui-forms-e2e.sh
+      - name: Std.I18n e2e (server and client give the same text, <html> lang / dir follow the locale, Sky.Live + Sky.Spa, Chromium + WebKit, strict CSP)
+        timeout-minutes: 10
+        run: scripts/i18n-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -1851,7 +1860,7 @@ jobs:
 
   gate-web-4:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/gate-setup
@@ -1888,6 +1897,9 @@ jobs:
       - name: Std.Nav e2e (pushUrl / replaceUrl / clearFragment, Sky.Live + Sky.Spa, Chromium + WebKit, strict CSP)
         timeout-minutes: 5
         run: scripts/nav-e2e.sh
+      - name: App.withDocument e2e (<html> lang / dir follow the model, Sky.Live + Sky.Spa, Chromium + WebKit, strict CSP)
+        timeout-minutes: 5
+        run: scripts/document-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

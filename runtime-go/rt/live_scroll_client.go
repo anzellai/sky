@@ -70,6 +70,6 @@ function __skyApplyFetchedPage(response, text, move, finished) {
     __skyPatch(text);
     if (view) __skyView = view;
     if (finished) finished();
-  }, undefined, view, "", false, __skyFetchedPageScrolls(text));
+  }, undefined, view, "", false, __skyFetchedPageScrolls(text), __skyFetchedPageDoc(text));
 }
 `

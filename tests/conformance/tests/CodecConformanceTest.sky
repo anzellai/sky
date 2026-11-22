@@ -934,7 +934,7 @@ tests =
     , Test.test "value: a Dict String Json.Value round-trips exactly"
         (\_ ->
             let
-                text = "{\"id\":\"h1\",\"items\":[[\"a\",{\"n\":1}],[\"b\",null]]}"
+                text = "{\"id\":\"h1\",\"items\":{\"a\":{\"n\":1},\"b\":null}}"
             in
                 Test.equal (Ok text) (Codec.fromJson hookMapObject text |> Result.map (Codec.toJson hookMapObject)))
     , Test.test "value: autoWith gives a List Json.Value field its codec, so the read Codec.auto refuses works"

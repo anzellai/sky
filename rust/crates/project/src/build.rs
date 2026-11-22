@@ -1013,6 +1013,7 @@ fn assemble_and_emit_loaded(
                     "withNotFound",
                     "withOnNavigate",
                     "withHead",
+                    "withDocument",
                     "withModelDecoder",
                     "withModelEncoder",
                     "withPersistProtectedFields",
@@ -1148,7 +1149,7 @@ fn assemble_and_emit_loaded(
         }
     }
     for (name, source) in &canonical_stdlib_sources {
-        if matches!(name.as_str(), "Std.Decimal" | "Std.Money") {
+        if matches!(name.as_str(), "Std.Decimal" | "Std.Money" | "Std.I18n") {
             if let Some(module) = hir::SkyDb::module_by_name(&db, name) {
                 if db.source_file(module) == *source {
                     cfg.trusted_builtin_adt_modules.insert(module);
@@ -1742,6 +1743,19 @@ fn build_inner(
         report.warnings.push(format!("embed migrations: {e}"));
     }
 
+    // Std.I18n: check the `[i18n]` catalogues with the runtime's own checker,
+    // embed them, and record the Go build tags (`sky_i18n`, `sky_cldr_<tag>`).
+    // NOT best-effort: a catalogue problem (E5001-E5008) fails `sky check`
+    // and `sky build` before `go build` runs (i18n.rs).
+    match crate::i18n::prepare(&opts.example_dir, &out_dir) {
+        Ok(p) => report.warnings.extend(p.notes),
+        Err(e) => {
+            report.emitted = false;
+            report.note = e;
+            return report;
+        }
+    }
+
     // The Std.Ai slots the source names (`Endpoint.endpoint "chat"`), for the
     // startup report: a generated `ai_slots_gen.go` beside main.go, removed
     // when the project declares none (ai_slots.rs). Best-effort like the
@@ -1930,13 +1944,20 @@ fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     // `-debug-actiongraph` tells `go_jobs::record_peaks` which packages
     // compiled; it is not part of any cache key.
     let graph = crate::go_jobs::action_graph_flag(out_dir);
+    // The Std.I18n build tags (i18n.rs): the client carries the same CLDR
+    // data as the server, so both format alike.
+    let tags = crate::i18n::tags_arg(out_dir);
+    let mut extra: Vec<&str> = vec![graph.as_str()];
+    if let Some(t) = &tags {
+        extra.push(t.as_str());
+    }
     let cmd = crate::go_cmd::GoBuild {
         dir: out_dir,
         target: crate::go_cmd::Target::Wasm,
         jobs,
         output: Some(std::ffi::OsStr::new("main.wasm")),
         packages: &["."],
-        extra: &[graph.as_str()],
+        extra: &extra,
     }
     .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.
@@ -2104,6 +2125,11 @@ fn run_go_build_once(
     if crate::coverage::map_wants_go_cover(&out_dir.join(crate::coverage::MAP_FILE)) {
         extra.extend(crate::go_cmd::COVER_FLAGS);
     }
+    // The Std.I18n build tags (i18n.rs), when the program uses the module.
+    let tags = crate::i18n::tags_arg(out_dir);
+    if let Some(t) = &tags {
+        extra.push(t.as_str());
+    }
     let cmd = crate::go_cmd::GoBuild {
         dir: out_dir,
         target: crate::go_cmd::Target::Native { cgo: cgo == "1" },
@@ -2137,11 +2163,11 @@ fn run_go_build_once(
 
 /// Outcome of a bounded child process (shared bounded-run helper — factored so
 /// the same kill-on-deadline machinery `sky verify` uses covers `go build`).
-struct BoundedOutcome {
+pub(crate) struct BoundedOutcome {
     /// `None` when the child was killed on timeout.
-    status: Option<std::process::ExitStatus>,
-    stderr: String,
-    timed_out: bool,
+    pub(crate) status: Option<std::process::ExitStatus>,
+    pub(crate) stderr: String,
+    pub(crate) timed_out: bool,
     /// The child's own peak resident set, its descendants included
     /// (`memory::wait_child`); `None` where the platform does not say.
     peak_rss: Option<u64>,
@@ -2151,7 +2177,7 @@ struct BoundedOutcome {
 /// `timeout` — killing the child (and reaping it) if the deadline passes. stdout
 /// is piped-and-dropped so a chatty child can't block on a full pipe. Returns
 /// the exit status (or `timed_out`) plus captured stderr.
-fn run_bounded(mut cmd: Command, timeout: Duration) -> std::io::Result<BoundedOutcome> {
+pub(crate) fn run_bounded(mut cmd: Command, timeout: Duration) -> std::io::Result<BoundedOutcome> {
     // No stdin: a Sky.Spa SSR backend leg reads its wasm-name handoff from its
     // own stdin (spa_wasm_handoff.rs), and no Go tool reads one.
     cmd.stdin(Stdio::null())
@@ -2743,6 +2769,10 @@ fn is_externally_consumed_section(section: &str) -> bool {
         // project records `terminal:cli` / `terminal:tui` once so a bare
         // `sky build`/`run` picks its backend. Build-time, never runtime.
         | "app"
+        // `[i18n]` (locales, default, catalogues) is read by the build
+        // (`i18n.rs`, which refuses an unknown key itself with E5001): the
+        // catalogues are checked and embedded, the locales pick the CLDR data.
+        | "i18n"
     )
 }
 

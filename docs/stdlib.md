@@ -555,6 +555,7 @@ case Dec.decodeString (Dec.field "name" Dec.string) payload of
 | `Enc.null` | `Value` |
 | `Enc.list` | `(a -> Value) -> List a -> Value` |
 | `Enc.object` | `List (String, Value) -> Value` |
+| `Enc.dict` | `(k -> String) -> (v -> Value) -> Dict k v -> Value` — a `Dict` as a JSON object, members sorted byte-wise by the key text (v0.31.0) |
 | `Enc.encode` | `Int -> Value -> String` (indent param) |
 | `Enc.raw` | `String -> Result Error Value` — embed JSON text that is already serialised; invalid text is `Err InvalidInput` |
 
@@ -567,6 +568,9 @@ case Dec.decodeString (Dec.field "name" Dec.string) payload of
 | `Dec.field` | `String -> Decoder a -> Decoder a` |
 | `Dec.index` | `Int -> Decoder a -> Decoder a` |
 | `Dec.list` | `Decoder a -> Decoder (List a)` |
+| `Dec.keyValuePairs` | `Decoder a -> Decoder (List (String, a))` — every member of an object, in byte-wise key order (v0.31.0) |
+| `Dec.dict` | `Decoder a -> Decoder (Dict String a)` — an object keyed by its member names (v0.31.0) |
+| `Dec.lazy` | `(() -> Decoder a) -> Decoder a` — a decoder that names itself, for a recursive structure (v0.31.0) |
 | `Dec.map`, `Dec.map2`...`Dec.map5` | combine |
 | `Dec.andThen` | dependent decoders |
 | `Dec.succeed` / `Dec.fail` | constant decoders |
@@ -583,6 +587,43 @@ writes its text as it came. A `Dec.value` result does NOT keep the key order of
 its source: its objects are written back with their keys sorted byte-wise at
 every depth (`{"b":1,"a":2}` becomes `{"a":2,"b":1}`), and whitespace is not
 kept. Keep text whose exact bytes matter (a signed payload) with `Enc.raw`.
+`Dec.keyValuePairs` and `Dec.dict` follow the same contract: the pairs come
+in byte-wise key order, not in the order of the text.
+
+**Objects with keys you do not know in advance** (v0.31.0). A map of names
+to values reads with `Dec.dict` (or `Dec.keyValuePairs` for a list) and
+writes with `Enc.dict`. An error names the key in quotes, after the path of
+its field: `at .scores["bob"]: expected Int, got String`.
+
+```elm
+scores : Dec.Decoder (Dict String Int)
+scores =
+    Dec.field "scores" (Dec.dict Dec.int)
+
+writeScores : Dict String Int -> Enc.Value
+writeScores d =
+    Enc.object [ ( "scores", Enc.dict identity Enc.int d ) ]
+```
+
+`Enc.dict` writes the members sorted byte-wise by the key text (`"10"` before
+`"9"`), the order `Codec.dict` and `Codec.auto` use. Give it a key function
+that maps different keys to different text. When two keys map to one text,
+both members stay in the `Value` and every Sky decoder refuses the object, so
+no entry is lost without an error.
+
+**Recursive structures.** `Dec.lazy (\_ -> tree)` lets a decoder name itself.
+Every decoder reads at most 10000 nested arrays and objects: `decodeString`
+refuses deeper text and `decodeValue` a deeper `Value`, so a recursive decoder
+gives an `Err` on deep input, never a stack overflow.
+
+**A repeated key is refused** (v0.31.0, breaking). JSON text with a key that
+one object gives twice (`{"a":1,"a":2}`) is an `Err` that names the key and
+the path of its object, at any depth and whatever the decoder reads:
+`duplicate key "a" in the object at .items[2]`. This is the I-JSON rule
+(RFC 7493). The text `"a"` and `"a"` is one key. Before v0.31.0 the last
+value was kept with no error. The rule is at the parser, so `Codec.fromJson`,
+`Codec.auto`, a Sky.Spa message, a `Std.Db.Store` JSON column and
+`Dec.decodeValue` (of an `Enc.object` that gives a key twice) follow it too.
 
 For long records use the pipeline form:
 
@@ -684,12 +725,20 @@ There is no global rate table: build `Rates` where the rates come from (config, 
 import Std.Time as Stime
 ```
 
-Embedded `time/tzdata`, so it works in containers without
-`/usr/share/zoneinfo`. **Note** the import alias `Stime` rather
-than `Time` — the kernel `Time` already owns that name. Zones are
-IANA strings (`"UTC"`, `"America/New_York"`, `"Asia/Tokyo"`); a bad
-zone name returns `Err Error`. Timestamps are unix-millis `Int`,
-matching `Time.unixMillis`. 32 entries.
+The full IANA time zone database is embedded (`time/tzdata`) in every
+Sky binary: the server, a CLI, and the Sky.Spa wasm client in a browser,
+which has no zone files. Use it. Do not keep your own table of zones or
+offsets. **Note** the import alias `Stime` rather than `Time`: the kernel
+`Time` already owns that name. Zones are IANA strings (`"UTC"`,
+`"America/New_York"`, `"Asia/Tokyo"`). They are case-sensitive, the empty
+name is UTC, and `"Local"` is refused (it is the host's zone, not an IANA
+name). Every `Err` is `InvalidInput` with the domain `"time"` and the code
+`UnknownZone`, `InvalidDate`, `NonexistentLocalTime` or
+`AmbiguousLocalTime`. Timestamps are unix-millis `Int`, matching
+`Time.unixMillis`.
+
+The embedded data adds about 390 KB to a wasm client (about 60 KB after
+brotli). The name list adds about 25 KB (about 4 KB after brotli).
 
 | Surface | Signature / behaviour |
 |---|---|
@@ -705,9 +754,59 @@ matching `Time.unixMillis`. 32 entries.
 | `isLeapYear y` | `Int -> Bool` |
 | `daysInMonth y m` | `Int -> Int -> Int` (handles leap Feb) |
 | `diffDays` / `diffHours` / `diffMinutes` / `diffSeconds` | `Int -> Int -> Int` (millis → unit) |
-| `fromParts zone y m d h mi s` | `... -> Result Error Int` — construct from components |
+| `fromParts zone y m d h mi s` | `... -> Result Error Int`. The instant of a local time. An `Err` for a date not in the calendar (31 April, 29 February in a common year), a field out of range (year 1 to 9999, hour 0 to 23, minute and second 0 to 59), a local time the clocks skip (`NonexistentLocalTime`) and one they repeat (`AmbiguousLocalTime`, the message gives both instants). It is `fromPartsWith Reject` (v0.31.0) |
+| `Disambiguation` | `Compatible \| Earlier \| Later \| Reject`, as in JavaScript Temporal. For a repeated local time, `Compatible` and `Earlier` give the earlier instant, `Later` the later one. For a skipped local time, `Compatible` and `Later` move it forward by the gap (01:30 in a 01:00 to 02:00 gap gives 02:30), `Earlier` moves it back (00:30). `Reject` is an `Err` |
+| `fromPartsWith d zone y m d h mi s` | `Disambiguation -> String -> Int -> Int -> Int -> Int -> Int -> Int -> Result Error Int`. `fromParts` with a rule for a skipped or repeated local time. Calendar errors stay `Err` |
+| `Parts` | `{ year, month, day, hour, minute, second, millisecond, weekday, offsetMinutes : Int, abbreviation : String }`. `weekday` is ISO (1 Monday to 7 Sunday). `offsetMinutes` is east positive, and drops the seconds of a local mean time offset before about 1900 |
+| `toParts zone ms` / `toPartsUtc ms` | `String -> Int -> Result Error Parts` / `Int -> Parts`. Every part of a local time in one call |
+| `isZone name` | `String -> Bool`. True for a name the other functions accept: a canonical name or a link (`"UTC"`, `"Asia/Calcutta"`). Exact case. False for `""` and `"Local"` |
+| `zones` | `List String`. The canonical IANA names, sorted (`"Etc/UTC"` is in it, its link `"UTC"` is not). Made from the tzdata of the Go version Sky builds with |
+| `nextTransition zone ms` / `previousTransition zone ms` | `String -> Int -> Result Error (Maybe Int)`. The next instant after `ms` (the last before `ms`) at which the zone's offset or abbreviation changes, to the millisecond. `Nothing` when there is none within 50 years. Both are strict, so a call on the result moves on |
 | `zoneOffset zone ms` / `zoneName zone ms` | zone metadata at that instant |
 | `utc` | `String` — the `"UTC"` constant |
+
+### `Std.I18n` — locales, plural rules and messages (v0.31.0)
+
+```elm
+import Std.I18n as I18n exposing (Locale, Text)
+import Std.I18n.Format as Format
+```
+
+Locales and catalogues come from `[i18n]` in `sky.toml`. `sky check` checks
+every catalogue (E5001 to E5008). Everything is pure and runs the same on the
+server and in a Sky.Spa client. Import it qualified: names such as `int`,
+`list` and `string` are short. The guide is [i18n.md](i18n.md).
+
+| Surface | Signature / behaviour |
+|---|---|
+| `locale s` | `String -> Result Error Locale` — parse and canonicalise ("zh-hant-hk" is "zh-Hant-HK") |
+| `tag` / `language` / `script` | `Locale -> String` — `script` gives the likely script ("zh-HK" is "Hant") |
+| `region` | `Locale -> Maybe String` |
+| `direction` | `Locale -> Direction` (`Ltr` / `Rtl`) |
+| `fallbacks` | `Locale -> List Locale` — the CLDR chain, then the default locale |
+| `negotiate supported header` | `List Locale -> String -> Locale` — `Accept-Language` matching |
+| `defaultLocale` / `locales` | `Locale` / `List Locale` — from `[i18n]`, else "en" |
+| `plural` / `ordinal` | `Locale -> Int -> PluralCategory` (`Zero One Two Few Many Other`) |
+| `pluralDecimal` | `Locale -> Decimal -> PluralCategory` |
+| `t loc key args` | `Locale -> String -> List ( String, Arg ) -> String` |
+| `text key args` / `key k` / `verbatim s` | build a `Text` to store and render later |
+| `render loc txt` | `Locale -> Text -> String` |
+| `textKey` | `Text -> Maybe String` |
+| `string` `int` `decimal` `money` `percent` `time` `date` `list` | build an `Arg` |
+| `overrides` | `List Override -> Result Error Overrides` — extra messages that win (`tWith`, `renderWith`) |
+
+### `Std.I18n.Format` — CLDR formatting (v0.31.0)
+
+| Surface | Signature / behaviour |
+|---|---|
+| `int` / `decimal` / `percent` / `money` | `Locale -> … -> Result Error String` ("1,234", "12,34,567" in hi, "£1,234.50", "1.234,50 €" in de) |
+| `date loc style iso` | `Locale -> Style -> String -> Result Error String` (`Short Medium Long Full`) |
+| `time` / `dateTime` | `Locale -> Style -> String -> Int -> Result Error String` — zone and Unix ms |
+| `list` | `Locale -> ListStyle -> List String -> Result Error String` (`And Or Unit`) |
+| `relative` | `Locale -> Numeric -> RelativeUnit -> Int -> Result Error String` (`Always` / `Auto`) |
+
+A locale whose CLDR data the program does not carry is an `Err` (domain
+"i18n", code "LocaleNotCompiled") that names the `sky.toml` fix.
 
 ---
 
@@ -1522,8 +1621,27 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   or a bad element of a `List (Maybe a)` is an `Err` naming where it failed,
   never a silent `Nothing`. A `Codec.object` field must be present, a
   `Maybe` included (`null` for `Nothing`).
-  `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
-  `[key, value]` pairs, so any comparable key round-trips. `Codec.value`
+  `Codec.dict keyCodec valueCodec` encodes a `Dict` as a JSON object when the
+  key codec is a scalar (v0.31.0): `Codec.string`, `Codec.int`,
+  `Codec.float`, `Codec.bool`, `Codec.char` or a `Codec.enum`. The member name
+  is the key text `Codec.auto` writes: a String as it is, an Int in decimal
+  (`"10"`), a Float in Go's shortest form (`"1.5"`, `"2"`, `"1e+21"`, `"NaN"`,
+  `"+Inf"`), a Bool as `"true"` / `"false"`, a Char as its code point
+  (`"97"`), an enum value as its name. Members are sorted byte-wise. This is
+  byte for byte the JSON `Codec.auto` writes for a record field of the same
+  `Dict` type. A key codec that is not one of these (a `lazy`, a `taggedUnion`) keeps the
+  JSON array of `[key, value]` pairs (v0.27). The decoder reads both forms,
+  so rows and files written by v0.30 and earlier still read. A key is read in
+  its one text only (`"010"`, `"1.50"`, `"-0"`, `"Inf"`, `"True"` are an
+  `Err`), an error names the key (`at ["x"]: …`), and two members that read
+  as one key are an `Err`. -0 and 0 are one Dict key (v0.31.0), and every NaN
+  is one. The schema of the object form is
+  `{"type":"object","additionalProperties":…}`, with a `propertyNames` pattern
+  for Int, Char and Float keys and the names for enum and Bool keys.
+  `Codec.char` (v0.31.0) is a `Char` as its code point, as `Codec.auto`
+  writes a `Char` field. `Codec.lazy (\_ -> codec)` (v0.31.0)
+  is a codec that names itself, for a recursive type (`Json.Decode.lazy` for
+  codecs; an open schema, a JSON text column). `Codec.value`
   (v0.29.2) is a raw `Json.Value`, as it is both ways (a JSON text column, the
   open schema `{}`): `Codec.list Codec.value` carries a `List Json.Value`
   field whatever the blank holds (`Codec.auto` reads one only when its blank
@@ -2233,6 +2351,7 @@ TZ-awareness:
 | `startOfDay` / `endOfDay` | `startOfDayUtc` / `endOfDayUtc` |
 | `startOfWeek` / `startOfMonth` / `endOfMonth` | `startOfWeekUtc` / `startOfMonthUtc` / `endOfMonthUtc` |
 | `startOfYear` / `endOfYear` | `startOfYearUtc` / `endOfYearUtc` |
+| `toParts` | `toPartsUtc : Int -> Parts` |
 
 The UTC variants plug `"UTC"` (always-valid IANA zone) at the call
 site, so the `Result Error _` wrap collapses to the bare value.
@@ -2440,6 +2559,54 @@ routes are built with `App.route` / `App.routeParam` / `App.api`. See
 [Sky.Live overview](skylive/overview.md) for the full TEA flow that this target
 delivers — the low-level `Sky.Live` runtime is documented there as the mechanism
 `--target web` compiles to.
+
+#### `Std.Html.Document` — attributes of the root `<html>` element
+
+`App.withDocument` sets the attributes of the root `<html>` element from the
+model. Screen readers, browser translation, hyphenation and `:lang()` CSS read
+the document language from `<html lang>`, so put it there, not on an element
+inside the view. A right-to-left page sets `dir`.
+
+```elm
+import Std.App as App
+import Std.Html.Document as Document
+
+documentFor : Model -> List Document.Attribute
+documentFor model =
+    [ Document.lang model.locale
+    , Document.dir (if model.locale == "ar" then Document.Rtl else Document.Ltr)
+    , Document.data "theme" model.theme
+    ]
+
+appDef =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound NotFound
+        |> App.withDocument documentFor
+```
+
+| Function | Writes |
+|---|---|
+| `lang : String -> Attribute` | `lang="…"`, a BCP 47 tag (`"en"`, `"fr-CA"`, `"zh-Hant-TW"`) |
+| `dir : Direction -> Attribute` | `dir="ltr"` / `"rtl"` / `"auto"` (`Ltr`, `Rtl`, `Auto`) |
+| `class : String -> Attribute` | `class="…"` |
+| `data : String -> String -> Attribute` | `data-<name>="…"` |
+| `translate : Bool -> Attribute` | `translate="yes"` / `"no"` |
+
+Rules. There is no free-form attribute name. A `lang` value that is not a
+well-formed BCP 47 tag is not written, and the app logs it once at WARN level
+(`DocumentAttributeRejected`). A `data` name must use `a-z`, `0-9`, `-`, `_`
+and `.` and must not start with `sky-`: the runtime uses `data-sky-*` for its
+own markers. When the list sets one attribute more than one time, the last
+value wins. Every value is HTML-escaped.
+
+Each web target writes the attributes on the first page and follows a change
+with no page reload. Sky.Live (`Live.withDocument`) computes the set once per
+render and sends it in the patch protocol only when it changed. The Sky.Spa
+server (`Spa.withDocument`) writes it on the first paint, and the client sets
+it after each render that changes it. A Sky.Spa page whose list has no `lang`
+keeps `lang="en"`. The desktop window (`Webview.appWithDocument`) writes it in
+its shell. The terminal targets ignore it. An app with no `withDocument`
+renders as before.
 
 #### `Std.Live.Head` — per-page `<head>` injection (v0.15.58+)
 

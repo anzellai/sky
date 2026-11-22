@@ -45,12 +45,14 @@ func (s *liveSession) takeDispatchScrolls() []liveScrollDelivery {
 func (s *liveSession) prepareDispatchFrameSnapshot(body string) frameSnapshot {
 	snapshot := s.prepareFrameSnapshot(body)
 	snapshot.scrolls = s.takeDispatchScrolls()
+	snapshot.docChanged = s.takeDocChange()
 	return snapshot
 }
 
 func (s *liveSession) prepareDispatchFrameSnapshotWithGlobalSeq(body string, globalSeq int64) frameSnapshot {
 	snapshot := s.prepareFrameSnapshotWithGlobalSeq(body, globalSeq)
 	snapshot.scrolls = s.takeDispatchScrolls()
+	snapshot.docChanged = s.takeDocChange()
 	return snapshot
 }
 

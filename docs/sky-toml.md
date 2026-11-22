@@ -39,6 +39,7 @@ That's enough — every other field has a sensible default.
 | `[env]`              | Env-var namespace prefix (v0.11.5+)                  |
 | `[security]`         | CSRF opt-out                                         |
 | `[app]`              | Persisted build `target` for a `Std.App` entry (build-time, not runtime) |
+| `[i18n]`             | `Std.I18n` locales, default locale and catalogue folder (build-time, v0.31+) |
 | `[tool.<name>]`      | Another tool's own settings. Sky never reads it and never warns (v0.27.2+) |
 
 > **Cross-platform packaging (app name, bundle id, icon) is NOT in `sky.toml`.**
@@ -130,6 +131,34 @@ This is a **build-time** marker (like `[spa]`), not runtime config — it is rea
 by the CLI when resolving the target, never by the running app. An explicit
 `--target` on the command line always overrides it, and it only applies to a
 dispatched `Std.App` entry (one that imports `Std.App` and runs `App.run`).
+
+---
+
+## `[i18n]` *(v0.31+)*
+
+The locales of a `Std.I18n` app and the folder of its message catalogues.
+
+```toml
+[i18n]
+locales = ["en-GB", "zh-Hans", "ar"]
+default = "en-GB"
+catalogues = "i18n"
+```
+
+| Key          | Type             | Default  | Meaning |
+|--------------|------------------|----------|---------|
+| `locales`    | array of strings | required | The app's locales, as canonical BCP 47 tags. `en-XA` adds the pseudo-locale. |
+| `default`    | string           | required | The locale every lookup chain ends in. It must be in `locales`. |
+| `catalogues` | string           | `"i18n"` | The folder that holds one folder per locale of `*.json` catalogues, relative to the project. |
+
+This is **build-time** config, not runtime config. `sky check` and `sky build`
+read it, check every catalogue (errors E5001 to E5008,
+[errors/i18n-catalogues.md](errors/i18n-catalogues.md)), embed the catalogues
+in the binary and the Sky.Spa wasm, and compile in the CLDR data of the
+listed locales and their CLDR parents only. No environment variable changes
+it. An unknown key in the section is error E5001. Without the section, a
+program that uses `Std.I18n` has the locale `en` only and no catalogue. See
+[i18n.md](i18n.md).
 
 ---
 

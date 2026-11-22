@@ -1,0 +1,980 @@
+module JsonObjectKeysConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for JSON objects with arbitrary keys (v0.31.0):
+Json.Decode.keyValuePairs / dict / lazy, Json.Encode.dict, the refusal of a
+repeated key at the parse boundary, Std.Codec.dict in its object form (and the
+pairs form it still reads), the law that Codec.dict and a Codec.auto field of
+the same Dict type write the same bytes, the dict schema, toXml / fromXml, and
+Codec.lazy. The last cases run against an in-process sqlite DB. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Task as Task
+import Sky.Core.Math as Math
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.Json.Encode as Encode exposing (Value)
+import Sky.Core.Json.Decode as Decode exposing (Decoder)
+import Std.Codec as Codec exposing (Codec)
+import Std.Db as Db
+import Std.Db.Store as Store exposing (Store)
+import Sky.Test as Test exposing (Test)
+
+-- ─── Fixtures ──────────────────────────────────────────────────────
+type Tree
+    = Tree Int (List Tree)
+
+
+treeDecoder : Decoder Tree
+treeDecoder =
+    Decode.map2
+        Tree
+        (Decode.field "v" Decode.int)
+        (Decode.field "c" (Decode.list (Decode.lazy (\_ -> treeDecoder))))
+
+
+treeCodec : Codec Tree
+treeCodec =
+    Codec.object Tree |> Codec.field "v" (\(Tree v _) -> v) Codec.int
+        |> Codec.field
+               "c"
+               (\(Tree _ kids) -> kids)
+               (Codec.list (Codec.lazy (\_ -> treeCodec)))
+        |> Codec.buildObject
+
+
+-- The depth of nested arrays, through a recursive decoder.
+depthDecoder : Decoder Int
+depthDecoder =
+    Decode.oneOf
+        [ Decode.map
+              (\xs -> 1 + Maybe.withDefault 0 (List.head xs))
+              (Decode.list (Decode.lazy (\_ -> depthDecoder)))
+        , Decode.succeed 0
+        ]
+
+
+nested : Int -> String
+nested n =
+    String.repeat n "[" ++ String.repeat n "]"
+
+
+nestedValue : Int -> Value
+nestedValue n =
+    if n <= 0 then
+        Encode.list identity []
+
+    else
+        Encode.list identity [ nestedValue (n - 1) ]
+
+-- A single-constructor custom type holding a Dict: Codec.auto writes it as
+-- {"tag":"Box","v0":…}, which `boxCodec` writes by hand.
+type Box
+    = Box (Dict String Int)
+
+type alias BoxFields =
+    { tag : String
+    , v0 : Dict String Int
+    }
+
+
+boxCodec : Codec Box
+boxCodec =
+    Codec.map
+        (\r -> Box r.v0)
+        (\(Box d) -> { tag = "Box", v0 = d })
+        (Codec.object BoxFields |> Codec.field "tag" .tag Codec.string
+            |> Codec.field "v0" .v0 (Codec.dict Codec.string Codec.int)
+            |> Codec.buildObject)
+
+-- Float, Bool and Char keys, and a Char field, under both codecs.
+type alias ScalarKeys =
+    { fl : Dict Float Int
+    , bo : Dict Bool String
+    , ch : Dict Char Int
+    , c : Char
+    }
+
+
+scalarSample : ScalarKeys
+scalarSample =
+    { fl =
+        Dict.fromList
+            [ ( 2.0, 1 )
+            , ( 1.5, 2 )
+            , ( 1.0e21, 3 )
+            , ( 1.0e-7, 4 )
+            , ( 1.23456789e8, 5 )
+            , ( 0.0, 7 )
+            , ( Math.nan, 8 )
+            , ( Math.inf, 9 )
+            , ( 0.1, 10 )
+            , ( negate Math.inf, 11 )
+            ]
+    , bo = Dict.fromList [ ( True, "yes" ), ( False, "no" ) ]
+    , ch = Dict.fromList [ ( 'a', 1 ), ( '日', 2 ) ]
+    , c = 'z'
+    }
+
+
+scalarAuto : Codec ScalarKeys
+scalarAuto =
+    Codec.auto { fl = Dict.empty, bo = Dict.empty, ch = Dict.empty, c = 'a' }
+
+
+scalarHand : Codec ScalarKeys
+scalarHand =
+    Codec.object ScalarKeys
+        |> Codec.field "fl" .fl (Codec.dict Codec.float Codec.int)
+        |> Codec.field "bo" .bo (Codec.dict Codec.bool Codec.string)
+        |> Codec.field "ch" .ch (Codec.dict Codec.char Codec.int)
+        |> Codec.field "c" .c Codec.char
+        |> Codec.buildObject
+
+type alias Rec =
+    { names : Dict String Int
+    , nums : Dict Int String
+    , nest : Dict String (Dict Int Int)
+    , listed : List (Dict String Int)
+    , opt : Maybe (Dict Int String)
+    , box : Box
+    }
+
+
+sample : Rec
+sample =
+    { names = Dict.fromList [ ( "b", 2 ), ( "a", 1 ), ( "B", 3 ), ( "x y", 4 ) ]
+    , nums =
+        Dict.fromList [ ( 9, "nine" ), ( 10, "ten" ), ( -3, "m" ), ( 0, "z" ) ]
+    , nest =
+        Dict.fromList
+            [ ( "x", Dict.fromList [ ( 2, 20 ), ( 11, 110 ) ] )
+            , ( "e", Dict.empty )
+            ]
+    , listed = [ Dict.fromList [ ( "k", 1 ) ], Dict.empty ]
+    , opt = Just (Dict.fromList [ ( 100, "h" ), ( -100, "n" ) ])
+    , box = Box (Dict.fromList [ ( "z", 26 ), ( "Z", 0 ) ])
+    }
+
+
+blank : Rec
+blank =
+    { names = Dict.empty
+    , nums = Dict.empty
+    , nest = Dict.empty
+    , listed = []
+    , opt = Nothing
+    , box = Box Dict.empty
+    }
+
+
+autoCodec : Codec Rec
+autoCodec =
+    Codec.auto blank
+
+
+handCodec : Codec Rec
+handCodec =
+    Codec.object Rec
+        |> Codec.field "names" .names (Codec.dict Codec.string Codec.int)
+        |> Codec.field "nums" .nums (Codec.dict Codec.int Codec.string)
+        |> Codec.field
+               "nest"
+               .nest
+               (Codec.dict Codec.string (Codec.dict Codec.int Codec.int))
+        |> Codec.field
+               "listed"
+               .listed
+               (Codec.list (Codec.dict Codec.string Codec.int))
+        |> Codec.field
+               "opt"
+               .opt
+               (Codec.maybe (Codec.dict Codec.int Codec.string))
+        |> Codec.field "box" .box boxCodec
+        |> Codec.buildObject
+
+
+-- Enum keys whose names are the keys themselves, so Codec.auto (which writes
+-- a `Dict String v` key as it is) and Codec.dict over an enum agree.
+colourKey : Codec String
+colourKey =
+    Codec.enum [ ( "red", "red" ), ( "Blue", "Blue" ), ( "green", "green" ) ]
+
+type alias Palette =
+    { colours : Dict String Int }
+
+
+paletteAuto : Codec Palette
+paletteAuto =
+    Codec.auto { colours = Dict.empty }
+
+
+paletteHand : Codec Palette
+paletteHand =
+    Codec.object Palette
+        |> Codec.field "colours" .colours (Codec.dict colourKey Codec.int)
+        |> Codec.buildObject
+
+
+-- A key codec that reads "A" and "a" as one key.
+lowerKey : Codec String
+lowerKey =
+    Codec.map String.toLower identity Codec.string
+
+
+-- The JSON text of a value with its object keys sorted (decode, re-encode).
+normal : Value -> String
+normal v =
+    case Decode.decodeValue Decode.value v of
+
+        Ok x ->
+            Encode.encode 0 x
+
+        Err e ->
+            "Err " ++ errorToString e
+
+
+isErrWith : String -> Result Error a -> Bool
+isErrWith needle r =
+    case r of
+
+        Ok _ ->
+            False
+
+        Err e ->
+            String.contains needle (errorToString e)
+
+
+-- ─── Pure cases ────────────────────────────────────────────────────
+pureTests : List Test
+pureTests =
+    [ Test.test
+          "Decode.keyValuePairs: pairs in byte-wise key order, not text order"
+          (\_ ->
+              Test.equal
+                  (Ok [ ( "B", 3 ), ( "a", 1 ), ( "b", 2 ) ])
+                  (Decode.decodeString
+                      (Decode.keyValuePairs Decode.int)
+                      "{\"b\":2,\"a\":1,\"B\":3}"))
+    , Test.test
+          "Decode.keyValuePairs: an empty object is an empty list"
+          (\_ ->
+              Test.equal
+                  (Ok [])
+                  (Decode.decodeString (Decode.keyValuePairs Decode.int) "{}"))
+    , Test.test
+          "Decode.keyValuePairs: a value error names the key under its field"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "at .s[\"b\"]: expected Int, got String"
+                      (Decode.decodeString
+                          (Decode.field "s" (Decode.keyValuePairs Decode.int))
+                          "{\"s\":{\"a\":1,\"b\":\"x\"}}")))
+    , Test.test
+          "Decode.keyValuePairs: a key holding \": \" keeps the path intact"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "at .s[\"a: b\"][0]: expected Int, got Bool"
+                      (Decode.decodeString
+                          (Decode.field
+                              "s"
+                              (Decode.keyValuePairs (Decode.list Decode.int)))
+                          "{\"s\":{\"a: b\":[true]}}")))
+    , Test.test
+          "Decode.keyValuePairs: an array is an Err, not an empty list"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "expected Object, got Array"
+                      (Decode.decodeString (Decode.keyValuePairs Decode.int) "[]")))
+    , Test.test
+          "Decode.dict: an object reads as a Dict keyed by member names"
+          (\_ ->
+              Test.equal
+                  (Ok (Dict.fromList [ ( "", 0 ), ( "a", 1 ), ( "x y", 2 ) ]))
+                  (Decode.decodeString
+                      (Decode.dict Decode.int)
+                      "{\"a\":1,\"x y\":2,\"\":0}"))
+    , Test.test
+          "Decode.dict: a nested dict error names both keys"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "at [\"o\"][\"i\"]: expected Int, got Null"
+                      (Decode.decodeString
+                          (Decode.dict (Decode.dict Decode.int))
+                          "{\"o\":{\"i\":null}}")))
+    , Test.test
+          "Decode.lazy: a recursive tree decodes"
+          (\_ ->
+              Test.equal
+                  (Ok (Tree 1 [ Tree 2 [], Tree 3 [ Tree 4 [] ] ]))
+                  (Decode.decodeString
+                      treeDecoder
+                      "{\"v\":1,\"c\":[{\"v\":2,\"c\":[]},{\"v\":3,\"c\":[{\"v\":4,\"c\":[]}]}]}"))
+    , Test.test
+          "Decode.lazy: 10000 nested arrays decode with no stack overflow"
+          (\_ ->
+              Test.equal
+                  (Ok 10000)
+                  (Decode.decodeString depthDecoder (nested 10000)))
+    , Test.test
+          "Decode.lazy: 10001 nested arrays are an Err, never a crash"
+          (\_ ->
+              Test.equal
+                  True
+                  (Result.toMaybe
+                      (Decode.decodeString depthDecoder (nested 10001))
+                      == Nothing))
+    , Test.test
+          "Decode.decodeValue: a Value nested deeper than 10000 is an Err"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "deeper than 10000"
+                      (Decode.decodeValue depthDecoder (nestedValue 10001))))
+    , Test.test
+          "duplicate key: refused at the top level, naming the key"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "duplicate key \"a\" in the top-level object"
+                      (Decode.decodeString
+                          (Decode.field "a" Decode.int)
+                          "{\"a\":1,\"a\":2}")))
+    , Test.test
+          "duplicate key: refused at depth, naming the path"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "duplicate key \"q\" in the object at .a[1][\"x y\"]"
+                      (Decode.decodeString
+                          Decode.value
+                          "{\"a\":[{},{\"x y\":{\"q\":1,\"r\":0,\"q\":2}}]}")))
+    , Test.test
+          "duplicate key: refused even when the decoder reads no field"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "duplicate key"
+                      (Decode.decodeString (Decode.succeed 0) "{\"a\":1,\"a\":1}")))
+    , Test.test
+          "duplicate key: an escaped spelling of the same key is a repeat"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "duplicate key \"a\""
+                      (Decode.decodeString Decode.value "{\"a\":1,\"\\u0061\":2}")))
+    , Test.test
+          "duplicate key: one key in two sibling objects is not a repeat"
+          (\_ ->
+              Test.equal
+                  (Ok [ 1, 2 ])
+                  (Decode.decodeString
+                      (Decode.list (Decode.field "a" Decode.int))
+                      "[{\"a\":1},{\"a\":2}]"))
+    , Test.test
+          "duplicate key: decodeValue refuses an Encode.object that repeats a key"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "duplicate key \"k\""
+                      (Decode.decodeValue
+                          (Decode.field "k" Decode.int)
+                          (Encode.object
+                              [ ( "k", Encode.int 1 ), ( "k", Encode.int 2 ) ]))))
+    , Test.test
+          "duplicate key: Codec.fromJson and Codec.auto refuse it"
+          (\_ ->
+              Test.equal
+                  ( True, True )
+                  ( isErrWith
+                        "duplicate key \"names\""
+                        (Codec.fromJson autoCodec "{\"names\":{},\"names\":{}}")
+                  , isErrWith
+                        "duplicate key \"k\""
+                        (Codec.fromJson
+                            (Codec.dict Codec.string Codec.int)
+                            "{\"k\":1,\"k\":2}")
+                  ))
+    , Test.test
+          "Encode.dict: members sorted byte-wise by the key text"
+          (\_ ->
+              Test.equal
+                  "{\"-1\":\"m\",\"10\":\"ten\",\"9\":\"nine\"}"
+                  (Encode.encode
+                      0
+                      (Encode.dict
+                          String.fromInt
+                          Encode.string
+                          (Dict.fromList
+                              [ ( 9, "nine" ), ( 10, "ten" ), ( -1, "m" ) ]))))
+    , Test.test
+          "Encode.dict: two keys with one text are both written, and every decoder refuses the object"
+          (\_ ->
+              let
+                  v =
+                      Encode.dict
+                          String.toLower
+                          Encode.int
+                          (Dict.fromList [ ( "A", 1 ), ( "a", 2 ) ])
+              in
+                  Test.equal
+                      ( "{\"a\":1,\"a\":2}", True, True )
+                      ( Encode.encode 0 v
+                      , isErrWith
+                            "duplicate key \"a\""
+                            (Decode.decodeString
+                                (Decode.dict Decode.int)
+                                (Encode.encode 0 v))
+                      , isErrWith
+                            "duplicate key \"a\""
+                            (Decode.decodeValue (Decode.dict Decode.int) v)
+                      ))
+    , Test.test
+          "Codec.dict: String, Int and enum keys write a JSON object"
+          (\_ ->
+              Test.equal
+                  ( "{\"B\":3,\"a\":1}"
+                  , "{\"-3\":\"m\",\"10\":\"t\",\"9\":\"n\"}"
+                  , "{\"Blue\":2,\"red\":1}"
+                  )
+                  ( Codec.toJson
+                        (Codec.dict Codec.string Codec.int)
+                        (Dict.fromList [ ( "a", 1 ), ( "B", 3 ) ])
+                  , Codec.toJson
+                        (Codec.dict Codec.int Codec.string)
+                        (Dict.fromList [ ( 9, "n" ), ( 10, "t" ), ( -3, "m" ) ])
+                  , Codec.toJson
+                        (Codec.dict colourKey Codec.int)
+                        (Dict.fromList [ ( "red", 1 ), ( "Blue", 2 ) ])
+                  ))
+    , Test.test
+          "Codec.dict: a key codec with no scalar schema (a lazy codec) keeps the pairs form"
+          (\_ ->
+              Test.equal
+                  "[[1,\"x\"],[2,\"y\"]]"
+                  (Codec.toJson
+                      (Codec.dict (Codec.lazy (\_ -> Codec.int)) Codec.string)
+                      (Dict.fromList [ ( 2, "y" ), ( 1, "x" ) ])))
+    , Test.test
+          "law: Float, Bool and Char keys write the bytes Codec.auto writes"
+          (\_ ->
+              Test.equal
+                  (Codec.toJson scalarAuto scalarSample)
+                  (Codec.toJson scalarHand scalarSample))
+    , Test.test
+          "law: Float, Bool and Char keys: the documented text, and each codec reads the other"
+          (\_ ->
+              Test.equal
+                  ( "{\"fl\":{\"+Inf\":9,\"-Inf\":11,\"0\":7,\"0.1\":10,\"1.23456789e+08\":5,\"1.5\":2,\"1e+21\":3,\"1e-07\":4,\"2\":1,\"NaN\":8},\"bo\":{\"false\":\"no\",\"true\":\"yes\"},\"ch\":{\"26085\":2,\"97\":1},\"c\":122}"
+                  , Ok True
+                  , Ok True
+                  )
+                  ( Codec.toJson scalarHand scalarSample
+                  , Codec.fromJson
+                        scalarAuto
+                        (Codec.toJson scalarHand scalarSample)
+                        |> Result.map (\x -> x == scalarSample)
+                  , Codec.fromJson
+                        scalarHand
+                        (Codec.toJson scalarAuto scalarSample)
+                        |> Result.map (\x -> x == scalarSample)
+                  ))
+    , Test.test
+          "Float keys: -0 and 0 are one Dict key, written 0"
+          (\_ ->
+              let
+                  d =
+                      Dict.fromList [ ( negate 0.0, "neg" ), ( 0.0, "pos" ) ]
+              in
+                  Test.equal
+                      ( 1, "{\"0\":\"pos\"}" )
+                      ( Dict.size d
+                      , Codec.toJson (Codec.dict Codec.float Codec.string) d
+                      ))
+    , Test.test
+          "Float keys: read in their one text only"
+          (\_ ->
+              Test.equal
+                  [ True, True, True, True, True, True ]
+                  (List.map
+                      (\k ->
+                          isErrWith
+                              "key: expected a Float key"
+                              (Codec.fromJson
+                                  (Codec.dict Codec.float Codec.int)
+                                  ("{\"" ++ k ++ "\":1}")))
+                      [ "1.50", "-0", "Inf", "1e21", "+1.5", "x" ]))
+    , Test.test
+          "Bool and Char keys: read in their one text only"
+          (\_ ->
+              Test.equal
+                  ( True, True, True )
+                  ( isErrWith
+                        "key: expected a Bool key"
+                        (Codec.fromJson
+                            (Codec.dict Codec.bool Codec.int)
+                            "{\"True\":1}")
+                  , isErrWith
+                        "key: expected an Int key"
+                        (Codec.fromJson
+                            (Codec.dict Codec.char Codec.int)
+                            "{\"097\":1}")
+                  , isErrWith
+                        "key: "
+                        (Codec.fromJson
+                            (Codec.dict Codec.char Codec.int)
+                            "{\"1114112\":1}")
+                  ))
+    , Test.test
+          "jsonSchema: Float, Bool and Char keys give the schema Codec.auto gives"
+          (\_ ->
+              let
+                  fields = [ "fl", "bo", "ch", "c" ]
+                  part codec name =
+                      case Decode.decodeValue
+                               (Decode.at [ "properties", name ] Decode.value)
+                               (Codec.jsonSchema codec).schema of
+
+                          Ok v ->
+                              normal v
+
+                          Err e ->
+                              errorToString e
+              in
+                  Test.equal
+                      (List.map (part scalarAuto) fields)
+                      (List.map (part scalarHand) fields))
+    , Test.test
+          "Codec.char: a code point both ways"
+          (\_ ->
+              Test.equal
+                  ( "97", Ok 'a', True )
+                  ( Codec.toJson Codec.char 'a'
+                  , Codec.fromJson Codec.char "97"
+                  , isErrWith "code point" (Codec.fromJson Codec.char "-1")
+                  ))
+    , Test.test
+          "Codec.dict: the pairs form of Sky v0.30 still reads"
+          (\_ ->
+              Test.equal
+                  ( Ok (Dict.fromList [ ( 9, "nine" ), ( 10, "ten" ) ])
+                  , Ok (Dict.fromList [ ( "a", 1 ) ])
+                  , Ok Dict.empty
+                  )
+                  ( Codec.fromJson
+                        (Codec.dict Codec.int Codec.string)
+                        "[[9,\"nine\"],[10,\"ten\"]]"
+                  , Codec.fromJson
+                        (Codec.dict Codec.string Codec.int)
+                        "[[\"a\",1]]"
+                  , Codec.fromJson (Codec.dict Codec.string Codec.int) "[]"
+                  ))
+    , Test.test
+          "Codec.dict: an Int key is read strictly"
+          (\_ ->
+              Test.equal
+                  [ True, True, True, True, True, True ]
+                  (List.map
+                      (\k ->
+                          isErrWith
+                              "key: expected an Int key"
+                              (Codec.fromJson
+                                  (Codec.dict Codec.int Codec.int)
+                                  ("{\"" ++ k ++ "\":1}")))
+                      [ "010", "+1", "1e1", "1.0", " 1", "-0" ]))
+    , Test.test
+          "Codec.dict: Int keys at the edges of the range round-trip"
+          (\_ ->
+              let
+                  d =
+                      Dict.fromList
+                          [ ( 9223372036854775807, 1 )
+                          , ( -9223372036854775807 - 1, 2 )
+                          , ( 0, 3 )
+                          ]
+                  c = Codec.dict Codec.int Codec.int
+              in
+                  Test.equal (Ok d) (Codec.fromJson c (Codec.toJson c d)))
+    , Test.test
+          "Codec.dict: an enum key that is not a name is an Err naming the key"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "at [\"pink\"]: key:"
+                      (Codec.fromJson
+                          (Codec.dict colourKey Codec.int)
+                          "{\"pink\":1}")))
+    , Test.test
+          "Codec.dict: a value error names the key"
+          (\_ ->
+              Test.equal
+                  True
+                  (isErrWith
+                      "at [\"10\"]: expected String, got Number"
+                      (Codec.fromJson
+                          (Codec.dict Codec.int Codec.string)
+                          "{\"10\":5}")))
+    , Test.test
+          "Codec.dict: two members that read as one key are an Err, never a lost entry"
+          (\_ ->
+              Test.equal
+                  ( True, True )
+                  ( isErrWith
+                        "two entries read as the same Dict key"
+                        (Codec.fromJson
+                            (Codec.dict lowerKey Codec.int)
+                            "{\"A\":1,\"a\":2}")
+                  , isErrWith
+                        "two entries read as the same Dict key"
+                        (Codec.fromJson
+                            (Codec.dict Codec.int Codec.int)
+                            "[[1,1],[1,2]]")
+                  ))
+    , Test.test
+          "law: Codec.dict and a Codec.auto field of the same Dict type write the same bytes"
+          (\_ ->
+              Test.equal
+                  (Codec.toJson autoCodec sample)
+                  (Codec.toJson handCodec sample))
+    , Test.test
+          "law: the bytes are the documented object form"
+          (\_ ->
+              Test.equal
+                  "{\"names\":{\"B\":3,\"a\":1,\"b\":2,\"x y\":4},\"nums\":{\"-3\":\"m\",\"0\":\"z\",\"10\":\"ten\",\"9\":\"nine\"},\"nest\":{\"e\":{},\"x\":{\"11\":110,\"2\":20}},\"listed\":[{\"k\":1},{}],\"opt\":{\"-100\":\"n\",\"100\":\"h\"},\"box\":{\"tag\":\"Box\",\"v0\":{\"Z\":0,\"z\":26}}}"
+                  (Codec.toJson handCodec sample))
+    , Test.test
+          "law: each codec reads what the other writes"
+          (\_ ->
+              Test.equal
+                  ( Ok sample, Ok sample )
+                  ( Codec.fromJson autoCodec (Codec.toJson handCodec sample)
+                  , Codec.fromJson handCodec (Codec.toJson autoCodec sample)
+                  ))
+    , Test.test
+          "law: enum keys write the bytes Codec.auto writes for the same keys"
+          (\_ ->
+              let
+                  p =
+                      { colours =
+                          Dict.fromList
+                              [ ( "red", 1 ), ( "Blue", 2 ), ( "green", 3 ) ]
+                      }
+              in
+                  Test.equal
+                      ( Codec.toJson paletteAuto p, Ok p )
+                      ( Codec.toJson paletteHand p
+                      , Codec.fromJson paletteHand (Codec.toJson paletteAuto p)
+                      ))
+    , Test.test
+          "law: the empty Dict is {} in both codecs"
+          (\_ ->
+              Test.equal
+                  (Codec.toJson autoCodec blank)
+                  (Codec.toJson handCodec blank))
+    , Test.test
+          "jsonSchema: the object form is a map, with the Int key pattern and the enum key names"
+          (\_ ->
+              Test.equal
+                  ( "{\"additionalProperties\":{\"type\":\"integer\"},\"type\":\"object\"}"
+                  , "{\"additionalProperties\":{\"type\":\"string\"},\"propertyNames\":{\"pattern\":\"^(0|-?[1-9][0-9]*)$\"},\"type\":\"object\"}"
+                  , "{\"additionalProperties\":{\"type\":\"integer\"},\"propertyNames\":{\"enum\":[\"red\",\"Blue\",\"green\"]},\"type\":\"object\"}"
+                  )
+                  ( normal
+                        (Codec.jsonSchema (Codec.dict Codec.string Codec.int)).schema
+                  , normal
+                        (Codec.jsonSchema (Codec.dict Codec.int Codec.string)).schema
+                  , normal
+                        (Codec.jsonSchema (Codec.dict colourKey Codec.int)).schema
+                  ))
+    , Test.test
+          "jsonSchema: exact for String and enum keys, not for Int keys or the pairs form"
+          (\_ ->
+              Test.equal
+                  [ True, False, True, False ]
+                  [ (Codec.jsonSchema (Codec.dict Codec.string Codec.int)).exact
+                  , (Codec.jsonSchema (Codec.dict Codec.int Codec.int)).exact
+                  , (Codec.jsonSchema (Codec.dict colourKey Codec.int)).exact
+                  , (Codec.jsonSchema
+                        (Codec.dict (Codec.lazy (\_ -> Codec.int)) Codec.int)).exact
+                  ])
+    , Test.test
+          "jsonSchema: the pairs form stays the open schema"
+          (\_ ->
+              Test.equal
+                  "{}"
+                  (Encode.encode
+                      0
+                      (Codec.jsonSchema
+                          (Codec.dict (Codec.lazy (\_ -> Codec.int)) Codec.int)).schema))
+    , Test.test
+          "jsonSchema: Codec.dict and Codec.auto give the same schema for each Dict field"
+          (\_ ->
+              let
+                  fields = [ "names", "nums", "nest", "listed", "opt" ]
+                  part codec name =
+                      case Decode.decodeValue
+                               (Decode.at [ "properties", name ] Decode.value)
+                               (Codec.jsonSchema codec).schema of
+
+                          Ok v ->
+                              normal v
+
+                          Err e ->
+                              errorToString e
+              in
+                  Test.equal
+                      (List.map (part autoCodec) fields)
+                      (List.map (part handCodec) fields))
+    , Test.test
+          "schemaValueError: checks a map's keys and values"
+          (\_ ->
+              let
+                  s =
+                      (Codec.jsonSchema (Codec.dict Codec.int Codec.string)).schema
+              in
+                  Test.equal
+                      [ Nothing
+                      , Just "the key \"x\" is not an Int in its decimal text"
+                      , Just "the key \"1\": expected a String, got 2"
+                      ]
+                      [ Codec.schemaValueError
+                            s
+                            (Codec.toValue
+                                (Codec.dict Codec.int Codec.string)
+                                (Dict.fromList [ ( 1, "a" ) ]))
+                      , Codec.schemaValueError
+                            s
+                            (Encode.object [ ( "x", Encode.string "a" ) ])
+                      , Codec.schemaValueError
+                            s
+                            (Encode.object [ ( "1", Encode.int 2 ) ])
+                      ])
+    , Test.test
+          "schemaFitError: Int keys do not read String keys, String keys read Int keys"
+          (\_ ->
+              let
+                  ints =
+                      (Codec.jsonSchema (Codec.dict Codec.int Codec.int)).schema
+                  texts =
+                      (Codec.jsonSchema (Codec.dict Codec.string Codec.int)).schema
+              in
+                  Test.equal
+                      ( Just
+                            "the source's Dict keys are String keys, which do not read as Int keys"
+                      , Nothing
+                      )
+                      ( Codec.schemaFitError ints texts
+                      , Codec.schemaFitError texts ints
+                      ))
+    , Test.test
+          "zeroJson: {} for the object form, [] for the pairs form"
+          (\_ ->
+              Test.equal
+                  ( Just "{}", Just "[]" )
+                  ( Maybe.map
+                        (Encode.encode 0)
+                        (Codec.zeroJson (Codec.dict Codec.int Codec.int))
+                  , Maybe.map
+                        (Encode.encode 0)
+                        (Codec.zeroJson
+                            (Codec.dict (Codec.lazy (\_ -> Codec.int)) Codec.int))
+                  ))
+    , Test.test
+          "toXml / fromXml: the entry shape is unchanged and round-trips the object form"
+          (\_ ->
+              let
+                  c = Codec.dict Codec.int Codec.string
+                  d = Dict.fromList [ ( 9, "nine" ), ( 10, "ten" ) ]
+              in
+                  Test.equal
+                      ( "<m><entry><key>10</key><value>ten</value></entry><entry><key>9</key><value>nine</value></entry></m>"
+                      , Ok d
+                      )
+                      ( Codec.toXml "m" c d
+                      , Codec.fromXml "m" c (Codec.toXml "m" c d)
+                      ))
+    , Test.test
+          "toXml / fromXml: a record of dicts round-trips"
+          (\_ ->
+              Test.equal
+                  (Ok sample)
+                  (Codec.fromXml
+                      "rec"
+                      handCodec
+                      (Codec.toXml "rec" handCodec sample)))
+    , Test.test
+          "Codec.lazy: a recursive codec round-trips and writes the inner JSON"
+          (\_ ->
+              let
+                  t = Tree 1 [ Tree 2 [], Tree 3 [ Tree 4 [] ] ]
+              in
+                  Test.equal
+                      ( "{\"v\":1,\"c\":[{\"v\":2,\"c\":[]},{\"v\":3,\"c\":[{\"v\":4,\"c\":[]}]}]}"
+                      , Ok t
+                      )
+                      ( Codec.toJson treeCodec t
+                      , Codec.fromJson treeCodec (Codec.toJson treeCodec t)
+                      ))
+    , Test.test
+          "Codec.lazy: the same reader as Decode.lazy, and an open schema"
+          (\_ ->
+              Test.equal
+                  ( Decode.decodeString
+                        treeDecoder
+                        "{\"v\":5,\"c\":[{\"v\":6,\"c\":[]}]}"
+                  , "{}"
+                  , []
+                  )
+                  ( Codec.fromJson
+                        treeCodec
+                        "{\"v\":5,\"c\":[{\"v\":6,\"c\":[]}]}"
+                  , Encode.encode
+                        0
+                        (Codec.jsonSchema (Codec.lazy (\_ -> treeCodec))).schema
+                  , Codec.problems (Codec.lazy (\_ -> treeCodec))
+                  ))
+    ]
+
+-- ─── Std.Db.Store ──────────────────────────────────────────────────
+type alias Bag =
+    { id : String
+    , counts : Dict Int Int
+    }
+
+
+bagCodec : Codec Bag
+bagCodec =
+    Codec.object Bag |> Codec.field "id" .id Codec.string
+        |> Codec.field "counts" .counts (Codec.dict Codec.int Codec.int)
+        |> Codec.buildObject
+
+
+bags : Store Bag
+bags =
+    Store.fromCodec "conf_dict_bags" bagCodec |> Store.primaryKey "id"
+
+
+setup : () -> Result Error Db
+setup _ =
+    case Task.run (Db.open "sqlite" "/tmp/sky-json-object-keys-conformance.db") of
+
+        Err e ->
+            Err e
+
+        Ok db ->
+            let
+                _ =
+                    Task.run
+                        (Db.exec db "DROP TABLE IF EXISTS conf_dict_bags" [])
+                _ =
+                    Task.run
+                        (Db.exec
+                            db
+                            "CREATE TABLE conf_dict_bags (id TEXT PRIMARY KEY, counts TEXT)"
+                            [])
+                _ =
+                    Task.run
+                        (Store.insert
+                            db
+                            bags
+                            { id = "new"
+                            , counts = Dict.fromList [ ( 10, 1 ), ( 9, 2 ) ]
+                            })
+                _ =
+                    Task.run
+                        (Db.exec
+                            db
+                            "INSERT INTO conf_dict_bags (id, counts) VALUES ('old', '[[9,2],[10,1]]')"
+                            [])
+                _ =
+                    Task.run
+                        (Db.exec
+                            db
+                            "INSERT INTO conf_dict_bags (id, counts) VALUES ('dup', '{\"9\":2,\"9\":3}')"
+                            [])
+            in
+                Ok db
+
+
+storeTests : List Test
+storeTests =
+    case setup () of
+
+        Err e ->
+            [ Test.test
+                  "store setup"
+                  (\_ -> Test.fail ("DB setup failed: " ++ errorToString e))
+            ]
+
+        Ok db ->
+            [ Test.test
+                  "Store: a Codec.dict field is written as the JSON object and reads back"
+                  (\_ ->
+                      Test.equal
+                          ( Ok
+                                (Just
+                                    { id = "new"
+                                    , counts =
+                                        Dict.fromList [ ( 9, 2 ), ( 10, 1 ) ]
+                                    })
+                          , Ok [ "{\"10\":1,\"9\":2}" ]
+                          )
+                          ( Task.run (Store.findBy db bags "id" "new")
+                          , Task.run
+                                (Db.query
+                                    db
+                                    "SELECT counts FROM conf_dict_bags WHERE id = 'new'"
+                                    [])
+                                |> Result.map
+                                       (List.map
+                                           (\row ->
+                                               Maybe.withDefault
+                                                   ""
+                                                   (Dict.get "counts" row)))
+                          ))
+            , Test.test
+                  "Store: a row written by Sky v0.30 (the pairs form) still reads"
+                  (\_ ->
+                      Test.equal
+                          (Ok
+                              (Just
+                                  { id = "old"
+                                  , counts =
+                                      Dict.fromList [ ( 9, 2 ), ( 10, 1 ) ]
+                                  }))
+                          (Task.run (Store.findBy db bags "id" "old")))
+            , Test.test
+                  "Store: a stored object that repeats a key is an Err naming the key"
+                  (\_ ->
+                      Test.equal
+                          True
+                          (isErrWith
+                              "duplicate key \"9\""
+                              (Task.run (Store.findBy db bags "id" "dup"))))
+            ]
+
+
+tests : List Test
+tests =
+    pureTests ++ storeTests
+
+
+main =
+    Test.runMain tests

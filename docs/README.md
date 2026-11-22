@@ -14,7 +14,7 @@ plans, audits, the retired compilers) is in [`history/`](history/).
 * [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md): current gotchas and
   workarounds.
 * [`migration/`](migration/): what changes between minors (`v0.27.md`,
-  `v0.28.md`, `v0.29.md`, `v0.30.md`), as loud, loud at run time and silent.
+  `v0.28.md`, `v0.29.md`, `v0.30.md`, `v0.31.md`), as loud, loud at run time and silent.
 * [`sky-toml.md`](sky-toml.md): every `sky.toml` key and environment variable.
 
 ## One entry point: `Std.App`
@@ -45,7 +45,7 @@ cost in a `Cost:` line in `sky doc`.
 `Std.Bundle`; `Std.Ui` with `Std.Ui.Animation`, `Background`, `Border`,
 `Canvas`, `Chart`, `Events`, `Font`, `Grid`, `Input`, `Keyed`, `Lazy`,
 `Region`, `Responsive`, `Terminal`, `Transform` and `Transition`; `Std.Html`
-with `Std.Html.Attributes` and `Std.Html.Events`; `Std.Css`;
+with `Std.Html.Attributes`, `Std.Html.Events` and `Std.Html.Document`; `Std.Css`;
 `Std.Live.Console` and `Std.Live.Head`.
 
 **HTTP servers.** `Sky.Http.Server`, `Sky.Http.Server.Stream`,
@@ -65,6 +65,11 @@ images on the server, v0.29.0) and `Std.Qr`.
 **Security and money.** `Std.Auth`; `Std.Crypto.Sign`, `Std.Crypto.Kx`,
 `Std.Crypto.Kdf`, `Std.Crypto.Noise` and `Std.Crypto.Cpace`; `Std.Decimal` and
 `Std.Money`.
+
+**Languages.** `Std.I18n` (locales, CLDR plural rules, checked message
+catalogues, `Text` in models) and `Std.I18n.Format` (numbers, money, dates,
+lists, relative time from CLDR), v0.31.0. See [i18n.md](i18n.md) and the
+catalogue errors in [errors/i18n-catalogues.md](errors/i18n-catalogues.md).
 
 **Effects and operations.** `Std.Durable`, `Std.Jobs`, `Std.PubSub`,
 `Std.Sync`, `Std.Breaker` (a circuit breaker, v0.30.0), `Std.Watch`, `Std.Email`, `Std.Time`, `Std.System`, `Std.Config`,

@@ -1,0 +1,14 @@
+{
+  "booking": {
+    "title": "Your booking",
+    "greeting": "Hello {name}",
+    "nights": { "=0": "No nights booked", "one": "{count} night", "other": "{count} nights" },
+    "total": "Total: {price}",
+    "arrival": "Arrival: {day}",
+    "extras": "Included: {items}",
+    "reminder": "We send a reminder {when}.",
+    "added": "{room} is in your basket.",
+    "add": "Add the suite",
+    "language": "Language"
+  }
+}

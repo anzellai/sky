@@ -882,3 +882,16 @@ symbol = "tests/conformance/tests/MoneyConformanceTest.sky (FX cases)"
 reason = "v0.29.2: the seven FX cases drove the removed global table through nested case expressions, each with two or three Test.fail branches for setRate / clearRates failing. With the explicit Rates value each case is one Test.equal over a Result, so the counted assertion calls fall by 5 while the cases (and what they pin: forward, round trip, inverse, refused zero and negative rate, missing rate, later rate wins) stay or grow (69 -> 71 cases)."
 owner  = "anzel"
 commit = "fix/v0.29.2"
+
+[[config-surface-rise]]
+metric = "pre_binary_surfaces"
+from   = 17
+to     = 20
+reason = """surface, by design: `[i18n]` (locales, default, catalogues) is new
+BUILD-TIME config for Std.I18n (v0.31.0). The build reads the three keys
+(rust/crates/project/src/i18n.rs, i18n_toml_value) to check the message
+catalogues, embed them, and pick the CLDR data the binary carries. No
+environment variable can change them: a deployed binary cannot gain a locale
+whose data it lacks, or a catalogue the build did not check."""
+owner  = "anzel"
+commit = "92416604b"

@@ -783,6 +783,47 @@ Algebraic correctness for these is uncontroversial. Effect-tier
 modules inherit Task's contract (failure surfaced; never panics in
 well-typed code).
 
+### 2.10j JSON objects with arbitrary keys and the Dict wire law (v0.31.0)
+
+**Invariants**, each with its test (`runtime-go/rt/json_duplicate_keys_test.go`;
+conformance suite `JsonObjectKeysConformanceTest`):
+
+* **One parse rule for every decoder.** JSON text that repeats a key in one
+  object is an `Err` naming the key and the path of its object
+  (`jsonParseDocument` → `jsonCheckDuplicateKeys`). `Decode.decodeString`,
+  `Codec.fromJson`, `Codec.auto`, a Sky.Spa payload and a `Std.Db.Store` JSON
+  column all parse there. `decodeValue` refuses an `Encode.object` that gives
+  a key twice, so `decodeValue d v == decodeString d (Encode.encode 0 v)`
+  still holds.
+* **Bounded depth.** Every decoder reads at most 10000 nested arrays and
+  objects (the parser's limit for text, `jsonMaxDepth` for a `Value`), so a
+  recursive decoder (`Decode.lazy`, `Codec.lazy`) gives an `Err` on deep
+  input, never a stack overflow.
+* **Key order.** `keyValuePairs`, `dict`, `Encode.dict`, `Codec.dict` and
+  `Codec.auto` use byte-wise key order. A decoded object keeps no key order.
+* **The Dict wire law.** For a `Dict k v` with String, Int or enum keys,
+  `Codec.toJson (Codec.dict ck cv) d` is byte for byte the JSON a `Codec.auto`
+  record field of the same type writes, at any depth (nested dicts, dicts in a
+  `List`, a `Maybe` or a variant payload), and each codec reads the other's
+  JSON. The schemas match (`{"type":"object","additionalProperties":…}`, a
+  `propertyNames` pattern for Int keys).
+* **No lost entry.** `Codec.dict` reads both its object form and the older
+  `[key, value]` pairs form. An Int key is read strictly (the decimal text
+  only). Two members or pairs that read as one Dict key are an `Err`.
+  `Encode.dict` keeps both members when its key function maps two keys to one
+  text, and every decoder then refuses the object.
+
+* **Every scalar key.** The law holds for String, Int, Float, Bool, Char
+  (`Codec.char`) and enum keys. The key text is the runtime's one text of the
+  key (`dictJSONKey` / `dictFloatKeyText`): a Float in Go's shortest `%v`
+  form, -0 written as `"0"`, NaN as `"NaN"`, the infinities as `"+Inf"` /
+  `"-Inf"`. These are valid JSON member names, so no key is refused on write.
+  `-0.0 == 0.0`, so the two are one Dict key, and every NaN is one Dict key:
+  the Dict holds one entry for each, and the JSON writes that entry once.
+  `Codec.dict` reads each key in its one text only. A Dict key is always one of these scalars (the
+  compiler refuses a composite key, `[E2008]`), so only a key codec with no
+  scalar description (a `lazy`, a `taggedUnion`) keeps the pairs array.
+
 ### 2.10a `Sky.Core.Process` streaming and `Std.Watch` (v0.27.0)
 
 **Invariants**, each with its test (`runtime-go/rt/process_spawn_test.go`,

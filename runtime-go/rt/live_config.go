@@ -78,6 +78,10 @@ func liveCfgSet(cfg any, key string, val any) any {
 // Live_withHead — `head : model -> List (Html msg)` per-page <head> injection.
 func Live_withHead(fn, cfg any) any { return liveCfgSet(cfg, "Head", fn) }
 
+// Live_withDocument — `document : model -> List Document.Attribute`, the
+// attributes of the root <html> element (document_attrs.go).
+func Live_withDocument(fn, cfg any) any { return liveCfgSet(cfg, "Document", fn) }
+
 // Live_withConsoleAuth — `consoleAuth : Request -> Task Error (Maybe Identity)`.
 func Live_withConsoleAuth(fn, cfg any) any { return liveCfgSet(cfg, "ConsoleAuth", fn) }
 

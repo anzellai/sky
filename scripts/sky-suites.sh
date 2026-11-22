@@ -109,7 +109,15 @@ for suite in $SUITES; do
     # silently-unset SKY_TEST_JSON would produce an empty manifest that the
     # caller would have to treat as a failure.
     export SKY_TEST_JSON="$report"
-    with_timeout 300 "$SKY" test "$suite" --out "$out" 2>&1 \
+    # 600s, not 300: the suite's own run is seconds, but the FIRST suite that
+    # pulls a large Go dependency set (Std_Ai_TrainTest: the Std.Ai trainer,
+    # registry and GGUF code) bears its COLD `go build` on a fresh runner after
+    # a stdlib change. That build alone ran past 300s in the v0.31.0 release
+    # gate (rc=124, no test output at all), while the same suite runs in 9 to
+    # 43 s with a warm cache. conformance.sh raised its bound for the same
+    # cause. The bound stays a real hang-detector; a genuine hang is still a
+    # bug to bisect.
+    with_timeout 600 "$SKY" test "$suite" --out "$out" 2>&1 \
         | tee "/tmp/sky-suite-$slug.log" | tail -30
     rc=${PIPESTATUS[0]}
     unset SKY_TEST_JSON

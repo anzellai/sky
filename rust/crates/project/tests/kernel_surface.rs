@@ -41,7 +41,15 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
     ),
     (
         "sky-stdlib/Std/Live.sky",
-        &["app", "config", "route", "api", "lifecycle", "withHead"],
+        &[
+            "app",
+            "config",
+            "route",
+            "api",
+            "lifecycle",
+            "withHead",
+            "withDocument",
+        ],
     ),
     (
         "sky-stdlib/Std/Spa.sky",
@@ -53,6 +61,7 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
             "withNotFound",
             "withOnNavigate",
             "withHead",
+            "withDocument",
             "returnedScrolls",
             "readInitScrolls",
             "rpcScrollHold",

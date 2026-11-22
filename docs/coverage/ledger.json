@@ -52,15 +52,16 @@
     "database_drivers": {
       "sqlite": 15
     },
-    "paths_with_sky_toml": 65,
+    "paths_with_sky_toml": 66,
     "sections": {
       "[\"go.dependencies\"]": 9,
       "[analytics]": 1,
       "[app]": 5,
       "[database]": 15,
       "[dependencies]": 1,
+      "[i18n]": 1,
       "[live]": 2,
-      "[source]": 62
+      "[source]": 63
     }
   },
   "gates": {
@@ -411,7 +412,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2287,
+      "expected_assertions": 2374,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -434,7 +435,7 @@
       "tier": "T1"
     },
     "corpus-1": {
-      "expected_assertions": 183,
+      "expected_assertions": 184,
       "falsifier_mutation": "corpus-1.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 0 of 4: each case built + run; values compared against the generator's own",
@@ -472,7 +473,7 @@
       "tier": "T2"
     },
     "corpus-2": {
-      "expected_assertions": 183,
+      "expected_assertions": 184,
       "falsifier_mutation": "corpus-2.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 1 of 4: each case built + run; values compared against the generator's own",
@@ -608,7 +609,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 896,
+      "expected_assertions": 898,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -641,7 +642,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 210,
+      "expected_assertions": 213,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -661,7 +662,7 @@
       "tier": "T1"
     },
     "fmt-clean": {
-      "expected_assertions": 407,
+      "expected_assertions": 411,
       "falsifier_mutation": "fmt-clean.unformat-a-tracked-file",
       "falsifier_proven": true,
       "summary": "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ and templates/ is already `sky fmt`-clean",
@@ -733,7 +734,7 @@
       "tier": "T1"
     },
     "roundtrip": {
-      "expected_assertions": 226,
+      "expected_assertions": 227,
       "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
@@ -744,7 +745,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 191,
+      "expected_assertions": 192,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
@@ -765,7 +766,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 1367,
+      "expected_assertions": 1406,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -806,7 +807,7 @@
       "tier": "T1"
     },
     "stdlib-bodies": {
-      "expected_assertions": 137,
+      "expected_assertions": 140,
       "falsifier_mutation": "stdlib-bodies.record-missing-field",
       "falsifier_proven": true,
       "summary": "every sky-stdlib module body type-checks (a build trusts stdlib signatures)",
@@ -855,12 +856,19 @@
           "apps:storefront",
           "examples/13-skyshop"
         ]
+      },
+      "[i18n]": {
+        "path": "examples/78-i18n-booking",
+        "units": [
+          "examples/78-i18n-booking"
+        ]
       }
     },
     "lost_if_examples_retired": {
       "_note": "sole owner is an examples/* path that is NOT a Layer 2 member path — exactly what retiring examples/ would remove.",
       "config_sections": {
-        "[analytics]": "examples/52-blog-analytics"
+        "[analytics]": "examples/52-blog-analytics",
+        "[i18n]": "examples/78-i18n-booking"
       },
       "stdlib_modules": {}
     },
@@ -880,6 +888,8 @@
       "Std.Ai.Tool": "examples/72-ai-support-desk",
       "Std.Cache": "examples/36-composite-server",
       "Std.Csv": "examples/36-composite-server",
+      "Std.I18n": "examples/78-i18n-booking",
+      "Std.I18n.Format": "examples/78-i18n-booking",
       "Std.Live": "examples/19-skyforum",
       "Std.Native": "examples/64-app-native",
       "Std.PubSub": "examples/36-composite-server",
@@ -933,6 +943,12 @@
         "path": "tests/conformance",
         "units": [
           "tests/conformance"
+        ]
+      },
+      "Std.Html.Document": {
+        "path": "scripts/document-e2e.sh",
+        "units": [
+          "e2e:scripts/document-e2e.sh"
         ]
       },
       "Std.Image": {
@@ -1017,23 +1033,23 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3284,
-    "stdlib_modules": 137,
-    "surfaces_covered": 196,
-    "surfaces_covered_pct": 95.1,
+    "stdlib_entries": 3362,
+    "stdlib_modules": 140,
+    "surfaces_covered": 199,
+    "surfaces_covered_pct": 95.2,
     "surfaces_equal": 15,
-    "surfaces_stronger": 191,
-    "surfaces_total": 206,
+    "surfaces_stronger": 194,
+    "surfaces_total": 209,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
-      "Example": 71,
-      "FlowTest": 69,
+      "Example": 72,
+      "FlowTest": 70,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 159
+    "units_total": 161
   },
   "surfaces": [
     {
@@ -4631,6 +4647,11 @@
           },
           {
             "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/document-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -8460,6 +8481,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/document-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -11850,6 +11876,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/document-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -12105,6 +12136,11 @@
             "strength": 3
           },
           {
+            "by": "examples/78-i18n-booking (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "flow:ai_device_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -12349,6 +12385,11 @@
             "by": "examples/77-demo-expenses (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "examples/78-i18n-booking (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
           },
           {
             "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
@@ -12851,6 +12892,11 @@
             "strength": 3
           },
           {
+            "by": "examples/78-i18n-booking (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "flow:ai_device_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -13085,6 +13131,11 @@
             "by": "examples/77-demo-expenses (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "examples/78-i18n-booking (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
           },
           {
             "by": "tests/Live — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
@@ -15220,6 +15271,28 @@
     {
       "category": "stdlib",
       "cover_new": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "e2e:scripts/document-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Html.Document public API",
+      "id": "stdlib.Std.Html.Document",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
         "class": "Falsified",
         "evidence": [
           {
@@ -15388,6 +15461,82 @@
       },
       "description": "the Std.Html.Events public API",
       "id": "stdlib.Std.Html.Events",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "examples/78-i18n-booking (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Runs",
+        "evidence": [
+          {
+            "by": "examples/78-i18n-booking (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 2
+      },
+      "description": "the Std.I18n public API",
+      "id": "stdlib.Std.I18n",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "examples/78-i18n-booking (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Runs",
+        "evidence": [
+          {
+            "by": "examples/78-i18n-booking (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 2
+      },
+      "description": "the Std.I18n.Format public API",
+      "id": "stdlib.Std.I18n.Format",
       "verdict": "stronger"
     },
     {
@@ -16407,6 +16556,11 @@
             "strength": 3
           },
           {
+            "by": "examples/78-i18n-booking (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "flow:ai_cloud_train_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -16476,6 +16630,11 @@
             "by": "examples/77-demo-expenses (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "examples/78-i18n-booking (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
           },
           {
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
@@ -17014,6 +17173,11 @@
             "strength": 3
           },
           {
+            "by": "examples/78-i18n-booking (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "flow:ai_device_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -17260,6 +17424,11 @@
             "strength": 3
           },
           {
+            "by": "examples/78-i18n-booking (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Live — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
@@ -17501,6 +17670,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/document-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -17691,6 +17865,11 @@
             "strength": 3
           },
           {
+            "by": "examples/78-i18n-booking (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "flow:ai_device_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -17870,6 +18049,11 @@
             "by": "examples/77-demo-expenses (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "examples/78-i18n-booking (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
           },
           {
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
@@ -18662,6 +18846,11 @@
             "strength": 3
           },
           {
+            "by": "examples/78-i18n-booking (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -18771,6 +18960,11 @@
             "by": "examples/77-demo-expenses (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "examples/78-i18n-booking (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
           },
           {
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
@@ -19641,7 +19835,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 5.8
+      "pct_of_denominator": 5.7
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -20616,6 +20810,14 @@
             "target"
           ]
         },
+        "Std.Html.Document": {
+          "count": 3,
+          "symbols": [
+            "Direction",
+            "class",
+            "translate"
+          ]
+        },
         "Std.Html.Events": {
           "count": 17,
           "symbols": [
@@ -20636,6 +20838,28 @@
             "onReset",
             "onScroll",
             "onSelect"
+          ]
+        },
+        "Std.I18n": {
+          "count": 8,
+          "symbols": [
+            "Arg",
+            "Override",
+            "Overrides",
+            "decimal",
+            "noOverrides",
+            "percent",
+            "renderWith",
+            "time"
+          ]
+        },
+        "Std.I18n.Format": {
+          "count": 4,
+          "symbols": [
+            "ListStyle",
+            "Numeric",
+            "RelativeUnit",
+            "Style"
           ]
         },
         "Std.Image": {
@@ -20661,7 +20885,7 @@
           ]
         },
         "Std.Live": {
-          "count": 33,
+          "count": 34,
           "symbols": [
             "AppConfig",
             "Route",
@@ -20678,6 +20902,7 @@
             "withAuthSliding",
             "withConsoleAuth",
             "withConsoleAuthModel",
+            "withDocument",
             "withDurable",
             "withEmbedded",
             "withGuard",
@@ -20767,7 +20992,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 29,
+          "count": 30,
           "symbols": [
             "AppConfig",
             "Route",
@@ -20786,6 +21011,7 @@
             "scrollRpcScope",
             "serverRoute",
             "withClientCrypto",
+            "withDocument",
             "withGuard",
             "withHead",
             "withHoldFree",
@@ -20805,6 +21031,12 @@
           "symbols": [
             "Mutex",
             "size"
+          ]
+        },
+        "Std.Time": {
+          "count": 1,
+          "symbols": [
+            "Parts"
           ]
         },
         "Std.Tui": {
@@ -21026,11 +21258,12 @@
           ]
         },
         "Std.Webview": {
-          "count": 7,
+          "count": 8,
           "symbols": [
             "AppCfg",
             "WindowCfg",
             "app",
+            "appWithDocument",
             "defaultWindow",
             "url",
             "withSize",
@@ -21076,8 +21309,8 @@
           ]
         }
       },
-      "count": 876,
-      "pct_of_denominator": 26.7
+      "count": 895,
+      "pct_of_denominator": 26.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -22144,6 +22377,14 @@
             "width"
           ]
         },
+        "Std.Html.Document": {
+          "count": 3,
+          "symbols": [
+            "Direction",
+            "class",
+            "translate"
+          ]
+        },
         "Std.Html.Events": {
           "count": 22,
           "symbols": [
@@ -22171,6 +22412,32 @@
             "onSubmit"
           ]
         },
+        "Std.I18n": {
+          "count": 12,
+          "symbols": [
+            "Arg",
+            "Direction",
+            "Locale",
+            "Override",
+            "Overrides",
+            "PluralCategory",
+            "Text",
+            "decimal",
+            "noOverrides",
+            "percent",
+            "renderWith",
+            "time"
+          ]
+        },
+        "Std.I18n.Format": {
+          "count": 4,
+          "symbols": [
+            "ListStyle",
+            "Numeric",
+            "RelativeUnit",
+            "Style"
+          ]
+        },
         "Std.Image": {
           "count": 2,
           "symbols": [
@@ -22196,7 +22463,7 @@
           ]
         },
         "Std.Live": {
-          "count": 36,
+          "count": 37,
           "symbols": [
             "AppConfig",
             "Route",
@@ -22216,6 +22483,7 @@
             "withAuthSliding",
             "withConsoleAuth",
             "withConsoleAuthModel",
+            "withDocument",
             "withDurable",
             "withEmbedded",
             "withGuard",
@@ -22312,7 +22580,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 29,
+          "count": 30,
           "symbols": [
             "AppConfig",
             "Route",
@@ -22331,6 +22599,7 @@
             "scrollRpcScope",
             "serverRoute",
             "withClientCrypto",
+            "withDocument",
             "withGuard",
             "withHead",
             "withHoldFree",
@@ -22356,6 +22625,13 @@
           "symbols": [
             "Mutex",
             "size"
+          ]
+        },
+        "Std.Time": {
+          "count": 2,
+          "symbols": [
+            "Disambiguation",
+            "Parts"
           ]
         },
         "Std.Tui": {
@@ -22591,11 +22867,12 @@
           ]
         },
         "Std.Webview": {
-          "count": 7,
+          "count": 8,
           "symbols": [
             "AppCfg",
             "WindowCfg",
             "app",
+            "appWithDocument",
             "defaultWindow",
             "url",
             "withSize",
@@ -22641,7 +22918,7 @@
           ]
         }
       },
-      "count": 989,
+      "count": 1013,
       "pct_of_denominator": 30.1
     }
   },
@@ -22811,6 +23088,18 @@
       "refs_qualified": 29,
       "role": "FlowTest",
       "sky_files": 2,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "e2e:scripts/document-e2e.sh",
+      "modules_imported": 5,
+      "path": "scripts/document-e2e.sh",
+      "refs_generous": 16,
+      "refs_qualified": 16,
+      "role": "FlowTest",
+      "sky_files": 1,
       "sky_toml_sections": []
     },
     {
@@ -24072,6 +24361,21 @@
     {
       "db_drivers": [],
       "gate": null,
+      "id": "examples/78-i18n-booking",
+      "modules_imported": 8,
+      "path": "examples/78-i18n-booking",
+      "refs_generous": 40,
+      "refs_qualified": 36,
+      "role": "Example",
+      "sky_files": 1,
+      "sky_toml_sections": [
+        "[i18n]",
+        "[source]"
+      ]
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
       "id": "flow:ai_cli_flow",
       "modules_imported": 10,
       "path": "rust/crates/sky/tests/ai_cli_flow.rs",
@@ -24733,12 +25037,12 @@
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Std",
-      "modules_imported": 55,
+      "modules_imported": 57,
       "path": "tests/Std",
-      "refs_generous": 746,
-      "refs_qualified": 719,
+      "refs_generous": 784,
+      "refs_qualified": 753,
       "role": "SkySuite",
-      "sky_files": 30,
+      "sky_files": 31,
       "sky_toml_sections": []
     },
     {
@@ -24747,10 +25051,10 @@
       "id": "tests/conformance",
       "modules_imported": 67,
       "path": "tests/conformance",
-      "refs_generous": 1050,
-      "refs_qualified": 1024,
+      "refs_generous": 1064,
+      "refs_qualified": 1037,
       "role": "Conformance",
-      "sky_files": 65,
+      "sky_files": 67,
       "sky_toml_sections": []
     }
   ]

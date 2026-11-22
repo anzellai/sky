@@ -102,6 +102,13 @@ mix-and-match — pre-inject whatever your targets need:
   `terminal:cli`, a one-line prompt under the view on `terminal:tui`. Without it
   a `terminal:cli` app reads no input and exits 0 once its Cmds and timers are
   done. See the terminal loop contract in `docs/skytui/overview.md`.
+- `App.withDocument (\model -> [ Document.lang model.locale, Document.dir Document.Ltr ])`
+  — the attributes of the root `<html>` element (`Std.Html.Document`: `lang`,
+  `dir`, `class`, `data`, `translate`). Every web target writes them on the
+  first page and follows a change with no reload: `web` / `tablet` /
+  `desktop` through Sky.Live, the client targets through the SSR page and the
+  wasm client, `App.runWebview` in its window shell. The terminal targets
+  ignore them. See `docs/stdlib.md` (`Std.Html.Document`).
 
 **`notFound` is mandatory for `web`, enforced by the type.** `App.withNotFound`
 flips a phantom capability flag on the `App` (`NoFallback` → `HasFallback`), and
@@ -610,7 +617,7 @@ bindings, local helper functions and lambdas (`|> secured` where `secured a = a
 the inline form `main = App.run (App.app { … } |> …)`, and any import spelling
 (`import Std.App as A` + `A.run`, or `exposing (run)` + bare `run`). Every
 builder step is either carried into the client build (`withRoutes`,
-`withNotFound`, `withHead`, `withOnNavigate`, `withRequest`, `withGuard`,
+`withNotFound`, `withHead`, `withDocument`, `withOnNavigate`, `withRequest`, `withGuard`,
 `withRpcError`, and `withClientCrypto`, which keeps end-to-end keys on the
 device: `docs/skyspa/client-crypto.md`), applied by the backend at boot
 (`withConfig` and `withBase`: the session store, TTL, CSRF switch, log, database

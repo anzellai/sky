@@ -1,0 +1,479 @@
+-- | Std.I18n — locales, plural rules and translated messages.
+--
+-- An app lists its locales in `sky.toml` and keeps its messages in JSON
+-- catalogues, one folder per locale:
+--
+--     [i18n]
+--     locales = ["en-GB", "zh-Hans"]
+--     default = "en-GB"
+--     catalogues = "i18n"
+--
+--     i18n/en-GB/shop.json   { "shop": { "title": "Shop",
+--                              "basket": { "one": "{count} item", "other": "{count} items" } } }
+--     i18n/zh-Hans/shop.json { "shop.title": "商店", "shop.basket": { "other": "{count} 件商品" } }
+--
+-- `sky check` and `sky build` read every catalogue and fail on a problem
+-- (codes E5001 to E5008): bad JSON, a key twice, a message that does not
+-- parse, an unknown function, a key the default locale does not have, a
+-- placeholder the default locale's message does not have, or plural forms
+-- that do not fit the locale's CLDR rules (Arabic needs six, Chinese one).
+-- The checked catalogues go into the binary (and the Sky.Spa wasm), with the
+-- CLDR data of the listed locales only.
+--
+-- Render a message:
+--
+--     I18n.t loc "shop.basket" [ ( "count", I18n.int 3 ) ]   -- "3 items"
+--
+-- Keep a `Text` in the model, not a sentence: a `Text` is a key and typed
+-- arguments, it survives `Codec.auto` and the session store, and it renders
+-- in the locale of whoever reads it.
+--
+--     type alias Model = { notice : Maybe Text, locale : Locale }
+--     notice = Just (I18n.text "shop.added" [ ( "item", I18n.string name ) ])
+--     view model = Ui.text (I18n.render model.locale notice)
+--
+-- A lookup goes through the locale's chain, then the default locale:
+-- zh-HK reads zh-Hant-HK, then zh-Hant, then the default. A key with no
+-- message anywhere (only possible for a key made at run time) shows as
+-- `⟦key⟧` outside production and as the key in production, and is logged
+-- once.
+--
+-- Messages use a subset of Unicode MessageFormat 2.0: `{$name}`, `{name}`
+-- (the same), `{$n :number minimumFractionDigits=2}`, `{$n :integer}`,
+-- `{$s :string}`, and `.input` / `.local` / `.match` for selection by plural
+-- category or exact number. A JSON object of plural categories
+-- (`zero one two few many other`, and `"=0"` for an exact number) selects by
+-- the argument `count`. See docs/i18n.md.
+--
+-- Formatting of numbers, money, dates, lists and relative time is in
+-- `Std.I18n.Format`. Everything here is pure and runs the same on the server
+-- and in a Sky.Spa client.
+module Std.I18n exposing
+    ( Locale
+    , Direction(..)
+    , PluralCategory(..)
+    , Text
+    , Arg
+    , Overrides
+    , Override
+    , locale
+    , tag
+    , language
+    , script
+    , region
+    , direction
+    , document
+    , fallbacks
+    , negotiate
+    , defaultLocale
+    , locales
+    , plural
+    , pluralDecimal
+    , ordinal
+    , t
+    , tWith
+    , text
+    , key
+    , verbatim
+    , render
+    , renderWith
+    , textKey
+    , string
+    , int
+    , decimal
+    , money
+    , percent
+    , time
+    , date
+    , list
+    , overrides
+    , noOverrides
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Ffi as Ffi
+import Std.Decimal as Dec exposing (Decimal)
+import Std.Html.Document as Document
+import Std.Money as Money exposing (Money)
+
+-- ─── Locales ─────────────────────────────────────────────────────
+-- | A BCP 47 locale in canonical form ("en-GB", "zh-Hant-HK"). Opaque: make
+-- one with `locale`, `negotiate`, `defaultLocale` or `locales`.
+type Locale
+    = Locale__Internal String
+
+-- | The writing direction of a locale's script.
+type Direction
+    = Ltr
+    | Rtl
+
+
+-- | `locale "zh-hant-hk"` is `Ok` the locale "zh-Hant-HK". It fixes the case
+-- of each subtag and replaces deprecated codes ("iw" is "he"). `Err` (kind
+-- `InvalidInput`, domain "i18n", code "InvalidLocale") for an empty or
+-- malformed tag.
+locale : String -> Result Error Locale
+locale s =
+    parseTag s |> Result.map Locale__Internal
+
+
+parseTag : String -> Result Error String
+parseTag s =
+    Ffi.callPure "I18n_parse" [ Ffi.toAny s ]
+
+
+-- | The canonical tag: "zh-Hant-HK". Use it for the `lang` attribute.
+tag : Locale -> String
+tag (Locale__Internal s) =
+    s
+
+
+-- | The language subtag: "zh".
+language : Locale -> String
+language (Locale__Internal s) =
+    Ffi.callPure "I18n_language" [ Ffi.toAny s ]
+
+
+-- | The script: as written, else the likely script from CLDR. "zh-CN" and
+-- "zh" give "Hans", "zh-HK" and "zh-TW" give "Hant", "en" gives "Latn".
+-- "" when CLDR does not know the language.
+script : Locale -> String
+script (Locale__Internal s) =
+    Ffi.callPure "I18n_script" [ Ffi.toAny s ]
+
+
+-- | The region subtag, when the tag has one: "HK" for "zh-Hant-HK".
+region : Locale -> Maybe String
+region (Locale__Internal s) =
+    let
+        r : String
+        r = Ffi.callPure "I18n_region" [ Ffi.toAny s ]
+    in
+        if r == "" then
+            Nothing
+
+        else
+            Just r
+
+
+-- | `Rtl` for a script written right to left (Arabic, Hebrew, …), else
+-- `Ltr`. Use it for the `dir` attribute.
+direction : Locale -> Direction
+direction (Locale__Internal s) =
+    let
+        rtl : Bool
+        rtl = Ffi.callPure "I18n_rtl" [ Ffi.toAny s ]
+    in
+        if rtl then
+            Rtl
+
+        else
+            Ltr
+
+
+-- | The `lang` and `dir` attributes of the root `<html>` element for a
+-- locale. Give it to `App.withDocument`:
+--
+--     app
+--         |> App.withDocument (\model -> I18n.document model.locale)
+--
+-- A language switch in the model then changes the page language and the
+-- text direction with no page reload.
+document : Locale -> List Document.Attribute
+document loc =
+    let
+        dir : Document.Direction
+        dir =
+            if direction loc == Rtl then
+                Document.Rtl
+
+            else
+                Document.Ltr
+    in
+        [ Document.lang (tag loc), Document.dir dir ]
+
+
+-- | The lookup chain of a locale: the locale, its CLDR parents, then the
+-- app's default locale. "zh-HK" gives zh-HK, zh-Hant-HK, zh-Hant, then the
+-- default. CLDR does not go from Traditional to Simplified Chinese.
+fallbacks : Locale -> List Locale
+fallbacks (Locale__Internal s) =
+    tagsToLocales (Ffi.callPure "I18n_fallbacks" [ Ffi.toAny s ])
+
+
+tagsToLocales : List String -> List Locale
+tagsToLocales tags =
+    List.map Locale__Internal tags
+
+
+-- | `negotiate supported header` picks the supported locale that best fits
+-- an `Accept-Language` header (CLDR language matching: "zh-CN" fits
+-- "zh-Hans", "en-US" fits "en-GB" when no other English is supported). With
+-- no fit it gives the first supported locale; with no supported locale, the
+-- default locale.
+negotiate : List Locale -> String -> Locale
+negotiate supported header =
+    Locale__Internal
+        (Ffi.callPure
+            "I18n_negotiate"
+            [ Ffi.toAny (List.map tag supported), Ffi.toAny header ])
+
+
+-- | The app's default locale: `[i18n] default` in sky.toml, else "en".
+defaultLocale : Locale
+defaultLocale =
+    Locale__Internal (Ffi.callPure "I18n_defaultLocale" [])
+
+
+-- | The app's locales: `[i18n] locales` in sky.toml, else [ "en" ].
+locales : List Locale
+locales =
+    tagsToLocales (Ffi.callPure "I18n_locales" [])
+
+-- ─── Plural rules ────────────────────────────────────────────────
+-- | A CLDR plural category.
+type PluralCategory
+    = Zero
+    | One
+    | Two
+    | Few
+    | Many
+    | Other
+
+
+categoryOf : Int -> PluralCategory
+categoryOf n =
+    case n of
+
+        0 ->
+            Zero
+
+        1 ->
+            One
+
+        2 ->
+            Two
+
+        3 ->
+            Few
+
+        4 ->
+            Many
+
+        _ ->
+            Other
+
+
+pluralKernel : Locale -> String -> Bool -> PluralCategory
+pluralKernel (Locale__Internal s) number ord =
+    categoryOf
+        (Ffi.callPure
+            "I18n_plural"
+            [ Ffi.toAny s, Ffi.toAny number, Ffi.toAny ord ])
+
+
+-- | The CLDR cardinal category of a whole number: `plural en 1` is `One`,
+-- `plural ar 3` is `Few`, `plural zh 1` is `Other`.
+plural : Locale -> Int -> PluralCategory
+plural loc n =
+    pluralKernel loc (String.fromInt n) False
+
+
+-- | The cardinal category of a decimal. Its visible fraction digits count:
+-- in English "1" is `One` and "1.0" is `Other`.
+pluralDecimal : Locale -> Decimal -> PluralCategory
+pluralDecimal loc d =
+    pluralKernel loc (decimalText d) False
+
+
+-- | The CLDR ordinal category: in English 1 is `One` (1st), 2 `Two` (2nd),
+-- 3 `Few` (3rd), 4 `Other` (4th).
+ordinal : Locale -> Int -> PluralCategory
+ordinal loc n =
+    pluralKernel loc (String.fromInt n) True
+
+-- ─── Messages ────────────────────────────────────────────────────
+-- | A typed message argument. Make one with `string`, `int`, `decimal`,
+-- `money`, `percent`, `time`, `date` or `list`. A placeholder with no
+-- function formats it for the message's locale.
+type Arg
+    = Arg__Internal String String
+
+-- | A message to show later: a key and its arguments, or verbatim text.
+-- Store a `Text` in a model, a notice or a refusal from the server instead
+-- of a sentence. It is plain data: `Codec.auto`, the Sky.Live session store
+-- and Sky.Spa messages carry it with no codec of your own.
+type Text
+    = Text__Message String (List ( String, String, String ))
+    | Text__Verbatim String
+
+
+-- A Decimal's text with its visible fraction digits ("1.0", not "1"):
+-- plural rules and `:number` exact keys read them.
+decimalText : Decimal -> String
+decimalText d =
+    Ffi.callPure "I18n_decimalText" [ Ffi.toAny d ]
+
+
+-- | A text argument, shown as it is.
+string : String -> Arg
+string s =
+    Arg__Internal "s" s
+
+
+-- | A whole number, with the locale's digits and grouping ("1,234").
+int : Int -> Arg
+int n =
+    Arg__Internal "i" (String.fromInt n)
+
+
+-- | A decimal, with up to three fraction digits ("1,234.5").
+decimal : Decimal -> Arg
+decimal d =
+    Arg__Internal "d" (decimalText d)
+
+
+-- | An amount in its currency, with the locale's symbol and pattern and the
+-- currency's digits ("£1,234.50", "1.234,50 €").
+money : Money -> Arg
+money m =
+    Arg__Internal
+        "m"
+        (Money.currencyCode (Money.currency m) ++ " "
+            ++ decimalText (Money.amount m))
+
+
+-- | A ratio shown as a percentage: `percent (0.125)` shows "12.5%".
+percent : Decimal -> Arg
+percent d =
+    Arg__Internal "p" (decimalText d)
+
+
+-- | `time ms zone` — a moment (Unix milliseconds) shown as a medium date
+-- and time in an IANA zone ("17 Nov 2026, 14:05:09").
+time : Int -> String -> Arg
+time ms zone =
+    Arg__Internal "t" (String.fromInt ms ++ " " ++ zone)
+
+
+-- | A calendar date "YYYY-MM-DD" shown as a medium date ("17 Nov 2026").
+date : String -> Arg
+date iso =
+    Arg__Internal "D" iso
+
+
+-- | Items joined with the locale's "and" list ("a, b and c").
+list : List String -> Arg
+list items =
+    Arg__Internal "l" (String.join "\u{001F}" items)
+
+
+argTriple : ( String, Arg ) -> ( String, String, String )
+argTriple pair =
+    case pair of
+
+        ( name, Arg__Internal kind payload ) ->
+            ( name, kind, payload )
+
+
+-- | `text key args` — a message to render later.
+text : String -> List ( String, Arg ) -> Text
+text k args =
+    Text__Message k (List.map argTriple args)
+
+
+-- | A message with no arguments.
+key : String -> Text
+key k =
+    Text__Message k []
+
+
+-- | Text that is not a message (a name from the database, a user's own
+-- words). `render` gives it back as it is.
+verbatim : String -> Text
+verbatim s =
+    Text__Verbatim s
+
+
+-- | The key of a message, or `Nothing` for verbatim text.
+textKey : Text -> Maybe String
+textKey txt =
+    case txt of
+
+        Text__Message k _ ->
+            Just k
+
+        Text__Verbatim _ ->
+            Nothing
+
+
+-- | Render a `Text` in a locale.
+render : Locale -> Text -> String
+render loc txt =
+    renderWith noOverrides loc txt
+
+
+-- | Render a `Text` in a locale, with overrides (see `overrides`).
+renderWith : Overrides -> Locale -> Text -> String
+renderWith (Overrides__Internal ov) (Locale__Internal s) txt =
+    case txt of
+
+        Text__Message k args ->
+            Ffi.callPure
+                "I18n_render"
+                [ Ffi.toAny ov, Ffi.toAny s, Ffi.toAny k, Ffi.toAny args ]
+
+        Text__Verbatim v ->
+            v
+
+
+-- | `t loc key args` renders a message now: `render loc (text key args)`.
+t : Locale -> String -> List ( String, Arg ) -> String
+t loc k args =
+    render loc (text k args)
+
+
+-- | `t` with overrides.
+tWith : Overrides -> Locale -> String -> List ( String, Arg ) -> String
+tWith ov loc k args =
+    renderWith ov loc (text k args)
+
+-- ─── Overrides ───────────────────────────────────────────────────
+-- | Extra messages that win over the catalogue, for example the wording one
+-- tenant of a multi-tenant app chose. A value, not global state: load them
+-- (from a database) and pass them to `tWith` / `renderWith`.
+type Overrides
+    = Overrides__Internal (List ( String, String, String ))
+
+-- | One override: the message for a key in a locale. The message uses the
+-- catalogue syntax.
+type alias Override =
+    { locale : Locale
+    , key : String
+    , message : String
+    }
+
+
+-- | No overrides.
+noOverrides : Overrides
+noOverrides =
+    Overrides__Internal []
+
+
+-- | Check and collect overrides. `Err` (domain "i18n", code
+-- "InvalidMessage") names the first message that does not parse or uses an
+-- unknown function. An override for a locale applies to every locale whose
+-- chain passes through it.
+overrides : List Override -> Result Error Overrides
+overrides entries =
+    let
+        triples : List ( String, String, String )
+        triples =
+            List.map (\o -> ( tag o.locale, o.key, o.message )) entries
+        checked : Result Error ()
+        checked = Ffi.callPure "I18n_checkOverrides" [ Ffi.toAny triples ]
+    in
+        Result.map (\_ -> Overrides__Internal triples) checked

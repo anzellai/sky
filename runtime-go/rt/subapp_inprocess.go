@@ -380,6 +380,7 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 		guard:          fieldOrNil(cfg, "Guard"),
 		persistExclude: spaStringList(fieldOrNil(cfg, "PersistExclude")),
 		head:           fieldOrNil(cfg, "Head"),
+		document:       fieldOrNil(cfg, "Document"),
 		consoleAuth:    fieldOrNil(cfg, "ConsoleAuth"),
 		locker:         newSessionLocker(),
 		msgTags:        make(map[string]int),

@@ -93,7 +93,17 @@ func init() {
 // the window OR a fatal init error occurs.
 func Webview_app(cfg any) any {
 	return func() any {
-		return webviewAppRun(cfg)
+		return webviewAppRun(cfg, nil)
+	}
+}
+
+// Webview_appWithDocument is Webview_app with the app's
+// `model -> List Document.Attribute` (Webview.appWithDocument,
+// document_attrs.go): the shell writes the attributes on <html>, and an
+// update that changes them sets them on the open page.
+func Webview_appWithDocument(doc any, cfg any) any {
+	return func() any {
+		return webviewAppRun(cfg, doc)
 	}
 }
 
@@ -219,6 +229,16 @@ type webviewState struct {
 	// server's `/` handler can serve the current HTML on
 	// navigation / reload. Empty in SetHtml mode.
 	currentBody atomic.Value // string
+	// docAttrs is the attribute text of the <html> start tag
+	// (Webview.appWithDocument, document_attrs.go), published for the page
+	// wrap and the loopback server. Empty when the app sets none.
+	docAttrs atomic.Value // string
+}
+
+// pageWrap is webviewPageWrapDoc with the current <html> attributes.
+func (s *webviewState) pageWrap(body string) string {
+	attrs, _ := s.docAttrs.Load().(string)
+	return webviewPageWrapDoc(body, attrs)
 }
 
 func (s *webviewState) bumpDropped() {
@@ -254,7 +274,7 @@ func (s *webviewState) lookupHandler(hid string) any {
 
 // webviewAppRun implements the v0.1 MVP loop. Returns Ok(()) when the
 // user closes the window cleanly; Err(...) on init failure.
-func webviewAppRun(cfg any) any {
+func webviewAppRun(cfg any, docFn any) any {
 	initFn := fieldOrNil(cfg, "Init")
 	updateFn := fieldOrNil(cfg, "Update")
 	viewFn := fieldOrNil(cfg, "View")
@@ -406,6 +426,9 @@ func webviewAppRun(cfg any) any {
 	// renderVNode populates the handlers map with every (sky-id,
 	// event) → Msg ctor binding so __skyDispatch can recover the
 	// typed ctor from the wire's handlerId.
+	// The <html> attributes of the first page (nil docFn: none).
+	docLast := documentAttrs(docFn, model)
+	state.docAttrs.Store(renderDocAttrs(docLast))
 	htmlAny := SkyCall(viewFn, model)
 	tree := webviewBuildTree(htmlAny)
 	handlers := map[string]any{}
@@ -426,7 +449,7 @@ func webviewAppRun(cfg any) any {
 	// (examples/31-webview-stopwatch-ui etc).
 	resyncPage.Store(func() {
 		b, _ := state.currentBody.Load().(string)
-		w.SetHtml(webviewPageWrap(b))
+		w.SetHtml(state.pageWrap(b))
 	})
 	staticDir := webviewStaticDir()
 	var loopbackSrv *http.Server
@@ -436,7 +459,7 @@ func webviewAppRun(cfg any) any {
 			fmt.Fprintf(os.Stderr,
 				"[sky.webview] loopback server failed (%v); falling back to SetHtml — relative-path assets WILL NOT load\n",
 				err)
-			w.SetHtml(webviewPageWrap(body))
+			w.SetHtml(state.pageWrap(body))
 		} else {
 			loopbackSrv = srv
 			url := fmt.Sprintf("http://127.0.0.1:%d/", port)
@@ -447,7 +470,7 @@ func webviewAppRun(cfg any) any {
 			resyncPage.Store(func() { w.Navigate(url) })
 		}
 	} else {
-		w.SetHtml(webviewPageWrap(body))
+		w.SetHtml(state.pageWrap(body))
 	}
 
 	// Subscription manager. Same shape as Sky.Tui / Sky.Cli — pushes
@@ -487,6 +510,16 @@ func webviewAppRun(cfg any) any {
 				}
 				model = loop.apply(appMsg, model)
 				subMgr.update(subsFn, model)
+				// The <html> attributes: computed once per update and set on
+				// the open page only when they changed.
+				if docFn != nil {
+					if next := documentAttrs(docFn, model); next != nil && !sameDocAttrs(next, docLast) {
+						js := webviewDocJS(docLast, next)
+						docLast = next
+						state.docAttrs.Store(renderDocAttrs(next))
+						w.Dispatch(func() { w.Eval(js) })
+					}
+				}
 
 				// Compute new tree + diff. Render once to populate
 				// the new handlers map; the rendered HTML is only
@@ -506,7 +539,7 @@ func webviewAppRun(cfg any) any {
 				// because the initial render swapped it in BEFORE
 				// Run started. Belt-and-braces guard kept anyway.
 				if prev == nil {
-					html := webviewPageWrap(newBody)
+					html := state.pageWrap(newBody)
 					w.Dispatch(func() { w.SetHtml(html) })
 					continue
 				}
@@ -577,9 +610,43 @@ func webviewBuildTree(node any) *VNode {
 // the page's own scripts. webviewSharedJS has an IIFE re-entry
 // guard so double-injection (during hot reload) is a no-op.
 func webviewPageWrap(body string) string {
+	return webviewPageWrapDoc(body, "")
+}
+
+// webviewPageWrapDoc is webviewPageWrap with the <html> attribute text
+// (renderDocAttrs: checked names, HTML-escaped values). "" gives the page
+// before the feature, byte for byte.
+func webviewPageWrapDoc(body, docAttrs string) string {
 	return fmt.Sprintf(
-		`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">%s</head><body><div id="sky-root">%s</div></body></html>`,
-		liveBaseStyleTag, body)
+		`<!DOCTYPE html><html%s><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">%s</head><body><div id="sky-root">%s</div></body></html>`,
+		docAttrs, liveBaseStyleTag, body)
+}
+
+// webviewDocJS is the script an update evaluates on the open page when the
+// <html> attributes changed: it removes the names the old set had and the
+// new set has not, then sets the new set. Names and values are JSON string
+// literals (json.Marshal escapes quotes, <, >, &, U+2028 and U+2029), so a
+// value is data, never code.
+func webviewDocJS(prev, next []docAttr) string {
+	keep := make(map[string]bool, len(next))
+	for _, a := range next {
+		keep[a.Name] = true
+	}
+	var b strings.Builder
+	b.WriteString("(function(){var e=document.documentElement;")
+	for _, a := range prev {
+		if !keep[a.Name] {
+			n, _ := json.Marshal(a.Name)
+			b.WriteString("e.removeAttribute(" + string(n) + ");")
+		}
+	}
+	for _, a := range next {
+		n, _ := json.Marshal(a.Name)
+		v, _ := json.Marshal(a.Value)
+		b.WriteString("e.setAttribute(" + string(n) + "," + string(v) + ");")
+	}
+	b.WriteString("})();")
+	return b.String()
 }
 
 // webviewStaticDir reads the configured static-asset directory for
@@ -643,7 +710,7 @@ func startWebviewLoopback(staticDir string, state *webviewState) (*http.Server, 
 			return
 		}
 		body, _ := state.currentBody.Load().(string)
-		page := webviewPageWrap(body)
+		page := state.pageWrap(body)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte(page))

@@ -9,6 +9,8 @@ func init() {
 	RegisterAdtOwner("test.CanonicalDecimal", "Std_Decimal_Decimal", skyDecimalOwner)
 	RegisterAdtOwner("test.CanonicalMoney", "Std_Money_Money", skyMoneyOwner)
 	RegisterAdtOwner("test.CanonicalCurrency", "Std_Money_Currency", skyCurrencyOwner)
+	RegisterAdtOwner("test.CanonicalI18nText", "Std_I18n_Text", skyI18nTextOwner)
+	RegisterAdtOwner("test.CanonicalI18nLocale", "Std_I18n_Locale", skyI18nLocaleOwner)
 }
 
 // Start with the actual strict runtime producer, then replace its amount with

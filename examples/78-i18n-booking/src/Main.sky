@@ -1,0 +1,191 @@
+module Main exposing (main)
+
+-- A booking page in several locales with Std.I18n.
+--
+-- sky.toml lists the locales (en-GB, zh-Hans, ar and the pseudo-locale
+-- en-XA) and the catalogue folder i18n/. `sky check` validates every
+-- catalogue; the binary carries the catalogues and the CLDR data of these
+-- locales only.
+--
+--   /       English (en-GB)
+--   /zh     Simplified Chinese (zh-Hans)
+--   /ar     Arabic: right to left, six plural forms; the keys it lacks fall
+--           back to en-GB
+--   /xa     the pseudo-locale en-XA, made from en-GB at build time
+--
+-- The notice in the model is a `Text` (a key and typed arguments), not a
+-- sentence, so it renders in the locale of the page that shows it.
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Cmd as Cmd exposing (Cmd)
+import Std.I18n as I18n exposing (Locale, Text)
+import Std.I18n.Format as Format
+import Std.Money as Money exposing (Currency(..))
+import Std.Sub as Sub exposing (Sub)
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Font as Font
+
+type Page
+    = EnglishPage
+    | ChinesePage
+    | ArabicPage
+    | PseudoPage
+
+type alias Model =
+    { page : Page
+    , notice : Maybe Text
+    }
+
+type Msg
+    = AddSuite
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { page = EnglishPage, notice = Nothing }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        AddSuite ->
+            ( { model
+                  | notice =
+                      Just
+                          (I18n.text
+                              "booking.added"
+                              [ ( "room", I18n.string "Garden Suite" ) ])
+              }
+            , Cmd.none
+            )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+localeOf : Page -> Locale
+localeOf page =
+    let
+        tag =
+            case page of
+
+                EnglishPage ->
+                    "en-GB"
+
+                ChinesePage ->
+                    "zh-Hans"
+
+                ArabicPage ->
+                    "ar"
+
+                PseudoPage ->
+                    "en-XA"
+    in
+        I18n.locale tag |> Result.withDefault I18n.defaultLocale
+
+
+-- The booking the page shows: 3 nights from 17 November 2026.
+nights : Int
+nights =
+    3
+
+
+arrivalMs : Int
+arrivalMs =
+    1794924309000
+
+
+bookingView : Locale -> List (Element Msg)
+bookingView loc =
+    let
+        tr key args = I18n.t loc key args
+        price = Money.fromMinor GBP 123450
+        reminder =
+            Format.relative loc Format.Auto Format.Days 2
+                |> Result.withDefault ""
+        checkIn =
+            Format.dateTime loc Format.Medium "Europe/London" arrivalMs
+                |> Result.withDefault ""
+    in
+        [ Ui.el [ Font.size 28, Font.bold ] (Ui.text (tr "booking.title" []))
+        , Ui.text (tr "booking.greeting" [ ( "name", I18n.string "Ada" ) ])
+        , Ui.text (tr "booking.nights" [ ( "count", I18n.int nights ) ])
+        , Ui.text (tr "booking.total" [ ( "price", I18n.money price ) ])
+        , Ui.text (tr "booking.arrival" [ ( "day", I18n.date "2026-11-17" ) ])
+        , Ui.text
+              (tr
+                  "booking.extras"
+                  [ ( "items", I18n.list [ "breakfast", "spa", "parking" ] ) ])
+        , Ui.text (tr "booking.reminder" [ ( "when", I18n.string reminder ) ])
+        , Ui.text checkIn
+        ]
+
+
+languageLinks : Element Msg
+languageLinks =
+    Ui.row
+        [ Ui.spacing 12 ]
+        [ Ui.link
+              [ Ui.htmlAttribute "sky-nav" "" ]
+              { url = "/", label = Ui.text "English" }
+        , Ui.link
+              [ Ui.htmlAttribute "sky-nav" "" ]
+              { url = "/zh", label = Ui.text "简体中文" }
+        , Ui.link
+              [ Ui.htmlAttribute "sky-nav" "" ]
+              { url = "/ar", label = Ui.text "العربية" }
+        , Ui.link
+              [ Ui.htmlAttribute "sky-nav" "" ]
+              { url = "/xa", label = Ui.text "en-XA" }
+        ]
+
+
+view : Model -> Element Msg
+view model =
+    let
+        loc = localeOf model.page
+        notice =
+            case model.notice of
+
+                Just txt ->
+                    [ Ui.el [ Font.italic ] (Ui.text (I18n.render loc txt)) ]
+
+                Nothing ->
+                    []
+    in
+        Ui.column
+            [ Ui.spacing 12, Ui.padding 24 ]
+            (languageLinks :: bookingView loc
+                ++ [ Ui.button
+                         []
+                         { onPress = Just AddSuite
+                         , label = Ui.text (I18n.t loc "booking.add" [])
+                         }
+                   ]
+                ++ notice)
+
+
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+               [ App.route "/" EnglishPage
+               , App.route "/zh" ChinesePage
+               , App.route "/ar" ArabicPage
+               , App.route "/xa" PseudoPage
+               ]
+        |> App.withNotFound EnglishPage
+        |> App.withDocument (\model -> I18n.document (localeOf model.page))
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8078 })
+
+
+main =
+    App.run appDef

@@ -40,6 +40,29 @@ func Spa_ssrRenderHead(head, model any) string {
 	return RenderSpaHead(head, model)
 }
 
+// Spa_ssrWithDocument is the `Ffi.kernel "Spa_ssrWithDocument"` alias the
+// generated SSR handler wraps its page in: `spaSsrWithDocument spaDocument_
+// resolved page`. It runs the app's `model -> List Document.Attribute`
+// (Spa.withDocument, document_attrs.go) on the route-resolved model and writes
+// the checked, HTML-escaped attributes on the page's <html> start tag. A page
+// with no lang keeps lang="en". With no attributes, or when the function
+// fails, the page is unchanged (lang="en", as before).
+func Spa_ssrWithDocument(doc, model, page any) string {
+	p := AsString(page)
+	if doc == nil {
+		return p
+	}
+	attrs := documentAttrs(doc, model)
+	if attrs == nil {
+		return p
+	}
+	at := strings.Index(p, spaSSRHtmlOpen)
+	if at < 0 {
+		return p
+	}
+	return p[:at] + spaSSRHtmlOpenWith(attrs) + p[at+len(spaSSRHtmlOpen):]
+}
+
 // Spa_pageRoute is the `Ffi.kernel "Spa_pageRoute"` alias the generated backend
 // mounts each SSR page with: `spaPageRoute_ "/form" ssrHandler`. It is a GET
 // route, like `Server.get`, so the CSRF middleware sees the page request: it

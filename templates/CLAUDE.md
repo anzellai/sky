@@ -12,7 +12,7 @@
 > Upgrading a project to a new Sky minor? Each migration guide lists every
 > change, old code and new code, as loud, loud at run time or silent:
 > https://github.com/anzellai/sky/tree/main/docs/migration (`v0.27.md`,
-> `v0.28.md`, `v0.29.md`, `v0.30.md`).
+> `v0.28.md`, `v0.29.md`, `v0.30.md`, `v0.31.md`).
 > Numeric instantiation and function application follow the rules in
 > https://github.com/anzellai/sky/blob/main/docs/language/types.md.
 > Task execution and tuple discard rules are in
@@ -106,6 +106,14 @@ resolved by precedence: preferring the cluster would have the app writing to a
 throwaway local directory while the user believes it is talking to the server
 they named. If you are handed a DSN, do not add `--embed` "to be safe" — pick
 the tier the user asked for.
+
+### The page language goes on `<html>`, not on the view
+
+When the user asks for a page language or a right-to-left layout, set it with
+`App.withDocument` (`Std.Html.Document`: `lang`, `dir`, `class`, `data`,
+`translate`), computed from the model. Do not add a `lang` attribute to the
+root view element: assistive technology and browser translation do not read
+it as the document language. See AGENTS.md "Document language".
 
 ### A slow build in CI is usually a cold cache
 
@@ -210,6 +218,16 @@ each JSON input once after the upgrade. Where a lenient fallback is intended,
 write it out (`Decode.oneOf [ dec, Decode.succeed default ]`); do not loosen a
 decoder only to make a test pass. See AGENTS.md "JSON decoding is strict".
 
+### After an upgrade to v0.31.0, check JSON with repeated keys and Dict wire shapes
+
+Every decoder now refuses JSON text that repeats a key in one object (the
+error names the key and its path). If a test or a partner payload fails with
+`duplicate key`, fix the producer; do not strip the key before decoding.
+`Codec.dict` with a scalar key (String, Int, Float, Bool, Char, enum) now writes a JSON object, not
+a `[key, value]` pairs array, and still reads the pairs. A client outside Sky
+that reads that JSON must read the object. Read an object with unknown keys
+with `Decode.dict` or `Decode.keyValuePairs`, not with a hand-written walk.
+
 ### After an upgrade to v0.28.0, read the migration guide first
 
 Sky's `docs/migration/v0.28.md` (in the Sky repository) lists every change.
@@ -271,6 +289,18 @@ make a test pass.
   in `.env.test`. A project whose `.env` names a database runs `sky test` in
   test mode, so outbound HTTP is mocked and fails closed without a fixture.
 
+### Translated text: Std.I18n catalogues, checked by the build
+
+Put every user-facing string in `i18n/<locale>/*.json` and render it with
+`I18n.t` or a stored `I18n.Text`. When `sky check` reports E5001 to E5008, fix
+the catalogue the message names (`docs/errors/i18n-catalogues.md` in the Sky
+repository): add the missing plural form, rename the placeholder to the one
+the default locale uses, add the key to the default locale first. Do not
+delete a message or a plural form to make the check pass. A new locale goes
+into `[i18n] locales` in `sky.toml`; a `LocaleNotCompiled` error at run time
+means it is missing there. Do not call a translation service on your own:
+ask the user who writes each language.
+
 ### XML and ZIP input is hostile: use Std.Xml and Std.Zip
 
 Read XML with `Std.Xml.parse` / `Std.Xml.Decode` (or `Codec.fromXml`) and
@@ -290,6 +320,17 @@ are refused with `InvalidInput` in the domain `"image"`. Draw cards, badges and
 thumbnails with `Std.Image.Canvas` (`blank` or `fromImage`, shapes, `paste`
 with a mask, `text` with `Canvas.defaultFont` or `loadFont`, then `encode`).
 Do not shell out to ImageMagick or Pillow.
+
+### Dates and time zones: use Std.Time
+
+`Std.Time` has the full IANA time zone database. It is embedded in every Sky
+binary, on the server and in the Sky.Spa client. Use it, and never keep your
+own table of zones or offsets. `zones` lists the zone names and
+`isZone` checks one. `toParts zone ms` gives every part of a local
+time. `fromParts` refuses 31 April, and it refuses a local time that
+the clocks skip or repeat. Choose an instant for those with
+`fromPartsWith Compatible` (or `Earlier`, `Later`, `Reject`). A
+scheduler finds the next offset change with `nextTransition`.
 
 ### Excel and Word files: use Std.Office.Xlsx and Std.Office.Docx
 

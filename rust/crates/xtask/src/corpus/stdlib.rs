@@ -408,6 +408,20 @@ pub const SURFACES: &[Surface] = &[
         "Std.Breaker",
         &["Sky.Core.Task as Task", "Sky.Core.Error as Error"],
     ),
+    // v0.31.0 Std.I18n / Std.I18n.Format: locales, CLDR plural rules,
+    // overrides and CLDR formatting are pure. The program has no [i18n]
+    // section, so its locale is en and it carries English CLDR data only. The
+    // expected values are CLDR's own (plural categories, en patterns) and the
+    // documented refusals, not observations of this runtime.
+    sf2(
+        "i18n",
+        "Std.I18n",
+        &[
+            "Std.I18n.Format as Format",
+            "Std.Money as Money",
+            "Sky.Core.Error as Error",
+        ],
+    ),
     // v0.28.0 Std.Ai.Local: a model reference and a spec are pure values (the
     // reference string IS the pinning contract: it carries the digest), and a
     // refusal of an unpinned model is decided before any fetch, so the
@@ -910,6 +924,9 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Sky.Core.Task",
     // v0.30.0: Std.Breaker lands covered (`breaker` surface).
     "Std.Breaker",
+    // v0.31.0: Std.I18n and Std.I18n.Format land covered (`i18n` surface).
+    "Std.I18n",
+    "Std.I18n.Format",
     // v0.28.0: Std.Ai.Local lands covered (`ailocal` surface).
     "Std.Ai.Local",
     // v0.28.0: Std.Ai.Failure lands covered (`aifailure` surface).
@@ -1079,7 +1096,16 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// but asserted by none, gained the `deadline` surface (`Task.timeout`,
 /// `Task.remaining`).
 /// Net (v0.30.0): 75 + 1 (Std.Admission) - 1 (Sky.Core.Task) = 75.
-pub const DARK_MODULE_CEILING: usize = 75;
+///
+/// Raised 75 -> 76 (v0.31.0): the new `Std.Html.Document`. Its `Attribute` is
+/// opaque and Sky has no reader for it: the values exist only to be written on
+/// the root `<html>` element, which a Sky program cannot observe. Its
+/// behaviour is covered where it happens, by
+/// `runtime-go/rt/document_attrs_test.go` (BCP 47 check, data-name rules,
+/// last-wins, escaping), `live_document_test.go`, `spa_ssr_document_test.go`,
+/// `webview_document_test.go`, `live_doc_client_test.go` and the browser
+/// gate `scripts/document-e2e.sh` (Sky.Live and web:app), not here.
+pub const DARK_MODULE_CEILING: usize = 76;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
@@ -1580,6 +1606,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "sync" => sync_battery(edge),
         "deadline" => deadline_battery(edge),
         "breaker" => breaker_battery(edge),
+        "i18n" => i18n_battery(edge),
         "ailocal" => ailocal_battery(edge),
         "aifailure" => aifailure_battery(edge),
         "aieval" => aieval_battery(edge),
@@ -4830,6 +4857,62 @@ fn breaker_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.I18n ---------------------------------------------------------------
+//
+// A program with no [i18n] section: its default and only locale is en, and it
+// carries the CLDR data of root and English. Plural rules are present for
+// every language, so Arabic plural categories are assertable; Chinese
+// formatting is the documented LocaleNotCompiled refusal.
+fn i18n_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["I18n.locale", "I18n.tag"],
+                "I18n.locale \"zh-hant-hk\" |> Result.map I18n.tag |> orE",
+                "zh-Hant-HK",
+            ),
+            s(
+                &["I18n.plural", "I18n.ordinal"],
+                "i18nPlurals",
+                "Zero,One,Two,Few,Many,Other;One,Two,Few,Other",
+            ),
+            s(
+                &["Format.money", "Format.int", "Format.list"],
+                "i18nFormats",
+                "£1,234.50;-1,234,567;a, b, and c",
+            ),
+            s(
+                &["I18n.overrides", "I18n.tWith", "I18n.int"],
+                "i18nOverride",
+                "1 item;2 items",
+            ),
+        ],
+        "failure" => vec![
+            s(
+                &["I18n.locale"],
+                "I18n.locale \"en--GB\" |> Result.map I18n.tag |> codeOf",
+                "i18n/InvalidLocale",
+            ),
+            s(
+                &["Format.int"],
+                "Format.int (loc \"zh-Hans\") 1 |> codeOf",
+                "i18n/LocaleNotCompiled",
+            ),
+            s(
+                &["I18n.overrides"],
+                "i18nBadOverride",
+                "i18n/InvalidMessage",
+            ),
+            s(
+                &["I18n.t"],
+                "I18n.t (loc \"en\") \"no.such.key\" []",
+                "⟦no.such.key⟧",
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
 // --- Std.Ai.Local ---------------------------------------------------------
 //
 // `hf:<org>/<repo>/<file>#sha256=<hex>` and `file:<path>#sha256=<hex>` are the
@@ -7223,6 +7306,89 @@ deadlineRemainingOutside =
         |> Task.map (showLeft 2000)
         |> Task.run
         |> failureName
+"#
+        }
+        "i18n" => {
+            r#"orE : Result Error String -> String
+orE r =
+    case r of
+        Ok v ->
+            v
+
+        Err _ ->
+            "E"
+
+
+codeOf : Result Error String -> String
+codeOf r =
+    case r of
+        Ok v ->
+            "ok:" ++ v
+
+        Err e ->
+            case Error.failureOf e of
+                Just f ->
+                    Error.failureDomain f ++ "/" ++ Error.failureCode f
+
+                Nothing ->
+                    "no domain"
+
+
+loc : String -> I18n.Locale
+loc s =
+    I18n.locale s |> Result.withDefault I18n.defaultLocale
+
+
+catName : I18n.PluralCategory -> String
+catName c =
+    case c of
+        I18n.Zero ->
+            "Zero"
+
+        I18n.One ->
+            "One"
+
+        I18n.Two ->
+            "Two"
+
+        I18n.Few ->
+            "Few"
+
+        I18n.Many ->
+            "Many"
+
+        I18n.Other ->
+            "Other"
+
+
+i18nPlurals : String
+i18nPlurals =
+    String.join "," (List.map (\n -> catName (I18n.plural (loc "ar") n)) [ 0, 1, 2, 3, 11, 100 ])
+        ++ ";"
+        ++ String.join "," (List.map (\n -> catName (I18n.ordinal (loc "en") n)) [ 1, 2, 3, 4 ])
+
+
+i18nFormats : String
+i18nFormats =
+    String.join ";"
+        [ Format.money (loc "en") (Money.fromMinor Money.GBP 123450) |> orE
+        , Format.int (loc "en") -1234567 |> orE
+        , Format.list (loc "en") Format.And [ "a", "b", "c" ] |> orE
+        ]
+
+
+i18nOverride : String
+i18nOverride =
+    I18n.overrides [ { locale = loc "en", key = "n", message = ".input {$count :number}\n.match $count\none {{{count} item}}\n* {{{count} items}}" } ]
+        |> Result.map (\ov -> String.join ";" (List.map (\n -> I18n.tWith ov (loc "en") "n" [ ( "count", I18n.int n ) ]) [ 1, 2 ]))
+        |> orE
+
+
+i18nBadOverride : String
+i18nBadOverride =
+    I18n.overrides [ { locale = loc "en", key = "k", message = "Hello {name" } ]
+        |> Result.map (\_ -> "")
+        |> codeOf
 "#
         }
         "breaker" => {

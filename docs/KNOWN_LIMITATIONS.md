@@ -1,4 +1,4 @@
-# Known limitations (v0.30.x)
+# Known limitations (v0.31.x)
 
 Active limitations users still hit at HEAD. Each entry explains the gap,
 why it exists, and the workaround. Closures across the v0.15 / v0.16 /
@@ -155,6 +155,23 @@ under `docs/history/`. This file lists ONLY what's still active at HEAD.
      semantics require them.
    `Task.loop` (explicit state) and `Task.forever` (a service loop) stay the
    clearest forms for a long loop.
+
+10. **`Std.Time` reads the host's zone files first.** The IANA zone
+    database is embedded in every Sky binary, so every zone works with no
+    files on the host, and the Sky.Spa client in a browser uses only the
+    embedded copy. On a host that has zone files (`/usr/share/zoneinfo`),
+    Go's `time.LoadLocation` reads those first. The server can then use a
+    newer or older release of the data than the client. The two disagree
+    only for a rule that changed between the two releases. The embedded
+    release is the one of the Go toolchain that builds the app (Go 1.26 has
+    tzdata 2025c). `Time.zones` lists the names of that release, and a new
+    zone appears in it when Sky moves to a newer Go. Workaround: to make the
+    server use the embedded copy only, run it with no zone files (a
+    `distroless` or `scratch` image), or set `ZONEINFO` to the toolchain's
+    `lib/time/zoneinfo.zip`. Two more limits, by design: there are no leap
+    seconds (`fromParts` refuses second 60), and `Parts.offsetMinutes`
+    drops the seconds of a local mean time offset before about 1900 (use
+    `zoneOffset`, which gives seconds).
 
 ## Sky.Spa
 

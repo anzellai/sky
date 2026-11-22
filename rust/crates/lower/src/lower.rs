@@ -2076,7 +2076,13 @@ fn emit_type_decl(
     let builtin = trusted_builtin_modules.contains(&decl.module_id)
         && matches!(
             parent.as_str(),
-            "Std.Decimal.Decimal" | "Std.Money.Money" | "Std.Money.Currency"
+            "Std.Decimal.Decimal"
+                | "Std.Money.Money"
+                | "Std.Money.Currency"
+                // Std.I18n's stored values: Codec.auto, the Sky.Spa wire and a
+                // saved model read them by this owner (rt/codec_i18n.go).
+                | "Std.I18n.Text"
+                | "Std.I18n.Locale"
         );
     let owner = base::go_string_literal(&format!(
         "{}:{parent}",
