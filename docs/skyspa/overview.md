@@ -227,6 +227,14 @@ work, or a static host) the client applies it once at boot, from the first
 model, as Sky.Live does on its first load. Before v0.27.0 the head was dropped
 on the static shell.
 
+`App.withDocument` (`Spa.withDocument`) sets the attributes of the root
+`<html>` element from the model (`Std.Html.Document`). The SSR page writes them
+on the first paint, with `data-sky-hydrating` after them. The client computes
+the set once per render and sets it on `document.documentElement` only when it
+differs from the set it applied last. A page whose list has no `lang` keeps
+`lang="en"`, as every Sky.Spa page had before; an app with no
+`withDocument` gets the page exactly as before.
+
 ## Msg order and server calls — the ordering contract
 
 The client keeps Sky.Live's TEA contract: **every Msg's `update` runs exactly

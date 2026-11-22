@@ -84,6 +84,7 @@ module Std.Spa exposing
     , withNotFound
     , withOnNavigate
     , withHead
+    , withDocument
     , withModelDecoder
     , withModelEncoder
     , withPersistProtectedFields
@@ -115,6 +116,7 @@ import Std.Cmd as Cmd
 import Sky.Core.Task as Task
 import Std.Codec as Codec exposing (Codec)
 import Std.Html exposing (Html)
+import Std.Html.Document as Document
 
 -- | The built Sky.Spa app configuration. Opaque — produced by `config`,
 -- refined by the `withX` builders, consumed by `app`. Phantom `model` / `msg`
@@ -245,6 +247,16 @@ withOnNavigate =
 withHead : (model -> List (Html msg)) -> AppConfig model msg -> AppConfig model msg
 withHead =
     Ffi.kernel "Spa_withHead"
+
+
+-- | Set the attributes of the root `<html>` element from the model (`lang`,
+-- `dir`, `class`, `data-*`, `translate`; see `Std.Html.Document`). The SSR
+-- backend writes them on the first paint. The wasm client sets them on the
+-- document when it starts and after each update that changes them. A page whose
+-- list has no `lang` gets `lang="en"`, as before.
+withDocument : (model -> List Document.Attribute) -> AppConfig model msg -> AppConfig model msg
+withDocument =
+    Ffi.kernel "Spa_withDocument"
 
 
 -- | Set the model DECODER — `decode json` turns the SSR-embedded `#sky-model`

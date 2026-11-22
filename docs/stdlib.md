@@ -2560,6 +2560,54 @@ routes are built with `App.route` / `App.routeParam` / `App.api`. See
 delivers — the low-level `Sky.Live` runtime is documented there as the mechanism
 `--target web` compiles to.
 
+#### `Std.Html.Document` — attributes of the root `<html>` element
+
+`App.withDocument` sets the attributes of the root `<html>` element from the
+model. Screen readers, browser translation, hyphenation and `:lang()` CSS read
+the document language from `<html lang>`, so put it there, not on an element
+inside the view. A right-to-left page sets `dir`.
+
+```elm
+import Std.App as App
+import Std.Html.Document as Document
+
+documentFor : Model -> List Document.Attribute
+documentFor model =
+    [ Document.lang model.locale
+    , Document.dir (if model.locale == "ar" then Document.Rtl else Document.Ltr)
+    , Document.data "theme" model.theme
+    ]
+
+appDef =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound NotFound
+        |> App.withDocument documentFor
+```
+
+| Function | Writes |
+|---|---|
+| `lang : String -> Attribute` | `lang="…"`, a BCP 47 tag (`"en"`, `"fr-CA"`, `"zh-Hant-TW"`) |
+| `dir : Direction -> Attribute` | `dir="ltr"` / `"rtl"` / `"auto"` (`Ltr`, `Rtl`, `Auto`) |
+| `class : String -> Attribute` | `class="…"` |
+| `data : String -> String -> Attribute` | `data-<name>="…"` |
+| `translate : Bool -> Attribute` | `translate="yes"` / `"no"` |
+
+Rules. There is no free-form attribute name. A `lang` value that is not a
+well-formed BCP 47 tag is not written, and the app logs it once at WARN level
+(`DocumentAttributeRejected`). A `data` name must use `a-z`, `0-9`, `-`, `_`
+and `.` and must not start with `sky-`: the runtime uses `data-sky-*` for its
+own markers. When the list sets one attribute more than one time, the last
+value wins. Every value is HTML-escaped.
+
+Each web target writes the attributes on the first page and follows a change
+with no page reload. Sky.Live (`Live.withDocument`) computes the set once per
+render and sends it in the patch protocol only when it changed. The Sky.Spa
+server (`Spa.withDocument`) writes it on the first paint, and the client sets
+it after each render that changes it. A Sky.Spa page whose list has no `lang`
+keeps `lang="en"`. The desktop window (`Webview.appWithDocument`) writes it in
+its shell. The terminal targets ignore it. An app with no `withDocument`
+renders as before.
+
 #### `Std.Live.Head` — per-page `<head>` injection (v0.15.58+)
 
 Optional per-page `<head>` injection — attach via `App.withHead`

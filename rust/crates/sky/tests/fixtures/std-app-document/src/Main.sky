@@ -1,0 +1,96 @@
+module Main exposing (main)
+
+-- App.withDocument: the attributes of the root <html> element follow the
+-- model on every web target. The buttons switch the language, and the
+-- "note" button changes the view but not the attributes
+-- (scripts/document-e2e.sh). The "probe" arm reads a file on the server, so
+-- the web:app build has a backend that renders the first paint (SSR).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Html.Document as Document
+import Std.Ui as Ui
+
+type alias Model =
+    { locale : String
+    , clicks : Int
+    }
+
+type Msg
+    = SetLocale String
+    | Note
+    | Probe
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { locale = "en", clicks = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        SetLocale l ->
+            ( { model | locale = l }, Cmd.none )
+
+        Note ->
+            ( { model | clicks = model.clicks + 1 }, Cmd.none )
+
+        Probe ->
+            case Task.run (File.readFile "document-probe.txt") of
+
+                Ok _ ->
+                    ( { model | clicks = model.clicks + 100 }, Cmd.none )
+
+                Err _ ->
+                    ( { model | clicks = model.clicks + 10 }, Cmd.none )
+
+
+documentFor : Model -> List Document.Attribute
+documentFor model =
+    if model.locale == "ar" then
+        [ Document.lang "ar"
+        , Document.dir Document.Rtl
+        , Document.data "theme" "dark \"<&"
+        ]
+
+    else
+        [ Document.lang model.locale, Document.dir Document.Ltr ]
+
+
+button : String -> Msg -> Ui.Element Msg
+button id msg =
+    Ui.button
+        [ Ui.htmlAttribute "id" id ]
+        { onPress = Just msg, label = Ui.text id }
+
+
+view : Model -> Ui.Element Msg
+view m =
+    Ui.column
+        []
+        [ Ui.el
+              [ Ui.htmlAttribute "id" "state" ]
+              (Ui.text
+                  ("LOCALE=" ++ m.locale ++ " CLICKS=" ++ String.fromInt m.clicks))
+        , button "ar" (SetLocale "ar")
+        , button "fr" (SetLocale "fr-CA")
+        , button "en" (SetLocale "en")
+        , button "note" Note
+        , button "probe" Probe
+        ]
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ()
+            |> App.withDocument documentFor)

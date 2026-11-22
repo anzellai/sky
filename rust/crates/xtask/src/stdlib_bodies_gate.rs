@@ -20,8 +20,8 @@ use std::path::Path;
 /// and Std.Zip (v0.29.0). 134 with Std.Office.Xlsx and Std.Office.Docx
 /// (v0.29.0). 135 with Std.Image.Canvas (v0.29.0). 136 with Std.Admission
 /// (v0.30.0). 137 with Std.Breaker
-/// (v0.30.0). 139 with Std.I18n and Std.I18n.Format (v0.31.0).
-pub const EXPECTED_MODULES: u64 = 139;
+/// (v0.30.0). 140 with Std.I18n, Std.I18n.Format and Std.Html.Document (v0.31.0).
+pub const EXPECTED_MODULES: u64 = 140;
 
 /// `(passed, assertions, detail)`. One assertion per module checked.
 pub fn check_body(root: &Path) -> (bool, u64, String) {

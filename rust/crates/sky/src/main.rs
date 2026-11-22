@@ -2333,6 +2333,12 @@ struct AppFields {
     /// argument may span lines (a `sky fmt`-wrapped `\m -> [ … ]`), so it is
     /// gathered by bracket-balancing, not by taking the first physical line.
     head: Option<String>,
+    /// `|> App.withDocument <fn>` — the `<html>` attribute builder
+    /// (`model -> List Document.Attribute`), carried into a NAMED top-level
+    /// `spaDocument_` binding and `|> Spa.withDocument spaDocument_`. The SSR
+    /// backend writes the attributes on the first paint; the wasm client sets
+    /// them after each render that changes them.
+    document: Option<String>,
     /// `App.withOnNavigate <fn>` — the navigation hook (`page -> msg`). Carried
     /// into `|> Spa.withOnNavigate spaOnNavigate_` (the Spa runtime already runs
     /// it on the client) AND into a NAMED top-level binding the SSR backend fires
@@ -2417,6 +2423,7 @@ const SPA_CARRIED_BUILDERS: &[&str] = &[
     "withRoutes",
     "withNotFound",
     "withHead",
+    "withDocument",
     "withOnNavigate",
     "withRequest",
     "withGuard",
@@ -2498,6 +2505,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
     let view = field("view")?;
     let subscriptions = field("subscriptions")?;
     let (mut routes, mut not_found, mut head) = (None, None, None);
+    let mut document = None;
     let (mut on_navigate, mut on_request, mut guard) = (None, None, None);
     let mut rpc_error = None;
     let mut console_auth = None;
@@ -2561,6 +2569,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
             "withRoutes" => routes = Some(arg.flat()),
             "withNotFound" => not_found = Some(place("notFound", arg)),
             "withHead" => head = Some(place("head", arg)),
+            "withDocument" => document = Some(place("document", arg)),
             "withOnNavigate" => on_navigate = Some(place("onNavigate", arg)),
             "withRequest" => on_request = Some(place("onRequest", arg)),
             "withGuard" => guard = Some(place("guard", arg)),
@@ -2586,6 +2595,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
         routes,
         not_found,
         head,
+        document,
         on_navigate,
         on_request,
         guard,
@@ -3347,6 +3357,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 fields.routes.as_deref().unwrap_or(""),
                 fields.not_found.as_deref().unwrap_or(""),
                 fields.head.as_deref().unwrap_or(""),
+                fields.document.as_deref().unwrap_or(""),
                 fields.on_navigate.as_deref().unwrap_or(""),
                 fields.on_request.as_deref().unwrap_or(""),
                 fields.guard.as_deref().unwrap_or(""),
@@ -3496,6 +3507,20 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
             "\n            |> Spa.withHead spaHead_".to_string(),
         ),
         None => ("spaHead_ _ =\n    []\n\n\n".to_string(), String::new()),
+    };
+    // Carry `App.withDocument` into a NAMED top-level `spaDocument_` binding,
+    // for the same reason as `spaHead_`: the generated backend copies every
+    // top-level decl except `main`, so the SSR route can write the `<html>`
+    // attributes of the requested route (`Spa_ssrWithDocument`). Always
+    // emitted (a `[]` default when the app has no `withDocument`, which keeps
+    // the page's `lang="en"`), so the SSR route references it uniformly. The
+    // client gets `|> Spa.withDocument spaDocument_` only when the app sets it.
+    let (document_binding, document_line) = match &fields.document {
+        Some(d) => (
+            format!("spaDocument_ model_ =\n    ({d}) model_\n\n\n"),
+            "\n            |> Spa.withDocument spaDocument_".to_string(),
+        ),
+        None => ("spaDocument_ _ =\n    []\n\n\n".to_string(), String::new()),
     };
     // Carry `App.withOnNavigate` (fix 5). A NAMED top-level `spaOnNavigate_`
     // binding — like `spaHead_` — reaches the generated BACKEND verbatim (the
@@ -3663,6 +3688,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
          {routes_binding}\
          {not_found_binding}\
          {head_binding}\
+         {document_binding}\
          {on_navigate_binding}\
          {on_request_binding}\
          {guard_binding}\
@@ -3681,7 +3707,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
          , update = {update}\n            \
          , view = spaView_\n            \
          , subscriptions = {subscriptions}\n            \
-         }}{routes_line}{not_found_line}{head_line}{on_navigate_line}{persist_exclude_line}{client_crypto_line}\n        \
+         }}{routes_line}{not_found_line}{head_line}{document_line}{on_navigate_line}{persist_exclude_line}{client_crypto_line}\n        \
          )\n",
         hoisted = fields.hoisted,
         canonical_bindings = canonical_bindings,
@@ -3689,6 +3715,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
         routes_binding = routes_binding,
         not_found_binding = not_found_binding,
         head_binding = head_binding,
+        document_binding = document_binding,
         on_navigate_binding = on_navigate_binding,
         on_request_binding = on_request_binding,
         guard_binding = guard_binding,
@@ -3698,6 +3725,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
         routes_line = routes_line,
         not_found_line = not_found_line,
         head_line = head_line,
+        document_line = document_line,
         on_navigate_line = on_navigate_line,
         client_crypto_line = if fields.client_crypto {
             "\n            |> Spa.withClientCrypto"

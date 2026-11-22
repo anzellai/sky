@@ -64,6 +64,7 @@ module Std.App exposing
     , withBase
     , withConfig
     , withHead
+    , withDocument
     , withGuard
     , withOnKey
     , withOnNavigate
@@ -119,6 +120,7 @@ import Std.Codec as Codec exposing (Codec)
 import Std.Db as Db exposing (Db)
 import Std.Durable as Durable
 import Std.Html as Html exposing (Html)
+import Std.Html.Document as Document
 import Std.Live as Live
 import Std.Live.Console as Console
 import Std.Log as Log
@@ -416,6 +418,7 @@ type App fallback seed page model msg key
 , base : BaseConfig
 , configs : List Config
 , head : Maybe (model -> List (Html msg))
+, document : Maybe (model -> List Document.Attribute)
 , guard : Maybe (msg -> model -> Result Error ())
 , onKey : Maybe (key -> msg)
 , onNavigate : Maybe (page -> msg)
@@ -479,6 +482,7 @@ app cfg =
         , base = baseDefaults
         , configs = []
         , head = Nothing
+        , document = Nothing
         , guard = Nothing
         , onKey = Nothing
         , onNavigate = Nothing
@@ -515,6 +519,7 @@ web cfg =
         , base = baseDefaults
         , configs = []
         , head = Nothing
+        , document = Nothing
         , guard = Nothing
         , onKey = Nothing
         , onNavigate = Nothing
@@ -550,6 +555,7 @@ cli cfg =
         , base = baseDefaults
         , configs = []
         , head = Nothing
+        , document = Nothing
         , guard = Nothing
         , onKey = Nothing
         , onNavigate = Nothing
@@ -587,6 +593,7 @@ tui cfg =
         , base = baseDefaults
         , configs = []
         , head = Nothing
+        , document = Nothing
         , guard = Nothing
         , onKey = Nothing
         , onNavigate = Nothing
@@ -855,6 +862,24 @@ findTerminal configs =
 withHead : (model -> List (Html msg)) -> App fallback seed page model msg key -> App fallback seed page model msg key
 withHead headFor (App a) =
     App { a | head = Just headFor }
+
+
+-- | Set the attributes of the root `<html>` element from the model: `lang`,
+-- `dir`, `class`, `data-*` and `translate` (`Std.Html.Document`). Screen
+-- readers, browser translation, hyphenation and `:lang()` CSS read the
+-- document language from `<html lang>`, not from an element inside the page.
+--
+--     |> App.withDocument (\model -> [ Document.lang model.locale, Document.dir Document.Ltr ])
+--
+-- Every web target writes them: `web` (`Live.withDocument`; a changed set goes
+-- to the browser with the update that changed it, with no reload), the Sky.Spa
+-- client targets (`Spa.withDocument`; the server writes them on the first
+-- paint, the client after each update that changes them) and the desktop
+-- window. The terminal targets ignore them. The list is computed once per
+-- render. When it sets one attribute more than one time, the last value wins.
+withDocument : (model -> List Document.Attribute) -> App fallback seed page model msg key -> App fallback seed page model msg key
+withDocument documentFor (App a) =
+    App { a | document = Just documentFor }
 
 
 -- | Attach a per-Msg guard — `guard msg model` returns `Err` to reject the
@@ -1684,14 +1709,22 @@ liveConfig_ (App a) =
 
                         Nothing ->
                             withAnalytics_
+                withDocument_ =
+                    case a.document of
+
+                        Just d ->
+                            Live.withDocument d withHead_
+
+                        Nothing ->
+                            withHead_
                 withGuard_ =
                     case a.guard of
 
                         Just g ->
-                            Live.withGuard g withHead_
+                            Live.withGuard g withDocument_
 
                         Nothing ->
-                            withHead_
+                            withDocument_
                 withNav_ =
                     case a.onNavigate of
 
@@ -2072,8 +2105,7 @@ runWebviewBoot_ : App fallback () page model msg key -> Task Error ()
 runWebviewBoot_ (App a) =
     let
         d = findDesktop a.configs
-    in
-        Webview.app
+        cfg =
             { init = a.init
             , update = a.update
             , view =
@@ -2092,6 +2124,14 @@ runWebviewBoot_ (App a) =
             , subscriptions = a.subscriptions
             , window = { title = d.title, size = ( d.width, d.height ) }
             }
+    in
+        case a.document of
+
+            Just documentFor ->
+                Webview.appWithDocument documentFor cfg
+
+            Nothing ->
+                Webview.app cfg
 
 
 -- | Run as **Sky.Live in a native window** (`--target desktop`): serve the Live

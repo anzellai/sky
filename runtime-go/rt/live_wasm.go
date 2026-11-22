@@ -151,6 +151,8 @@ func spaRun(cfg any) any {
 	spaServerRoutes = asSpaServerRoutes(fieldOrNil(cfg, "Routes"))
 	spaNotFound = fieldOrNil(cfg, "NotFound")
 	spaOnNavigate = fieldOrNil(cfg, "OnNavigate")
+	// The <html> attributes (Spa.withDocument, spa_document_wasm.go).
+	spaResetDocument(cfg)
 	// Client scratch-state persistence (P2). The encoder (`model -> String`) and
 	// the protected (session) field-name list are wired by the auto-split beside
 	// the SSR model decoder; both nil/empty on an app with no encoder, in which
@@ -848,6 +850,9 @@ var spaScrollCommands spaScrollQueue
 func renderCurrent() { renderCurrentWithScroll(false) }
 
 func renderCurrentWithScroll(continuation bool) {
+	// The <html> attributes follow the model: computed once per render, and
+	// applied only when they differ from the set applied last.
+	defer spaApplyDocument()
 	painted, held := false, false
 	defer func() {
 		if !painted {

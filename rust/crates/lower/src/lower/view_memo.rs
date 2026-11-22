@@ -105,6 +105,7 @@ pub(super) const BUILDERS: &[(&str, usize)] = &[
     ("withNotFound", 2),
     ("withOnNavigate", 2),
     ("withHead", 2),
+    ("withDocument", 2),
     ("withModelDecoder", 2),
     ("withModelEncoder", 2),
     ("withPersistProtectedFields", 2),

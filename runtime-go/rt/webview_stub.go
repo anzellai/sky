@@ -17,6 +17,13 @@
 
 package rt
 
+// Webview_appWithDocument is Webview_app with the <html> attributes; the stub
+// refuses it the same way.
+func Webview_appWithDocument(doc any, cfg any) any {
+	_ = doc
+	return Webview_app(cfg)
+}
+
 func Webview_app(cfg any) any {
 	return func() any {
 		_ = cfg
