@@ -635,6 +635,10 @@
 #   `any` result): `mapKeyKind` asks whether a `propertyNames` pattern is the
 #   Float key pattern, and `mapKeyError` whether a member name reads as a
 #   Float key. No adapter or dispatch site.
+#
+# 78-i18n-booking (new, v0.31.0): the Std.I18n booking example (Sky.Live,
+#   Std.Ui, Std.I18n, Std.I18n.Format, App.withDocument). New row: narrow=87,
+#   measured with `coerce-floor --only=78-i18n-booking`.
 00-standard-libs	adapter=0	dispatch=0	narrow=106
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=5
@@ -705,6 +709,7 @@
 74-ai-cloud	adapter=0	dispatch=0	narrow=1325
 75-ai-everywhere	adapter=0	dispatch=0	narrow=797
 77-demo-expenses	adapter=0	dispatch=0	narrow=249
+78-i18n-booking	adapter=0	dispatch=0	narrow=87
 apps/dispatch	adapter=0	dispatch=0	narrow=166
 apps/fieldbook	adapter=0	dispatch=0	narrow=386
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2

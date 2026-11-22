@@ -533,7 +533,6 @@ sky-stdlib/Std/Time.sky: endOfMonthUtc
 sky-stdlib/Std/Time.sky: endOfYear
 sky-stdlib/Std/Time.sky: endOfYearUtc
 sky-stdlib/Std/Time.sky: formatInZone
-sky-stdlib/Std/Time.sky: fromParts
 sky-stdlib/Std/Time.sky: inZone
 sky-stdlib/Std/Time.sky: isLeapYear
 sky-stdlib/Std/Time.sky: isWeekend
