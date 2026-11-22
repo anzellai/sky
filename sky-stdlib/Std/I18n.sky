@@ -184,16 +184,17 @@ direction (Locale__Internal s) =
 -- text direction with no page reload.
 document : Locale -> List Document.Attribute
 document loc =
-    [ Document.lang (tag loc)
-    , Document.dir
-        (case direction loc of
-            Rtl ->
+    let
+        dir : Document.Direction
+        dir =
+            if direction loc == Rtl then
                 Document.Rtl
 
-            Ltr ->
+            else
                 Document.Ltr
-        )
-    ]
+    in
+        [ Document.lang (tag loc), Document.dir dir ]
+
 
 -- | The lookup chain of a locale: the locale, its CLDR parents, then the
 -- app's default locale. "zh-HK" gives zh-HK, zh-Hant-HK, zh-Hant, then the

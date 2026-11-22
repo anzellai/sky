@@ -1767,6 +1767,9 @@ jobs:
       - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
         timeout-minutes: 5
         run: scripts/ui-forms-e2e.sh
+      - name: Std.I18n e2e (server and client give the same text, <html> lang / dir follow the locale, Sky.Live + Sky.Spa, Chromium + WebKit, strict CSP)
+        timeout-minutes: 10
+        run: scripts/i18n-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

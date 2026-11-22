@@ -129,10 +129,18 @@ languageLinks : Element Msg
 languageLinks =
     Ui.row
         [ Ui.spacing 12 ]
-        [ Ui.link [] { url = "/", label = Ui.text "English" }
-        , Ui.link [] { url = "/zh", label = Ui.text "简体中文" }
-        , Ui.link [] { url = "/ar", label = Ui.text "العربية" }
-        , Ui.link [] { url = "/xa", label = Ui.text "en-XA" }
+        [ Ui.link
+              [ Ui.htmlAttribute "sky-nav" "" ]
+              { url = "/", label = Ui.text "English" }
+        , Ui.link
+              [ Ui.htmlAttribute "sky-nav" "" ]
+              { url = "/zh", label = Ui.text "简体中文" }
+        , Ui.link
+              [ Ui.htmlAttribute "sky-nav" "" ]
+              { url = "/ar", label = Ui.text "العربية" }
+        , Ui.link
+              [ Ui.htmlAttribute "sky-nav" "" ]
+              { url = "/xa", label = Ui.text "en-XA" }
         ]
 
 
