@@ -644,24 +644,33 @@ fn verify_one(
         if let Some((p, _)) = &restore_target {
             set_mtime(p, std::time::SystemTime::now());
         }
-        if let Err(e) = rebuild_after_revert(
+        let rebuilt = rebuild_after_revert(
             &opts.repo_root,
             &opts.exe,
             rust_source,
             mutation_started,
-            budget,
-        ) {
+            rebuild_budget(budget),
+        );
+        if let Err(e) = &rebuilt {
             eprintln!(
                 "harness: WARNING — could not rebuild after reverting {}: {e}\n\
-                 The binary may still contain the mutation. Rebuild before trusting \
-                 any later result.",
+                 The binary may still contain the mutation. The reverted source keeps \
+                 a new mtime, so the next cargo build recompiles it. Rebuild before \
+                 trusting any later result.",
                 m.id
             );
         }
-        // Put the freshness clock back where the revert left it, now that cargo
-        // has recompiled from the clean source.
-        if let Some((p, Some(mt))) = &restore_target {
-            set_mtime(p, *mt);
+        // Put the freshness clock back where the revert left it, but only when
+        // cargo has recompiled from the clean source. After a failed rebuild the
+        // artefacts can hold the mutation: a mutated run that went over its
+        // budget leaves a mutated rlib, and the old mtime makes cargo read that
+        // rlib as fresh. A later plain `cargo run -p xtask -- kernel-members`
+        // then measured the mutation on a clean tree ("ADD (real, missing):
+        // sortWith"). The new mtime makes every later build recompile.
+        if let Some((p, original)) = &restore_target {
+            if let Some(mt) = mtime_after_rebuild(rebuilt.is_ok(), *original) {
+                set_mtime(p, mt);
+            }
         }
     }
 
@@ -671,6 +680,32 @@ fn verify_one(
         outcome,
         as_declared,
         detail,
+    }
+}
+
+/// The shortest budget a post-revert rebuild gets. The rebuild is not the
+/// gate: it restores the tree's binaries, so it may not inherit a gate budget
+/// that a mutated build has already run over on a loaded machine.
+const REBUILD_FLOOR: Duration = Duration::from_secs(30 * 60);
+
+/// The budget of the rebuild after a revert: the gate's budget, but never less
+/// than [`REBUILD_FLOOR`].
+fn rebuild_budget(gate_budget: Duration) -> Duration {
+    gate_budget.max(REBUILD_FLOOR)
+}
+
+/// The mtime to put back on the reverted source after the rebuild. `Some`
+/// (the original) only when the rebuild succeeded. After a failed rebuild the
+/// source keeps its new mtime, so a later cargo build does not read a mutated
+/// artefact as fresh.
+fn mtime_after_rebuild(
+    rebuild_ok: bool,
+    original: Option<std::time::SystemTime>,
+) -> Option<std::time::SystemTime> {
+    if rebuild_ok {
+        original
+    } else {
+        None
     }
 }
 
@@ -911,6 +946,21 @@ mod tests {
     // The v0.27.18 defect: `shared-world` reported 157 assertions against an
     // exact 155, the suite said FAIL, and the falsifier still took the
     // baseline as green and recorded PROVEN.
+    #[test]
+    fn a_failed_rebuild_leaves_the_reverted_source_newer() {
+        let original = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        assert_eq!(mtime_after_rebuild(true, Some(original)), Some(original));
+        assert_eq!(mtime_after_rebuild(false, Some(original)), None);
+        assert_eq!(mtime_after_rebuild(true, None), None);
+    }
+
+    #[test]
+    fn the_rebuild_never_inherits_a_short_gate_budget() {
+        assert_eq!(rebuild_budget(Duration::from_secs(60)), REBUILD_FLOOR);
+        let long = REBUILD_FLOOR + Duration::from_secs(1);
+        assert_eq!(rebuild_budget(long), long);
+    }
+
     #[test]
     fn a_baseline_with_the_wrong_assertion_count_is_not_green() {
         let gate = super::super::registry::find("shared-world").expect("registered");
