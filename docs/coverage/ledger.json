@@ -935,6 +935,12 @@
           "tests/conformance"
         ]
       },
+      "Std.Html.Document": {
+        "path": "scripts/document-e2e.sh",
+        "units": [
+          "e2e:scripts/document-e2e.sh"
+        ]
+      },
       "Std.Image": {
         "path": "tests/conformance",
         "units": [
@@ -1019,21 +1025,21 @@
   "summary": {
     "stdlib_entries": 3295,
     "stdlib_modules": 138,
-    "surfaces_covered": 196,
-    "surfaces_covered_pct": 94.7,
-    "surfaces_equal": 16,
-    "surfaces_stronger": 191,
+    "surfaces_covered": 197,
+    "surfaces_covered_pct": 95.2,
+    "surfaces_equal": 15,
+    "surfaces_stronger": 192,
     "surfaces_total": 207,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
       "Example": 71,
-      "FlowTest": 69,
+      "FlowTest": 70,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 159
+    "units_total": 160
   },
   "surfaces": [
     {
@@ -4631,6 +4637,11 @@
           },
           {
             "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/document-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -8460,6 +8471,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/document-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -11850,6 +11866,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/document-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -15220,9 +15241,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "e2e:scripts/document-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
       },
       "cover_today": {
         "class": "None",
@@ -15231,7 +15258,7 @@
       },
       "description": "the Std.Html.Document public API",
       "id": "stdlib.Std.Html.Document",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -17517,6 +17544,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/document-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web-1..4 / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -19646,7 +19678,7 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 9,
+      "count": 8,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
@@ -19654,11 +19686,10 @@
         "Std.Cli",
         "Std.Db.Migrate",
         "Std.Db.Table",
-        "Std.Html.Document",
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 6.5
+      "pct_of_denominator": 5.8
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -19666,7 +19697,7 @@
       "modules": []
     },
     "surfaces_with_zero_new_cover": {
-      "count": 10,
+      "count": 9,
       "surfaces": [
         "cli.console",
         "cli.console-serve",
@@ -19675,7 +19706,6 @@
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Cli",
         "stdlib.Std.Db.Table",
-        "stdlib.Std.Html.Document",
         "stdlib.Std.Tui",
         "stdlib.Std.Webview"
       ]
@@ -20259,7 +20289,7 @@
           ]
         },
         "Std.App": {
-          "count": 23,
+          "count": 22,
           "symbols": [
             "BaseConfig",
             "DesktopOpts",
@@ -20281,7 +20311,6 @@
             "terminalDefaults",
             "withAppUrl",
             "withBase",
-            "withDocument",
             "withPersistExclude",
             "withSessionLifetime"
           ]
@@ -20636,14 +20665,10 @@
           ]
         },
         "Std.Html.Document": {
-          "count": 7,
+          "count": 3,
           "symbols": [
-            "Attribute",
             "Direction",
             "class",
-            "data",
-            "dir",
-            "lang",
             "translate"
           ]
         },
@@ -21110,8 +21135,8 @@
           ]
         }
       },
-      "count": 887,
-      "pct_of_denominator": 26.9
+      "count": 882,
+      "pct_of_denominator": 26.8
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -21753,7 +21778,7 @@
           ]
         },
         "Std.App": {
-          "count": 26,
+          "count": 25,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -21778,7 +21803,6 @@
             "terminalDefaults",
             "withAppUrl",
             "withBase",
-            "withDocument",
             "withPersistExclude",
             "withSessionLifetime"
           ]
@@ -22180,14 +22204,10 @@
           ]
         },
         "Std.Html.Document": {
-          "count": 7,
+          "count": 3,
           "symbols": [
-            "Attribute",
             "Direction",
             "class",
-            "data",
-            "dir",
-            "lang",
             "translate"
           ]
         },
@@ -22691,8 +22711,8 @@
           ]
         }
       },
-      "count": 1000,
-      "pct_of_denominator": 30.3
+      "count": 995,
+      "pct_of_denominator": 30.2
     }
   },
   "units": [
@@ -22861,6 +22881,18 @@
       "refs_qualified": 29,
       "role": "FlowTest",
       "sky_files": 2,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "e2e:scripts/document-e2e.sh",
+      "modules_imported": 5,
+      "path": "scripts/document-e2e.sh",
+      "refs_generous": 16,
+      "refs_qualified": 16,
+      "role": "FlowTest",
+      "sky_files": 1,
       "sky_toml_sections": []
     },
     {

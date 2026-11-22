@@ -21,11 +21,11 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 207 |
-| covered by the new corpus (>= Asserted) | 196 |
-| verdict `stronger` | 191 |
-| verdict `equal` | 16 |
+| covered by the new corpus (>= Asserted) | 197 |
+| verdict `stronger` | 192 |
+| verdict `equal` | 15 |
 | verdict `weaker` | 0 |
-| corpus units | 159 |
+| corpus units | 160 |
 | stdlib modules (denominator) | 138 |
 | stdlib entries (denominator) | 3295 |
 
@@ -33,9 +33,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 6.5% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 1000 | 30.3% |
-| symbols unreferenced under the generous rule | 887 | 26.9% |
+| stdlib modules imported by nothing | 8 | 5.8% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 995 | 30.2% |
+| symbols unreferenced under the generous rule | 882 | 26.8% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 0 | — |
 
 ### Surfaces with zero new cover
@@ -47,7 +47,6 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `stdlib.Sky.Core.Io`
 - `stdlib.Std.Cli`
 - `stdlib.Std.Db.Table`
-- `stdlib.Std.Html.Document`
 - `stdlib.Std.Tui`
 - `stdlib.Std.Webview`
 
@@ -58,7 +57,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 26 |
-| stdlib modules owned by exactly one unit of any role | 19 |
+| stdlib modules owned by exactly one unit of any role | 20 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -239,7 +238,7 @@ None.
 | `stdlib.Std.Email` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Html.Document` | stdlib | None | None | equal |
+| `stdlib.Std.Html.Document` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Html.Events` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Image` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Image.Canvas` | stdlib | Asserted | Falsified | stronger |
