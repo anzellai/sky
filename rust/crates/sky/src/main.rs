@@ -1891,6 +1891,21 @@ fn stage_std_app_derived(project_dir: &Path, out_root: &Path) -> Result<PathBuf,
         eprintln!("sky build: stage {}: {e}", src_to.display());
         return Err(ExitCode::FAILURE);
     }
+    // The project's own native extensions (`native/<platform>/`: Swift, Java,
+    // Kotlin handlers and their plist / manifest fragments). The split copies
+    // `native/` from THIS staged tree into each leg (`spa_split::propagate_deps`)
+    // and the shell build reads it there (`collect_native_dirs`). Without it the
+    // shell never called the app's own `register<Stem>`, while a dependency's
+    // handler (reached through `.skydeps` / an absolute path dep) was linked
+    // (#334). A copy, not a link: the tree is small and a failure is fatal.
+    let native_from = project_dir.join("native");
+    if native_from.is_dir() {
+        let native_to = out_root.join("native");
+        if let Err(e) = copy_dir_recursive(&native_from, &native_to) {
+            eprintln!("sky build: stage {}: {e}", native_to.display());
+            return Err(ExitCode::FAILURE);
+        }
+    }
     let toml_src = project_dir.join("sky.toml");
     if toml_src.exists() {
         // A local path dependency's relative `path` is relative to THIS
@@ -22670,6 +22685,50 @@ echo key > "$ks"
             ANDROID_EXT_REGISTRY.contains("public final class SkyRegistry")
                 && ANDROID_EXT_REGISTRY.contains("package sky.nativeext;")
         );
+    }
+
+    /// #334: a `Std.App` client build (`--target mobile:ios`, `mobile:android`,
+    /// `desktop:mac`, …) stages the app at `.skyapp/<target>/` and splits THAT
+    /// tree. The split copies `native/` from the staged tree into each leg
+    /// (`spa_split::propagate_deps`), so the staged tree must carry the app's
+    /// own `native/`. It did not, and the shell never called the app's own
+    /// `register<Stem>`, while a path package's handler was linked.
+    #[test]
+    fn std_app_staging_carries_the_projects_own_native_dir() {
+        let dir = bundle_scratch(
+            "stdappnative",
+            "name = \"p\"\n",
+            "module Main exposing (main)\nmain = 0\n",
+        );
+        for (platform, file) in [
+            ("ios", "Screen.swift"),
+            ("android", "Screen.java"),
+            ("macos", "Screen.swift"),
+        ] {
+            let d = dir.join("native").join(platform);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join(file), "// register Screen\n").unwrap();
+        }
+        std::fs::write(dir.join("native/ios/app.entitlements"), "<plist/>\n").unwrap();
+        let out_root = dir.join(".skyapp").join("mobile-ios");
+        // A stale file from an earlier build must not survive a restage.
+        std::fs::create_dir_all(out_root.join("native/ios")).unwrap();
+        std::fs::write(out_root.join("native/ios/Gone.swift"), "// stale\n").unwrap();
+        stage_std_app_derived(&dir, &out_root).expect("stage");
+
+        for (platform, ext) in [("ios", "swift"), ("android", "java"), ("macos", "swift")] {
+            let stems: Vec<String> = collect_native_files(&out_root, platform, ext)
+                .into_iter()
+                .map(|(s, _)| s)
+                .collect();
+            assert_eq!(
+                stems,
+                vec!["Screen".to_string()],
+                "the staged Std.App tree must carry native/{platform}"
+            );
+        }
+        assert!(out_root.join("native/ios/app.entitlements").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A library ships native code + fragments under `native/<platform>/`;

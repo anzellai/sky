@@ -1250,8 +1250,11 @@ page. `App.withPersistExclude [ "siteConfig", "serverNow" ]` (or
 fields out of every stored copy and, on a full load, always takes them from the
 SSR seed, so a stale copy cannot paint the first frame. A session field is never
 left out (the identity check below reads it). Without an SSR seed (a static
-deploy) the stored copy has no value for these fields, the model decoder refuses
-it, and the client boots from `init`. On Sky.Live the same builder makes a full
+deploy, a `web:app` client, a native shell) these fields come from `init`, and
+every other field restores from the stored copy (v0.31.1, #335; before, the
+client lost the whole stored copy). A field the stored copy does not have (a
+field a newer build added) also comes from the seed, or from `init` when there
+is no seed. On Sky.Live the same builder makes a full
 page load of an existing session refresh the fields from `init`.
 
 **Persistence is per identity.** The stored model restores only when the

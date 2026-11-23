@@ -11,6 +11,26 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## Unreleased
+
+### Fixed
+
+- A `Std.App` app built for a native shell (`--target mobile:ios`,
+  `mobile:android`, `desktop:mac` and the other client targets) now links the
+  handlers in its own `native/<platform>/` directory (#334). The build stages
+  the app under `.skyapp/<target>/` and splits that copy, and the copy had no
+  `native/`. The shell linked a dependency's handler, but it never called the
+  app's own `register<Name>`, so each `Native.bridge` call to it failed at run
+  time.
+- `App.withPersistExclude` no longer loses the whole saved model on a page
+  with no server-rendered seed (a `web:app` static mount, a native shell)
+  (#335). The save leaves the excluded fields out, and the restore gave that
+  copy to the model decoder as it was, which refused it, so the client started
+  from `init`. The excluded fields now come from `init` and every other field
+  restores. A field that the saved copy does not have (a field that a newer
+  build added) now comes from the seed, or from `init` when there is no seed,
+  so that copy also restores.
+
 ## v0.31.0 — translated text, time zones, JSON objects with any keys and the page language (2026-11-22)
 
 ### ⚠ Breaking changes

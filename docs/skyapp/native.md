@@ -252,6 +252,12 @@ A project or a Sky library can still ship native files under
 `native/macos/Info.plist.append`, `native/macos/app.entitlements` and
 `native/android/permissions.xml`.
 
+The project's own `native/` is linked on every client target, also when a
+`Std.App` app goes through the auto-split under `.skyapp/<target>/.split`.
+Before v0.31.1 that path dropped it (#334): the shell linked a dependency's
+handler but never called the app's own `register<Name>`, and each
+`Native.bridge` call to it failed at run time.
+
 The build reads each fragment as a tree and merges the trees; it never joins
 them as text. Before v0.27.0 it did, and two defects followed: two
 `app.entitlements` files that were each a whole property list became two XML

@@ -99,6 +99,14 @@ func spaMergeStoredOverSeed(storedJSON, seedJSON string, protectedFields []strin
 			}
 		}
 	}
+	// A field the stored model does not carry (an App.withPersistExclude field
+	// the save stripped, or a field a newer build added) comes from the seed,
+	// so the model decode sees every field (#335).
+	for k, v := range seed {
+		if _, ok := stored[k]; !ok {
+			stored[k] = v
+		}
+	}
 	out, err := json.Marshal(stored)
 	if err != nil {
 		return "", false
@@ -368,6 +376,62 @@ func spaRestoreStored(st spaKV, seedJSON string, protected, winFields []string, 
 	}
 	merged, useIt = spaMergeStoredOverSeed(stored, seedJSON, winFields, maxBytes)
 	return merged, useIt, life
+}
+
+// spaRestoreStoredWithInit is the boot decision the client uses: spaRestoreStored,
+// plus the init model as the base when the page has no SSR seed (a `web:app`
+// static mount, a native shell). The stored model does not carry the
+// App.withPersistExclude fields (spaPersistStripFields removed them on save),
+// and it may lack a field a newer build added. Without a base the decode of
+// such a blob fails and the whole restore is lost (#335). So with no seed the
+// result is the init model, overlaid with every stored field except the
+// excluded ones, which always come from init (an older build may have stored
+// them). A protected (session) field is never excluded: with no seed there is
+// no server identity, so the stored session restores as before.
+//
+// With a seed the seed is the base (spaMergeStoredOverSeed fills every field
+// the stored model lacks from it), and initJSON is not used. An empty or
+// unparseable initJSON keeps the stored model as it is.
+func spaRestoreStoredWithInit(st spaKV, seedJSON, initJSON string, protected, winFields, exclude []string, maxBytes int) (merged string, useIt bool, life spaPersistLife) {
+	merged, useIt, life = spaRestoreStored(st, seedJSON, protected, winFields, maxBytes)
+	if !useIt || seedJSON != "" {
+		return merged, useIt, life
+	}
+	return spaFillFromInit(merged, initJSON, exclude, protected), true, life
+}
+
+// spaFillFromInit returns the init model's JSON overlaid with every field of the
+// stored model except the excluded ones. Never panics. A blob that does not
+// parse returns storedJSON unchanged.
+func spaFillFromInit(storedJSON, initJSON string, exclude, protected []string) string {
+	if initJSON == "" {
+		return storedJSON
+	}
+	var base, stored map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(initJSON), &base); err != nil || base == nil {
+		return storedJSON
+	}
+	if err := json.Unmarshal([]byte(storedJSON), &stored); err != nil || stored == nil {
+		return storedJSON
+	}
+	skip := map[string]bool{}
+	for _, f := range exclude {
+		for _, k := range spaFieldKeys(f) {
+			if !spaPersistProtectedWireKey(k, protected) {
+				skip[k] = true
+			}
+		}
+	}
+	for k, v := range stored {
+		if !skip[k] {
+			base[k] = v
+		}
+	}
+	out, err := json.Marshal(base)
+	if err != nil {
+		return storedJSON
+	}
+	return string(out)
 }
 
 // spaPersistWrite stores the model a step produced. When the model's identity
