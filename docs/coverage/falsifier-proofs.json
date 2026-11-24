@@ -9,18 +9,18 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "ai-device-csp": {
       "inputs_files": 2377,
-      "inputs_hash": "d13c98921a9450acc38b2dc3af82b709e0161cb9",
+      "inputs_hash": "64b2203ec48a526fe80cd1af56422eda57510428",
       "mutation": "ai-device-csp.evaluate-a-string",
       "mutations": [
         "ai-device-csp.evaluate-a-string"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489812
+      "proven_at_unix": 1795493201
     },
     "ai-device-decide": {
       "inputs_files": 4,
@@ -31,7 +31,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "ai-device-digest": {
       "inputs_files": 1656,
@@ -42,7 +42,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "ai-device-ios-sim": {
       "inputs_files": 3,
@@ -53,7 +53,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795490025
+      "proven_at_unix": 1795492817
     },
     "ai-device-no-silent-fallback": {
       "inputs_files": 1656,
@@ -64,7 +64,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "ai-device-partition": {
       "inputs_files": 3,
@@ -75,18 +75,18 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "ai-device-privacy": {
       "inputs_files": 2377,
-      "inputs_hash": "b2b149d9b0a67b7e971ae72741c076dcdba0ed02",
+      "inputs_hash": "cb50db3b45c13f4922b8a2509e957d8ef25f05ce",
       "mutation": "ai-device-privacy.device-calls-the-server",
       "mutations": [
         "ai-device-privacy.device-calls-the-server"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489812
+      "proven_at_unix": 1795493201
     },
     "ai-serve-hot-load": {
       "inputs_files": 1656,
@@ -97,7 +97,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "ai-stream-pieces": {
       "inputs_files": 1656,
@@ -108,7 +108,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "ai-train-exactly-once": {
       "inputs_files": 8,
@@ -119,7 +119,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "ai-train-resume": {
       "inputs_files": 1656,
@@ -130,7 +130,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "analytics-prune-errors-are-reported": {
       "inputs_files": 1656,
@@ -141,18 +141,18 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489361
+      "proven_at_unix": 1795493094
     },
     "analytics-retention-survives-a-panic": {
       "inputs_files": 1656,
-      "inputs_hash": "ec633bb8c7e64904a45a30329a067b3833d6da4c",
+      "inputs_hash": "f929592cddf05fdc638ca6dc94043341bcef82ab",
       "mutation": "analytics-retention.no-recover-inside-the-cycle",
       "mutations": [
         "analytics-retention.no-recover-inside-the-cycle"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795330017
+      "proven_at_unix": 1795491860
     },
     "apps-bundled": {
       "inputs_files": 23,
@@ -163,7 +163,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488880
+      "proven_at_unix": 1795491929
     },
     "apps-dispatch": {
       "inputs_files": 11,
@@ -174,7 +174,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795330017
+      "proven_at_unix": 1795491860
     },
     "apps-dispatch-destructive": {
       "inputs_files": 11,
@@ -185,7 +185,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489361
+      "proven_at_unix": 1795493094
     },
     "apps-dispatch-postgres": {
       "inputs_files": 11,
@@ -196,7 +196,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489561
+      "proven_at_unix": 1795492147
     },
     "apps-ffi-scale": {
       "inputs_files": 33,
@@ -207,7 +207,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795330017
+      "proven_at_unix": 1795491860
     },
     "apps-fieldbook": {
       "inputs_files": 15,
@@ -218,7 +218,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489522
+      "proven_at_unix": 1795492549
     },
     "apps-fleet": {
       "inputs_files": 19,
@@ -229,7 +229,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489561
+      "proven_at_unix": 1795492147
     },
     "apps-ledger": {
       "inputs_files": 18,
@@ -240,7 +240,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488880
+      "proven_at_unix": 1795491929
     },
     "apps-ledger-postgres": {
       "inputs_files": 18,
@@ -251,7 +251,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489522
+      "proven_at_unix": 1795492549
     },
     "apps-relay": {
       "inputs_files": 544,
@@ -263,7 +263,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489286
+      "proven_at_unix": 1795492722
     },
     "build-growth-linear": {
       "inputs_files": 646,
@@ -274,7 +274,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488910
+      "proven_at_unix": 1795491947
     },
     "build-new-dir-compiles-nothing": {
       "inputs_files": 646,
@@ -285,7 +285,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489561
+      "proven_at_unix": 1795492147
     },
     "canary": {
       "inputs_files": 2,
@@ -296,7 +296,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1795491068
+      "proven_at_unix": 1795492153
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -307,18 +307,18 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488880
+      "proven_at_unix": 1795491929
     },
     "config-matrix": {
       "inputs_files": 2367,
-      "inputs_hash": "c71f17f1f8bfa4cf3152207bbb00b1511a4ecd19",
+      "inputs_hash": "cb6c067361172a7fa9c90fefab7e6226042898a8",
       "mutation": "config-matrix.invert-operator-env-provenance",
       "mutations": [
         "config-matrix.invert-operator-env-provenance"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488880
+      "proven_at_unix": 1795491929
     },
     "config-migrate": {
       "inputs_files": 5,
@@ -329,7 +329,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488880
+      "proven_at_unix": 1795491929
     },
     "config-migration": {
       "inputs_files": 5,
@@ -340,7 +340,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488910
+      "proven_at_unix": 1795491947
     },
     "config-surface": {
       "inputs_files": 1663,
@@ -351,7 +351,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795491068
+      "proven_at_unix": 1795491860
     },
     "conformance": {
       "inputs_files": 140,
@@ -362,7 +362,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489286
+      "proven_at_unix": 1795492722
     },
     "console-analytics-queries-are-bounded": {
       "inputs_files": 1656,
@@ -373,7 +373,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489361
+      "proven_at_unix": 1795493094
     },
     "corpus-1": {
       "inputs_files": 185,
@@ -385,7 +385,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489733
+      "proven_at_unix": 1795492481
     },
     "corpus-2": {
       "inputs_files": 185,
@@ -397,7 +397,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489733
+      "proven_at_unix": 1795492481
     },
     "corpus-3": {
       "inputs_files": 185,
@@ -409,7 +409,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489413
+      "proven_at_unix": 1795492153
     },
     "corpus-4": {
       "inputs_files": 185,
@@ -421,7 +421,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489413
+      "proven_at_unix": 1795492153
     },
     "corpus-emit-shape": {
       "inputs_files": 185,
@@ -434,7 +434,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488880
+      "proven_at_unix": 1795491929
     },
     "corpus-isolation": {
       "inputs_files": 185,
@@ -445,18 +445,18 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489522
+      "proven_at_unix": 1795492549
     },
     "corpus-manifest": {
       "inputs_files": 185,
-      "inputs_hash": "69f684eaa9c1f68b4a80f340c13547cb499eac3c",
+      "inputs_hash": "622cf8c5a19130aca7ed6e5a23e1cfa233a6bcca",
       "mutation": "corpus-manifest.drift",
       "mutations": [
         "corpus-manifest.drift"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795330017
+      "proven_at_unix": 1795491860
     },
     "corpus-reject": {
       "inputs_files": 185,
@@ -469,7 +469,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489286
+      "proven_at_unix": 1795492722
     },
     "corpus-witness": {
       "inputs_files": 185,
@@ -480,18 +480,18 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489522
+      "proven_at_unix": 1795492549
     },
     "coverage-ledger": {
       "inputs_files": 5777,
-      "inputs_hash": "52b62d65358f092cbaec929f547a6d54c0cb70aa",
+      "inputs_hash": "518f931a3f6f0295a2e0e4f463265c49dc11ab8e",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489286
+      "proven_at_unix": 1795492722
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 1656,
@@ -502,7 +502,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489361
+      "proven_at_unix": 1795493094
     },
     "fmt-clean": {
       "inputs_files": 751,
@@ -513,7 +513,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "jobs-complete-failure-is-reported": {
       "inputs_files": 1656,
@@ -524,7 +524,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488910
+      "proven_at_unix": 1795491947
     },
     "kernel-members": {
       "inputs_files": 144,
@@ -535,7 +535,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488910
+      "proven_at_unix": 1795491947
     },
     "live-time-every-mutex-survives-a-panic": {
       "inputs_files": 1656,
@@ -546,7 +546,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488910
+      "proven_at_unix": 1795491947
     },
     "lsp": {
       "inputs_files": 70,
@@ -558,7 +558,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489361
+      "proven_at_unix": 1795493094
     },
     "periodic-loops-recover-per-cycle": {
       "inputs_files": 1656,
@@ -569,7 +569,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488910
+      "proven_at_unix": 1795491947
     },
     "reject": {
       "inputs_files": 4,
@@ -580,7 +580,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489286
+      "proven_at_unix": 1795492722
     },
     "roundtrip": {
       "inputs_files": 537,
@@ -591,7 +591,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489361
+      "proven_at_unix": 1795493094
     },
     "shared-world": {
       "inputs_files": 795,
@@ -602,7 +602,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489286
+      "proven_at_unix": 1795492722
     },
     "sky-fmt-check": {
       "inputs_files": 5,
@@ -613,7 +613,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489361
+      "proven_at_unix": 1795493094
     },
     "sky-suites": {
       "inputs_files": 141,
@@ -624,7 +624,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489286
+      "proven_at_unix": 1795492722
     },
     "sky-verify": {
       "inputs_files": 672,
@@ -635,7 +635,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488880
+      "proven_at_unix": 1795491929
     },
     "spa-diff-fuzz": {
       "inputs_files": 20,
@@ -650,7 +650,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489522
+      "proven_at_unix": 1795492549
     },
     "spa-wasm-server-only": {
       "inputs_files": 1656,
@@ -661,7 +661,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488882
+      "proven_at_unix": 1795492312
     },
     "stdlib-bodies": {
       "inputs_files": 4,
@@ -672,7 +672,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489361
+      "proven_at_unix": 1795493094
     },
     "store-query-postgres": {
       "inputs_files": 71,
@@ -683,7 +683,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795489561
+      "proven_at_unix": 1795492147
     },
     "verify-cli": {
       "inputs_files": 539,
@@ -694,7 +694,7 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1795488910
+      "proven_at_unix": 1795491947
     }
   },
   "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, older than the declared window, or whose `inputs_hash` no longer matches its proof inputs (`harness --explain-inputs <gate>`), renders UNPROVEN under `--require-proofs` and is re-proven by the next incremental run.",
