@@ -173,7 +173,9 @@ key two times in one object is refused, `Time.fromParts` refuses an invalid
 date and a local time the clocks skip or repeat (`fromPartsWith Compatible`
 keeps the old answer), zone names are exact and `"Local"` is refused, and new
 names (`dict`, `lazy`, `char`, `zones`, `withDocument`, the `Std.Time`
-`Disambiguation` constructors) can be `[E1012]` under `exposing (..)`.
+`Disambiguation` constructors, and in v0.31.1 the `Std.Bundle` names
+`Encryption`, `ExemptEncryptionOnly`, `NonExemptEncryption`, `withEncryption`)
+can be `[E1012]` under `exposing (..)`.
 
 **Upgrading a v0.29 project?** `docs/migration/v0.30.md` lists every change,
 split into loud (fails to compile, the error shows the fix) and silent. Among
