@@ -35,7 +35,7 @@ module Std.Bundle exposing
 --
 --     bundle : Bundle
 --     bundle =
---         Bundle.default                         -- name = project name, default icon
+--         Bundle.default                         -- name = project name, platform icon
 --             |> Bundle.withId "com.acme.notes"  -- YOUR reverse-DNS id (owned domain)
 --             |> Bundle.withIcon "assets/icon.png"
 --
@@ -44,8 +44,8 @@ module Std.Bundle exposing
 --
 -- `sky build --target ios|android|desktop` reads these values to fill the
 -- generated Info.plist / AndroidManifest / desktop shell. Every field has a
--- sane default (the app name falls back to the project name, the icon to a
--- shipped Sky mark), so a `bundle` binding is entirely OPTIONAL — a project with
+-- sane default (the app name falls back to the project name, the icon to the
+-- platform's own icon), so a `bundle` binding is entirely OPTIONAL — a project with
 -- none still packages, under a default id. A real store submission needs an id
 -- tied to a domain you own, so set `withId` before publishing.
 
@@ -70,7 +70,7 @@ type Bundle
 
 
 -- | The empty manifest: every field defaulted by the packager (app name → the
--- project name, id → a dev placeholder, icon → the shipped Sky mark, version →
+-- project name, id → a dev placeholder, icon → the platform's own icon, version →
 -- the project version) and no extra assets.
 default : Bundle
 default =
@@ -104,9 +104,10 @@ withId id (Bundle fields) =
     Bundle { fields | id = Just id }
 
 
--- | Set the app icon — a path (relative to the project) to a source PNG the
--- packager renders into each platform's icon set. Defaults to a shipped Sky
--- mark.
+-- | Set the app icon — a path (relative to the app's project directory) to a
+-- source PNG the packager renders into each platform's icon set. A release
+-- also compiles it into the iOS `Assets.car`. A path that names no file stops
+-- the build. Defaults to the platform's own icon.
 withIcon : String -> Bundle -> Bundle
 withIcon path (Bundle fields) =
     Bundle { fields | icon = Just path }

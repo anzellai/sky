@@ -345,7 +345,8 @@ without a provisioning profile. Guide: `docs/skyapp/native.md`.
 
 `--upload testflight` (with `--target mobile:ios` or `tablet:ipad`, on macOS
 with Xcode) then validates the signed `.ipa` and uploads it to App Store
-Connect with `xcrun altool`, which makes it a TestFlight build. The API key
+Connect with `xcrun altool`, which makes it a TestFlight build. It works with
+the altool of Xcode 16 (GitHub's `macos-15` runner) and of Xcode 27 (#336). The API key
 comes from `SKY_ASC_KEY_ID`, `SKY_ASC_ISSUER_ID` and `SKY_ASC_KEY_PATH` (the
 `.p8`, which never goes on a command line). `--ipa <file>` uploads an `.ipa`
 packaged earlier, without a build. Before any build or network call it refuses

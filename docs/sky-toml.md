@@ -1106,7 +1106,7 @@ import Std.Bundle as Bundle exposing (Bundle)
 
 bundle : Bundle
 bundle =
-    Bundle.default                          -- name = project dir, default Sky icon
+    Bundle.default                          -- name = project dir, platform icon
         |> Bundle.withId "com.acme.notes"   -- YOUR reverse-DNS id (a domain you own)
         |> Bundle.withIcon "assets/icon.png"
         |> Bundle.withVersion "2.3.0"
@@ -1128,7 +1128,9 @@ eval, no `sky.toml`) to fill the generated iOS `Info.plist`, the Android manifes
 | `withName`    | project directory name            | CFBundleDisplayName · `android:label` · desktop title |
 | `withId`      | `sky.spa.<sanitised-dir-name>` (dev) | CFBundleIdentifier · Android `package` |
 | `withVersion` | `1.0`                             | CFBundleShortVersionString · `android:versionName` |
-| `withIcon`    | platform default icon             | app icon — a source PNG rendered into the iOS AppIcon set + Android mipmaps (needs macOS `sips`) |
+| `withBuild`   | `1`                               | CFBundleVersion · `android:versionCode` (raise it for each store upload) |
+| `withIcon`    | platform default icon             | app icon — a source PNG, relative to the app's directory, rendered into the iOS AppIcon set + Android mipmaps (needs macOS `sips`); an iOS release also compiles it into `Assets.car`; a missing file stops the build |
+| `withEncryption` | left out (App Store Connect asks each build) | `ITSAppUsesNonExemptEncryption` (iOS only) |
 
 Rules:
 
@@ -1151,11 +1153,14 @@ Rules:
 
 Full API: `sky doc Std.Bundle`.
 
-> Roadmap: per-platform overrides, a `Bundle.assetBytes` reader (bytes, not just
-> a URL), a shipped default icon, native permissions, and release
-> signing/notarization. `--target ios` still builds for the **simulator** and
-> `--target android` signs with the **debug** keystore — neither is store-ready
-> yet.
+Permissions, entitlements and store builds are in `docs/skyapp/native.md`:
+`--target ios` builds for the simulator and `--target android` signs with the
+debug keystore, and `sky package --release --target mobile:ios|mobile:android|desktop:mac`
+makes the signed store artefact (`--upload testflight` sends an iOS build to
+App Store Connect).
+
+> Roadmap: per-platform overrides and a `Bundle.assetBytes` reader (bytes, not
+> just a URL).
 
 ---
 
