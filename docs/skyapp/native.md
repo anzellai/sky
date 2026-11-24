@@ -39,7 +39,7 @@ bundle =
 | `withId` | CFBundleIdentifier, the Android package | `sky.spa.<name>` (with a note) |
 | `withVersion` | CFBundleShortVersionString, `android:versionName` | `1.0` |
 | `withBuild` | CFBundleVersion, `android:versionCode` | `1` |
-| `withIcon` | the app icon set (rendered with `sips`; a release also compiles it into `Assets.car` with `actool` and sets `CFBundleIconName`) | the platform icon |
+| `withIcon` | the app icon set, a path relative to the project directory (rendered with `sips`; a release also compiles it into `Assets.car` with `actool` and sets `CFBundleIconName`; a missing file stops the build) | the platform icon |
 | `withEncryption` | `ITSAppUsesNonExemptEncryption` (`ExemptEncryptionOnly` is `false`, `NonExemptEncryption` is `true`), iOS only | left out: App Store Connect asks for every build |
 
 A store refuses a second upload with the same build number, so raise

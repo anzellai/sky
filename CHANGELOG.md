@@ -11,6 +11,20 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.31.2 — the app icon reaches Std.App mobile releases (2026-11-24)
+
+### Fixed
+
+- **`Bundle.withIcon` works in a `Std.App` mobile or desktop build.** A client
+  target packages a generated project (`<app>/.skyapp/<target>/.split/frontend`),
+  and the icon path was read relative to it. The file was not found, the build
+  printed a note and used the platform icon, and App Store Connect refused the
+  upload for a missing icon. The path is now relative to the app's own
+  directory for every generated project (`.split/frontend`, `.skyapp/<target>`).
+- **A declared icon that does not exist stops the build.** `Bundle.withIcon`
+  naming a missing file is now an error that names the path, on iOS, Android
+  and macOS, never a build with the platform icon.
+
 ## v0.31.1 — native shells link their own handlers, saved models keep excluded fields, App Store-ready iOS releases (2026-11-24)
 
 ### Fixed
