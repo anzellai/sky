@@ -711,7 +711,8 @@ any flow that sends a key to the server (docs/skyspa/client-crypto.md). Declare 
 permission with the text its prompt shows (`Bundle.withUsage Bundle.Camera
 "…"`; `Native.authenticate` needs `Bundle.FaceId` and `Native.scanCode`
 needs `Bundle.Camera`, and the iOS / Android build fails without it), Apple
-entitlements with `Bundle.withEntitlement`, keep secrets in `Native.secureSet`
+entitlements with `Bundle.withEntitlement`, the App Store export compliance
+answer with `Bundle.withEncryption Bundle.ExemptEncryptionOnly`, keep secrets in `Native.secureSet`
 (Keychain / Android Keystore; `Err Unavailable` in a browser, never
 `localStorage`), scan a QR code or barcode with `Native.scanCode`, insert text
 at a textarea's caret (an editor's "Insert" menu) with `Native.insertAtCursor

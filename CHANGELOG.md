@@ -47,6 +47,22 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `["arm64"]` on every build (#337). App Store validation refuses a 64-bit
   binary without it. A `native/ios/Info.plist.append` that also sets it
   merges into one array with no duplicate.
+- `sky package --release --target mobile:ios` now makes an app that passes
+  App Store validation with no extra step (#337). The release adds the keys
+  that Xcode writes: the toolchain keys (`DTPlatformName`,
+  `DTPlatformVersion`, `DTPlatformBuild`, `DTSDKName`, `DTSDKBuild`,
+  `DTXcode`, `DTXcodeBuild`, `DTCompiler`, `BuildMachineOSBuild`), read from
+  the Xcode and SDK that build it, and all four
+  `UISupportedInterfaceOrientations~ipad`. It compiles the `Bundle.withIcon`
+  image into `Assets.car` with `xcrun actool` and sets `CFBundleIconName`.
+  Before, App Store Connect refused the upload as "Unsupported SDK or Xcode
+  version".
+- New: `Bundle.withEncryption Bundle.ExemptEncryptionOnly` (or
+  `NonExemptEncryption`) writes `ITSAppUsesNonExemptEncryption` into the iOS
+  Info.plist, so TestFlight does not hold each build for the export
+  compliance question. The new names `Encryption`, `ExemptEncryptionOnly`,
+  `NonExemptEncryption` and `withEncryption` can give `[E1012]` under
+  `exposing (..)` when another exposed module has the same name.
 
 ## v0.31.0 — translated text, time zones, JSON objects with any keys and the page language (2026-11-22)
 

@@ -7396,6 +7396,17 @@ const IOS_ICON_PLIST: &str = "\n    <key>CFBundleIcons</key>\n    \
     <dict><key>CFBundlePrimaryIcon</key><dict><key>CFBundleIconFiles</key>\
     <array><string>AppIcon60x60</string></array></dict></dict>";
 
+/// The icon keys of a device (release) build: the PNG files as above, plus
+/// `CFBundleIconName`, the `AppIcon` set that `actool` compiles into
+/// `Assets.car` (`compile_ios_asset_catalogue`), at the top level and in the
+/// primary icon.
+const IOS_ICON_PLIST_CATALOGUE: &str =
+    "\n    <key>CFBundleIconName</key><string>AppIcon</string>\n    \
+    <key>CFBundleIcons</key>\n    \
+    <dict><key>CFBundlePrimaryIcon</key><dict><key>CFBundleIconFiles</key>\
+    <array><string>AppIcon60x60</string></array>\
+    <key>CFBundleIconName</key><string>AppIcon</string></dict></dict>";
+
 /// Render the app icon into the iOS `.app` at the iPhone home-screen sizes
 /// (60pt @2x = 120px, @3x = 180px), named as `CFBundleIconFiles` expects.
 fn generate_ios_app_icons(icon_src: &Path, app_dir: &Path) -> Result<(), String> {
@@ -8758,6 +8769,11 @@ fn build_ios_app_in(
             rank: plist::Rank::Declared,
             entries: native_pkg::usage_entries(&decl.permissions, false),
         },
+        plist::Layer {
+            origin: "Bundle.withEncryption".to_string(),
+            rank: plist::Rank::Declared,
+            entries: ios_encryption_entries(decl.non_exempt_encryption),
+        },
     ];
     info_layers.extend(native_pkg::fragment_layers(
         &native_pkg::fragments(&native_dirs, project_dir, "Info.plist.append"),
@@ -9054,6 +9070,22 @@ fn ios_generated_info(
             "UIRequiredDeviceCapabilities".to_string(),
             Array(vec![S("arm64".into())]),
         ),
+        // iPad multitasking (Split View, Slide Over) needs all four; App Store
+        // validation refuses an iPad build without them (#337).
+        (
+            "UISupportedInterfaceOrientations~ipad".to_string(),
+            Array(
+                [
+                    "UIInterfaceOrientationPortrait",
+                    "UIInterfaceOrientationPortraitUpsideDown",
+                    "UIInterfaceOrientationLandscapeLeft",
+                    "UIInterfaceOrientationLandscapeRight",
+                ]
+                .iter()
+                .map(|o| S((*o).into()))
+                .collect(),
+            ),
+        ),
         ("UILaunchScreen".to_string(), Dict(vec![])),
         (
             "CFBundleSupportedPlatforms".to_string(),
@@ -9065,10 +9097,251 @@ fn ios_generated_info(
         ),
     ];
     if icons {
-        out.extend(plist::parse_entries(IOS_ICON_PLIST)?);
+        // A device build compiles the icon into `Assets.car` (`actool`), which
+        // App Store validation requires and finds by `CFBundleIconName`. A
+        // simulator build has no catalogue and names the PNG files only.
+        out.extend(plist::parse_entries(if device {
+            IOS_ICON_PLIST_CATALOGUE
+        } else {
+            IOS_ICON_PLIST
+        })?);
     }
     out.extend(plist::parse_entries(&render_ios_ats(url))?);
     Ok(out)
+}
+
+/// `Bundle.withEncryption` as the Info.plist key App Store Connect reads for
+/// export compliance. Nothing when the app does not say.
+fn ios_encryption_entries(non_exempt: Option<bool>) -> Vec<(String, plist::Value)> {
+    non_exempt
+        .map(|b| {
+            vec![(
+                "ITSAppUsesNonExemptEncryption".to_string(),
+                plist::Value::Bool(b),
+            )]
+        })
+        .unwrap_or_default()
+}
+
+/// The Xcode and SDK that build a release, as Xcode itself records them in an
+/// app's Info.plist. App Store Connect refuses an upload without these keys
+/// ("Unsupported SDK or Xcode version"), even from a current Xcode (#337).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IosToolchain {
+    /// `xcrun --sdk iphoneos --show-sdk-version`, e.g. `26.2`.
+    sdk_version: String,
+    /// `xcrun --sdk iphoneos --show-sdk-build-version`, e.g. `23C53`.
+    sdk_build: String,
+    /// The Xcode version from `xcodebuild -version`, e.g. `26.6`.
+    xcode_version: String,
+    /// The Xcode build from `xcodebuild -version`, e.g. `17F42`.
+    xcode_build: String,
+    /// `sw_vers -buildVersion` of the machine that builds, e.g. `25F71`.
+    os_build: String,
+}
+
+/// `DTXcode` from an Xcode version: major, minor and patch as `MMmp`, so
+/// `26.6` is `2660`, `16.4.1` is `1641` and `27.2` is `2720`. `None` when the
+/// text is not a version.
+fn xcode_version_code(version: &str) -> Option<String> {
+    let mut parts = version.trim().split('.');
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next().map_or(Ok(0), str::parse).ok()?;
+    let patch: u32 = parts.next().map_or(Ok(0), str::parse).ok()?;
+    if minor > 9 || patch > 9 || parts.next().is_some() {
+        return None;
+    }
+    Some(format!("{:02}{minor}{patch}", major))
+}
+
+/// The version and the build from `xcodebuild -version`:
+/// `Xcode 26.6\nBuild version 17F42\n`.
+fn parse_xcodebuild_version(out: &str) -> Option<(String, String)> {
+    let mut version = None;
+    let mut build = None;
+    for line in out.lines() {
+        if let Some(v) = line.trim().strip_prefix("Xcode ") {
+            version = Some(v.trim().to_string());
+        } else if let Some(b) = line.trim().strip_prefix("Build version ") {
+            build = Some(b.trim().to_string());
+        }
+    }
+    Some((version?, build?))
+}
+
+/// The toolchain keys Xcode writes into a device build's Info.plist.
+fn ios_toolchain_entries(t: &IosToolchain) -> Result<Vec<(String, plist::Value)>, String> {
+    use plist::Value::String as S;
+    let xcode = xcode_version_code(&t.xcode_version).ok_or_else(|| {
+        format!(
+            "cannot read the Xcode version `{}` (from `xcodebuild -version`)",
+            t.xcode_version
+        )
+    })?;
+    Ok(vec![
+        ("BuildMachineOSBuild".to_string(), S(t.os_build.clone())),
+        (
+            "DTCompiler".to_string(),
+            S("com.apple.compilers.llvm.clang.1_0".into()),
+        ),
+        ("DTPlatformBuild".to_string(), S(t.sdk_build.clone())),
+        ("DTPlatformName".to_string(), S("iphoneos".into())),
+        ("DTPlatformVersion".to_string(), S(t.sdk_version.clone())),
+        ("DTSDKBuild".to_string(), S(t.sdk_build.clone())),
+        (
+            "DTSDKName".to_string(),
+            S(format!("iphoneos{}", t.sdk_version)),
+        ),
+        ("DTXcode".to_string(), S(xcode)),
+        ("DTXcodeBuild".to_string(), S(t.xcode_build.clone())),
+    ])
+}
+
+/// Read [`IosToolchain`] from the Xcode at `developer_dir` (the one the
+/// release build used) and from this machine.
+fn read_ios_toolchain(developer_dir: &std::ffi::OsStr) -> Result<IosToolchain, String> {
+    let run = |prog: &str, args: &[&str]| -> Result<String, String> {
+        let out = Command::new(prog)
+            .args(args)
+            .env("DEVELOPER_DIR", developer_dir)
+            .env_remove("SDKROOT")
+            .output()
+            .map_err(|e| format!("run {prog}: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "`{prog} {}` failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    let sdk_version = run("xcrun", &["--sdk", "iphoneos", "--show-sdk-version"])?;
+    let sdk_build = run("xcrun", &["--sdk", "iphoneos", "--show-sdk-build-version"])?;
+    let (xcode_version, xcode_build) = parse_xcodebuild_version(&run("xcodebuild", &["-version"])?)
+        .ok_or("cannot read `xcodebuild -version`")?;
+    let os_build = run("sw_vers", &["-buildVersion"])?;
+    Ok(IosToolchain {
+        sdk_version,
+        sdk_build,
+        xcode_version,
+        xcode_build,
+        os_build,
+    })
+}
+
+/// Add `entries` to the Info.plist of a built `.app` (a key it already has
+/// takes the new value). Used after the release build, before signing.
+fn add_to_info_plist(info: &Path, entries: &[(String, plist::Value)]) -> Result<(), String> {
+    let text =
+        std::fs::read_to_string(info).map_err(|e| format!("read {}: {e}", info.display()))?;
+    let mut all = plist::parse_entries(&text).map_err(|e| format!("{}: {e}", info.display()))?;
+    for (k, v) in entries {
+        match all.iter_mut().find(|(ek, _)| ek == k) {
+            Some((_, ev)) => *ev = v.clone(),
+            None => all.push((k.clone(), v.clone())),
+        }
+    }
+    std::fs::write(info, plist::render_document(&all))
+        .map_err(|e| format!("write {}: {e}", info.display()))
+}
+
+/// The `Contents.json` of a single-size `AppIcon` set (Xcode 14 and later):
+/// one 1024px image that `actool` renders at every iPhone and iPad size.
+const IOS_APPICON_CONTENTS: &str = r#"{
+  "images" : [
+    {
+      "filename" : "AppIcon-1024.png",
+      "idiom" : "universal",
+      "platform" : "ios",
+      "size" : "1024x1024"
+    }
+  ],
+  "info" : {
+    "author" : "sky",
+    "version" : 1
+  }
+}
+"#;
+
+/// Write an asset catalogue with the `AppIcon` set from `icon_src` under
+/// `work`, and return the `actool` arguments that compile it into the `.app`
+/// at `app` (`Assets.car` plus the icon PNGs).
+fn ios_asset_catalogue(
+    work: &Path,
+    icon_src: &Path,
+    app: &Path,
+) -> Result<Vec<std::ffi::OsString>, String> {
+    let set = work.join("Assets.xcassets").join("AppIcon.appiconset");
+    let _ = std::fs::remove_dir_all(work.join("Assets.xcassets"));
+    std::fs::create_dir_all(&set).map_err(|e| format!("create {}: {e}", set.display()))?;
+    std::fs::write(
+        work.join("Assets.xcassets").join("Contents.json"),
+        "{\n  \"info\" : {\n    \"author\" : \"sky\",\n    \"version\" : 1\n  }\n}\n",
+    )
+    .map_err(|e| format!("write the asset catalogue: {e}"))?;
+    std::fs::write(set.join("Contents.json"), IOS_APPICON_CONTENTS)
+        .map_err(|e| format!("write the AppIcon set: {e}"))?;
+    sips_resize(icon_src, 1024, &set.join("AppIcon-1024.png"))?;
+    Ok(ios_actool_args(work, app))
+}
+
+/// The `xcrun actool` arguments that compile `work/Assets.xcassets` into the
+/// `.app` at `app`, with `AppIcon` as the app icon.
+fn ios_actool_args(work: &Path, app: &Path) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = vec!["actool".into(), "--compile".into(), app.into()];
+    for a in [
+        "--platform",
+        "iphoneos",
+        "--minimum-deployment-target",
+        "17.0",
+        "--app-icon",
+        "AppIcon",
+        "--target-device",
+        "iphone",
+        "--target-device",
+        "ipad",
+        "--output-format",
+        "human-readable-text",
+        "--notices",
+        "--warnings",
+        "--output-partial-info-plist",
+    ] {
+        args.push(a.into());
+    }
+    args.push(work.join("assetcatalog_generated_info.plist").into());
+    args.push(work.join("Assets.xcassets").into());
+    args
+}
+
+/// Compile the app icon into `Assets.car` in the `.app` with `xcrun actool`.
+fn compile_ios_asset_catalogue(
+    work: &Path,
+    icon_src: &Path,
+    app: &Path,
+    developer_dir: &std::ffi::OsStr,
+) -> Result<(), String> {
+    let args = ios_asset_catalogue(work, icon_src, app)?;
+    let out = Command::new("xcrun")
+        .args(&args)
+        .env("DEVELOPER_DIR", developer_dir)
+        .env_remove("SDKROOT")
+        .output()
+        .map_err(|e| format!("run xcrun actool: {e}"))?;
+    if !out.status.success() || !app.join("Assets.car").is_file() {
+        return Err(format!(
+            "`xcrun actool` could not compile the app icon into Assets.car:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    // actool's partial Info.plist names the icons it wrote (`CFBundleIcons`
+    // and the iPad `CFBundleIcons~ipad`); Xcode merges it into the app's.
+    let partial = work.join("assetcatalog_generated_info.plist");
+    let text = std::fs::read_to_string(&partial)
+        .map_err(|e| format!("read {}: {e}", partial.display()))?;
+    let entries = plist::parse_entries(&text).map_err(|e| format!("{}: {e}", partial.display()))?;
+    add_to_info_plist(&app.join("Info.plist"), &entries)
 }
 
 /// `sky package --release --target mobile:ios`: compile the shell for DEVICES
@@ -9093,10 +9366,11 @@ fn package_ios_release(
             .replace("{{AI_FLAGS}}", ai_flags),
     )
     .map_err(|e| format!("write build-release.sh: {e}"))?;
+    let developer_dir = ios_developer_dir()?;
     let status = Command::new("bash")
         .arg("build-release.sh")
         .current_dir(root)
-        .env("DEVELOPER_DIR", ios_developer_dir()?)
+        .env("DEVELOPER_DIR", &developer_dir)
         .env_remove("SDKROOT")
         .status()
         .map_err(|e| format!("run build-release.sh: {e}"))?;
@@ -9107,7 +9381,14 @@ fn package_ios_release(
     let app = payload.join(format!("{name}.app"));
     if let Some(icon) = icon_src {
         generate_ios_app_icons(icon, &app)?;
+        // App Store validation needs the compiled catalogue that
+        // CFBundleIconName names (#337).
+        compile_ios_asset_catalogue(&root.join("release-assets"), icon, &app, &developer_dir)?;
     }
+    // The toolchain keys Xcode records; App Store Connect refuses an upload
+    // without them (#337). Written before signing, which seals Info.plist.
+    let toolchain = read_ios_toolchain(&developer_dir)?;
+    add_to_info_plist(&app.join("Info.plist"), &ios_toolchain_entries(&toolchain)?)?;
     copy_ai_embedded(&app.join("sky-ai"), ai_embedded)?;
     let ipa_name = match signing {
         Some(sign) => {
@@ -22332,6 +22613,143 @@ echo key > "$ks"
             ])),
             "{doc}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #337 (the wider part): App Store validation of an iOS release also needs
+    /// all four iPad orientations, the icon named by `CFBundleIconName` (in an
+    /// `Assets.car`), the export compliance key when the app answers it, and
+    /// the toolchain keys Xcode records.
+    #[test]
+    fn ios_release_info_plist_has_the_app_store_keys() {
+        use plist::Value;
+        let dir = bundle_scratch(
+            "infoplistappstore",
+            "name = \"p\"\n",
+            "module Main exposing (main, bundle)\n\nimport Std.Bundle as Bundle exposing (Bundle)\n\n\
+             bundle : Bundle\nbundle =\n    Bundle.default\n        |> Bundle.withId \"com.acme.pair\"\n\
+             \x20       |> Bundle.withEncryption Bundle.ExemptEncryptionOnly\n\nmain = 0\n",
+        );
+        let id = resolve_bundle_identity(&dir).unwrap();
+        let url = app_url::resolve(
+            app_url::Shell::Ios,
+            None,
+            Some("https://app.example.test/"),
+            None,
+        )
+        .unwrap();
+        let get = |e: &[(String, Value)], k: &str| {
+            e.iter().find(|(ek, _)| ek == k).map(|(_, v)| v.clone())
+        };
+        let release = ios_generated_info(&id, &url, true, true).unwrap();
+        let orientations: Vec<Value> = [
+            "UIInterfaceOrientationPortrait",
+            "UIInterfaceOrientationPortraitUpsideDown",
+            "UIInterfaceOrientationLandscapeLeft",
+            "UIInterfaceOrientationLandscapeRight",
+        ]
+        .iter()
+        .map(|o| Value::String((*o).into()))
+        .collect();
+        assert_eq!(
+            get(&release, "UISupportedInterfaceOrientations~ipad"),
+            Some(Value::Array(orientations))
+        );
+        assert_eq!(
+            get(&release, "CFBundleIconName"),
+            Some(Value::String("AppIcon".into()))
+        );
+        let Some(Value::Dict(icons)) = get(&release, "CFBundleIcons") else {
+            panic!("CFBundleIcons is a dict");
+        };
+        let Some(Value::Dict(primary)) = get(&icons, "CFBundlePrimaryIcon") else {
+            panic!("CFBundlePrimaryIcon is a dict");
+        };
+        assert_eq!(
+            get(&primary, "CFBundleIconName"),
+            Some(Value::String("AppIcon".into()))
+        );
+        // A simulator build has no asset catalogue, so it names no icon set.
+        let sim = ios_generated_info(&id, &url, true, false).unwrap();
+        assert!(get(&sim, "CFBundleIconName").is_none());
+        assert!(get(&sim, "UISupportedInterfaceOrientations~ipad").is_some());
+
+        // Bundle.withEncryption -> ITSAppUsesNonExemptEncryption.
+        let decl = native_pkg::read_declarations(&dir).unwrap();
+        assert_eq!(decl.non_exempt_encryption, Some(false));
+        assert_eq!(
+            ios_encryption_entries(decl.non_exempt_encryption),
+            vec![(
+                "ITSAppUsesNonExemptEncryption".to_string(),
+                Value::Bool(false)
+            )]
+        );
+        assert!(ios_encryption_entries(None).is_empty());
+
+        // The toolchain keys, added to a built app's Info.plist before signing.
+        assert_eq!(xcode_version_code("26.6").as_deref(), Some("2660"));
+        assert_eq!(xcode_version_code("16.4.1").as_deref(), Some("1641"));
+        assert_eq!(xcode_version_code("27.2").as_deref(), Some("2720"));
+        assert_eq!(xcode_version_code("16").as_deref(), Some("1600"));
+        assert_eq!(xcode_version_code("beta"), None);
+        assert_eq!(
+            parse_xcodebuild_version("Xcode 26.6\nBuild version 17F42\n"),
+            Some(("26.6".to_string(), "17F42".to_string()))
+        );
+        let t = IosToolchain {
+            sdk_version: "26.2".into(),
+            sdk_build: "23C53".into(),
+            xcode_version: "26.6".into(),
+            xcode_build: "17F42".into(),
+            os_build: "25F71".into(),
+        };
+        let info = dir.join("Info.plist");
+        std::fs::write(
+            &info,
+            plist::render_document(&ios_generated_info(&id, &url, true, true).unwrap()),
+        )
+        .unwrap();
+        add_to_info_plist(&info, &ios_toolchain_entries(&t).unwrap()).unwrap();
+        let written = plist::parse_entries(&std::fs::read_to_string(&info).unwrap()).unwrap();
+        for (k, v) in [
+            ("DTPlatformName", "iphoneos"),
+            ("DTPlatformVersion", "26.2"),
+            ("DTPlatformBuild", "23C53"),
+            ("DTSDKName", "iphoneos26.2"),
+            ("DTSDKBuild", "23C53"),
+            ("DTXcode", "2660"),
+            ("DTXcodeBuild", "17F42"),
+            ("DTCompiler", "com.apple.compilers.llvm.clang.1_0"),
+            ("BuildMachineOSBuild", "25F71"),
+        ] {
+            assert_eq!(get(&written, k), Some(Value::String(v.into())), "{k}");
+        }
+        assert_eq!(
+            get(&written, "CFBundleIdentifier"),
+            Some(Value::String("com.acme.pair".into())),
+            "the existing keys stay"
+        );
+        // A key the app already has takes the new value, once.
+        add_to_info_plist(
+            &info,
+            &[("DTXcode".to_string(), Value::String("2720".into()))],
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&info).unwrap();
+        assert_eq!(text.matches("<key>DTXcode</key>").count(), 1, "{text}");
+
+        // The icon catalogue actool compiles.
+        let args: Vec<String> = ios_actool_args(Path::new("/w"), Path::new("/a/X.app"))
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(&args[..3], ["actool", "--compile", "/a/X.app"]);
+        assert!(args.windows(2).any(|w| w == ["--app-icon", "AppIcon"]));
+        assert!(args.windows(2).any(|w| w == ["--platform", "iphoneos"]));
+        assert!(args.windows(2).any(|w| w == ["--target-device", "ipad"]));
+        assert_eq!(args.last().map(String::as_str), Some("/w/Assets.xcassets"));
+        let contents: serde_json::Value = serde_json::from_str(IOS_APPICON_CONTENTS).unwrap();
+        assert_eq!(contents["images"][0]["size"], "1024x1024");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

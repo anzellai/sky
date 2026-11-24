@@ -39,7 +39,8 @@ bundle =
 | `withId` | CFBundleIdentifier, the Android package | `sky.spa.<name>` (with a note) |
 | `withVersion` | CFBundleShortVersionString, `android:versionName` | `1.0` |
 | `withBuild` | CFBundleVersion, `android:versionCode` | `1` |
-| `withIcon` | the app icon set (rendered with `sips`) | the platform icon |
+| `withIcon` | the app icon set (rendered with `sips`; a release also compiles it into `Assets.car` with `actool` and sets `CFBundleIconName`) | the platform icon |
+| `withEncryption` | `ITSAppUsesNonExemptEncryption` (`ExemptEncryptionOnly` is `false`, `NonExemptEncryption` is `true`), iOS only | left out: App Store Connect asks for every build |
 
 A store refuses a second upload with the same build number, so raise
 `withBuild` for each release. Before v0.27.0 the build number was always 1.
@@ -550,6 +551,19 @@ bundle =
 
 App Store Connect refuses a build number it already has for the version, so
 raise `Bundle.withBuild` for every upload.
+
+Add `|> Bundle.withEncryption Bundle.ExemptEncryptionOnly` when the app uses no
+encryption or only exempt encryption (HTTPS, the system TLS and keychain), so
+that TestFlight does not hold each build for the export compliance question.
+
+**What the release adds to Info.plist.** App Store validation needs keys that
+Xcode writes and a plain build does not (#337). `sky package --release` writes
+them: `UIRequiredDeviceCapabilities` (`arm64`), all four
+`UISupportedInterfaceOrientations~ipad`, the icon compiled into `Assets.car`
+with `xcrun actool` and named by `CFBundleIconName`, and the toolchain keys
+(`DTPlatformName`, `DTPlatformVersion`, `DTPlatformBuild`, `DTSDKName`,
+`DTSDKBuild`, `DTXcode`, `DTXcodeBuild`, `DTCompiler`, `BuildMachineOSBuild`),
+read from the Xcode and SDK that build the app, before signing.
 
 **The command.**
 
