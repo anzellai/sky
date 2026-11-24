@@ -69,6 +69,9 @@ pub struct Program {
     pub expect: fn(u64) -> String,
     /// A partner run on the same input (program 4's regex).
     pub partner: Option<&'static [&'static str]>,
+    /// `GOMAXPROCS` for every run, when the program must see a fixed number
+    /// of Ps whatever the machine has.
+    pub gomaxprocs: Option<u32>,
 }
 
 fn expect_n(n: u64) -> String {
@@ -99,6 +102,7 @@ pub const PROGRAMS: &[Program] = &[
         malloc_budget: 0.5,
         expect: expect_n,
         partner: None,
+        gomaxprocs: None,
     },
     Program {
         name: "dict-counts",
@@ -109,6 +113,7 @@ pub const PROGRAMS: &[Program] = &[
         malloc_budget: 8.0,
         expect: expect_dict,
         partner: None,
+        gomaxprocs: None,
     },
     Program {
         name: "string-roundtrip",
@@ -119,6 +124,7 @@ pub const PROGRAMS: &[Program] = &[
         malloc_budget: 0.05,
         expect: expect_string,
         partner: None,
+        gomaxprocs: None,
     },
     Program {
         name: "tokenise",
@@ -129,6 +135,7 @@ pub const PROGRAMS: &[Program] = &[
         malloc_budget: 1.5,
         expect: expect_tokens,
         partner: Some(&["regex"]),
+        gomaxprocs: None,
     },
     Program {
         name: "cons-unit",
@@ -139,6 +146,7 @@ pub const PROGRAMS: &[Program] = &[
         malloc_budget: 0.5,
         expect: expect_n,
         partner: None,
+        gomaxprocs: None,
     },
     Program {
         name: "concurrent-cons",
@@ -154,6 +162,12 @@ pub const PROGRAMS: &[Program] = &[
         malloc_budget: 0.5,
         expect: expect_8n,
         partner: None,
+        // Four Ps, as on the 4-vCPU CI runner, so eight Tasks always share
+        // Ps. A many-core machine otherwise gives each Task its own P and
+        // hides contention between builders: the weak.Pointer.Value
+        // contention of v0.31.1 was 5 to 15 times slower at 4 Ps and
+        // barely visible at 8.
+        gomaxprocs: Some(4),
     },
 ];
 
@@ -199,9 +213,19 @@ struct RunResult {
     failed: Option<String>,
 }
 
-fn run_once(bin: &Path, cwd: &Path, args: &[String], ceiling: f64) -> RunResult {
+fn run_once(
+    bin: &Path,
+    cwd: &Path,
+    args: &[String],
+    ceiling: f64,
+    procs: Option<u32>,
+) -> RunResult {
     let started = Instant::now();
-    let child = Command::new(bin)
+    let mut cmd = Command::new(bin);
+    if let Some(procs) = procs {
+        cmd.env("GOMAXPROCS", procs.to_string());
+    }
+    let child = cmd
         .args(args)
         .current_dir(cwd)
         .env("SKY_RT_MEMSTATS_ON_EXIT", "1")
@@ -286,10 +310,10 @@ fn run_once(bin: &Path, cwd: &Path, args: &[String], ceiling: f64) -> RunResult 
 }
 
 /// Best of [`RUNS`] at one size. Stops early on a timeout or a failure.
-fn best_of(bin: &Path, cwd: &Path, args: &[String], ceiling: f64) -> RunResult {
+fn best_of(bin: &Path, cwd: &Path, args: &[String], ceiling: f64, procs: Option<u32>) -> RunResult {
     let mut best: Option<RunResult> = None;
     for _ in 0..RUNS {
-        let r = run_once(bin, cwd, args, ceiling);
+        let r = run_once(bin, cwd, args, ceiling, procs);
         if r.timed_out || r.failed.is_some() {
             return r;
         }
@@ -394,7 +418,13 @@ pub fn measure(root: &Path, p: &Program, ceiling: f64) -> Verdict {
     let (n, n4) = (p.n, 4 * p.n);
     // The big size first: a quadratic program is then killed once instead of
     // being run five times at the small size first.
-    let big = best_of(&bin, &dir, &args_for(n4, p.extra_args), ceiling);
+    let big = best_of(
+        &bin,
+        &dir,
+        &args_for(n4, p.extra_args),
+        ceiling,
+        p.gomaxprocs,
+    );
     check_run("4n", &big, &(p.expect)(n4), ceiling, &mut problems);
     if big.timed_out || big.failed.is_some() {
         return Verdict {
@@ -403,7 +433,13 @@ pub fn measure(root: &Path, p: &Program, ceiling: f64) -> Verdict {
             report: format!("4n={n4}: killed or failed"),
         };
     }
-    let small = best_of(&bin, &dir, &args_for(n, p.extra_args), ceiling);
+    let small = best_of(
+        &bin,
+        &dir,
+        &args_for(n, p.extra_args),
+        ceiling,
+        p.gomaxprocs,
+    );
     check_run("n", &small, &(p.expect)(n), ceiling, &mut problems);
     if big.secs > ceiling {
         problems.push(format!(
@@ -436,7 +472,7 @@ pub fn measure(root: &Path, p: &Program, ceiling: f64) -> Verdict {
         small.secs, big.secs, p.malloc_budget
     );
     if let Some(partner) = p.partner {
-        let pr = best_of(&bin, &dir, &args_for(n4, partner), ceiling);
+        let pr = best_of(&bin, &dir, &args_for(n4, partner), ceiling, p.gomaxprocs);
         check_run("partner 4n", &pr, &(p.expect)(n4), ceiling, &mut problems);
         if pr.failed.is_none() && !pr.timed_out {
             let ratio = big.secs / pr.secs.max(1e-9);

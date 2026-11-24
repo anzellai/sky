@@ -30,8 +30,27 @@ package rt
 // memory, so a live weak pointer whose block ends at xs's last slot IS xs's
 // block. A stale entry (weak pointer nil) is simply overwritten. There is no
 // cleanup goroutine and no unbounded map: the memory is the table, about
-// 32 kB, and a lookup is one atomic load, a compare and one weak.Value; it
-// allocates nothing.
+// 32 kB, and a lookup is two atomic loads and two compares; it allocates
+// nothing.
+//
+// THE LIVENESS CHECK READS THE WEAK HANDLE, NOT weak.Pointer.Value. Value
+// calls mspan.ensureSwept, which compare-and-swaps one global runtime word
+// (sweep.active) twice on every call while a sweep is open. A sweep stays
+// open from one GC to the next when the background sweeper is starved, which
+// is the case when busy goroutines fill every P. Eight builders consing in
+// parallel on four Ps then spent most of their time contending on that word,
+// and the accumulator loop ran 5 to 15 times slower (the perf gate's
+// concurrent-cons growth check). The check needs less than Value gives: it
+// never makes a pointer from the weak one (the cons writes through xs, which
+// the caller already holds), it only needs to know that the block's memory
+// has not been reused. The runtime stores the object's address in the weak
+// handle and sets it to 0 when it sweeps the dead object, before the memory
+// can be reused. So a non-zero handle whose block ends at xs's last slot
+// means that address still belongs to the block, so xs's own allocation IS
+// the block, and xs keeps it alive. weakHandleReadable probes the handle
+// layout once at start-up; on a Go release where the probe fails, the lookup
+// falls back to Value (correct, only slower), and a runtime test fails so
+// the change is seen.
 //
 // Only blocks of capacity 32 or more are registered. A shorter list (the
 // usual Html children, Std.Ui rows, `x :: [ literal ]`) gets a plain exact
@@ -65,6 +84,7 @@ package rt
 // code that appends cannot write into a block either.
 
 import (
+	"runtime"
 	"sync/atomic"
 	"unsafe"
 	"weak"
@@ -78,6 +98,7 @@ const (
 
 type blockState struct {
 	slot0    weak.Pointer[byte] // slot 0 of the block (weak: never keeps it alive)
+	handle   *atomic.Uintptr    // slot0's runtime handle when weakHandleReadable, else nil
 	end      uintptr            // address of the last slot: the table key
 	cap      int
 	elemSize uintptr
@@ -85,6 +106,50 @@ type blockState struct {
 }
 
 var blockTable [blockSets][2]atomic.Pointer[blockState]
+
+// Test hooks: calls of the weak.Pointer.Value fallback in lookupBlock, and
+// whole-list copies into a new registered block. Neither is on the per-cons
+// fast path.
+var (
+	blockWeakValueCalls atomic.Int64
+	blockCopies         atomic.Int64
+)
+
+// weakHandleReadable is true when a weak.Pointer is one pointer to a word
+// that holds the object's address, as the runtime has made it since Go 1.24
+// (runtime.getOrAddWeakHandle). It is checked once, on a probe object.
+var weakHandleReadable = probeWeakHandle()
+
+func weakHandleOf(wp *weak.Pointer[byte]) *atomic.Uintptr {
+	return (*atomic.Uintptr)(*(*unsafe.Pointer)(unsafe.Pointer(wp)))
+}
+
+func probeWeakHandle() bool {
+	if unsafe.Sizeof(weak.Pointer[byte]{}) != unsafe.Sizeof(unsafe.Pointer(nil)) {
+		return false
+	}
+	obj := new([64]byte)
+	wp := weak.Make(&obj[0])
+	h := weakHandleOf(&wp)
+	ok := h != nil && h.Load() == uintptr(unsafe.Pointer(&obj[0])) && wp.Value() == &obj[0]
+	runtime.KeepAlive(obj)
+	return ok
+}
+
+// newBlockState describes a fresh block of capacity c whose list starts at h.
+func newBlockState(slot0 *byte, end uintptr, c, h int, size uintptr) *blockState {
+	st := &blockState{
+		slot0:    weak.Make(slot0),
+		end:      end,
+		cap:      c,
+		elemSize: size,
+	}
+	if weakHandleReadable {
+		st.handle = weakHandleOf(&st.slot0)
+	}
+	st.frontier.Store(int64(h))
+	return st
+}
 
 func blockSet(end uintptr) *[2]atomic.Pointer[blockState] {
 	h := uint64(end) * 0x9E3779B97F4A7C15
@@ -99,11 +164,15 @@ func lookupBlock(end uintptr, size uintptr) *blockState {
 		if st == nil || st.end != end || st.elemSize != size {
 			continue
 		}
-		p := st.slot0.Value()
-		if p == nil {
-			continue
+		var base uintptr
+		if st.handle != nil {
+			// 0 once the runtime has swept the dead block (file comment).
+			base = st.handle.Load()
+		} else {
+			blockWeakValueCalls.Add(1)
+			base = uintptr(unsafe.Pointer(st.slot0.Value()))
 		}
-		if uintptr(unsafe.Pointer(p))+uintptr(st.cap-1)*size != end {
+		if base == 0 || base+uintptr(st.cap-1)*size != end {
 			continue
 		}
 		return st
@@ -177,14 +246,8 @@ func consCopy[T any](x T, xs []T, size uintptr) []T {
 	h := c - n
 	block[h] = x
 	copy(block[h+1:], xs)
-	st := &blockState{
-		slot0:    weak.Make((*byte)(unsafe.Pointer(&block[0]))),
-		end:      uintptr(unsafe.Pointer(&block[c-1])),
-		cap:      c,
-		elemSize: size,
-	}
-	st.frontier.Store(int64(h))
-	registerBlock(st)
+	blockCopies.Add(1)
+	registerBlock(newBlockState((*byte)(unsafe.Pointer(&block[0])), uintptr(unsafe.Pointer(&block[c-1])), c, h, size))
 	return block[h:]
 }
 
@@ -232,13 +295,7 @@ func listAppendBlock[T any](xs, ys []T) []T {
 	h := c - total
 	copy(block[h:], xs)
 	copy(block[h+m:], ys)
-	st := &blockState{
-		slot0:    weak.Make((*byte)(unsafe.Pointer(&block[0]))),
-		end:      uintptr(unsafe.Pointer(&block[c-1])),
-		cap:      c,
-		elemSize: size,
-	}
-	st.frontier.Store(int64(h))
-	registerBlock(st)
+	blockCopies.Add(1)
+	registerBlock(newBlockState((*byte)(unsafe.Pointer(&block[0])), uintptr(unsafe.Pointer(&block[c-1])), c, h, size))
 	return block[h:]
 }

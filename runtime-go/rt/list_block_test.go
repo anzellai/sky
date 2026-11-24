@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unsafe"
 )
 
 func buildCons(n int) []int {
@@ -298,5 +299,95 @@ func TestRuntimeNeverChangesAListArgument(t *testing.T) {
 	}
 	if !strings.Contains(string(doc), "must treat every slice argument as\nread-only") {
 		t.Fatal("docs/ffi/boundary-philosophy.md no longer states the read-only slice rule")
+	}
+}
+
+// Eight builders on four Ps, as in tests/perf/concurrent-cons, while GC
+// cycles run: a cons onto a registered block must not go through
+// weak.Pointer.Value. Value calls mspan.ensureSwept, which CASes one global
+// word (the runtime's sweep.active) on every call while a sweep is open, so
+// eight builders consing through it contended on that word and the
+// accumulator loop ran 5 to 15 times slower (the perf gate's growth check
+// failed). Each builder must also stay at O(log n) whole-list copies.
+func TestConcurrentConsStaysOffTheRuntimeWeakPath(t *testing.T) {
+	if !weakHandleReadable {
+		t.Fatal("the weak handle probe failed on this Go toolchain: every cons onto a block now takes weak.Pointer.Value (see list_block.go)")
+	}
+	prev := runtime.GOMAXPROCS(4)
+	defer runtime.GOMAXPROCS(prev)
+	const builders, n = 8, 100000
+	blockWeakValueCalls.Store(0)
+	blockCopies.Store(0)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				runtime.GC()
+			}
+		}
+	}()
+	var wg sync.WaitGroup
+	results := make([][]int, builders)
+	for g := 0; g < builders; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			results[g] = buildCons(n)
+		}(g)
+	}
+	wg.Wait()
+	close(done)
+	for g, xs := range results {
+		if len(xs) != n || xs[0] != 1 || xs[n-1] != n {
+			t.Fatalf("builder %d: wrong list", g)
+		}
+	}
+	if c := blockWeakValueCalls.Load(); c != 0 {
+		t.Fatalf("%d conses went through weak.Pointer.Value, want 0", c)
+	}
+	// Doubling from 32 to 2n is about log2(n/16) copies per builder; an
+	// eviction adds one. Allow twice that.
+	limit := int64(builders * 2 * 14)
+	if c := blockCopies.Load(); c > limit {
+		t.Fatalf("%d whole-list copies for %d builders of %d, want at most %d", c, builders, n, limit)
+	}
+}
+
+// A block that dies is never found again: the runtime clears its weak
+// handle when it sweeps the block, before the memory can be reused.
+func TestDeadBlockIsNotFoundAfterGC(t *testing.T) {
+	// The cons trusts the runtime's weak handle word: it must read the
+	// object's address while the block is live and 0 once the sweep has
+	// freed it, before the memory can be reused. The start-up probe checks
+	// only the layout, so this test checks the clearing itself. A Go release
+	// that clears the handle later, or stores anything else in it, fails
+	// here instead of corrupting memory in an app.
+	if !weakHandleReadable {
+		t.Fatal("the weak handle probe failed on this Go release: re-read runtime/mheap.go (weakHandleBox, freeSpecial) and update list_block.go")
+	}
+	xs := buildCons(1000)
+	end := uintptr(unsafe.Pointer(&xs[len(xs)-1]))
+	st := lookupBlock(end, unsafe.Sizeof(0))
+	if st == nil {
+		t.Fatal("a live block was not found")
+	}
+	if st.handle == nil {
+		t.Fatal("a registered block has no handle although the probe passed")
+	}
+	if got, want := st.handle.Load(), uintptr(unsafe.Pointer(st.slot0.Value())); got != want {
+		t.Fatalf("the live handle reads %#x, want the block address %#x", got, want)
+	}
+	runtime.KeepAlive(xs)
+	xs = nil
+	runtime.GC()
+	runtime.GC()
+	if got := st.handle.Load(); got != 0 {
+		t.Fatalf("the handle of a swept block reads %#x, want 0: this Go release no longer clears it at sweep", got)
+	}
+	if lookupBlock(end, unsafe.Sizeof(0)) != nil {
+		t.Fatal("a dead block was found")
 	}
 }

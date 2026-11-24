@@ -15,6 +15,18 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- **Parallel list builders no longer slow each other down.** Since v0.29.0
+  `x :: xs` reuses free room in front of a list block, and each cons checked
+  that the block was still alive with `weak.Pointer.Value`. While a garbage
+  collection sweep is open, `Value` updates one global runtime word on every
+  call. Several Tasks that each built a list with an accumulator loop then
+  contended on that word, and the loop ran 5 to 15 times slower when the
+  Tasks outnumbered the CPUs (eight Tasks on four cores took up to 330 ms
+  for 400,000 elements each, against about 35 ms). The cons now reads the
+  block's weak handle directly, which the runtime clears before the memory
+  can be reused, so the check stays two atomic loads with no shared write
+  (`runtime-go/rt/list_block.go`). The perf gate runs its `concurrent-cons`
+  program on four Ps, so a machine with many cores sees this class too.
 - A `Std.App` app built for a native shell (`--target mobile:ios`,
   `mobile:android`, `desktop:mac` and the other client targets) now links the
   handlers in its own `native/<platform>/` directory (#334). The build stages
@@ -11208,7 +11220,7 @@ full current-state catalog. Items closed since v0.16.x:
 - Skydeploy clean rebuild + runtime probe (`/`, `/_sky/healthz`,
   `/_sky/buildinfo`, console mounted)
 
-## v0.31.1 — native shells link their own handlers, saved models keep excluded fields, App Store-ready iOS releases (2026-11-24)
+## Unreleased
 
 ### Std.Ui — surface complete
 
