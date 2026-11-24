@@ -2249,6 +2249,41 @@ fn ui_node_centre(emu: &Emulator, ids: &[&str]) -> Option<(i32, i32)> {
     None
 }
 
+/// Whether the system permission prompt has the input focus.
+#[cfg(unix)]
+fn permission_prompt_focused(emu: &Emulator) -> bool {
+    emu.shell_text(&["dumpsys", "window"])
+        .lines()
+        .any(|l| l.contains("mCurrentFocus=") && l.contains("GrantPermissionsActivity"))
+}
+
+/// Tap a permission prompt button at `at` and confirm that the prompt closed.
+/// A tap sent while the prompt still animates in is dropped by the system:
+/// on the CI emulator the deny button was found and tapped, and the prompt
+/// stayed on screen with no answer (release run 45351237930). So the tap is
+/// checked: when the prompt still has the focus 5 s later, the button is
+/// found again and tapped again, at most three taps. The loop stops as soon
+/// as the prompt loses the focus, so a second prompt shown after the answer
+/// is not tapped here and the caller's "prompt showed again" check still
+/// sees it.
+#[cfg(unix)]
+fn tap_permission_button(emu: &Emulator, button: &str, at: (i32, i32)) {
+    let mut at = Some(at);
+    for _ in 0..3 {
+        let Some((x, y)) = at else { return };
+        let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < until {
+            if !permission_prompt_focused(emu) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        eprintln!("the permission prompt is still up after a tap on {button}, tapping again");
+        at = ui_node_centre(emu, &[button]);
+    }
+}
+
 /// `Native.scanCode` at first launch waits for the camera prompt's answer.
 /// The shell asks for the declared run-time permissions when it starts, and
 /// the probe calls `scanCode` right after its secure-store round trip, while
@@ -2337,7 +2372,7 @@ fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
         let early = backend.probe_line("scan", 1);
         let tap = emu.find_ui(&[button]);
         if let Some((x, y)) = tap {
-            let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+            tap_permission_button(&emu, button, (x, y));
         }
         let mut grant_missing = false;
         if want == "scan=cancelled" {
@@ -2524,7 +2559,7 @@ fn android_emulator_notify_at_first_launch_waits_for_the_notification_prompt() {
                 tap = ui_node_centre(&emu, &[button]);
             }
             if let Some((x, y)) = tap {
-                let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+                tap_permission_button(&emu, button, (x, y));
             }
             (backend.probe_line("secure", 180), None, tap)
         } else {
@@ -2535,7 +2570,7 @@ fn android_emulator_notify_at_first_launch_waits_for_the_notification_prompt() {
             let early = backend.probe_line("notify", 1);
             let tap = emu.find_ui(&[button]);
             if let Some((x, y)) = tap {
-                let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+                tap_permission_button(&emu, button, (x, y));
             }
             (secure, early, tap)
         };
