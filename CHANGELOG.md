@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## Unreleased
+## v0.31.1 — native shells link their own handlers, saved models keep excluded fields, App Store-ready iOS releases (2026-11-24)
 
 ### Fixed
 
@@ -27,11 +27,6 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   can be reused, so the check stays two atomic loads with no shared write
   (`runtime-go/rt/list_block.go`). The perf gate runs its `concurrent-cons`
   program on four Ps, so a machine with many cores sees this class too.
-
-## v0.31.1 — native shells link their own handlers, saved models keep excluded fields, App Store-ready iOS releases (2026-11-24)
-
-### Fixed
-
 - A `Std.App` app built for a native shell (`--target mobile:ios`,
   `mobile:android`, `desktop:mac` and the other client targets) now links the
   handlers in its own `native/<platform>/` directory (#334). The build stages
@@ -11225,7 +11220,7 @@ full current-state catalog. Items closed since v0.16.x:
 - Skydeploy clean rebuild + runtime probe (`/`, `/_sky/healthz`,
   `/_sky/buildinfo`, console mounted)
 
-## v0.31.1 — native shells link their own handlers, saved models keep excluded fields, App Store-ready iOS releases (2026-11-24)
+## Unreleased
 
 ### Std.Ui — surface complete
 
