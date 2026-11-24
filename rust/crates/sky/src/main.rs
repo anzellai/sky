@@ -6600,7 +6600,7 @@ fn package_macos_release(
     // app's device bridge reads them (ai_device_desktop.go).
     copy_ai_embedded(&resources.join("sky-ai"), &ai_embedded_files(project_dir)?)?;
 
-    let icon = bundle_icon_source(project_dir, id);
+    let icon = bundle_icon_source(project_dir, id)?;
     if let Some(icon) = &icon {
         let st = Command::new("sips")
             .args(["-s", "format", "icns"])
@@ -7433,27 +7433,63 @@ fn generate_android_icons(icon_src: &Path, res_root: &Path) -> Result<(), String
     Ok(())
 }
 
-/// The resolved app-icon source PNG to render, or `None` (after a note) when
-/// there is nothing to render: no `withIcon` declared, the declared file is
-/// missing, or `sips` is unavailable. Keeps the "should we generate icons?"
-/// decision (and its user-facing notes) in one place for iOS and Android.
-fn bundle_icon_source(project_dir: &Path, id: &BundleIdentity) -> Option<PathBuf> {
-    let icon = id.icon.as_ref()?;
-    let path = project_dir.join(icon);
+/// The resolved app-icon source PNG to render. `Ok(None)` when there is
+/// nothing to render: no `withIcon` declared, or `sips` is unavailable (after
+/// a note). A declared file that does not exist is an error: building on with
+/// the platform default icon shipped an iOS release that App Store Connect
+/// refused for a missing icon. Keeps the "should we generate icons?" decision
+/// (and its user-facing messages) in one place for iOS, Android and macOS.
+fn bundle_icon_source(project_dir: &Path, id: &BundleIdentity) -> Result<Option<PathBuf>, String> {
+    let Some(icon) = id.icon.as_ref() else {
+        return Ok(None);
+    };
+    // A relative path is relative to the APP, not to the generated project a
+    // client build packages (`<app>/.skyapp/<target>/.split/frontend`), which
+    // holds only the sources.
+    let root = bundle_source_root(project_dir);
+    let path = root.join(icon);
     if !path.is_file() {
-        eprintln!(
-            "  note: Bundle.withIcon \"{icon}\" — no such file at {}; using the platform default icon.",
-            path.display()
-        );
-        return None;
+        return Err(format!(
+            "Bundle.withIcon \"{icon}\": no such file at {}. Give the path of a \
+             1024×1024 PNG relative to the project directory ({}).",
+            path.display(),
+            root.display()
+        ));
     }
     if !sips_available() {
         eprintln!(
             "  note: app-icon generation needs macOS `sips` (absent here); using the platform default icon."
         );
-        return None;
+        return Ok(None);
     }
-    Some(path)
+    Ok(Some(path))
+}
+
+/// The user's project directory for `project_dir`. A client build packages a
+/// GENERATED project: the Sky.Spa split's frontend (`<app>/.split/frontend`),
+/// or for a `Std.App` entry the split of the staged copy
+/// (`<app>/.skyapp/<target>/.split/frontend`), and a `Std.App` server build
+/// packages the staged copy itself (`<app>/.skyapp/<target>`). Each of these
+/// maps back to `<app>`. Any other directory is its own root.
+fn bundle_source_root(project_dir: &Path) -> PathBuf {
+    let mut dir = project_dir;
+    if is_generated_split_project(dir) {
+        if let Some(app) = dir
+            .parent()
+            .filter(|p| p.file_name() == Some(std::ffi::OsStr::new(".split")))
+            .and_then(Path::parent)
+        {
+            dir = app;
+        }
+    }
+    if let Some(app) = dir
+        .parent()
+        .filter(|p| p.file_name() == Some(std::ffi::OsStr::new(".skyapp")))
+        .and_then(Path::parent)
+    {
+        dir = app;
+    }
+    dir.to_path_buf()
 }
 
 /// The user's app name for a Sky.Spa split frontend. The native shell of a
@@ -7668,7 +7704,7 @@ fn build_android_apk_in(
 
     // App icon → mipmap-<density>/ic_launcher.png; the manifest points at it only
     // when we actually generated the mipmaps (else Android uses its default).
-    let icon_attr = match bundle_icon_source(project_dir, &id) {
+    let icon_attr = match bundle_icon_source(project_dir, &id)? {
         Some(icon) => {
             generate_android_icons(&icon, &res_root)?;
             "\n        android:icon=\"@mipmap/ic_launcher\""
@@ -8651,7 +8687,7 @@ fn build_ios_app_in(
 ) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let name = &id.exe_name;
-    let icon_src = bundle_icon_source(project_dir, &id);
+    let icon_src = bundle_icon_source(project_dir, &id)?;
     let decl = native_pkg::read_declarations(project_dir)?;
     let want_location = decl.permissions.iter().any(|d| d.spec().location);
     let (loc_import, loc_manager, loc_onappear) = if want_location {
@@ -23318,10 +23354,12 @@ echo key > "$ks"
         );
         let id = resolve_bundle_identity(&dir).unwrap();
         assert!(id.icon.is_none());
-        assert!(bundle_icon_source(&dir, &id).is_none());
+        assert!(bundle_icon_source(&dir, &id).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&dir);
 
-        // withIcon declared but the file is missing → None (a note, not a crash).
+        // withIcon declared but the file is missing → an error naming the path,
+        // never a build with the platform default icon (App Store Connect
+        // refuses that upload).
         let dir2 = bundle_scratch(
             "missingicon",
             "name = \"p\"\n",
@@ -23330,8 +23368,52 @@ echo key > "$ks"
         );
         let id2 = resolve_bundle_identity(&dir2).unwrap();
         assert_eq!(id2.icon.as_deref(), Some("nope.png"));
-        assert!(bundle_icon_source(&dir2, &id2).is_none());
+        let err = bundle_icon_source(&dir2, &id2).unwrap_err();
+        assert!(err.contains("Bundle.withIcon \"nope.png\""), "{err}");
         let _ = std::fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn bundle_icon_source_resolves_against_the_app_from_a_generated_split() {
+        // A Std.App mobile build packages `<app>/.skyapp/<target>/.split/frontend`
+        // (a generated project with only the sources). The icon declared as
+        // `assets/icon.png` lives at `<app>/assets/icon.png`; it was looked up in
+        // the generated frontend, not found, and the release shipped with no icon.
+        let app = bundle_scratch(
+            "spliticon",
+            "name = \"p\"\n",
+            "module Main exposing (main, bundle)\n\
+             bundle = Bundle.default |> Bundle.withIcon \"assets/icon.png\"\nmain = 0\n",
+        );
+        std::fs::create_dir_all(app.join("assets")).unwrap();
+        std::fs::write(app.join("assets/icon.png"), b"png").unwrap();
+        let split_toml = "name = \"mobile-ios-frontend\"\n[spa]\ngenerated = true\n";
+        let main = std::fs::read_to_string(app.join("src/Main.sky")).unwrap();
+        let mk = |rel: &str| {
+            let d = app.join(rel);
+            std::fs::create_dir_all(d.join("src")).unwrap();
+            std::fs::write(d.join("sky.toml"), split_toml).unwrap();
+            std::fs::write(d.join("src/Main.sky"), &main).unwrap();
+            d
+        };
+        for front in [
+            mk(".skyapp/mobile-ios/.split/frontend"),
+            mk(".split/frontend"),
+        ] {
+            assert_eq!(bundle_source_root(&front), app, "{}", front.display());
+            let id = resolve_bundle_identity(&front).unwrap();
+            if sips_available() {
+                let got = bundle_icon_source(&front, &id).unwrap();
+                assert_eq!(got, Some(app.join("assets/icon.png")));
+            }
+        }
+        // The staged Std.App copy itself (a server-side desktop build).
+        let staged = app.join(".skyapp/desktop");
+        std::fs::create_dir_all(&staged).unwrap();
+        assert_eq!(bundle_source_root(&staged), app);
+        // An ordinary project is its own root.
+        assert_eq!(bundle_source_root(&app), app);
+        let _ = std::fs::remove_dir_all(&app);
     }
 
     #[test]
