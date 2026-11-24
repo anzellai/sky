@@ -359,14 +359,34 @@ func TestConcurrentConsStaysOffTheRuntimeWeakPath(t *testing.T) {
 // A block that dies is never found again: the runtime clears its weak
 // handle when it sweeps the block, before the memory can be reused.
 func TestDeadBlockIsNotFoundAfterGC(t *testing.T) {
+	// The cons trusts the runtime's weak handle word: it must read the
+	// object's address while the block is live and 0 once the sweep has
+	// freed it, before the memory can be reused. The start-up probe checks
+	// only the layout, so this test checks the clearing itself. A Go release
+	// that clears the handle later, or stores anything else in it, fails
+	// here instead of corrupting memory in an app.
+	if !weakHandleReadable {
+		t.Fatal("the weak handle probe failed on this Go release: re-read runtime/mheap.go (weakHandleBox, freeSpecial) and update list_block.go")
+	}
 	xs := buildCons(1000)
 	end := uintptr(unsafe.Pointer(&xs[len(xs)-1]))
-	if lookupBlock(end, unsafe.Sizeof(0)) == nil {
+	st := lookupBlock(end, unsafe.Sizeof(0))
+	if st == nil {
 		t.Fatal("a live block was not found")
 	}
+	if st.handle == nil {
+		t.Fatal("a registered block has no handle although the probe passed")
+	}
+	if got, want := st.handle.Load(), uintptr(unsafe.Pointer(st.slot0.Value())); got != want {
+		t.Fatalf("the live handle reads %#x, want the block address %#x", got, want)
+	}
+	runtime.KeepAlive(xs)
 	xs = nil
 	runtime.GC()
 	runtime.GC()
+	if got := st.handle.Load(); got != 0 {
+		t.Fatalf("the handle of a swept block reads %#x, want 0: this Go release no longer clears it at sweep", got)
+	}
 	if lookupBlock(end, unsafe.Sizeof(0)) != nil {
 		t.Fatal("a dead block was found")
 	}
