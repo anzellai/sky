@@ -9048,6 +9048,12 @@ fn ios_generated_info(
             "UIDeviceFamily".to_string(),
             Array(vec![Integer("1".into()), Integer("2".into())]),
         ),
+        // App Store validation refuses a 64-bit binary without it (#337). An
+        // array, so a fragment that also sets it unions into one array.
+        (
+            "UIRequiredDeviceCapabilities".to_string(),
+            Array(vec![S("arm64".into())]),
+        ),
         ("UILaunchScreen".to_string(), Dict(vec![])),
         (
             "CFBundleSupportedPlatforms".to_string(),
@@ -22249,6 +22255,84 @@ echo key > "$ks"
         // manifest, never in the run-time request.
         let (_, _, rt3) = android_permission_java(&declared(&["FaceId"]));
         assert!(rt3.is_empty(), "{rt3}");
+    }
+
+    /// #337: App Store validation refuses a 64-bit binary whose Info.plist has
+    /// no `UIRequiredDeviceCapabilities` = `["arm64"]`. The shell writes it on
+    /// every build, simulator and device, and a project or library fragment
+    /// that also sets it merges into ONE array with no duplicate.
+    #[test]
+    fn ios_info_plist_requires_arm64_and_merges_a_fragment_without_duplicates() {
+        let dir = bundle_scratch(
+            "infoplistarm64",
+            "name = \"p\"\n",
+            "module Main exposing (main)\nmain = 0\n",
+        );
+        std::fs::create_dir_all(dir.join("native/ios")).unwrap();
+        std::fs::write(
+            dir.join("native/ios/Info.plist.append"),
+            "<key>UIRequiredDeviceCapabilities</key><array><string>arm64</string><string>metal</string></array>\n",
+        )
+        .unwrap();
+        let lib = dir.join(".skydeps/github.com_acme_cam/native/ios");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(
+            lib.join("Info.plist.append"),
+            "<key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>\n",
+        )
+        .unwrap();
+        let id = resolve_bundle_identity(&dir).unwrap();
+        let url = app_url::resolve(
+            app_url::Shell::Ios,
+            None,
+            Some("https://app.example.test/"),
+            None,
+        )
+        .unwrap();
+        let arm64 = plist::Value::Array(vec![plist::Value::String("arm64".into())]);
+        for device in [false, true] {
+            let generated = ios_generated_info(&id, &url, false, device).unwrap();
+            let own = generated
+                .iter()
+                .find(|(k, _)| k == "UIRequiredDeviceCapabilities")
+                .map(|(_, v)| v.clone());
+            assert_eq!(own, Some(arm64.clone()), "device = {device}");
+        }
+        let mut layers = vec![plist::Layer {
+            origin: "sky".into(),
+            rank: plist::Rank::Generated,
+            entries: ios_generated_info(&id, &url, false, true).unwrap(),
+        }];
+        layers.extend(
+            native_pkg::fragment_layers(
+                &native_pkg::fragments(
+                    &collect_native_dirs(&dir, "ios"),
+                    &dir,
+                    "Info.plist.append",
+                ),
+                &dir,
+            )
+            .unwrap(),
+        );
+        let doc = native_pkg::merge_document("Info.plist", &layers).unwrap();
+        let entries = plist::parse_entries(&doc).expect("one valid plist");
+        assert_eq!(
+            doc.matches("UIRequiredDeviceCapabilities").count(),
+            1,
+            "{doc}"
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .find(|(k, _)| k == "UIRequiredDeviceCapabilities")
+                .map(|(_, v)| v.clone()),
+            Some(plist::Value::Array(vec![
+                plist::Value::String("arm64".into()),
+                plist::Value::String("metal".into()),
+            ])),
+            "{doc}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The generated iOS Info.plist is ONE valid property list: the identity

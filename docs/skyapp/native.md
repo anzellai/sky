@@ -282,6 +282,11 @@ both, except that two dependencies that disagree are an error: set the key in
 the project's own fragment, which outranks every dependency. A fragment may be
 a whole property list, a bare `<dict>`, or a run of `<key>`/value pairs.
 
+The iOS shell's `Info.plist` always has `UIRequiredDeviceCapabilities` =
+`["arm64"]`, on every build (#337). App Store validation refuses a 64-bit
+binary without it. A fragment that also sets it, for example
+`["arm64", "metal"]`, merges into one array, and `arm64` appears once.
+
 `native/android/permissions.xml` elements merge the same way:
 identical elements appear once, a `<uses-permission>` that `withPermission`
 already declares is dropped, and two `<uses-permission>` / `<uses-feature>`
@@ -569,7 +574,10 @@ file. The signing variables are not needed, because the file is already signed.
 | `SKY_ASC_KEY_PATH` | The path to the downloaded `AuthKey_<KEY_ID>.p8`. |
 
 **How the key is passed.** The key id and the issuer id are identifiers, not
-secrets, and go to `altool` as `--api-key` and `--api-issuer`. The key file
+secrets, and go to `altool` as `--apiKey` and `--apiIssuer`, with the `.ipa`
+after `-f` and `-t ios` (`--validate-app`, then `--upload-app`). This is the form
+that both the altool of Xcode 16 (GitHub's `macos-15` runner) and that of
+Xcode 27 accept (#336). The key file
 never appears on a command line, so `ps` does not show it: `altool` reads
 `AuthKey_<KEY_ID>.p8` from the directory in `API_PRIVATE_KEYS_DIR`, which is
 one of the places `xcrun altool --help` documents. When your file already has

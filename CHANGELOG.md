@@ -30,6 +30,23 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   restores. A field that the saved copy does not have (a field that a newer
   build added) now comes from the seed, or from `init` when there is no seed,
   so that copy also restores.
+- `sky add`, `sky install` and `sky update` rebuild the Go FFI inspector after
+  a Go upgrade. The cached inspector was keyed on its source only, so after
+  an upgrade to Go 1.27 the old binary, built by Go 1.26, refused every module
+  whose `go` line is 1.27 ("package requires newer Go version") until the
+  cache was cleared by hand. The cache key now includes the Go version.
+- `sky package --release --target mobile:ios --upload testflight` works with
+  the altool of older Xcode releases, such as Xcode 16 on GitHub's `macos-15`
+  runner (#336). Sky passed the `.ipa` as the argument of `--validate-app` and
+  `--upload-package`, with `--api-key` and `--api-issuer`, a form only the
+  altool of Xcode 27 accepts. The older altool stopped with "Option
+  '--validate-app' does not take an argument". Sky now runs `--validate-app`
+  and `--upload-app` with `-f <file> -t ios --apiKey … --apiIssuer …`, which
+  both versions accept.
+- The iOS shell's `Info.plist` now has `UIRequiredDeviceCapabilities` =
+  `["arm64"]` on every build (#337). App Store validation refuses a 64-bit
+  binary without it. A `native/ios/Info.plist.append` that also sets it
+  merges into one array with no duplicate.
 
 ## v0.31.0 — translated text, time zones, JSON objects with any keys and the page language (2026-11-22)
 
