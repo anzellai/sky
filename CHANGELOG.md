@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## Unreleased
+## v0.31.1 — native shells link their own handlers, saved models keep excluded fields, App Store-ready iOS releases (2026-11-24)
 
 ### Fixed
 
@@ -11208,7 +11208,7 @@ full current-state catalog. Items closed since v0.16.x:
 - Skydeploy clean rebuild + runtime probe (`/`, `/_sky/healthz`,
   `/_sky/buildinfo`, console mounted)
 
-## Unreleased
+## v0.31.1 — native shells link their own handlers, saved models keep excluded fields, App Store-ready iOS releases (2026-11-24)
 
 ### Std.Ui — surface complete
 
