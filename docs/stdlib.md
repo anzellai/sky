@@ -2767,7 +2767,8 @@ the range, so a later `insertAtCursor` replaces it. Same errors as
 `Std.Bundle` declares what the native shells ship with: identity (`withId`,
 `withName`, `withVersion`, `withBuild`, `withIcon`), assets, permissions with
 their purpose strings (`withPermission`, `withUsage Bundle.Camera "…"`) and
-typed Apple entitlements (`withEntitlement (Bundle.AppGroup "group.…")`). A call
+typed Apple entitlements (`withEntitlement (Bundle.AppGroup "group.…")`) and the
+export compliance answer (`withEncryption Bundle.ExemptEncryptionOnly`). A call
 to `Native.authenticate`, `capturePhoto`, `geolocation` or `scanCode` without
 its permission fails the iOS and Android builds. `sky package --release` makes the
 store artefact. Full guide: [`docs/skyapp/native.md`](skyapp/native.md).

@@ -199,3 +199,77 @@ func decodeObj(t *testing.T, s string) map[string]json.RawMessage {
 	}
 	return m
 }
+
+// #335: a client with no SSR seed (a `web:app` static mount, a native shell)
+// restores the saved model over the init model. App.withPersistExclude strips
+// the excluded fields before the save, so the stored blob lacks them. Before
+// the fix the boot restored the stored blob verbatim, the model decode failed
+// on the missing fields, and the client lost every saved field.
+func TestSpaPersistExcludeRestoresWithoutSeed(t *testing.T) {
+	const initJSON = `{"count":0,"busy":false}`
+	exclude := []string{"busy"}
+	st := memKV{}
+	_, _, life := spaRestoreStoredWithInit(st, "", initJSON, nil, exclude, exclude, spaPersistMaxBytes)
+	spaPersistWrite(st, &life, spaPersistStripFields(`{"count":3,"busy":true}`, exclude, nil), nil, spaPersistMaxBytes)
+
+	merged, ok, _ := spaRestoreStoredWithInit(st, "", initJSON, nil, exclude, exclude, spaPersistMaxBytes)
+	if !ok {
+		t.Fatalf("the stored model must restore")
+	}
+	fields := decodeObj(t, merged)
+	if string(fields["count"]) != "3" {
+		t.Errorf("count = %s, want 3 from storage: %s", fields["count"], merged)
+	}
+	if string(fields["busy"]) != "false" {
+		t.Errorf("busy = %s, want false from init (excluded field): %s", fields["busy"], merged)
+	}
+
+	t.Run("a stale stored excluded field comes from init", func(t *testing.T) {
+		st := memKV{spaPersistKey: `{"count":5,"busy":true}`}
+		merged, ok, _ := spaRestoreStoredWithInit(st, "", initJSON, nil, exclude, exclude, spaPersistMaxBytes)
+		f := decodeObj(t, merged)
+		if !ok || string(f["count"]) != "5" || string(f["busy"]) != "false" {
+			t.Errorf("merged = %s, want count from storage and busy from init", merged)
+		}
+	})
+
+	t.Run("a field the stored model lacks comes from init", func(t *testing.T) {
+		st := memKV{spaPersistKey: `{"count":5}`}
+		merged, ok, _ := spaRestoreStoredWithInit(st, "", `{"count":0,"busy":false,"added":"x"}`, nil, nil, nil, spaPersistMaxBytes)
+		f := decodeObj(t, merged)
+		if !ok || string(f["count"]) != "5" || string(f["added"]) != `"x"` || string(f["busy"]) != "false" {
+			t.Errorf("merged = %s, want missing fields from init", merged)
+		}
+	})
+
+	t.Run("the stored session is kept when there is no seed", func(t *testing.T) {
+		st := memKV{spaPersistKey: `{"session":{"u":1},"count":2}`}
+		prot := []string{"session"}
+		merged, ok, life := spaRestoreStoredWithInit(st, "", `{"session":null,"count":0}`, prot, prot, []string{"session"}, spaPersistMaxBytes)
+		f := decodeObj(t, merged)
+		if !ok || string(f["session"]) != `{"u":1}` || life.id == "" {
+			t.Errorf("merged = %s, life = %+v, want the stored session (no server identity to compare)", merged, life)
+		}
+	})
+
+	t.Run("a seed still wins over init", func(t *testing.T) {
+		st := memKV{spaPersistKey: `{"session":null,"count":2}`}
+		prot := []string{"session"}
+		wins := spaPersistWinsWithExclude(prot, exclude)
+		merged, ok, _ := spaRestoreStoredWithInit(st, `{"session":null,"count":0,"busy":true}`, initJSON, prot, wins, exclude, spaPersistMaxBytes)
+		f := decodeObj(t, merged)
+		if !ok || string(f["count"]) != "2" || string(f["busy"]) != "true" {
+			t.Errorf("merged = %s, want count from storage and busy from the seed", merged)
+		}
+	})
+
+	t.Run("a field the stored model lacks comes from the seed", func(t *testing.T) {
+		st := memKV{spaPersistKey: `{"session":null,"count":2}`}
+		prot := []string{"session"}
+		merged, ok, _ := spaRestoreStoredWithInit(st, `{"session":null,"count":0,"note":"n"}`, initJSON, prot, prot, nil, spaPersistMaxBytes)
+		f := decodeObj(t, merged)
+		if !ok || string(f["count"]) != "2" || string(f["note"]) != `"n"` {
+			t.Errorf("merged = %s, want count from storage and note from the seed", merged)
+		}
+	})
+}

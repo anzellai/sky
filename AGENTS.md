@@ -439,7 +439,8 @@ browser and on the iOS simulator) reach the device, and `sky package --release
 address is refused); `--upload testflight` then validates and uploads the
 signed `.ipa` to App Store Connect with `xcrun altool` (API key from
 `SKY_ASC_KEY_ID` / `SKY_ASC_ISSUER_ID` / `SKY_ASC_KEY_PATH`; needs
-`Bundle.withId` and a `Bundle.withBuild` that rises per upload). See
+`Bundle.withId` and a `Bundle.withBuild` that rises per upload;
+`Bundle.withEncryption Bundle.ExemptEncryptionOnly` answers export compliance). See
 `docs/skyapp/native.md`. An editor's "Insert" menu puts text at a textarea's
 caret with `Native.insertAtCursor "body" "{{first_name}}"` (`Task Error String`,
 the control's new value; it uses the selection the person left when focus moved

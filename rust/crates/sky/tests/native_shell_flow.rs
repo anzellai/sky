@@ -278,7 +278,7 @@ mod testflight {
 
     /// A fake `xcrun` (TEST-ONLY `SKY_XCRUN`). It records every call, the
     /// `API_PRIVATE_KEYS_DIR` altool would read the key from and the files in it,
-    /// and answers `--validate-app` / `--upload-package` with the altool JSON
+    /// and answers `--validate-app` / `--upload-app` with the altool JSON
     /// named by `FAKE_VALIDATE` / `FAKE_UPLOAD`. No network, no credentials.
     const FAKE_XCRUN: &str = r#"#!/bin/sh
     log="$FAKE_XCRUN_LOG"
@@ -295,7 +295,7 @@ mod testflight {
     for f in "$API_PRIVATE_KEYS_DIR"/*; do echo "KEYFILE ${f##*/}" >> "$log"; done
     case "$2" in
       --validate-app) mode="$FAKE_VALIDATE" ;;
-      --upload-package) mode="$FAKE_UPLOAD" ;;
+      --upload-app) mode="$FAKE_UPLOAD" ;;
       *) mode=unknown ;;
     esac
     case "$mode" in
@@ -512,13 +512,14 @@ mod testflight {
         assert_eq!(code, 0, "the upload must succeed:\n{out}\n--- log\n{log}");
         let calls: Vec<&str> = log.lines().filter(|l| l.starts_with("ARGS ")).collect();
         let ipa_s = ipa.display().to_string();
-        let auth = format!("--api-key {ASC_KEY_ID} --api-issuer {ASC_ISSUER} --output-format json");
+        let auth =
+            format!("-t ios --apiKey {ASC_KEY_ID} --apiIssuer {ASC_ISSUER} --output-format json");
         assert_eq!(
             calls,
             [
                 "ARGS --find altool".to_string(),
-                format!("ARGS altool --validate-app {ipa_s} {auth}"),
-                format!("ARGS altool --upload-package {ipa_s} {auth}"),
+                format!("ARGS altool --validate-app -f {ipa_s} {auth}"),
+                format!("ARGS altool --upload-app -f {ipa_s} {auth}"),
             ],
             "validate first, then upload, with altool's documented arguments:\n{log}"
         );
@@ -564,7 +565,7 @@ mod testflight {
                 && out.contains("Nothing was uploaded"),
             "{out}"
         );
-        assert!(!log.contains("--upload-package"), "{log}");
+        assert!(!log.contains("--upload-app"), "{log}");
 
         // Apple refuses the upload with plain text output: reported, with the fix.
         let (code, out, _) = upload_run(

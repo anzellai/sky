@@ -39,7 +39,8 @@ bundle =
 | `withId` | CFBundleIdentifier, the Android package | `sky.spa.<name>` (with a note) |
 | `withVersion` | CFBundleShortVersionString, `android:versionName` | `1.0` |
 | `withBuild` | CFBundleVersion, `android:versionCode` | `1` |
-| `withIcon` | the app icon set (rendered with `sips`) | the platform icon |
+| `withIcon` | the app icon set (rendered with `sips`; a release also compiles it into `Assets.car` with `actool` and sets `CFBundleIconName`) | the platform icon |
+| `withEncryption` | `ITSAppUsesNonExemptEncryption` (`ExemptEncryptionOnly` is `false`, `NonExemptEncryption` is `true`), iOS only | left out: App Store Connect asks for every build |
 
 A store refuses a second upload with the same build number, so raise
 `withBuild` for each release. Before v0.27.0 the build number was always 1.
@@ -252,6 +253,12 @@ A project or a Sky library can still ship native files under
 `native/macos/Info.plist.append`, `native/macos/app.entitlements` and
 `native/android/permissions.xml`.
 
+The project's own `native/` is linked on every client target, also when a
+`Std.App` app goes through the auto-split under `.skyapp/<target>/.split`.
+Before v0.31.1 that path dropped it (#334): the shell linked a dependency's
+handler but never called the app's own `register<Name>`, and each
+`Native.bridge` call to it failed at run time.
+
 The build reads each fragment as a tree and merges the trees; it never joins
 them as text. Before v0.27.0 it did, and two defects followed: two
 `app.entitlements` files that were each a whole property list became two XML
@@ -275,6 +282,11 @@ different values, the higher source wins and the build prints a note naming
 both, except that two dependencies that disagree are an error: set the key in
 the project's own fragment, which outranks every dependency. A fragment may be
 a whole property list, a bare `<dict>`, or a run of `<key>`/value pairs.
+
+The iOS shell's `Info.plist` always has `UIRequiredDeviceCapabilities` =
+`["arm64"]`, on every build (#337). App Store validation refuses a 64-bit
+binary without it. A fragment that also sets it, for example
+`["arm64", "metal"]`, merges into one array, and `arm64` appears once.
 
 `native/android/permissions.xml` elements merge the same way:
 identical elements appear once, a `<uses-permission>` that `withPermission`
@@ -540,6 +552,19 @@ bundle =
 App Store Connect refuses a build number it already has for the version, so
 raise `Bundle.withBuild` for every upload.
 
+Add `|> Bundle.withEncryption Bundle.ExemptEncryptionOnly` when the app uses no
+encryption or only exempt encryption (HTTPS, the system TLS and keychain), so
+that TestFlight does not hold each build for the export compliance question.
+
+**What the release adds to Info.plist.** App Store validation needs keys that
+Xcode writes and a plain build does not (#337). `sky package --release` writes
+them: `UIRequiredDeviceCapabilities` (`arm64`), all four
+`UISupportedInterfaceOrientations~ipad`, the icon compiled into `Assets.car`
+with `xcrun actool` and named by `CFBundleIconName`, and the toolchain keys
+(`DTPlatformName`, `DTPlatformVersion`, `DTPlatformBuild`, `DTSDKName`,
+`DTSDKBuild`, `DTXcode`, `DTXcodeBuild`, `DTCompiler`, `BuildMachineOSBuild`),
+read from the Xcode and SDK that build the app, before signing.
+
 **The command.**
 
 ```bash
@@ -563,7 +588,10 @@ file. The signing variables are not needed, because the file is already signed.
 | `SKY_ASC_KEY_PATH` | The path to the downloaded `AuthKey_<KEY_ID>.p8`. |
 
 **How the key is passed.** The key id and the issuer id are identifiers, not
-secrets, and go to `altool` as `--api-key` and `--api-issuer`. The key file
+secrets, and go to `altool` as `--apiKey` and `--apiIssuer`, with the `.ipa`
+after `-f` and `-t ios` (`--validate-app`, then `--upload-app`). This is the form
+that both the altool of Xcode 16 (GitHub's `macos-15` runner) and that of
+Xcode 27 accept (#336). The key file
 never appears on a command line, so `ps` does not show it: `altool` reads
 `AuthKey_<KEY_ID>.p8` from the directory in `API_PRIVATE_KEYS_DIR`, which is
 one of the places `xcrun altool --help` documents. When your file already has

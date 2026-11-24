@@ -15,6 +15,8 @@ module Std.Bundle exposing
     , Entitlement(..)
     , PushEnvironment(..)
     , withEntitlement
+    , Encryption(..)
+    , withEncryption
     )
 
 -- | `Std.Bundle` — everything a Sky app ships WITH: its cross-platform identity
@@ -63,6 +65,7 @@ type Bundle
 , permissions : List Permission
 , usages : List ( Permission, String )
 , entitlements : List Entitlement
+, encryption : Maybe Encryption
 }
 
 
@@ -81,6 +84,7 @@ default =
         , permissions = []
         , usages = []
         , entitlements = []
+        , encryption = Nothing
         }
 
 
@@ -278,3 +282,31 @@ type Entitlement
 withEntitlement : Entitlement -> Bundle -> Bundle
 withEntitlement ent (Bundle fields) =
     Bundle { fields | entitlements = fields.entitlements ++ [ ent ] }
+
+-- | What the app's export compliance answer is: whether it uses encryption
+-- that is not exempt from US export rules.
+--
+-- * `ExemptEncryptionOnly` — no encryption, or only exempt encryption (HTTPS,
+--   the platform's own TLS and keychain, standard authentication). Most apps.
+-- * `NonExemptEncryption` — the app ships its own non-exempt encryption and
+--   needs export documentation.
+type Encryption
+    = ExemptEncryptionOnly
+    | NonExemptEncryption
+
+
+-- | Answer the App Store export compliance question in the app itself. The iOS
+-- shell writes `ITSAppUsesNonExemptEncryption` into its Info.plist (`false` for
+-- `ExemptEncryptionOnly`, `true` for `NonExemptEncryption`), so TestFlight does
+-- not hold each new build until the question is answered by hand:
+--
+--     bundle =
+--         Bundle.default
+--             |> Bundle.withId "com.acme.notes"
+--             |> Bundle.withEncryption Bundle.ExemptEncryptionOnly
+--
+-- The build reads the constructor statically. Without it the key is left out
+-- and App Store Connect asks for every build. Other platforms ignore it.
+withEncryption : Encryption -> Bundle -> Bundle
+withEncryption enc (Bundle fields) =
+    Bundle { fields | encryption = Just enc }

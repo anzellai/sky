@@ -1423,6 +1423,9 @@ pub struct Declarations {
     pub entitlements: Vec<Entitlement>,
     pub capabilities: BTreeSet<&'static str>,
     pub sites: Sites,
+    /// `Bundle.withEncryption`: the value of `ITSAppUsesNonExemptEncryption`
+    /// (`Some(false)` for `ExemptEncryptionOnly`), or `None` when unset.
+    pub non_exempt_encryption: Option<bool>,
 }
 
 /// Read the declarations from the entry source (permissions, entitlements) and
@@ -1432,6 +1435,7 @@ pub fn read_declarations(project_dir: &Path) -> Result<Declarations, String> {
     let entry = crate::read_entry_source(project_dir).unwrap_or_default();
     let permissions = scan_permissions(&entry).map_err(|e| format!("Std.Bundle: {e}"))?;
     let entitlements = scan_entitlements(&entry).map_err(|e| format!("Std.Bundle: {e}"))?;
+    let non_exempt_encryption = scan_encryption(&entry).map_err(|e| format!("Std.Bundle: {e}"))?;
     let mut capabilities = BTreeSet::new();
     let mut sites = Sites {
         entry: entry_rel,
@@ -1461,7 +1465,36 @@ pub fn read_declarations(project_dir: &Path) -> Result<Declarations, String> {
         entitlements,
         capabilities,
         sites,
+        non_exempt_encryption,
     })
+}
+
+/// `Bundle.withEncryption <Encryption>` — the export compliance answer, as the
+/// value of `ITSAppUsesNonExemptEncryption`. `Ok(None)` when absent; an error
+/// when present with anything but one of the two constructors. The last call
+/// wins, as the builder does.
+pub fn scan_encryption(src: &str) -> Result<Option<bool>, String> {
+    let mut found = None;
+    for after in call_sites(src, "withEncryption") {
+        let arg = skip_ws_parens(&src[after..]);
+        if arg.starts_with([':', ',', ')']) {
+            continue; // a signature, or an import's exposing list
+        }
+        let (ctor, _) = ctor_prefix(arg);
+        found = Some(match ctor.as_str() {
+            "ExemptEncryptionOnly" => false,
+            "NonExemptEncryption" => true,
+            _ => {
+                return Err(format!(
+                    "line {}: `Bundle.withEncryption` needs `Bundle.ExemptEncryptionOnly` or \
+                     `Bundle.NonExemptEncryption` written in place (the build reads it \
+                     statically).",
+                    line_of(src, after)
+                ))
+            }
+        });
+    }
+    Ok(found)
 }
 
 /// `Bundle.withBuild <n>` — the store build number (CFBundleVersion /
@@ -2327,6 +2360,25 @@ mod tests {
 
     fn e_ok(r: Result<(), String>) -> bool {
         r.is_ok()
+    }
+
+    #[test]
+    fn encryption_reads_one_of_the_two_constructors() {
+        assert_eq!(scan_encryption("b = x\n").unwrap(), None);
+        assert_eq!(
+            scan_encryption("b = d |> Bundle.withEncryption Bundle.ExemptEncryptionOnly\n")
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            scan_encryption("b = d |> withEncryption (NonExemptEncryption)\n").unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            scan_encryption("import Std.Bundle exposing (withEncryption)\n").unwrap(),
+            None
+        );
+        assert!(scan_encryption("b = d |> Bundle.withEncryption enc\n").is_err());
     }
 
     #[test]

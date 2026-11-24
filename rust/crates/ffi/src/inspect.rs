@@ -391,7 +391,7 @@ pub fn ensure_inspector(repo_root: &Path) -> Result<PathBuf, String> {
         ));
     }
     let files = collect_tool_sources(&src_dir)?;
-    let hash = content_hash(&files);
+    let hash = inspector_cache_key(&files, &host_go_version());
     let cache_root = xdg_cache_sky()
         .join("tools")
         .join(format!("sky-ffi-inspect-{hash}"));
@@ -438,6 +438,30 @@ fn collect_tool_sources(src_dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
+}
+
+/// The cache key of a built inspector: the tool source and the Go toolchain
+/// that builds it. The inspector parses packages with the go/types of the Go
+/// that built it, so a binary from an older Go refuses a module whose go line
+/// is newer ("package requires newer Go version"). Keying on the version
+/// rebuilds it after a Go upgrade.
+fn inspector_cache_key(files: &[(String, Vec<u8>)], go_version: &str) -> String {
+    let mut keyed = files.to_vec();
+    keyed.push(("\0go-version".to_string(), go_version.as_bytes().to_vec()));
+    content_hash(&keyed)
+}
+
+/// `go env GOVERSION` of the `go` on PATH (the one `build_inspector` runs), or
+/// "" when it cannot be read (the build then reports the missing toolchain).
+fn host_go_version() -> String {
+    Command::new("go")
+        .args(["env", "GOVERSION"])
+        .envs(go_env_for_constrained_home())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Stable content hash (FNV-1a, 64-bit) over the sorted `(path, bytes)` tree.
@@ -580,6 +604,25 @@ fn build_inspector(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The cached inspector is a Go program built by the host toolchain. It parses
+    // packages with that toolchain's go/types, so a binary built by Go 1.26
+    // refuses a module whose go line is 1.27 ("package requires newer Go
+    // version"). The cache key used to be the tool source alone, so after a Go
+    // upgrade every `sky add` of such a module failed until the cache was
+    // cleared by hand. The key now includes the Go version.
+    #[test]
+    fn the_inspector_cache_key_changes_with_the_go_version() {
+        let files = vec![("main.go".to_string(), b"package main\n".to_vec())];
+        let a = inspector_cache_key(&files, "go1.26.4");
+        let b = inspector_cache_key(&files, "go1.27.3");
+        assert_ne!(a, b, "a Go upgrade must rebuild the inspector");
+        assert_eq!(
+            a,
+            inspector_cache_key(&files, "go1.26.4"),
+            "the key is stable"
+        );
+    }
 
     fn fixture(name: &str) -> String {
         let p = Path::new(env!("CARGO_MANIFEST_DIR"))

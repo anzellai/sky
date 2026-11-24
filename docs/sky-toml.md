@@ -984,8 +984,8 @@ altool` and reads its API key from the environment too:
 
 | Variable | Target | Meaning |
 |---|---|---|
-| `SKY_ASC_KEY_ID` | `--upload testflight` | The App Store Connect API key id (10 characters). Passed to `altool` as `--api-key`. Required. |
-| `SKY_ASC_ISSUER_ID` | `--upload testflight` | The issuer id (a UUID) from the API keys page. Passed as `--api-issuer`. Required. |
+| `SKY_ASC_KEY_ID` | `--upload testflight` | The App Store Connect API key id (10 characters). Passed to `altool` as `--apiKey`. Required. |
+| `SKY_ASC_ISSUER_ID` | `--upload testflight` | The issuer id (a UUID) from the API keys page. Passed as `--apiIssuer`. Required. |
 | `SKY_ASC_KEY_PATH` | `--upload testflight` | Path to the downloaded `AuthKey_<KEY_ID>.p8`. Required. The file never goes on a command line: `altool` reads it from the directory in `API_PRIVATE_KEYS_DIR`, and Sky never prints it. |
 | `SKY_XCRUN` | `--upload testflight` | **Test only.** An executable run in place of `xcrun`, so the flow tests can prove the upload with a fake. Leave it unset. |
 

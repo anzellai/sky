@@ -236,7 +236,14 @@ func spaRestoreFromStorage(cfg any, doc js.Value) bool {
 	wins := spaPersistWinsWithExclude(spaSeedWinsFields(spaPersistProt, spaPersistSeed, spaPageSeedFields(doc)), spaPersistExclude)
 	// Restores only a model stored under the seed's identity (spa_persist.go
 	// spaRestoreStored); another identity's copy is removed, never merged.
-	merged, useIt, life := spaRestoreStored(spaLocalKV{}, seed, spaPersistProt, wins, spaPersistMaxBytes)
+	// With no SSR seed the init model (spaModel here, set by the caller) is the
+	// base: the stored blob lacks the withPersistExclude fields, and they come
+	// from init (#335).
+	initJSON := ""
+	if seed == "" {
+		initJSON = spaEncodeModel(spaModel)
+	}
+	merged, useIt, life := spaRestoreStoredWithInit(spaLocalKV{}, seed, initJSON, spaPersistProt, wins, spaPersistExclude, spaPersistMaxBytes)
 	spaLife = life
 	if !useIt {
 		return false

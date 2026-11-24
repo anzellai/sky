@@ -523,7 +523,8 @@ app =
 - `withPersistExclude fields` names model fields that never come back from an
   earlier page: values the server owns, such as site settings or a feature
   flag. On a client target they are left out of the model kept in
-  `localStorage` and taken from the server-rendered seed on a reload; on
+  `localStorage` and taken from the server-rendered seed on a reload, or from
+  `init` when the page has no seed (a `web:app` client, a native shell); on
   Sky.Live a full page load of an existing session refreshes them from `init`.
   A session field is never left out.
 

@@ -447,21 +447,28 @@ impl Step {
     }
 }
 
-/// The arguments after `xcrun`, in the form `xcrun altool --help` documents
-/// for the current Xcode. The key file is NOT among them: altool reads it
+/// The arguments after `xcrun`, in the one form that both the altool of Xcode
+/// 16 (GitHub's macos-15 runner) and the altool of Xcode 27 accept: the file
+/// after `-f`, the platform after `-t`, and `--apiKey` / `--apiIssuer`. Xcode
+/// 27 also documents `--validate-app <file>` and `--api-key`, but the older
+/// altool refuses them ("does not take an argument"), so they are not used
+/// (#336). The key file is NOT among them: altool reads it
 /// from `$API_PRIVATE_KEYS_DIR` (see [`KeyDir`]).
 pub fn altool_args(step: Step, ipa: &Path, key: &AscKey) -> Vec<OsString> {
     let verb = match step {
         Step::Validate => "--validate-app",
-        Step::Upload => "--upload-package",
+        Step::Upload => "--upload-app",
     };
     vec![
         "altool".into(),
         verb.into(),
+        "-f".into(),
         ipa.as_os_str().to_owned(),
-        "--api-key".into(),
+        "-t".into(),
+        "ios".into(),
+        "--apiKey".into(),
         key.key_id.clone().into(),
-        "--api-issuer".into(),
+        "--apiIssuer".into(),
         key.issuer_id.clone().into(),
         "--output-format".into(),
         "json".into(),
@@ -781,17 +788,31 @@ mod tests {
             [
                 "altool",
                 "--validate-app",
+                "-f",
                 "/r/App.ipa",
-                "--api-key",
+                "-t",
+                "ios",
+                "--apiKey",
                 "ABC123DEF4",
-                "--api-issuer",
+                "--apiIssuer",
                 "57246542-96fe-1a63-e053-0824d011072a",
                 "--output-format",
                 "json"
             ]
         );
+        // #336: the file goes after `-f`, never as the verb's own argument, and
+        // the upload verb is `--upload-app`. The altool of Xcode 16 (the GitHub
+        // macos-15 runner) refuses `--validate-app <file>` ("does not take an
+        // argument") and `--api-key`; this form is accepted by it and by the
+        // altool of Xcode 27.
         let u = altool_args(Step::Upload, Path::new("/r/App.ipa"), &key());
-        assert_eq!(u[1], "--upload-package");
+        let u: Vec<String> = u.iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        assert_eq!(u[1], "--upload-app");
+        assert_eq!(
+            u[2..],
+            v[2..],
+            "upload takes the same file, platform and key"
+        );
         for a in v.iter() {
             assert!(!a.contains(".p8"), "the key file is never an argument: {a}");
         }
