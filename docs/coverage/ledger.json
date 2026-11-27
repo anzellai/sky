@@ -412,7 +412,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2382,
+      "expected_assertions": 2391,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -745,7 +745,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 192,
+      "expected_assertions": 197,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
@@ -23854,8 +23854,8 @@
       "id": "examples/35-composite-generics",
       "modules_imported": 19,
       "path": "examples/35-composite-generics",
-      "refs_generous": 103,
-      "refs_qualified": 98,
+      "refs_generous": 102,
+      "refs_qualified": 97,
       "role": "Example",
       "sky_files": 6,
       "sky_toml_sections": [
@@ -24118,8 +24118,8 @@
       "id": "examples/55-store-partial-update",
       "modules_imported": 5,
       "path": "examples/55-store-partial-update",
-      "refs_generous": 16,
-      "refs_qualified": 13,
+      "refs_generous": 14,
+      "refs_qualified": 11,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
@@ -24247,8 +24247,8 @@
       "id": "examples/68-ai-dataset",
       "modules_imported": 11,
       "path": "examples/68-ai-dataset",
-      "refs_generous": 54,
-      "refs_qualified": 47,
+      "refs_generous": 55,
+      "refs_qualified": 48,
       "role": "Example",
       "sky_files": 3,
       "sky_toml_sections": [
@@ -24275,8 +24275,8 @@
       "id": "examples/70-ai-synthetic",
       "modules_imported": 13,
       "path": "examples/70-ai-synthetic",
-      "refs_generous": 59,
-      "refs_qualified": 53,
+      "refs_generous": 60,
+      "refs_qualified": 54,
       "role": "Example",
       "sky_files": 3,
       "sky_toml_sections": [
