@@ -737,16 +737,28 @@ fn checked_combinator_hint(
             .is_some_and(|l| l.name.as_str() == name && sky.module_name(l.module) == module),
         _ => false,
     };
-    // Only an error inside a call of one of them: another mistake in the same
-    // def keeps its own message.
-    let (module, _, name) = NEWLY_CHECKED.iter().find(|(m, p, n)| {
-        body.exprs.iter().any(|(e, _)| {
-            is(head(e), m, p, n)
-                && body.expr_span(e).is_some_and(|sp| {
-                    sp.file == at.file && sp.range.0 <= at.range.0 && at.range.1 <= sp.range.1
-                })
+    // Only an error whose innermost enclosing call (or pipe) is a call of one
+    // of them: a clash in a call nested in its arguments
+    // (`Result.map f (Decode.decodeString dbDecoder s)`) is that call's, and
+    // another mistake in the same def keeps its own message.
+    let innermost = body
+        .exprs
+        .iter()
+        .filter(|(_, x)| match x {
+            Expr::Call(..) => true,
+            Expr::Binop { op, .. } => matches!(op.as_str(), "|>" | "<|"),
+            _ => false,
         })
-    })?;
+        .filter_map(|(e, _)| {
+            let sp = body.expr_span(e)?;
+            (sp.file == at.file && sp.range.0 <= at.range.0 && at.range.1 <= sp.range.1)
+                .then_some((sp.range.1 - sp.range.0, e))
+        })
+        .min_by_key(|(len, _)| *len)
+        .map(|(_, e)| e)?;
+    let (module, _, name) = NEWLY_CHECKED
+        .iter()
+        .find(|(m, p, n)| is(head(innermost), m, p, n))?;
     let short = module.rsplit('.').next().unwrap_or(module);
     Some(format!(
         "since v0.27.0 `{short}.{name}` is type-checked (it had no signature, so any \

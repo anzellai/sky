@@ -34,9 +34,15 @@ struct Got {
     code: String,
     message: String,
     at: String,
+    suggestion: Option<String>,
 }
 
 fn check(body: &str, extra: &[(&str, &str)]) -> Vec<Got> {
+    check_with(body, extra, "")
+}
+
+/// As [`check`], with `more` added to the module's imports.
+fn check_with(body: &str, extra: &[(&str, &str)], more: &str) -> Vec<Got> {
     let mut db = SourceDb::new();
     for (n, p) in stdlib() {
         db.add_module(n, p.clone());
@@ -45,7 +51,8 @@ fn check(body: &str, extra: &[(&str, &str)]) -> Vec<Got> {
     for (i, (name, src)) in extra.iter().enumerate() {
         ids.push(db.add_module(name, syntax::parse(src, FileId(100 + i as u32))));
     }
-    let imports: String = extra.iter().map(|(n, _)| format!("import {n}\n")).collect();
+    let mut imports: String = extra.iter().map(|(n, _)| format!("import {n}\n")).collect();
+    imports.push_str(more);
     let src = format!(
         "module Main exposing (main)\n\n{HEADER}{imports}\n\n{body}\n\n\nmain =\n    println \"x\"\n"
     );
@@ -65,6 +72,7 @@ fn check(body: &str, extra: &[(&str, &str)]) -> Vec<Got> {
                 code: d.code.0,
                 message: d.message,
                 at,
+                suggestion: d.suggestion,
             }
         })
         .collect()
@@ -316,8 +324,8 @@ fn apply_named_fix(body: &str, got: &[Got]) -> Option<String> {
     }
     let i = m.find("To fix it")?;
     let tail = &m[i..];
-    let end = tail.rfind('`')?;
-    let start = tail[..end].rfind('`')? + 1;
+    let start = tail.find(": `")? + 3;
+    let end = start + tail[start..].find('`')?;
     let fix = tail[start..end].replace("err ", "Error.notFound ");
     if let Some((pat, _)) = fix.split_once(" <- ") {
         let line = body
@@ -588,4 +596,146 @@ fn a_block_in_an_if_or_case_tail_takes_the_annotated_type() {
         "<-",
         "n <- Task.fromResult (parse s)",
     );
+}
+
+// ---- 6. a fix is named only when the whole fixed definition checks -------
+
+/// Judge probe d1: `a <- String.toInt "3"` would be a `Maybe` line in a
+/// `Task` block, so the bind fix is not named; the `Maybe` idiom is.
+const D1: &str = "go : Task Error ()\ngo =\n    let\n        a = String.toInt \"3\"\n        t <- Task.succeed 1\n    in\n    println (String.fromInt (a + t))";
+/// Judge probe d4: `t <- Task.succeed 3` would be a `Task` line in a
+/// `Maybe` block.
+const D4: &str = "go : Maybe Int\ngo =\n    let\n        t = Task.succeed 3\n        m <- Just 1\n    in\n    Just (m + t)";
+/// Judge probe d5: the bind line would make the `Int` body a `Maybe` block.
+const D5: &str = "f : Int\nf =\n    let\n        a = String.toInt \"3\"\n    in\n    a + 1";
+/// Judge probe d6: a `Maybe` bind line in a `Task` body.
+const D6: &str = "go : Task Error ()\ngo =\n    let\n        a = String.toInt \"3\"\n    in\n    println (String.fromInt (a + 1))";
+/// Judge probes a2, b3, b4: a conversion with the `err` placeholder.
+const A2: &str = "go : String -> Task Error Int\ngo s =\n    let\n        n <- String.toInt s\n        m <- Task.succeed 2\n    in\n    Task.succeed (n + m)";
+const B3: &str = "go s =\n    let\n        n <- Task.succeed 1\n        m <- String.toInt s\n    in\n    Task.succeed (n + m)";
+const B4: &str = "go : String -> Task Error Int\ngo s =\n    let\n        n <- Task.succeed 1\n    in\n    String.toInt s";
+
+fn only_e2001(got: &[Got]) -> &Got {
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2001").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    e[0]
+}
+
+#[test]
+fn a_bind_fix_that_fails_in_the_def_is_not_named_and_the_idiom_is() {
+    for body in [D1, D5, D6] {
+        let got = check(body, &[]);
+        let e = only_e2001(&got);
+        assert!(!e.message.contains("bind it with"), "{body}\n{got:#?}");
+        assert!(!e.message.contains("To fix it"), "{body}\n{got:#?}");
+        assert!(
+            e.message.contains(
+                "`String.toInt` gives a `Maybe Int`: handle `Nothing` with `case` or \
+                 `Maybe.withDefault`"
+            ),
+            "{body}\n{got:#?}"
+        );
+    }
+    let got = check(D4, &[]);
+    let e = only_e2001(&got);
+    assert!(!e.message.contains("bind it with"), "{got:#?}");
+    assert!(
+        e.message.contains("`Task.succeed` gives a `Task"),
+        "{got:#?}"
+    );
+}
+
+#[test]
+fn a_conversion_names_what_err_is() {
+    for body in [A2, B3, B4] {
+        let got = check(body, &[]);
+        let e = only_e2001(&got);
+        assert!(
+            e.message
+                .contains("where `err` is the `Error` to report (e.g. `Error.invalidInput \"…\"`)"),
+            "{body}\n{got:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_type_name_takes_a_or_an() {
+    let got = check(
+        "f : Int\nf =\n    let\n        a <- String.toInt \"3\"\n    in\n    a + 1",
+        &[],
+    );
+    let e = only_e2001(&got);
+    assert!(e.message.contains("an `Int`"), "{got:#?}");
+    assert!(!e.message.contains("a `Int`"), "{got:#?}");
+    assert!(
+        e.message
+            .contains("handle `Nothing` with `case` or `Maybe.withDefault`"),
+        "{got:#?}"
+    );
+}
+
+#[test]
+fn the_checked_combinator_hint_blames_the_call_that_mismatches() {
+    // Judge probe s1: the clash is in `Decode.decodeString`'s argument, a
+    // Db decoder where a Json decoder is wanted, not in `Result.map`.
+    let got = check_with(
+        "v : String\nv =\n    Result.withDefault \"e\" (Result.map String.fromInt (Decode.decodeString (DbDecode.int \"age\") \"{}\"))",
+        &[],
+        "import Std.Db.Decode as DbDecode\n",
+    );
+    let e = only_e2001(&got);
+    assert!(
+        e.at.trim_start_matches('(')
+            .starts_with("Decode.decodeString"),
+        "{got:#?}"
+    );
+    assert!(
+        !e.suggestion
+            .as_deref()
+            .unwrap_or("")
+            .contains("`Result.map` is type-checked"),
+        "{got:#?}"
+    );
+    // A clash in `Result.map`'s own argument keeps the hint.
+    let got = check(
+        "v : Int\nv =\n    Result.withDefault 0 (Result.map String.length (Ok 1))",
+        &[],
+    );
+    assert!(
+        got.iter().any(|g| g
+            .suggestion
+            .as_deref()
+            .is_some_and(|s| s.contains("`Result.map` is type-checked"))),
+        "{got:#?}"
+    );
+}
+
+/// Property: every note-producing fixture either names no fix, or names one
+/// that, applied to the source, type-checks clean.
+#[test]
+fn every_note_fixture_names_only_fixes_that_check() {
+    let fixtures = [
+        D1, D4, D5, D6, A2, B3, B4,
+        "f : Int\nf =\n    let\n        a <- String.toInt \"3\"\n    in\n    a + 1",
+        "go : Task Error ()\ngo =\n    let\n        a <- String.toInt \"3\"\n        t <- Task.succeed 1\n    in\n    println (String.fromInt (a + t))",
+        "go : Maybe Int\ngo =\n    let\n        t <- Task.succeed 3\n        m <- Just 1\n    in\n    Just (m + t)",
+        "step : Int -> Task Error Int\nstep n =\n    let\n        a <- Task.succeed n\n        b <- Task.succeed (a + 1)\n    in\n    b",
+        "step : Int -> Task Error Int\nstep n =\n    let\n        a <- Task.succeed n\n    in\n    Just a",
+        "step : Int -> Result Error Int\nstep n =\n    let\n        a <- Ok n\n    in\n    a + 1",
+        "step : Int -> Maybe Int\nstep n =\n    let\n        a <- Just n\n    in\n    a",
+        "go : Task Error Int\ngo =\n    let\n        x <- Task.succeed 1\n    in\n    String.toInt \"3\"",
+        "go : Maybe Int\ngo =\n    let\n        a = String.toInt \"1\"\n    in\n    Just (a + 1)",
+        "go : Decoder Int\ngo =\n    let\n        a = Decode.int\n    in\n    Decode.succeed (a + 1)",
+    ];
+    let mut named = 0;
+    for body in fixtures {
+        let got = check(body, &[]);
+        assert!(got.iter().any(|g| g.code == "E2001"), "{body}\n{got:#?}");
+        if let Some(fixed) = apply_named_fix(body, &got) {
+            named += 1;
+            let after = check(&fixed, &[]);
+            assert!(after.is_empty(), "fix does not check:\n{fixed}\n{after:#?}");
+        }
+    }
+    assert!(named >= 8, "only {named} fixtures named a fix");
 }

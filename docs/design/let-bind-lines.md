@@ -146,18 +146,26 @@ pattern is `[E3001]` with "use `case`". Find the union through
   alone, so a well-typed program chooses the same functions with and without
   the annotation (`ty/tests/let_bind.rs`). With no expected type, the first
   line's head sets the block's type.
-- A note names a fix ONLY when the fix type-checks. The checker decides it
-  by unifying the fixed expression on a copy of the union-find taken before
-  the clash (`Infer::fits_on`, ty/src/bind.rs), never from the error text.
-  The conversion of a line or of the `in` body (`Task.fromResult
+- A note names a fix ONLY when the whole fixed definition type-checks. One
+  test decides every such note (`Infer::fixed_def_checks`, ty/src/bind.rs):
+  the fix is applied to a copy of the def's resolved body (HIR), and the
+  whole def is inferred again in a run of its own, against its annotation,
+  as the checker does. The fix is named only when that run has no error.
+  The run is side-effect free, runs only on the error path, once per
+  candidate note, and a run started for a note tries no fix of its own. A
+  value the fix leaves to the user (`err` in `Result.fromMaybe err`) is a
+  typed hole in the re-check, and the note says what it is: "where `err` is
+  the `Error` to report (e.g. `Error.invalidInput "…"`)". The fixes so
+  decided: the conversion of a line or of the `in` body (`Task.fromResult
   (Result.fromMaybe err e)`, `Task.fromResult`, `Result.fromMaybe err`,
-  `Result.toMaybe`) is named when the converted value fits the block. The
-  wrap of the `in` body (`Task.succeed` / `Ok` / `Just` / the home
-  `succeed`) is named when the wrapped value fits. Otherwise the note gives
-  the two types, and, for a function, how many arguments make it fit. "bind
-  it with `a <- e`" is named when `a` is bound with `=` to a value of type
-  `M … x`, the use (a call argument, a field access, an operator operand)
-  refuses `M … x`, and the same use with `x` type-checks.
+  `Result.toMaybe`), the wrap of the `in` body (`Task.succeed` / `Ok` /
+  `Just` / the home `succeed`), and "bind it with `a <- e`" for a name bound
+  with `=` to a value of type `M … x` whose use refuses `M … x` and takes
+  `x`. When no fix checks, the note gives the types and, for a `Maybe`, a
+  `Result` or a `Task`, the idiom in words ("`String.toInt` gives a `Maybe
+  Int`: handle `Nothing` with `case` or `Maybe.withDefault`"); for a
+  function, how many arguments make it fit. A type name in a note takes
+  "a" or "an" by its first sound (`an Int`).
 - Docs: `docs/errors/E2015-*.md`, `E2016-*.md`, the diagnostics registry
   (diagnostics/src/lib.rs ~304) and doc 03 §14.
 

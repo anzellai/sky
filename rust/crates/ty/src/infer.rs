@@ -95,7 +95,7 @@ pub struct Infer<'a> {
     pub(crate) world: &'a World,
     pub(crate) db: &'a dyn SkyDb,
     pub uf: UnionFind,
-    locals: HashMap<LocalId, TyVarId>,
+    pub(crate) locals: HashMap<LocalId, TyVarId>,
     pub errors: Vec<TypeError>,
     /// Per-expression type-var recording — enabled for the lowerer's typed
     /// table (M4). Off by default so the M3 accept-parity path is unchanged.
@@ -196,6 +196,10 @@ pub struct Infer<'a> {
     /// a line of another head is blamed, and the notes try their fixes
     /// against the type the block must have.
     pub(crate) root_bind_block: HashMap<ExprId, TyVarId>,
+    /// This run re-checks a def with a note's fix applied
+    /// (`Infer::fixed_def_checks`): its own notes try no fix of their own,
+    /// so a re-check never starts another.
+    pub(crate) fix_trial: bool,
     /// Per-def entries that take the place of the world's own in its two
     /// lowering-only record channels (see [`RecordOverlay`]).
     overlay: Option<&'a RecordOverlay>,
@@ -274,6 +278,7 @@ impl<'a> Infer<'a> {
             bind_expects: HashMap::new(),
             eq_bound: HashMap::new(),
             root_bind_block: HashMap::new(),
+            fix_trial: false,
             overlay: None,
             #[cfg(test)]
             no_fast_paths: FORCE_GENERAL_PATHS.with(|f| f.get()),
@@ -1811,11 +1816,11 @@ impl<'a> Infer<'a> {
                 let errors_before = self.errors.len();
                 let chosen_before = self.bind_choices.len();
                 self.start_bind(crate::bind::PendingBind {
-                    expected,
                     call: e,
                     callee_ty,
                     e_ty: te,
                     e_errored,
+                    e_expr: ex,
                     e_span: body.expr_span(ex),
                     span,
                     module: self
@@ -1878,7 +1883,7 @@ impl<'a> Infer<'a> {
                             .and_then(|d| self.db.def_loc(d))
                             .map(|l| l.module);
                         let text = self.span_text(module, body.expr_span(fb));
-                        let note = self.body_note(snap, h, tl, tlam, expected, text)?;
+                        let note = self.body_note(snap, h, tl, tlam, expected, fb, text)?;
                         Some((body.expr_span(fb), note))
                     });
                 if refused || rest_errored {

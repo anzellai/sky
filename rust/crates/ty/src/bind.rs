@@ -57,11 +57,10 @@ pub(crate) struct PendingBind {
     pub module: Option<ModuleId>,
     /// `p <- …` as written, for the message (a simple pattern only).
     pub pat_text: String,
+    /// The expression after `<-`.
+    pub e_expr: ExprId,
     /// The span of the expression after `<-`, to quote it in a message.
     pub e_span: Option<Span>,
-    /// The annotated result, when the block is the whole body of an
-    /// annotated def: a note tries its fix against it.
-    pub expected: Option<TyVarId>,
 }
 
 /// The first bind line of each block in tail position of `root`: the whole
@@ -94,6 +93,8 @@ pub(crate) fn root_bind_calls(body: &Body, root: ExprId) -> Vec<ExprId> {
 /// at one use ([`Infer::eq_bound_value`]).
 pub(crate) struct EqBound {
     name: Name,
+    /// The local `name` binds.
+    local: hir::LocalId,
     /// The expression after `=`.
     rhs: ExprId,
     /// `M`.
@@ -332,6 +333,105 @@ impl NoAndThen {
     }
 }
 
+/// "a" or "an" before a type name, by the sound of its first letter
+/// (`an Int`, `a Maybe`, `a Unit`).
+pub(crate) fn article(name: &str) -> &'static str {
+    let mut cs = name.chars().map(|c| c.to_ascii_lowercase());
+    match (cs.next(), cs.next()) {
+        // `Url`, `Unit`, `User`, `Uuid` start with the sound "you".
+        (Some('u'), Some('n' | 'r' | 's' | 'u' | 't')) => "a",
+        (Some('a' | 'e' | 'i' | 'o' | 'u'), _) => "an",
+        _ => "a",
+    }
+}
+
+/// A copy of one def's resolved body with a note's fix applied, to re-check
+/// the whole def with it ([`Infer::fixed_def_checks`]). Fresh locals no
+/// pattern binds stand for a value the fix leaves to the user (`err` in
+/// `Result.fromMaybe err`): a typed hole, which takes the type its use
+/// needs. A seeded local is a value of a known scheme (`Just`, `Ok`).
+pub(crate) struct FixedBody {
+    body: Body,
+    seeds: Vec<(hir::LocalId, crate::Scheme)>,
+    next_local: u32,
+}
+
+impl FixedBody {
+    fn new(body: &Body) -> Self {
+        FixedBody {
+            body: body.clone(),
+            seeds: Vec::new(),
+            next_local: u32::MAX,
+        }
+    }
+
+    fn fresh_local(&mut self) -> hir::LocalId {
+        let l = hir::LocalId(self.next_local);
+        self.next_local -= 1;
+        l
+    }
+
+    /// A typed hole: a value of the type its use needs.
+    fn hole(&mut self) -> ExprId {
+        let l = self.fresh_local();
+        self.body.expr(Expr::Var(Res::Local(l)))
+    }
+
+    /// A value of type `scheme` (a constructor such as `Just`).
+    fn seeded(&mut self, scheme: crate::Scheme) -> ExprId {
+        let l = self.fresh_local();
+        self.seeds.push((l, scheme));
+        self.body.expr(Expr::Var(Res::Local(l)))
+    }
+
+    /// Replace the expression at `at` with `f args… (old)`.
+    fn wrap(&mut self, at: ExprId, f: ExprId, mut args: Vec<ExprId>) {
+        let old = self.body.exprs[at].clone();
+        let moved = self.body.expr(old);
+        if let Some(sp) = self.body.expr_span(at) {
+            self.body.expr_spans.insert(moved, sp);
+        }
+        args.push(moved);
+        self.body.exprs[at] = Expr::Call(f, args);
+    }
+
+    /// Turn the `let` line `local = rhs` into the bind line `local <- rhs`,
+    /// the first line of its segment's continuation. `None` when the line
+    /// is not found.
+    fn bind_line(&mut self, local: hir::LocalId, rhs: ExprId) -> Option<()> {
+        let (at, defs, rest) = self.body.exprs.iter().find_map(|(id, e)| match e {
+            Expr::Let { defs, body } => defs
+                .iter()
+                .any(|d| {
+                    d.body == rhs
+                        && d.params.is_empty()
+                        && d.pat.is_none()
+                        && matches!(d.binders.as_slice(), [(_, l)] if *l == local)
+                })
+                .then(|| (id, defs.clone(), *body)),
+            _ => None,
+        })?;
+        let others: Vec<hir::LocalDef> = defs.into_iter().filter(|d| d.body != rhs).collect();
+        let pat = self.body.pat(Pattern::Var(local));
+        let lam = self.body.expr(Expr::Lambda {
+            params: vec![pat],
+            body: rest,
+        });
+        let head = self.body.expr(Expr::Var(Res::BindAndThen));
+        let call = Expr::Call(head, vec![lam, rhs]);
+        self.body.exprs[at] = if others.is_empty() {
+            call
+        } else {
+            let call = self.body.expr(call);
+            Expr::Let {
+                defs: others,
+                body: call,
+            }
+        };
+        Some(())
+    }
+}
+
 /// The outcome of one attempt to choose a bind line's `andThen`.
 enum Attempt {
     /// The head is still unknown: try again later.
@@ -537,6 +637,150 @@ impl<'a> Infer<'a> {
             .unwrap_or_else(|| fallback.to_string())
     }
 
+    /// The resolved body of the def under inference, the one the checker
+    /// reports on.
+    fn own_body(&self) -> Option<(Arc<hir::ResolveResult>, DefId)> {
+        let def = self.self_def?;
+        let module = self.db.def_loc(def)?.module;
+        let resolved = self.db.resolve(module);
+        resolved
+            .bodies
+            .contains_key(&def)
+            .then_some((resolved, def))
+    }
+
+    /// THE test for a note that names a code fix: apply the fix with `edit`
+    /// to a copy of the def's body, and infer the WHOLE def again in a run of
+    /// its own (against its annotation when it has one), as the checker
+    /// does. The fix is named only when that run has no error at all, so a
+    /// fix that clears this clash but breaks another line of the same def is
+    /// never shown. Nothing of the run is kept. One run per candidate note,
+    /// only after an error; a run started here tries no fix of its own.
+    pub(crate) fn fixed_def_checks(&self, edit: impl FnOnce(&mut FixedBody) -> Option<()>) -> bool {
+        if self.fix_trial {
+            return false;
+        }
+        let Some((resolved, def)) = self.own_body() else {
+            return false;
+        };
+        let Some(orig) = resolved.bodies.get(&def) else {
+            return false;
+        };
+        let mut fixed = FixedBody::new(orig);
+        if edit(&mut fixed).is_none() {
+            return false;
+        }
+        let mut run = Infer::new(self.world, self.db).with_self_def(Some(def));
+        run.fix_trial = true;
+        for (l, scheme) in &fixed.seeds {
+            let v = run.instantiate(scheme);
+            run.locals.insert(*l, v);
+        }
+        match self.world.value_sigs.get(&def) {
+            Some(scheme) => {
+                let scheme = scheme.clone();
+                run.infer_def_against(&fixed.body, &scheme);
+            }
+            None => {
+                run.infer_def(&fixed.body);
+            }
+        }
+        run.errors.is_empty()
+    }
+
+    /// The `Var` of the exposed value `name` of `module`, in `fixed`.
+    fn exposed_var(&self, fixed: &mut FixedBody, module: &str, name: &str) -> Option<ExprId> {
+        let mid = self.db.module_by_name(module)?;
+        let def = self.db.module_exports(mid).value(name)?;
+        Some(fixed.body.expr(Expr::Var(Res::Def(def))))
+    }
+
+    /// Apply the conversion `chain` to the expression at `at` in `fixed`,
+    /// a typed hole for each leading argument it leaves to the user.
+    fn apply_chain_at(
+        &self,
+        fixed: &mut FixedBody,
+        at: ExprId,
+        chain: &[(&str, &str, usize)],
+    ) -> Option<()> {
+        for (module, name, holes) in chain {
+            let f = self.exposed_var(fixed, module, name)?;
+            let args = (0..*holes).map(|_| fixed.hole()).collect();
+            fixed.wrap(at, f, args);
+        }
+        Some(())
+    }
+
+    /// The words after a conversion that leaves `err` to the user: what
+    /// `err` is, with an example when the block's error type is `Error`.
+    fn err_placeholder(&self, block_ty: &Ty) -> String {
+        let err = match block_ty {
+            Ty::App(_, args) if args.len() == 2 => Some(&args[0]),
+            _ => None,
+        };
+        match err {
+            Some(Ty::App(n, a)) if a.is_empty() && nominal::strip(n.as_str()) != "Error" => {
+                let t = nominal::strip(n.as_str());
+                format!(", where `err` is the `{t}` to report")
+            }
+            _ => {
+                let q = self
+                    .db
+                    .module_by_name("Sky.Core.Error")
+                    .map(|mid| self.qualifier_of(mid, "Error"))
+                    .unwrap_or_else(|| "Error".to_string());
+                format!(", where `err` is the `Error` to report (e.g. `{q}.invalidInput \"…\"`)")
+            }
+        }
+    }
+
+    /// The plain note for a value of type `ty` (head `head`) used where its
+    /// result is needed and no fix checks: the types, and the idiom that
+    /// takes the result out, in words. `who` names the value (`` `a` `` or
+    /// the function that gives it).
+    fn result_idiom(&self, who: &str, head: &str, ty: &Ty) -> String {
+        let q = |m: &str, f: &str| -> String {
+            self.db
+                .module_by_name(m)
+                .map(|mid| self.qualifier_of(mid, f))
+                .unwrap_or_else(|| f.to_string())
+        };
+        let shown = ty.render_pretty();
+        let a = article(&shown);
+        match nominal::strip(head) {
+            "Maybe" => format!(
+                "{who} gives {a} `{shown}`: handle `Nothing` with `case` or `{}.withDefault`.",
+                q("Sky.Core.Maybe", "Maybe")
+            ),
+            "Result" => format!(
+                "{who} gives {a} `{shown}`: handle `Err` with `case` or `{}.withDefault`.",
+                q("Sky.Core.Result", "Result")
+            ),
+            "Task" => format!(
+                "{who} gives {a} `{shown}`: its result is available only inside a `Task` \
+                 chain (`{}.andThen`, or a block of `Task` bind lines).",
+                q("Sky.Core.Task", "Task")
+            ),
+            _ => format!("{who} gives {a} `{shown}`, not its result."),
+        }
+    }
+
+    /// How a note names the value `rhs` gives: the called function
+    /// (`` `String.toInt` ``), else the value's own text.
+    fn giver_text(&self, body: &Body, rhs: ExprId) -> String {
+        let module = self
+            .self_def
+            .and_then(|d| self.db.def_loc(d))
+            .map(|l| l.module);
+        let at = match &body.exprs[rhs] {
+            Expr::Call(f, _) => *f,
+            _ => rhs,
+        };
+        self.span_text(module, body.expr_span(at))
+            .map(|t| format!("`{t}`"))
+            .unwrap_or_else(|| "The value".to_string())
+    }
+
     /// Run `f` on a copy of `snap` (a union-find taken before a failed
     /// unification), then put every piece of inference state `f` may touch
     /// back as it was. A note that names a fix is decided this way: the fix
@@ -570,40 +814,12 @@ impl<'a> Infer<'a> {
         })
     }
 
-    fn fun_var(&mut self, from: TyVarId, to: TyVarId) -> TyVarId {
-        self.uf.fresh(Content::Structure(FlatTy::Fun(from, to)))
-    }
-
     /// The head and the last argument of the application `v`, when it is one.
     fn app_parts(&mut self, v: TyVarId) -> Option<(Name, TyVarId)> {
         match self.uf.content(v) {
             Content::Structure(FlatTy::App(n, args)) => args.last().map(|l| (n, *l)),
             _ => None,
         }
-    }
-
-    /// The type of `chain` applied to a value of type `v`, on the current
-    /// union-find: each `(module, function, holes)` is applied after `holes`
-    /// leading arguments of any type (`err` in `Result.fromMaybe err`).
-    /// `None` when a step does not type-check.
-    fn apply_chain(&mut self, v: TyVarId, chain: &[(&str, &str, usize)]) -> Option<TyVarId> {
-        let mut cur = v;
-        for (module, name, holes) in chain {
-            let mid = self.db.module_by_name(module)?;
-            let def = self.db.module_exports(mid).value(name)?;
-            let mut f = self.infer_res(Res::Def(def));
-            for _ in 0..*holes {
-                let (h, r) = (self.uf.fresh_flex(), self.uf.fresh_flex());
-                let want = self.fun_var(h, r);
-                self.uf.unify(f, want).ok()?;
-                f = r;
-            }
-            let r = self.uf.fresh_flex();
-            let want = self.fun_var(cur, r);
-            self.uf.unify(f, want).ok()?;
-            cur = r;
-        }
-        Some(cur)
     }
 
     /// The conversion of a value of head `from` into head `to`, as the
@@ -613,7 +829,7 @@ impl<'a> Infer<'a> {
         from: &str,
         to: &str,
         arg: &str,
-    ) -> Option<(Vec<(&'static str, &'static str, usize)>, String)> {
+    ) -> Option<(Vec<(&'static str, &'static str, usize)>, String, bool)> {
         let q = |m: &str, f: &str| -> String {
             self.db
                 .module_by_name(m)
@@ -629,18 +845,22 @@ impl<'a> Infer<'a> {
                     ("Sky.Core.Task", "fromResult", 0),
                 ],
                 format!("{}.fromResult ({}.fromMaybe err {arg})", task(), result()),
+                true,
             ),
             ("Result", "Task") => (
                 vec![("Sky.Core.Task", "fromResult", 0)],
                 format!("{}.fromResult {arg}", task()),
+                false,
             ),
             ("Maybe", "Result") => (
                 vec![("Sky.Core.Result", "fromMaybe", 1)],
                 format!("{}.fromMaybe err {arg}", result()),
+                true,
             ),
             ("Result", "Maybe") => (
                 vec![("Sky.Core.Result", "toMaybe", 0)],
                 format!("{}.toMaybe {arg}", result()),
+                false,
             ),
             _ => return None,
         })
@@ -664,6 +884,7 @@ impl<'a> Infer<'a> {
         lam: TyVarId,
         want: TyVarId,
         expected: Option<TyVarId>,
+        fb: ExprId,
         body_text: Option<String>,
     ) -> Option<String> {
         let (prepared, body_ty, block_ty, bv, rv, body_head) = self.on_snapshot(snap, |s| {
@@ -699,21 +920,40 @@ impl<'a> Infer<'a> {
             .as_deref()
             .filter(|h| !nominal::same(h, block_head))
         {
-            if let Some((chain, text)) = self.conversion(nominal::strip(h), &b, &arg) {
-                let fits = self.fits_on(snap, |s| {
-                    s.apply_chain(bv, &chain)
-                        .is_some_and(|c| s.uf.unify(c, rv).is_ok())
-                });
-                if fits {
-                    return Some(format!("{intro} To fix it, convert it: `{text}`."));
+            if let Some((chain, text, err)) = self.conversion(nominal::strip(h), &b, &arg) {
+                if self.fixed_def_checks(|f| self.apply_chain_at(f, fb, &chain)) {
+                    let err = if err {
+                        self.err_placeholder(&block_ty)
+                    } else {
+                        String::new()
+                    };
+                    return Some(format!("{intro} To fix it, convert it: `{text}`{err}."));
                 }
             }
         }
         // A wrap of a plain value, when the wrapped value fits.
+        // Each is a `Res::Def` (`Task.succeed`, the home `succeed`) or a
+        // builtin constructor's scheme (`Ok`, `Just`).
+        enum Wrap {
+            Def(DefId),
+            Ctor(crate::Scheme),
+        }
         let wrap = match b.as_str() {
-            "Task" => Some(("Task.succeed".to_string(), None)),
-            "Result" => Some(("Ok".to_string(), None)),
-            "Maybe" => Some(("Just".to_string(), None)),
+            "Task" => self
+                .db
+                .module_by_name("Sky.Core.Task")
+                .and_then(|m| self.db.module_exports(m).value("succeed"))
+                .map(|d| ("Task.succeed".to_string(), Wrap::Def(d))),
+            "Result" => self
+                .world
+                .ctors
+                .get("Ok")
+                .map(|s| ("Ok".to_string(), Wrap::Ctor(s.clone()))),
+            "Maybe" => self
+                .world
+                .ctors
+                .get("Just")
+                .map(|s| ("Just".to_string(), Wrap::Ctor(s.clone()))),
             _ => self.home_exposes(block_head, "succeed").and_then(|mid| {
                 let def = self.db.module_exports(mid).value("succeed")?;
                 let fallback = if b == "Decoder" {
@@ -723,23 +963,18 @@ impl<'a> Infer<'a> {
                 };
                 Some((
                     format!("{}.succeed", self.qualifier_of(mid, &fallback)),
-                    Some(def),
+                    Wrap::Def(def),
                 ))
             }),
         };
-        if let Some((wrap, def)) = wrap {
-            let fits = self.fits_on(snap, |s| match def {
-                // The home `succeed` itself, instantiated and applied.
-                Some(def) => {
-                    let f = s.infer_res(Res::Def(def));
-                    let want = s.fun_var(bv, rv);
-                    s.uf.unify(f, want).is_ok()
-                }
-                // `Task.succeed`, `Ok`, `Just`: `a -> M … a`, so the body
-                // fits when it unifies with the block's last argument.
-                None => s
-                    .app_parts(rv)
-                    .is_some_and(|(_, r)| s.uf.unify(bv, r).is_ok()),
+        if let Some((wrap, how)) = wrap {
+            let fits = self.fixed_def_checks(|f| {
+                let callee = match how {
+                    Wrap::Def(d) => f.body.expr(Expr::Var(Res::Def(d))),
+                    Wrap::Ctor(s) => f.seeded(s),
+                };
+                f.wrap(fb, callee, Vec::new());
+                Some(())
             });
             if fits {
                 return Some(format!(
@@ -791,6 +1026,7 @@ impl<'a> Infer<'a> {
         self.home_exposes(head.as_str(), "andThen")?;
         Some(EqBound {
             name,
+            local: *l,
             rhs,
             head: head.as_str().to_string(),
             inner,
@@ -827,18 +1063,30 @@ impl<'a> Infer<'a> {
         if self.fits_on(snap, |s| fits(s, c.ty)) || !self.fits_on(snap, |s| fits(s, c.inner)) {
             return None;
         }
-        let module = self
-            .self_def
-            .and_then(|d| self.db.def_loc(d))
-            .map(|l| l.module);
-        let rhs_text = self
-            .span_text(module, body.expr_span(c.rhs))
-            .unwrap_or_else(|| "…".to_string());
+        // The bind line is named only when the whole def checks with it: in
+        // a block of another type, or a body that is not a block of that
+        // type, it moves the clash elsewhere.
+        if self.fixed_def_checks(|f| f.bind_line(c.local, c.rhs)) {
+            let module = self
+                .self_def
+                .and_then(|d| self.db.def_loc(d))
+                .map(|l| l.module);
+            let rhs_text = self
+                .span_text(module, body.expr_span(c.rhs))
+                .unwrap_or_else(|| "…".to_string());
+            let head = nominal::strip(&c.head);
+            return Some(format!(
+                "\n\nNote: `{}` is {} `{head}`; to use its result, bind it with `{} <- {rhs_text}`.",
+                c.name.as_str(),
+                article(head),
+                c.name.as_str()
+            ));
+        }
+        let ty = self.on_snapshot(snap, |s| s.read_back(c.ty));
+        let who = self.giver_text(body, c.rhs);
         Some(format!(
-            "\n\nNote: `{}` is a `{}`; to use its result, bind it with `{} <- {rhs_text}`.",
-            c.name.as_str(),
-            nominal::strip(&c.head),
-            c.name.as_str()
+            "\n\nNote: {}",
+            self.result_idiom(&who, &c.head, &ty)
         ))
     }
 
@@ -857,7 +1105,8 @@ impl<'a> Infer<'a> {
         let b = nominal::strip(block).to_string();
         let plain = format!(
             "\n\nNote: this bind line chains with the `andThen` of `{shown}`, and the block \
-             is a `{b}` block. One block of bind lines chains one type."
+             is {} `{b}` block. One block of bind lines chains one type.",
+            article(&b)
         );
         let e_text = self
             .span_text(pb.module, pb.e_span)
@@ -867,43 +1116,43 @@ impl<'a> Infer<'a> {
         } else {
             e_text
         };
-        let Some((chain, text)) = self.conversion(&shown, &b, &arg) else {
-            return plain;
-        };
-        let Some(and_then) = self
-            .home_exposes(block, "andThen")
-            .and_then(|mid| self.db.module_exports(mid).value("andThen"))
-        else {
-            return plain;
-        };
-        let (e_ty, callee, expected) = (pb.e_ty, pb.callee_ty, pb.expected);
-        let fits = self.fits_on(snap, |s| {
-            let Some((lam, rest)) = s.fun_parts(callee) else {
-                return false;
-            };
-            let Some((_, result)) = s.fun_parts(rest) else {
-                return false;
-            };
-            if let Some(x) = expected {
-                if s.uf.unify(result, x).is_err() {
-                    return false;
+        // With no fix that checks: the idiom that takes a `Maybe` or a
+        // `Result` apart, in words.
+        let idiom: String = {
+            let e_ty = self.on_snapshot(snap, |s| s.read_back(pb.e_ty));
+            match shown.as_str() {
+                "Maybe" | "Result" => {
+                    let who = self
+                        .own_body()
+                        .and_then(|(r, d)| r.bodies.get(&d).map(|b| self.giver_text(b, pb.e_expr)));
+                    format!(
+                        "{plain} {}",
+                        self.result_idiom(&who.unwrap_or_else(|| "It".to_string()), &shown, &e_ty)
+                    )
                 }
+                _ => plain.clone(),
             }
-            let Some(conv) = s.apply_chain(e_ty, &chain) else {
-                return false;
+        };
+        let Some((chain, text, err)) = self.conversion(&shown, &b, &arg) else {
+            return idiom;
+        };
+        if self.fixed_def_checks(|f| self.apply_chain_at(f, pb.e_expr, &chain)) {
+            let err = if err {
+                let block_ty = self.on_snapshot(snap, |s| {
+                    let (_, rest) = s.fun_parts(pb.callee_ty)?;
+                    let (_, result) = s.fun_parts(rest)?;
+                    Some(s.read_back(result))
+                });
+                self.err_placeholder(&block_ty.unwrap_or(Ty::Error))
+            } else {
+                String::new()
             };
-            let f = s.infer_res(Res::Def(and_then));
-            let rest = s.fun_var(conv, result);
-            let want = s.fun_var(lam, rest);
-            s.uf.unify(f, want).is_ok()
-        });
-        if fits {
             format!(
-                "{plain} To fix it, convert the line: `{} <- {text}`.",
+                "{plain} To fix it, convert the line: `{} <- {text}`{err}.",
                 pb.pat_text
             )
         } else {
-            plain
+            idiom
         }
     }
 
@@ -1029,7 +1278,8 @@ pub(crate) fn other_head(t: &Ty, head: &str) -> bool {
 pub(crate) fn mixed_note(head: &str) -> String {
     format!(
         "\n\nNote: this bind line chains with the `andThen` of `{head}`, so the rest of the \
-         block must be a `{head}` too. One block of bind lines chains one type."
+         block must be {} `{head}` too. One block of bind lines chains one type.",
+        article(head)
     )
 }
 
