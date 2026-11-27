@@ -529,11 +529,11 @@ broadcast req =
             Maybe.withDefault "relay.events" (Server.queryParam "topic" req)
         payload = String.trim req.body
     in
-        PubSub.publish topic payload
-            |> Task.andThen
-                   (\n ->
-                       PubSub.publishNoEcho topic payload
-                           |> Task.andThen (\m -> broadcastOk topic (n + m)))
+        (let
+            n <- PubSub.publish topic payload
+            m <- PubSub.publishNoEcho topic payload
+        in
+            broadcastOk topic (n + m))
             |> Task.onError (\e -> broadcastUnavailable topic e)
 
 

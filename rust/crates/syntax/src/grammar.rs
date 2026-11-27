@@ -605,6 +605,7 @@ fn pattern_paren(p: &mut Parser) -> CompletedMarker {
     }
     let is_tuple = p.with_indent(0, |p| {
         pattern(p);
+        misplaced_bind(p);
         let mut tuple = false;
         while p.at(Comma) {
             tuple = true;
@@ -613,6 +614,7 @@ fn pattern_paren(p: &mut Parser) -> CompletedMarker {
                 break;
             }
             pattern(p);
+            misplaced_bind(p);
         }
         p.expect(RParen);
         tuple
@@ -626,11 +628,13 @@ fn pattern_list(p: &mut Parser) -> CompletedMarker {
     p.with_indent(0, |p| {
         if !p.at(RBrack) {
             pattern(p);
+            misplaced_bind(p);
             while p.eat(Comma) {
                 if p.at(RBrack) {
                     break;
                 }
                 pattern(p);
+                misplaced_bind(p);
             }
         }
         p.expect(RBrack);
@@ -647,6 +651,7 @@ fn pattern_record(p: &mut Parser) -> CompletedMarker {
                 break;
             }
             p.expect(LowerIdent);
+            misplaced_bind(p);
             if !p.eat(Comma) {
                 break;
             }
@@ -1026,7 +1031,7 @@ fn record_expr(p: &mut Parser) -> CompletedMarker {
             }
             let fm = p.start();
             p.expect(LowerIdent);
-            p.expect(Eq);
+            expect_eq(p);
             expr(p);
             fm.complete(p, RecordField);
             if !p.eat(Comma) {
@@ -1053,6 +1058,7 @@ fn lambda_expr(p: &mut Parser) -> CompletedMarker {
         pattern_app(p);
     }
     pl.complete(p, ParamList);
+    misplaced_bind(p);
     p.expect(Arrow);
     expr(p);
     m.complete(p, LambdaExpr)
@@ -1124,6 +1130,21 @@ fn expect_eq(p: &mut Parser) {
         p.err_and_bump(BIND_OUTSIDE_LET);
     } else {
         p.expect(Eq);
+    }
+}
+
+/// A `<-` after a pattern or a parameter list where no bind line can be (a
+/// case-arm pattern, a lambda or function parameter, a pattern inside
+/// brackets): the bind-line misuse. The `<-` and the expression after it go
+/// into one ERROR node with the bind-line diagnostic, so the misuse gives one
+/// diagnostic and the rest of the construct still parses.
+fn misplaced_bind(p: &mut Parser) {
+    if p.at(LArrow) {
+        let m = p.start();
+        p.error(BIND_OUTSIDE_LET);
+        p.bump(); // <-
+        expr(p);
+        m.complete(p, Error);
     }
 }
 
@@ -1224,6 +1245,7 @@ fn case_expr(p: &mut Parser) -> CompletedMarker {
 fn match_arm(p: &mut Parser, pat_col: u32) {
     let m = p.start();
     pattern(p);
+    misplaced_bind(p);
     p.expect(Arrow);
     // arm body binds `withIndent (max patCol bodyCol)` so the next sibling arm
     // is not slurped into this body (doc 03 §5.5).

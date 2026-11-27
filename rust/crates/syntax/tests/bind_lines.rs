@@ -186,3 +186,34 @@ fn annotation_directly_before_a_bind_line_is_refused() {
     // An annotation before an `=` line, then a bind line, is fine.
     assert_clean("x =\n    let\n        a : Int\n        a = 1\n        b <- t\n    in\n    b\n");
 }
+
+#[test]
+fn larrow_in_a_record_field_is_a_parse_error() {
+    assert_one_error("r =\n    { a <- Just 1 }\n", BIND_HINT);
+    assert_one_error("r =\n    { a = 1, b <- Just 2 }\n", BIND_HINT);
+    assert_one_error("r =\n    { m | a <- Just 1 }\n", BIND_HINT);
+}
+
+#[test]
+fn larrow_in_a_case_arm_pattern_is_a_parse_error() {
+    assert_one_error("x =\n    case m of\n        Just x <- m -> x\n", BIND_HINT);
+    assert_one_error(
+        "x =\n    case m of\n        Just x <- m -> x\n        Nothing -> 0\n",
+        BIND_HINT,
+    );
+}
+
+#[test]
+fn larrow_in_a_lambda_parameter_is_a_parse_error() {
+    assert_one_error("f =\n    \\x <- Just 1\n", BIND_HINT);
+    assert_one_error("f =\n    \\x <- Just 1 -> x\n", BIND_HINT);
+}
+
+#[test]
+fn larrow_in_a_function_parameter_is_a_parse_error() {
+    assert_one_error("f (x <- m) = x\n", BIND_HINT);
+    assert_one_error(
+        "x =\n    let\n        f (y <- m) = y\n    in\n    f\n",
+        BIND_HINT,
+    );
+}
