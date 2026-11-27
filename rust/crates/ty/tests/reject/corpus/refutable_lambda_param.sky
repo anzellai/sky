@@ -1,0 +1,19 @@
+-- gate: reject
+-- defect: a refutable pattern as a lambda parameter
+-- rust: reject [E3001] a binder pattern must match every value; use `case`
+--
+-- Before v0.32.0 `\(Just x) -> x` applied to `Nothing` returned `0`: the
+-- lambda had no second branch, and the generated code read a zero value.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+f : Maybe Int -> Int
+f =
+    \(Just x) -> x
+
+
+main =
+    println (String.fromInt (f Nothing))

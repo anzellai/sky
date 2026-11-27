@@ -1,0 +1,22 @@
+-- gate: reject
+-- defect: a refutable pattern as a `let` destructure
+-- rust: reject [E3001] a binder pattern must match every value; use `case`
+--
+-- Before v0.32.0 `let (Just x) = m in x` with `m = Nothing` panicked at run
+-- time: a destructure has no second branch to take.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+g : Maybe Int -> Int
+g m =
+    let
+        (Just x) = m
+    in
+        x
+
+
+main =
+    println (String.fromInt (g Nothing))

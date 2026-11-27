@@ -170,7 +170,9 @@ signature, result included; an integer out of range across the boundary is an
 Among them: `Std.Db.Decode` has its own `Decoder` type, and the bare `Decoder`
 (written with no import) is the JSON decoder, so a row, TOML or XML decoder
 written as the bare `Decoder` is `[E2001]` (write `DbDecode.Decoder`,
-`Config.Decoder`, `XmlDecode.Decoder`).
+`Config.Decoder`, `XmlDecode.Decoder`). A pattern in a lambda or
+function parameter or a `let` destructure must match every value: `\(Just x)
+-> x` is `[E3001]`, use `case`.
 
 **Upgrading a v0.30 project?** `docs/migration/v0.31.md` lists every change,
 split into loud, loud at run time and silent. Among them: `Codec.dict` with a

@@ -31,6 +31,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Sky.Core.Json.Decode`, `Std.Db.Decode` and `Std.Config` each export a
   `Decoder`. A module that exposes two of them with `(..)` and writes the bare
   name gets `[E1012]`. Qualify it.
+- **A pattern in a binder position must match every value.** A lambda
+  parameter, a function parameter (top level or in a `let`) and a `let`
+  destructure have no second branch. Before, `\(Just x) -> x` applied to
+  `Nothing` silently returned `0`, and `let (Just x) = m in x` panicked. A
+  pattern there that can fail (a literal, a list or cons pattern, a `Bool`, a
+  constructor of a type with two or more variants) is now `[E3001]` with the
+  hint to use `case`. Variables, `_`, `()`, records, tuples, aliases and the
+  constructor of a one-variant type stay accepted, also nested.
 
 ## v0.31.2 — the app icon reaches Std.App mobile releases (2026-11-24)
 

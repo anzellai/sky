@@ -102,6 +102,29 @@ fn a_body_that_contradicts_its_annotation_is_refused() {
     );
 }
 
+/// v0.32.0: a refutable pattern in a binder position is `[E3001]`, a hard
+/// error in every build, so the stdlib gate counts it although the checker
+/// reports `[E3001]` at warning severity.
+#[test]
+fn a_refutable_binder_in_a_stdlib_body_is_refused() {
+    let world = overlay("Sky.Core.Maybe", |src| {
+        format!(
+            "{src}\n\nprobeRefutable : Maybe Int -> Int\nprobeRefutable =\n    \\(Just x) -> x\n"
+        )
+    });
+    let report = check_stdlib_modules(&world);
+    let errs: Vec<&String> = report
+        .modules
+        .iter()
+        .filter(|m| m.module == "Sky.Core.Maybe")
+        .flat_map(|m| &m.errors)
+        .collect();
+    assert!(
+        errs.iter().any(|e| e.contains("[E3001]")),
+        "refutable stdlib binder not refused: {errs:?}"
+    );
+}
+
 /// `Sky.Ffi` stays a user-code rule: the stdlib is granted it.
 #[test]
 fn the_stdlib_keeps_its_ffi_grant() {

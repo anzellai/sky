@@ -50,6 +50,9 @@ pub use sig::{
     variant_arg_types_qualified, wants_callsite_harvest, CallerParamRecords, ParamRecordSeen,
     World, WorldDecls,
 };
+// The one irrefutability check (v0.32.0): every binder position, including the
+// bind lines of a `let` block, calls it.
+pub use exhaustive::{check_binder, first_refutable, Binder};
 pub use unify::{SuperType, UnionFind};
 
 /// An arena-allocated type-variable id. Replaces `UF.Point` pointer identity

@@ -170,7 +170,10 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// `Live.withOnNavigate` and a raw `Spa.withOnNavigate`).
 /// **119 since v0.32.0**: a `Std.Db.Decode` row decoder passed to
 /// `Json.Decode.decodeString` (`db_decoder_is_not_a_json_decoder.sky`).
-pub const EXPECTED_CORPUS_FILES: usize = 119;
+/// **123 since v0.32.0**: a refutable pattern as a lambda parameter, a
+/// top-level parameter, a `let` function parameter and a `let` destructure
+/// (the four `refutable_*.sky` files).
+pub const EXPECTED_CORPUS_FILES: usize = 123;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -208,7 +211,8 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// **66 since v0.30.0** (the four served-app `routed_page_*.sky` files).
 /// **71 since v0.30.0** (the five `withOnNavigate` `routed_page_*.sky` files).
 /// **72 since v0.32.0** (`db_decoder_is_not_a_json_decoder.sky`).
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 72;
+/// **76 since v0.32.0** (the four `refutable_*.sky` files).
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 76;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

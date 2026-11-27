@@ -2,20 +2,125 @@
 //! conservative-but-real: **only ADT-constructor and Bool heads force
 //! coverage** — a wildcard/var/irrefutable head covers the rest, and
 //! infinite-domain literal (Int/String/…) and list heads are NOT forced (we do
-//! not over-report). Warns `E3001` on a genuine missing constructor.
+//! not over-report). Warns `E3001` on a genuine missing constructor, and on a
+//! refutable pattern in a binder position ([`check_binder`], v0.32.0).
 
 use crate::sig::World;
 use hir::{Body, Expr, ExprId, PatId, Pattern};
 use std::collections::BTreeSet;
 
 /// Walk every `case` in a body, returning one `E3001` diagnostic per
-/// non-exhaustive ADT/Bool match.
+/// non-exhaustive ADT/Bool match, and one per refutable pattern in a binder
+/// position (a parameter or a `let` destructure, see [`check_binder`]).
 pub fn check_body(body: &Body, world: &World) -> Vec<diagnostics::Diagnostic> {
     let mut out = Vec::new();
+    for &p in &body.params {
+        check_binder(body, world, p, Binder::Parameter, &mut out);
+    }
     if let Some(root) = body.root {
         walk(body, world, root, &mut out);
     }
     out
+}
+
+/// Where a pattern binds with no second branch to fall back on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Binder {
+    /// A parameter of a top-level or `let`-bound function.
+    Parameter,
+    /// A lambda parameter.
+    LambdaParameter,
+    /// The pattern of a `let` destructure (`let ( a, b ) = pair`).
+    LetDestructure,
+    /// The pattern of a bind line in a `let` block (v0.32.0).
+    BindLine,
+}
+
+impl Binder {
+    fn describe(self) -> &'static str {
+        match self {
+            Binder::Parameter => "a function parameter",
+            Binder::LambdaParameter => "a lambda parameter",
+            Binder::LetDestructure => "a `let` destructure",
+            Binder::BindLine => "a bind line",
+        }
+    }
+}
+
+/// The first sub-pattern of `p` that can fail to match a value of its type,
+/// or `None` when `p` matches every value (it is IRREFUTABLE).
+///
+/// Total: a variable, `_`, `()`, a record pattern, a tuple or an alias of
+/// total patterns, and a constructor of a ONE-variant union whose arguments
+/// are total. The union is found through `CtorRef::type_` (its `DefId`), never
+/// by name (doc 13, D1). Refutable: a literal, a `Bool`, a list or cons
+/// pattern, a constructor of a union with two or more variants, and a
+/// constructor that did not resolve. `Pattern::Error` counts as total, so a
+/// parse error is not reported a second time.
+pub fn first_refutable(body: &Body, world: &World, p: PatId) -> Option<PatId> {
+    match &body.pats[p] {
+        Pattern::Anything | Pattern::Var(_) | Pattern::Unit | Pattern::Record(_) => None,
+        Pattern::Error => None,
+        Pattern::Alias(inner, _) => first_refutable(body, world, *inner),
+        Pattern::Tuple(xs) => xs.iter().find_map(|&x| first_refutable(body, world, x)),
+        Pattern::Ctor { ctor, args, .. } => {
+            let one_variant = ctor
+                .as_ref()
+                .and_then(|cr| world.union_members_by_def.get(&cr.type_))
+                .is_some_and(|members| members.len() == 1);
+            if one_variant {
+                args.iter().find_map(|&a| first_refutable(body, world, a))
+            } else {
+                Some(p)
+            }
+        }
+        Pattern::Bool(_)
+        | Pattern::Chr(_)
+        | Pattern::Str(_)
+        | Pattern::Int(_)
+        | Pattern::Float(_)
+        | Pattern::List(_)
+        | Pattern::Cons(..) => Some(p),
+    }
+}
+
+/// Report `[E3001]` when the pattern `p`, in the binder position `at`, can
+/// fail to match. ONE check for every binder position: function parameters,
+/// lambda parameters, `let` destructures and bind lines.
+pub fn check_binder(
+    body: &Body,
+    world: &World,
+    p: PatId,
+    at: Binder,
+    out: &mut Vec<diagnostics::Diagnostic>,
+) {
+    let Some(bad) = first_refutable(body, world, p) else {
+        return;
+    };
+    let labels = body
+        .pat_span(bad)
+        .or_else(|| body.pat_span(p))
+        .map(|span| {
+            vec![diagnostics::Label {
+                span,
+                message: "this pattern does not match every value".to_string(),
+            }]
+        })
+        .unwrap_or_default();
+    out.push(diagnostics::Diagnostic {
+        severity: diagnostics::Severity::Warning,
+        code: diagnostics::Code("E3001".to_string()),
+        message: format!(
+            "This pattern in {} does not match every value, and there is no other branch \
+             to take. Use a `case` with a branch for each shape instead.",
+            at.describe()
+        ),
+        labels,
+        suggestion: Some(
+            "Bind a variable here and match it with `case … of`, which must cover every value."
+                .to_string(),
+        ),
+    });
 }
 
 fn walk(body: &Body, world: &World, e: ExprId, out: &mut Vec<diagnostics::Diagnostic>) {
@@ -51,7 +156,12 @@ fn walk_guarded(body: &Body, world: &World, e: ExprId, out: &mut Vec<diagnostics
             }
         }
         Expr::Negate(x) | Expr::Access(x, _) => walk(body, world, *x, out),
-        Expr::Lambda { body: b, .. } => walk(body, world, *b, out),
+        Expr::Lambda { params, body: b } => {
+            for &p in params {
+                check_binder(body, world, p, Binder::LambdaParameter, out);
+            }
+            walk(body, world, *b, out)
+        }
         Expr::Call(f, args) => {
             walk(body, world, *f, out);
             for &a in args {
@@ -71,6 +181,12 @@ fn walk_guarded(body: &Body, world: &World, e: ExprId, out: &mut Vec<diagnostics
         }
         Expr::Let { defs, body: b } => {
             for d in defs {
+                if let Some(p) = d.pat {
+                    check_binder(body, world, p, Binder::LetDestructure, out);
+                }
+                for &p in &d.params {
+                    check_binder(body, world, p, Binder::Parameter, out);
+                }
                 walk(body, world, d.body, out);
             }
             walk(body, world, *b, out);
