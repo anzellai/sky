@@ -428,11 +428,11 @@ find kind name xs =
 -- is in the outcome (`evalSuite` fails on it).
 evaluate : Pipeline -> String -> EvalRequest -> Task Error EvalOutcome
 evaluate (Pipeline p) name req =
-    find "suite" name p.suites
-        |> Task.andThen
-               (\spec ->
-                   context (Pipeline p) []
-                       |> Task.andThen (\ctx -> evaluateIn ctx spec req))
+    let
+        spec <- find "suite" name p.suites
+        ctx <- context (Pipeline p) []
+    in
+        evaluateIn ctx spec req
 
 type alias Run =
     { label : String
@@ -443,36 +443,16 @@ type alias Run =
 
 evaluateIn : Context -> SuiteSpec -> EvalRequest -> Task Error EvalOutcome
 evaluateIn ctx (SuiteSpec s) req =
-    refuseEnvAdapter s.target req
-        |> Task.andThen (\_ -> candidateRun ctx (SuiteSpec s) req.candidate)
-        |> Task.andThen
-               (\cand ->
-                   baselineRun ctx (SuiteSpec s) cand req.against
-                       |> Task.andThen
-                              (\base ->
-                                  runBaseline ctx (SuiteSpec s) base
-                                      |> Task.andThen
-                                             (\baseReport ->
-                                                 s.runAs
-                                                     cand.label
-                                                     ctx.db
-                                                     cand.provider
-                                                     |> Task.andThen
-                                                            (\report ->
-                                                                attachTo
-                                                                    ctx
-                                                                    cand.version
-                                                                    report
-                                                                    |> Task.map
-                                                                           (\_ ->
-                                                                               outcomeOf
-                                                                                   (SuiteSpec
-                                                                                       s)
-                                                                                   req
-                                                                                   cand
-                                                                                   base
-                                                                                   baseReport
-                                                                                   report)))))
+    let
+        _ <- refuseEnvAdapter s.target req
+        cand <- candidateRun ctx (SuiteSpec s) req.candidate
+        base <- baselineRun ctx (SuiteSpec s) cand req.against
+        baseReport <- runBaseline ctx (SuiteSpec s) base
+        report <- s.runAs cand.label ctx.db cand.provider
+    in
+        attachTo ctx cand.version report
+            |> Task.map
+                   (\_ -> outcomeOf (SuiteSpec s) req cand base baseReport report)
 
 
 runBaseline : Context -> SuiteSpec -> Maybe Run -> Task Error (Maybe Eval.Report)
@@ -696,42 +676,33 @@ evalAgainst p name aliasName =
 -- rows gives the same digest and, registered, the same version number.
 freezeDataset : Pipeline -> String -> Task Error Frozen
 freezeDataset (Pipeline p) name =
-    find "dataset" name p.datasets
-        |> Task.andThen
-               (\spec ->
-                   context (Pipeline p) []
-                       |> Task.andThen (\ctx -> freezeIn ctx name spec))
+    let
+        spec <- find "dataset" name p.datasets
+        ctx <- context (Pipeline p) []
+    in
+        freezeIn ctx name spec
 
 
 freezeIn : Context -> String -> DatasetSpec -> Task Error Frozen
 freezeIn ctx name (DatasetSpec d) =
-    d.freeze ctx (d.folder (Dataset.folder ".sky/ai/datasets" name))
-        |> Task.andThen
-               (\frozen ->
-                   case frozen of
+    let
+        ( m, path ) <-
+            d.freeze ctx (d.folder (Dataset.folder ".sky/ai/datasets" name))
+    in
+        if d.registered then
+            let
+                reg <- ctx.registry
+            in
+                Registry.registerDataset reg m path
+                    |> Task.map
+                           (\dv ->
+                               { manifest = m
+                               , path = path
+                               , registered = Just dv
+                               })
 
-                       ( m, path ) ->
-                           if d.registered then
-                               ctx.registry
-                                   |> Task.andThen
-                                          (\reg ->
-                                              Registry.registerDataset
-                                                  reg
-                                                  m
-                                                  path)
-                                   |> Task.map
-                                          (\dv ->
-                                              { manifest = m
-                                              , path = path
-                                              , registered = Just dv
-                                              })
-
-                           else
-                               Task.succeed
-                                   { manifest = m
-                                   , path = path
-                                   , registered = Nothing
-                                   })
+        else
+            Task.succeed { manifest = m, path = path, registered = Nothing }
 
 
 -- | Start a pipeline slot's engine with its code defaults and return its
@@ -745,8 +716,11 @@ warmSlot (Pipeline p) name =
 -- | Run a pipeline task with arguments.
 runTask : Pipeline -> String -> List String -> Task Error ()
 runTask (Pipeline p) name args =
-    find "task" name p.tasks
-        |> Task.andThen (\f -> context (Pipeline p) args |> Task.andThen f)
+    let
+        f <- find "task" name p.tasks
+        ctx <- context (Pipeline p) args
+    in
+        f ctx
 
 
 -- | Move an alias to a registry version on its attached evidence, compared
@@ -759,17 +733,16 @@ promote p name number aliasName =
 
 promoteWith : Pipeline -> EvalRequest -> String -> Int -> String -> Task Error Registry.AliasEvent
 promoteWith (Pipeline p) req name number aliasName =
-    context (Pipeline p) [] |> Task.andThen (\ctx -> ctx.registry)
-        |> Task.andThen
-               (\reg ->
-                   Registry.version reg name number
-                       |> Task.andThen
-                              (\v ->
-                                  Registry.promoteCompared
-                                      reg
-                                      aliasName
-                                      v
-                                      (suiteThresholds (Pipeline p) req)))
+    let
+        ctx <- context (Pipeline p) []
+        reg <- ctx.registry
+        v <- Registry.version reg name number
+    in
+        Registry.promoteCompared
+            reg
+            aliasName
+            v
+            (suiteThresholds (Pipeline p) req)
 
 
 -- A suite's thresholds by the suite's report name, with the request's
@@ -1069,26 +1042,23 @@ floatFlag name opts =
 
 evalVerb : Bool -> Pipeline -> String -> List String -> Task Error ()
 evalVerb json p suiteName opts =
-    Task.fromResult
-        (Result.map2
-            (\rate regression ->
-                { candidate = flag "--candidate" opts
-                , against = flag "--against" opts
-                , minPassRate = rate
-                , maxRegression = regression
-                })
-            (floatFlag "--min-pass-rate" opts)
-            (floatFlag "--max-regression" opts))
-        |> Task.andThen
-               (\req ->
-                   evaluate p suiteName req
-                       |> Task.andThen
-                              (\o ->
-                                  writeReports o opts
-                                      |> Task.andThen (\_ -> report json o)
-                                      |> Task.andThen
-                                             (\_ ->
-                                                 promoteOnPass json p req o opts)))
+    let
+        req <-
+            Task.fromResult
+                (Result.map2
+                    (\rate regression ->
+                        { candidate = flag "--candidate" opts
+                        , against = flag "--against" opts
+                        , minPassRate = rate
+                        , maxRegression = regression
+                        })
+                    (floatFlag "--min-pass-rate" opts)
+                    (floatFlag "--max-regression" opts))
+        o <- evaluate p suiteName req
+        _ <- writeReports o opts
+        _ <- report json o
+    in
+        promoteOnPass json p req o opts
 
 
 -- The JUnit XML (by default under `.sky/ai/eval/<suite>/`, where CI picks it
@@ -1176,19 +1146,14 @@ promoteOnPass json p req o opts =
                                 }))
 
                 ( Just aliasName, Just v ) ->
-                    context p [] |> Task.andThen (\ctx -> ctx.registry)
-                        |> Task.andThen
-                               (\reg ->
-                                   expectedState reg req o v aliasName
-                                       |> Task.andThen
-                                              (\expected ->
-                                                  Registry.promoteIf
-                                                      reg
-                                                      aliasName
-                                                      expected
-                                                      v
-                                                      passed))
-                        |> Task.andThen (\ev -> eventOut json v.name ev)
+                    let
+                        ctx <- context p []
+                        reg <- ctx.registry
+                        expected <- expectedState reg req o v aliasName
+                        ev <-
+                            Registry.promoteIf reg aliasName expected v passed
+                    in
+                        eventOut json v.name ev
 
 
 -- The alias state the promotion expects: the baseline's version when the
@@ -1366,43 +1331,42 @@ promoteVerb json p name number opts =
                     (number ++ " is not a version number (write 3 or v3)"))
 
         ( Just aliasName, Just n ) ->
-            Task.fromResult (floatFlag "--min-pass-rate" opts)
-                |> Task.andThen
-                       (\rate ->
-                           if List.member "--force" opts then
-                               forceVerb
-                                   p
-                                   name
-                                   n
-                                   aliasName
-                                   (Maybe.withDefault "" (flag "--reason" opts))
+            let
+                rate <- Task.fromResult (floatFlag "--min-pass-rate" opts)
+                ev <-
+                    if List.member "--force" opts then
+                        forceVerb
+                            p
+                            name
+                            n
+                            aliasName
+                            (Maybe.withDefault "" (flag "--reason" opts))
 
-                           else
-                               case flag "--expect" opts of
+                    else
+                        case flag "--expect" opts of
 
-                                   Just expect ->
-                                       promoteExpecting
-                                           p
-                                           { evalRequest | minPassRate = rate }
-                                           name
-                                           n
-                                           aliasName
-                                           expect
+                            Just expect ->
+                                promoteExpecting
+                                    p
+                                    { evalRequest | minPassRate = rate }
+                                    name
+                                    n
+                                    aliasName
+                                    expect
 
-                                   Nothing ->
-                                       promoteWith
-                                           p
-                                           { evalRequest | minPassRate = rate }
-                                           name
-                                           n
-                                           aliasName)
-                |> Task.andThen
-                       (\ev ->
-                           if json then
-                               println (JsonE.encode 0 (Registry.eventValue ev))
+                            Nothing ->
+                                promoteWith
+                                    p
+                                    { evalRequest | minPassRate = rate }
+                                    name
+                                    n
+                                    aliasName
+            in
+                if json then
+                    println (JsonE.encode 0 (Registry.eventValue ev))
 
-                           else
-                               println (eventText name ev))
+                else
+                    println (eventText name ev)
 
 
 -- The pipeline's registry, on its own database (`withDb`, `--db`) and store
@@ -1559,59 +1523,50 @@ trainedOnVerb json p digest =
 -- serves now.
 promoteExpecting : Pipeline -> EvalRequest -> String -> Int -> String -> String -> Task Error Registry.AliasEvent
 promoteExpecting p req name n aliasName expect =
-    context p [] |> Task.andThen (\ctx -> ctx.registry)
-        |> Task.andThen
-               (\reg ->
-                   Task.map2
-                       (\v expected -> { v = v, expected = expected })
-                       (Registry.version reg name n)
-                       (if expect == "none" then
-                           Task.succeed Nothing
+    let
+        ctx <- context p []
+        reg <- ctx.registry
+        found <-
+            Task.map2
+                (\v expected -> { v = v, expected = expected })
+                (Registry.version reg name n)
+                (if expect == "none" then
+                    Task.succeed Nothing
 
-                       else
-                           case String.toInt
-                                    (if String.startsWith "v" expect then
-                                        String.dropLeft 1 expect
+                else
+                    case String.toInt
+                             (if String.startsWith "v" expect then
+                                 String.dropLeft 1 expect
 
-                                    else
-                                        expect) of
+                             else
+                                 expect) of
 
-                               Just e ->
-                                   Registry.version reg name e |> Task.map Just
+                        Just e ->
+                            Registry.version reg name e |> Task.map Just
 
-                               Nothing ->
-                                   Task.fail
-                                       (usageError
-                                           ("--expect " ++ expect
-                                               ++ " is not a version number or none")))
-                       |> Task.andThen
-                              (\found ->
-                                  Registry.evidenceAgainst
-                                      reg
-                                      aliasName
-                                      found.v
-                                      (suiteThresholds p req)
-                                      |> Task.andThen
-                                             (\evidence ->
-                                                 case evidence of
-
-                                                     ( passed, _ ) ->
-                                                         Registry.promoteIf
-                                                             reg
-                                                             aliasName
-                                                             found.expected
-                                                             found.v
-                                                             passed)))
+                        Nothing ->
+                            Task.fail
+                                (usageError
+                                    ("--expect " ++ expect
+                                        ++ " is not a version number or none")))
+        ( passed, _ ) <-
+            Registry.evidenceAgainst
+                reg
+                aliasName
+                found.v
+                (suiteThresholds p req)
+    in
+        Registry.promoteIf reg aliasName found.expected found.v passed
 
 
 forceVerb : Pipeline -> String -> Int -> String -> String -> Task Error Registry.AliasEvent
 forceVerb p name n aliasName reason =
-    context p [] |> Task.andThen (\ctx -> ctx.registry)
-        |> Task.andThen
-               (\reg ->
-                   Registry.version reg name n
-                       |> Task.andThen
-                              (\v -> Registry.forcePromote reg aliasName v reason))
+    let
+        ctx <- context p []
+        reg <- ctx.registry
+        v <- Registry.version reg name n
+    in
+        Registry.forcePromote reg aliasName v reason
 
 
 membersVerb : Bool -> Pipeline -> Task Error ()
