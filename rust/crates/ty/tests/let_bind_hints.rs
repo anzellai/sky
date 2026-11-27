@@ -496,3 +496,96 @@ fn a_conversion_that_does_not_fit_is_not_named() {
         "{got:#?}"
     );
 }
+
+// ---- 5. the expected type sets the block's type ---------------------------
+
+const PARSE: &str = "parse : String -> Result Error Int\nparse s =\n    Result.fromMaybe (Error.invalidInput \"nan\") (String.toInt s)\n\n\n";
+
+/// The source with `defs` before `body`, its one `[E2001]` at `at` naming
+/// `fix`, and the fix applied checks clean.
+fn expected_blames_line(body: &str, at: &str, fix: &str) {
+    let src = format!("{FETCH_USER}{PARSE}{body}");
+    let got = check(&src, &[]);
+    one_e2001_at(&got, at, &[fix]);
+    let fixed = apply_named_fix(&src, &got).unwrap_or_else(|| panic!("no fix: {got:#?}"));
+    let after = check(&fixed, &[]);
+    assert!(after.is_empty(), "fix does not check:\n{fixed}\n{after:#?}");
+}
+
+#[test]
+fn a_result_first_line_in_an_annotated_task_block_is_blamed() {
+    // Judge probe e15: the block is a Task block (the annotation), so the
+    // Result line is converted, never the `in` body wrapped in `Ok`.
+    expected_blames_line(
+        "go : String -> Task Error Int\ngo s =\n    let\n        n <- parse s\n    in\n    Task.succeed n",
+        "<-",
+        "n <- Task.fromResult (parse s)",
+    );
+}
+
+#[test]
+fn a_maybe_first_line_in_an_annotated_result_block_is_blamed() {
+    // e15 swapped: a Maybe line in a Result block.
+    expected_blames_line(
+        "go : String -> Result Error Int\ngo s =\n    let\n        n <- String.toInt s\n    in\n    Ok n",
+        "<-",
+        "n <- Result.fromMaybe err (String.toInt s)",
+    );
+}
+
+#[test]
+fn a_maybe_first_line_before_a_task_line_is_blamed() {
+    // Judge probe e2.
+    let body = "go : String -> Task Error Int\ngo s =\n    let\n        n <- String.toInt s\n        u <- fetchUser n\n    in\n    Task.succeed (String.length u.name + n)";
+    expected_blames_line(
+        body,
+        "<-",
+        "n <- Task.fromResult (Result.fromMaybe err (String.toInt s))",
+    );
+    let got = check(&format!("{FETCH_USER}{PARSE}{body}"), &[]);
+    assert!(!got[0].message.contains("Maybe` block"), "{got:#?}");
+}
+
+#[test]
+fn a_maybe_second_line_after_a_task_line_is_blamed() {
+    // Judge probe e2b.
+    expected_blames_line(
+        "go : String -> Task Error Int\ngo s =\n    let\n        u <- fetchUser 1\n        n <- String.toInt s\n    in\n    Task.succeed (String.length u.name + n)",
+        "<-",
+        "n <- Task.fromResult (Result.fromMaybe err (String.toInt s))",
+    );
+}
+
+#[test]
+fn a_result_first_line_before_a_task_line_is_blamed() {
+    // Judge probe e12.
+    expected_blames_line(
+        "go : String -> Task Error Int\ngo s =\n    let\n        n <- parse s\n        u <- fetchUser n\n    in\n    Task.succeed (String.length u.name)",
+        "<-",
+        "n <- Task.fromResult (parse s)",
+    );
+}
+
+#[test]
+fn a_result_second_line_after_a_task_line_is_blamed() {
+    // Judge probe e12b.
+    expected_blames_line(
+        "go : String -> Task Error Int\ngo s =\n    let\n        u <- fetchUser 1\n        n <- parse s\n    in\n    Task.succeed (String.length u.name + n)",
+        "<-",
+        "n <- Task.fromResult (parse s)",
+    );
+}
+
+#[test]
+fn a_block_in_an_if_or_case_tail_takes_the_annotated_type() {
+    expected_blames_line(
+        "go : String -> Task Error Int\ngo s =\n    if s == \"\" then\n        Task.succeed 0\n    else\n        let\n            n <- parse s\n        in\n        Task.succeed n",
+        "<-",
+        "n <- Task.fromResult (parse s)",
+    );
+    expected_blames_line(
+        "go : String -> Task Error Int\ngo s =\n    case s of\n        \"\" ->\n            Task.succeed 0\n\n        _ ->\n            let\n                n <- parse s\n            in\n            Task.succeed n",
+        "<-",
+        "n <- Task.fromResult (parse s)",
+    );
+}

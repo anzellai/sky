@@ -137,6 +137,15 @@ pattern is `[E3001]` with "use `case`". Find the union through
   calling it by name. Also covers an unexposed andThen ("expose it") and the
   self-reference case.
 - Mixed types in one block: ordinary `[E2001]`, with a note.
+- The block's type is the expected type when it is known: a block in tail
+  position of an annotated def's body (through `let`, `if` and `case`) has
+  the annotated result. Its first line unifies its result with it, so each
+  line whose head differs is the one blamed, at its own `<-`, with the
+  conversion of that line (`n <- Task.fromResult (parse s)`), tried against
+  the expected type. The `andThen` is still chosen from the type of `e`
+  alone, so a well-typed program chooses the same functions with and without
+  the annotation (`ty/tests/let_bind.rs`). With no expected type, the first
+  line's head sets the block's type.
 - A note names a fix ONLY when the fix type-checks. The checker decides it
   by unifying the fixed expression on a copy of the union-find taken before
   the clash (`Infer::fits_on`, ty/src/bind.rs), never from the error text.

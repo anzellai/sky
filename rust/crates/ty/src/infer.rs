@@ -190,10 +190,12 @@ pub struct Infer<'a> {
     /// names the bind line `name <- e` (`Infer::bind_result_note`).
     pub(crate) eq_bound: HashMap<LocalId, (Name, ExprId)>,
     /// While an annotated def's body is inferred: the first bind line of
-    /// the block that is the whole body, and the annotated result. A bind
-    /// line of that block passes it on to the next one. Used only by the
-    /// notes, to try a fix against the type the block must have.
-    pub(crate) root_bind_block: Option<(ExprId, TyVarId)>,
+    /// each block in tail position of the body (through `let`, `if` and
+    /// `case`), and the annotated result. A bind line of that block passes
+    /// it on to the next one. The first line unifies its result with it, so
+    /// a line of another head is blamed, and the notes try their fixes
+    /// against the type the block must have.
+    pub(crate) root_bind_block: HashMap<ExprId, TyVarId>,
     /// Per-def entries that take the place of the world's own in its two
     /// lowering-only record channels (see [`RecordOverlay`]).
     overlay: Option<&'a RecordOverlay>,
@@ -271,7 +273,7 @@ impl<'a> Infer<'a> {
             bind_choices: Vec::new(),
             bind_expects: HashMap::new(),
             eq_bound: HashMap::new(),
-            root_bind_block: None,
+            root_bind_block: HashMap::new(),
             overlay: None,
             #[cfg(test)]
             no_fast_paths: FORCE_GENERAL_PATHS.with(|f| f.get()),
@@ -828,12 +830,19 @@ impl<'a> Infer<'a> {
         // reject; that is exactly `record_missing_field` at its call site).
         let recursive_result = self.seed_shared_recursion(body, &param_vars);
         let errs_before = self.errors.len();
-        // A block of bind lines that is the whole body has the annotated
-        // result: its notes try their fixes against it (never unified here).
-        self.root_bind_block =
-            crate::bind::root_bind_call(body, root).map(|c| (c, expected_result));
+        // A block of bind lines in tail position of the body has the
+        // annotated result: the block's type is the annotation's, so a line
+        // of another head is the one blamed, and every note tries its fix
+        // against it.
+        let saved_root = std::mem::replace(
+            &mut self.root_bind_block,
+            crate::bind::root_bind_calls(body, root)
+                .into_iter()
+                .map(|c| (c, expected_result))
+                .collect(),
+        );
         let v = self.infer_expr(body, root);
-        self.root_bind_block = None;
+        self.root_bind_block = saved_root;
         if let Some(result) = recursive_result {
             self.unify(v, result);
         }
@@ -1786,14 +1795,19 @@ impl<'a> Infer<'a> {
                 // A later line of a block: its result is the block's, which
                 // the enclosing bind line fixed. A line of another type is
                 // refused here, at its own `<-`, when its `andThen` is chosen.
+                // The annotated result, when this block is in tail position
+                // of an annotated body.
+                let expected = self.root_bind_block.remove(&e);
                 if let Some(block) = self.bind_expects.remove(&e) {
                     self.unify(result, block);
+                } else if let Some(x) = expected {
+                    // The first line: the block's type is the expected type,
+                    // so a line whose head differs is refused at its own
+                    // `<-` with the conversion of that line. `result` is
+                    // fresh here, so this never fails, and the `andThen` is
+                    // still chosen from the type of `e` alone.
+                    self.unify(result, x);
                 }
-                // The annotated result, when this block is the whole body.
-                let expected = self
-                    .root_bind_block
-                    .filter(|(c, _)| *c == e)
-                    .map(|(_, v)| v);
                 let errors_before = self.errors.len();
                 let chosen_before = self.bind_choices.len();
                 self.start_bind(crate::bind::PendingBind {
@@ -1822,10 +1836,16 @@ impl<'a> Infer<'a> {
                 if let Some(next) = crate::bind::next_bind_line(body, lam) {
                     self.bind_expects.insert(next, result);
                     if let Some(v) = expected {
-                        self.root_bind_block = Some((next, v));
+                        self.root_bind_block.insert(next, v);
                     }
                 }
+                let errors_in_rest = self.errors.len();
                 let tl = self.infer_expr(body, lam);
+                // The rest of a block with an expected type already reported
+                // a clash inside it: its type is poisoned, and a second
+                // report against the block's type is a cascade (as the def's
+                // own body-vs-annotation check is skipped then).
+                let rest_errored = expected.is_some() && self.errors.len() > errors_in_rest;
                 // The conversion note only when the rest of the block has
                 // another head; a clash inside one head is a plain mismatch.
                 let mixed = head.as_deref().is_some_and(|h| {
@@ -1861,7 +1881,7 @@ impl<'a> Infer<'a> {
                         let note = self.body_note(snap, h, tl, tlam, expected, text)?;
                         Some((body.expr_span(fb), note))
                     });
-                if refused {
+                if refused || rest_errored {
                     self.errors.truncate(before);
                 } else if let Some((at, note)) = body_fix {
                     if let Some(at) = at {

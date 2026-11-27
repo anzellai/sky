@@ -594,3 +594,29 @@ fn a_function_after_the_arrow_is_e2016_naming_the_missing_arguments() {
         "{got:#?}"
     );
 }
+
+/// The expected type of a block in tail position (the annotation, through
+/// `let`, `if` and `case`) only decides which line is blamed in an
+/// ill-typed block. In a well-typed one, each `andThen` is still chosen from
+/// the type of its own `e`: the annotated and unannotated forms choose the
+/// same functions.
+#[test]
+fn the_expected_type_never_changes_the_choice_in_a_well_typed_block() {
+    for (annot, def) in [
+        ("go : Int -> Task Error Int\n", "go n =\n    let\n        a <- Task.succeed n\n        b <- Task.succeed (a + 1)\n    in\n    Task.succeed b"),
+        ("go : Int -> Maybe Int\n", "go n =\n    if n > 0 then\n        Nothing\n    else\n        let\n            a <- Just n\n        in\n        Just (a + 1)"),
+        ("go : Int -> Result Error Int\n", "go n =\n    case n of\n        0 ->\n            Ok 0\n\n        _ ->\n            let\n                k = n * 2\n                a <- Ok k\n            in\n            Ok a"),
+        ("go : Int -> Maybe Int\n", "go m =\n    let\n        a <- Just m\n        b <- Just 2\n    in\n    Just (a + b)"),
+        ("go : Int -> Task Error Int\n", "go t =\n    let\n        x = 1\n    in\n    let\n        a <- Task.succeed t\n    in\n    Task.succeed (a + x)"),
+    ] {
+        let annotated = format!("{annot}{def}");
+        clean(&annotated);
+        clean(def);
+        assert_eq!(
+            chosen(&annotated, &[], "go"),
+            chosen(def, &[], "go"),
+            "{annotated}"
+        );
+        assert!(!chosen(def, &[], "go").is_empty(), "{def}");
+    }
+}

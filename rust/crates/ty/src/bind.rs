@@ -64,21 +64,30 @@ pub(crate) struct PendingBind {
     pub expected: Option<TyVarId>,
 }
 
-/// The first bind line of the block that is the whole of `root` (through
-/// the `let` segments the resolver wraps around it), when there is one.
-pub(crate) fn root_bind_call(body: &Body, root: ExprId) -> Option<ExprId> {
-    let mut cur = root;
-    loop {
+/// The first bind line of each block in tail position of `root`: the whole
+/// of `root`, or a tail of it through the `let` segments (the resolver's and
+/// the written ones), the branches of an `if` and the arms of a `case`. Each
+/// such block has the type of `root`.
+pub(crate) fn root_bind_calls(body: &Body, root: ExprId) -> Vec<ExprId> {
+    let mut out = Vec::new();
+    let mut todo = vec![root];
+    while let Some(cur) = todo.pop() {
         match &body.exprs[cur] {
-            Expr::Let { body: b, .. } => cur = *b,
+            Expr::Let { body: b, .. } => todo.push(*b),
+            Expr::If { arms, els } => {
+                todo.push(*els);
+                todo.extend(arms.iter().map(|(_, t)| *t));
+            }
+            Expr::Case { branches, .. } => todo.extend(branches.iter().map(|b| b.body)),
             Expr::Call(f, args)
                 if args.len() == 2 && matches!(body.exprs[*f], Expr::Var(Res::BindAndThen)) =>
             {
-                return Some(cur)
+                out.push(cur)
             }
-            _ => return None,
+            _ => {}
         }
     }
+    out
 }
 
 /// A name bound with `=` to a value whose type `M … x` has an `andThen`,
