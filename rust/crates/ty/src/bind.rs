@@ -661,7 +661,23 @@ impl<'a> Infer<'a> {
         let q = self.qualifier_of(mid, &shown);
         let write = match self.span_text_within(pb.module, pb.e_span, 100) {
             Some(t) => {
-                let arg = if t.contains(' ') && !(t.starts_with('(') && t.ends_with(')')) {
+                let one_group = |open: char, close: char| {
+                    // `t` is ONE bracket group: its first bracket closes at the
+                    // very end (so `[ a ] ++ [ b ]` still gets parentheses).
+                    t.starts_with(open) && t.ends_with(close) && {
+                        let mut depth = 0i32;
+                        let last = t.len() - close.len_utf8();
+                        t.char_indices().all(|(i, c)| {
+                            if c == open {
+                                depth += 1;
+                            } else if c == close {
+                                depth -= 1;
+                            }
+                            depth > 0 || i == last
+                        })
+                    }
+                };
+                let arg = if t.contains(' ') && !one_group('(', ')') && !one_group('[', ']') {
                     format!("({t})")
                 } else {
                     t

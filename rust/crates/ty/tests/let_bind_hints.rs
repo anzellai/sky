@@ -985,6 +985,31 @@ fn a_list_of_tasks_in_a_task_block_names_task_sequence() {
     );
 }
 
+/// A list literal after `<-` is one bracket group: the named fix does not
+/// wrap it in a second pair of parentheses. Two list literals joined by `++`
+/// are not one group, and keep them.
+#[test]
+fn a_list_literal_is_not_wrapped_in_extra_parentheses() {
+    let src = "f : Task Error Int\nf =\n    let\n        xs <- [ Task.succeed 1, Task.succeed 2 ]\n    in\n    Task.succeed (List.length xs)";
+    let got = check_with(src, &[], "import Sky.Core.List as List\n");
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2016").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    assert!(
+        e[0].message
+            .contains("`xs <- Task.sequence [ Task.succeed 1, Task.succeed 2 ]`"),
+        "{got:#?}"
+    );
+    let src = "f : Task Error Int\nf =\n    let\n        xs <- [ Task.succeed 1 ] ++ [ Task.succeed 2 ]\n    in\n    Task.succeed (List.length xs)";
+    let got = check_with(src, &[], "import Sky.Core.List as List\n");
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2016").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    assert!(
+        e[0].message
+            .contains("`xs <- Task.sequence ([ Task.succeed 1 ] ++ [ Task.succeed 2 ])`"),
+        "{got:#?}"
+    );
+}
+
 /// A `List` of Results in a Result block names `Result.combine`; a `List`
 /// of plain values names nothing.
 #[test]
