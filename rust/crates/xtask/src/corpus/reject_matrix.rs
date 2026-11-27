@@ -94,6 +94,12 @@ pub const DEFECT: Axis = Axis::new(
         "dict_composite_key",
         "value_cycle",
         "regex_invalid_literal",
+        "bind_outside_let",
+        "bind_split_scope",
+        "bind_needs_type",
+        "bind_no_andthen",
+        "bind_refutable_pattern",
+        "bind_mixed_types",
     ],
 );
 
@@ -209,6 +215,10 @@ impl Side {
 const REC: &str = "type alias Rec =\n    { a : Int, b : String }\n\n\n";
 const ADD: &str = "add : Int -> Int -> Int\nadd x y =\n    x + y\n\n\n";
 const COLOR: &str = "type Color\n    = Red\n    | Green\n    | Blue\n\n\n";
+
+/// The def a bind-line defect sits in (v0.32.0), and the probe that reads it.
+const VIA_BIND_SIG: &str = "viaBind : Maybe Int\n";
+const VIA_BIND_PROBE: &str = "String.fromInt (Maybe.withDefault 0 viaBind)";
 
 /// The ill program, the repaired twin, and the diagnostic code the rejection
 /// must carry.
@@ -464,6 +474,112 @@ fn defect(defect: &str, rimport: &str) -> (Side, Side, &'static str) {
             well.extra_imports.push(import);
             (ill, well, "E2014")
         }
+
+        // ---- bind lines (v0.32.0, #342) ------------------------------------
+        // `<-` outside a `let` block is a parse error that names the fix. The
+        // twin puts the same line in a `let`.
+        "bind_outside_let" => (
+            Side::new(
+                format!("{VIA_BIND_SIG}viaBind =\n    n <- Just knownName\n    Just n\n"),
+                VIA_BIND_PROBE,
+            ),
+            Side::new(
+                format!(
+                    "{VIA_BIND_SIG}viaBind =\n    let\n        n <- Just knownName\n    in\n    Just n\n"
+                ),
+                VIA_BIND_PROBE,
+            ),
+            "E0001",
+        ),
+        // A bind line splits the block: `total` reads `n2`, which is defined
+        // after the bind line, in a later segment. The twin moves `total`
+        // below `n2`, the fix the hint names.
+        "bind_split_scope" => {
+            let block = |lines: [&str; 3]| {
+                format!(
+                    "{VIA_BIND_SIG}viaBind =\n    let\n        {}\n        {}\n        {}\n    in\n    Just total\n",
+                    lines[0], lines[1], lines[2]
+                )
+            };
+            let (total, bind, n2) = ("total = n2 + 0", "n <- Just knownName", "n2 = n");
+            (
+                Side::new(
+                    block([total, bind, n2]),
+                    VIA_BIND_PROBE,
+                ),
+                Side::new(
+                    block([bind, n2, total]),
+                    VIA_BIND_PROBE,
+                ),
+                "E1001",
+            )
+        }
+        // The type after `<-` is still a type variable at the end of the
+        // definition, so no `andThen` can be chosen. The twin annotates it.
+        "bind_needs_type" => {
+            let body = "step t =\n    let\n        n <- t\n    in\n    Task.succeed (n + 1)\n";
+            let probe = "String.fromInt (Result.withDefault 0 (Task.run (step (Task.succeed knownName))))";
+            let import = "import Sky.Core.Error exposing (Error)".to_string();
+            let mut ill = Side::new(body, probe);
+            ill.extra_imports.push(import.clone());
+            let mut well = Side::new(
+                format!("step : Task Error Int -> Task Error Int\n{body}"),
+                probe,
+            );
+            well.extra_imports.push(import);
+            (ill, well, "E2015")
+        }
+        // The type after `<-` is `Int`, which has no `andThen`. The twin
+        // binds the `Maybe` itself.
+        "bind_no_andthen" => (
+            Side::new(
+                format!(
+                    "{VIA_BIND_SIG}viaBind =\n    let\n        n <- Maybe.withDefault 0 (Just knownName)\n    in\n    Just n\n"
+                ),
+                VIA_BIND_PROBE,
+            ),
+            Side::new(
+                format!(
+                    "{VIA_BIND_SIG}viaBind =\n    let\n        n <- Just knownName\n    in\n    Just n\n"
+                ),
+                VIA_BIND_PROBE,
+            ),
+            "E2016",
+        ),
+        // The pattern of a bind line is the parameter of the continuation, so
+        // it must match every value. The twin binds a name.
+        "bind_refutable_pattern" => (
+            Side::new(
+                format!(
+                    "{VIA_BIND_SIG}viaBind =\n    let\n        (Just n) <- Just (Just knownName)\n    in\n    Just n\n"
+                ),
+                VIA_BIND_PROBE,
+            ),
+            Side::new(
+                format!(
+                    "{VIA_BIND_SIG}viaBind =\n    let\n        inner <- Just (Just knownName)\n    in\n    inner\n"
+                ),
+                VIA_BIND_PROBE,
+            ),
+            "E3001",
+        ),
+        // Two bind lines of one block chain different types: a `Maybe` and a
+        // `Result`. The twin makes both `Maybe`.
+        "bind_mixed_types" => (
+            Side::new(
+                format!(
+                    "{VIA_BIND_SIG}viaBind =\n    let\n        n <- Just knownName\n        k <- Ok 0\n    in\n    Just (n + k)\n"
+                ),
+                VIA_BIND_PROBE,
+            ),
+            Side::new(
+                format!(
+                    "{VIA_BIND_SIG}viaBind =\n    let\n        n <- Just knownName\n        k <- Just 0\n    in\n    Just (n + k)\n"
+                ),
+                VIA_BIND_PROBE,
+            ),
+            "E2001",
+        ),
 
         other => panic!("reject_matrix: unknown defect {other:?}"),
     }

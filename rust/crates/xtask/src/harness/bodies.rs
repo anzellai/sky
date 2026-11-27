@@ -945,7 +945,14 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **898 since the v0.31.0 `i18n` Family-S surface** (+2: the nominal and
 /// failure cases of `Std.I18n` / `Std.I18n.Format`).
-pub const CORPUS_EXPECTED: u64 = 898;
+///
+/// **1048 since v0.32.0 bind lines** (+150): the `let_bind` stratum (+96,
+/// Family L: 4 `lb_monad` x 4 `lb_pattern` x 3 `lb_position` x 2 `lb_annot`)
+/// and six Family-R bind-line defects (+54: `bind_outside_let` `[E0001]`,
+/// `bind_split_scope` `[E1001]`, `bind_needs_type` `[E2015]`,
+/// `bind_no_andthen` `[E2016]`, `bind_refutable_pattern` `[E3001]`,
+/// `bind_mixed_types` `[E2001]`, each x 3 `rposition` x 3 `rimport`).
+pub const CORPUS_EXPECTED: u64 = 1048;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -1055,7 +1062,10 @@ pub const CORPUS_EXPECTED: u64 = 898;
 ///
 /// **734 since the v0.31.0 `i18n` Family-S surface** (+2, both built and
 /// run).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 734;
+///
+/// **830 since the v0.32.0 `let_bind` stratum** (+96, every one built and
+/// run; the same +96 as `CORPUS_EXPECTED`).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 830;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -1069,7 +1079,11 @@ pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 734;
 ///
 /// **306 since the v0.29.0 `regex_invalid_literal` defect** (153 cases): a
 /// literal `Regex.fromString` pattern that is not RE2, `[E2014]`.
-pub const CORPUS_REJECT_EXPECTED: u64 = 306;
+///
+/// **414 since the v0.32.0 bind-line defects** (207 cases): six defects of
+/// bind lines in `let` (`[E0001]`, `[E1001]`, `[E2015]`, `[E2016]`, `[E3001]`,
+/// `[E2001]`), each crossed with the position and import axes.
+pub const CORPUS_REJECT_EXPECTED: u64 = 414;
 /// Family E: one assertion per asserted property across the 10 cases. Measured:
 /// **46** (the two struct-shape properties only apply to the named-alias arm).
 pub const CORPUS_EMIT_SHAPE_EXPECTED: u64 = 46;

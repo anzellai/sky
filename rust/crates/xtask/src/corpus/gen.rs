@@ -892,8 +892,10 @@ pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
         | "lambda_record_param"
         | "generic_alias_slot"
         | "let_mutual_recursion"
-        | "generic_fn_record_slot" => {
+        | "generic_fn_record_slot"
+        | "let_bind" => {
             let (body, out) = match stratum.name {
+                "let_bind" => super::lang_shapes::let_bind(assignment),
                 "generic_fn_record_slot" => super::lang_shapes::generic_fn_record_slot(assignment),
                 "let_mutual_recursion" => super::lang_shapes::let_mutual_recursion(assignment),
                 "lambda_record_param" => super::lang_shapes::lambda_record_param(assignment),
