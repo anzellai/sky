@@ -577,7 +577,7 @@ fn bare_line_msg(shown: &str) -> String {
 }
 
 /// A bare expression line in a `let` block (`println "a"` with no `=` or
-/// `<-`) is ONE `[E0001]` on that line, never "expected Eq" at the `in`,
+/// `<-`) is ONE `[E0001]` on that line, never "expected `=`" at the `in`,
 /// in a block with bind lines and in one without.
 #[test]
 fn a_bare_expression_line_in_a_let_block_is_one_error_on_that_line() {

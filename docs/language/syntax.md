@@ -386,7 +386,7 @@ binding. When the parse
 accepted the word and read more of its construct before it failed, the word
 is in its valid place and is never named, even though renaming it would make
 the unit parse as a function call: `if y` with no `then` gives
-`expected ThenKw`, `case y` with no `of` gives `expected OfKw`, and a `let`
+``expected `then` ``, `case y` with no `of` gives ``expected `of` ``, and a `let`
 cut off after its first binding keeps the parser's message.
 
 On top of that, a trial must prove the word is the cause. Read as a
@@ -408,8 +408,10 @@ The earliest word that qualifies is named. This finds the word even where the
 parse fails a few tokens later (`x ++ if` fails at the end of the line) or at
 a valid keyword (`if if then …` names the second `if`, not `then`). When no
 word qualifies, the parser's own message stays, so a keyword in its valid
-place is never named: `module Main exposing main` gives `expected LParen`,
-and `if x 1 else 2` gives `expected ThenKw`.
+place is never named: `module Main exposing main` gives ``expected `(` ``,
+and `if x 1 else 2` gives ``expected `then` ``. A parser message names a
+token by its source text and a class by plain words (a name, a type), never
+by an internal kind name.
 
 A `case` needs at least one branch. `case x of` with no branch is
 `expected a case branch`. A `let` needs at least one binding. `let in x` is

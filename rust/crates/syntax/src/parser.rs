@@ -553,7 +553,7 @@ impl<'a> Parser<'a> {
         if self.eat(kind) {
             true
         } else {
-            self.error(format!("expected {kind:?}"));
+            self.error(format!("expected {}", kind.describe()));
             false
         }
     }

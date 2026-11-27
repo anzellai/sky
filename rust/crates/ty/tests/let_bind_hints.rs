@@ -34,6 +34,8 @@ struct Got {
     code: String,
     message: String,
     at: String,
+    /// The whole source line the first label starts on.
+    line: String,
     suggestion: Option<String>,
 }
 
@@ -68,10 +70,21 @@ fn check_with(body: &str, extra: &[(&str, &str)], more: &str) -> Vec<Got> {
                 .first()
                 .map(|l| src[l.span.range.0 as usize..l.span.range.1 as usize].to_string())
                 .unwrap_or_default();
+            let line = d
+                .labels
+                .first()
+                .map(|l| {
+                    let s = l.span.range.0 as usize;
+                    let a = src[..s].rfind('\n').map_or(0, |i| i + 1);
+                    let b = src[s..].find('\n').map_or(src.len(), |i| s + i);
+                    src[a..b].to_string()
+                })
+                .unwrap_or_default();
             Got {
                 code: d.code.0,
                 message: d.message,
                 at,
+                line,
                 suggestion: d.suggestion,
             }
         })
@@ -738,4 +751,69 @@ fn every_note_fixture_names_only_fixes_that_check() {
         }
     }
     assert!(named >= 8, "only {named} fixtures named a fix");
+}
+
+// ---- 3. an error inside an `in` body of the block's type ---------------
+
+/// No diagnostic carries the body note; exactly one `[E2001]`, on the
+/// source line `line` (the bind line, as a hand-written `andThen` blames
+/// the task it chains on).
+fn inner_error_only_at(got: &[Got], line: &str) {
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2001").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    assert_eq!(e[0].line.trim(), line, "{got:#?}");
+    assert!(
+        got.iter()
+            .all(|g| !g.message.contains("the `in` expression has type")),
+        "{got:#?}"
+    );
+}
+
+#[test]
+fn a_field_typo_in_an_in_body_of_the_block_type_gives_no_body_note() {
+    // Judge probe f04.
+    let got = check(
+        "type alias User = { name : String, age : Int }\n\n\
+         getUser : Task Error User\ngetUser =\n    Task.succeed { name = \"a\", age = 3 }\n\n\
+         go : Task Error Int\ngo =\n    let\n        user <- getUser\n    in\n    Task.succeed user.agee",
+        &[],
+    );
+    inner_error_only_at(&got, "user <- getUser");
+    assert!(got[0].message.contains("agee"), "{got:#?}");
+}
+
+#[test]
+fn a_wrong_type_value_in_an_in_body_of_the_block_type_gives_no_body_note() {
+    // Judge probe d09.
+    let got = check(
+        "go : Task Error Int\ngo =\n    let\n        a <- Task.succeed \"x\"\n    in\n    Task.succeed (a + 1)",
+        &[],
+    );
+    inner_error_only_at(&got, "a <- Task.succeed \"x\"");
+}
+
+#[test]
+fn an_int_bound_in_a_float_maybe_block_gives_no_body_note() {
+    let got = check(
+        "floaty : Maybe Float\nfloaty =\n    let\n        a <- Just 1.5\n        b <- Just 2\n    in\n    Just (a * b)",
+        &[],
+    );
+    inner_error_only_at(&got, "b <- Just 2");
+    assert!(got[0].message.contains("`Int` vs `Float`"), "{got:#?}");
+}
+
+#[test]
+fn an_in_body_whose_own_type_clashes_still_gets_the_body_note() {
+    let got = check(
+        "go : Task Error Int\ngo =\n    let\n        x <- Task.succeed 1\n    in\n    \"text\"",
+        &[],
+    );
+    one_e2001_at(
+        &got,
+        "\"text\"",
+        &[
+            "the `in` expression has type `String`",
+            "this block needs `Task Error Int`",
+        ],
+    );
 }

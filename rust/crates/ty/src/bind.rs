@@ -876,7 +876,9 @@ impl<'a> Infer<'a> {
     /// `Task.succeed`) is named only when the fixed expression unifies with
     /// `M … R` on a copy of it; otherwise the note gives the two types, and,
     /// for a function, how many arguments make it fit. `None` when the body's
-    /// type is not known.
+    /// type is not known, `Some(None)` when the body's own type fits the
+    /// block's type: the clash is then inside the body, and the error is
+    /// given with no note, as for a hand-written `andThen`.
     pub(crate) fn body_note(
         &mut self,
         snap: &UnionFind,
@@ -886,22 +888,49 @@ impl<'a> Infer<'a> {
         expected: Option<TyVarId>,
         fb: ExprId,
         body_text: Option<String>,
-    ) -> Option<String> {
-        let (prepared, body_ty, block_ty, bv, rv, body_head) = self.on_snapshot(snap, |s| {
-            let (pl, bv) = s.fun_parts(lam)?;
-            let (pw, rv) = s.fun_parts(want)?;
-            let _ = s.uf.unify(pl, pw);
-            if let Some(x) = expected {
-                let _ = s.uf.unify(rv, x);
-            }
-            let body_ty = s.read_back(bv);
-            if matches!(body_ty, Ty::Var(_) | Ty::Error) {
-                return None;
-            }
-            let head = s.app_parts(bv).map(|(n, _)| n.as_str().to_string());
-            let block_ty = s.read_back(rv);
-            Some((s.uf.clone(), body_ty, block_ty, bv, rv, head))
-        })?;
+    ) -> Option<Option<String>> {
+        let Some((prepared, body_ty, block_ty, bv, rv, body_head)) =
+            self.on_snapshot(snap, |s| {
+                let (pl, bv) = s.fun_parts(lam)?;
+                let (pw, rv) = s.fun_parts(want)?;
+                if let Some(x) = expected {
+                    let _ = s.uf.unify(rv, x);
+                }
+                // The body's type fits the block's (the unifier expands
+                // aliases) on a copy of the union-find.
+                let fits = |s: &mut Self| {
+                    let cur = s.uf.clone();
+                    s.fits_on(&cur, |t| {
+                        t.unify(bv, rv);
+                        true
+                    })
+                };
+                // A body of a known type that fits before the last bind
+                // line's name takes the type of its line (`Just (a * b)`
+                // with `b <- Just 2` in a `Maybe Float` block): the clash
+                // is that line's, so the error needs no note.
+                let known = |s: &mut Self| !matches!(s.read_back(bv), Ty::Var(_) | Ty::Error);
+                if known(s) && fits(s) {
+                    return Some(None);
+                }
+                let _ = s.uf.unify(pl, pw);
+                let body_ty = s.read_back(bv);
+                if matches!(body_ty, Ty::Var(_) | Ty::Error) {
+                    return None;
+                }
+                // The body's type fits the block's: the clash is inside the
+                // body (`user.agee`, `a + 1` with `a : String`), so the
+                // error needs no note, as for a hand-written `andThen`.
+                if fits(s) {
+                    return Some(None);
+                }
+                let head = s.app_parts(bv).map(|(n, _)| n.as_str().to_string());
+                let block_ty = s.read_back(rv);
+                Some(Some((s.uf.clone(), body_ty, block_ty, bv, rv, head)))
+            })?
+        else {
+            return Some(None);
+        };
         let snap = &prepared;
         let b = nominal::strip(block_head).to_string();
         let v = body_text.unwrap_or_else(|| "…".to_string());
@@ -927,7 +956,9 @@ impl<'a> Infer<'a> {
                     } else {
                         String::new()
                     };
-                    return Some(format!("{intro} To fix it, convert it: `{text}`{err}."));
+                    return Some(Some(format!(
+                        "{intro} To fix it, convert it: `{text}`{err}."
+                    )));
                 }
             }
         }
@@ -977,9 +1008,9 @@ impl<'a> Infer<'a> {
                 Some(())
             });
             if fits {
-                return Some(format!(
+                return Some(Some(format!(
                     "{intro} To fix it, wrap the value in `{wrap}`: `{wrap} {arg}`."
-                ));
+                )));
             }
         }
         // A function: the number of arguments after which it fits.
@@ -1004,10 +1035,10 @@ impl<'a> Infer<'a> {
                 s.uf.unify(cur, rv).is_ok()
             })
         });
-        Some(match needs {
+        Some(Some(match needs {
             Some(k) => format!("{intro} It is a function: it needs {k} more argument(s)."),
             None => intro,
-        })
+        }))
     }
 
     /// A name bound with `=` in a `let` to a value whose type `M … x` has an

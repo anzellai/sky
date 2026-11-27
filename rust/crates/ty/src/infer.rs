@@ -1883,7 +1883,7 @@ impl<'a> Infer<'a> {
                             .and_then(|d| self.db.def_loc(d))
                             .map(|l| l.module);
                         let text = self.span_text(module, body.expr_span(fb));
-                        let note = self.body_note(snap, h, tl, tlam, expected, fb, text)?;
+                        let note = self.body_note(snap, h, tl, tlam, expected, fb, text)??;
                         Some((body.expr_span(fb), note))
                     });
                 if refused || rest_errored {
