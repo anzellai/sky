@@ -330,6 +330,47 @@ pub const PRELUDE_QUALIFIERS: &[(&str, &[&str])] = &[
 /// it as an import edge (`ty::sig`), so all three agree.
 pub const DEFAULT_QUALIFIED_IMPORTS: &[(&str, &str)] = &[("Tuple", "Sky.Core.Tuple")];
 
+/// The stdlib modules a bare kernel qualifier (`Task`, `Maybe`, `Db`) can
+/// name when no import binds it, in preference order. The resolver uses the
+/// first one the compilation carries as the qualifier's *home*.
+///
+/// The kernel fallback alone reaches only the enumerated kernel members
+/// ([`KERNEL_FUNCTIONS`]). A pure-Sky helper of the same module (v0.32.0
+/// `Task.bestEffort`, `Task.unless`, `Task.toResult`) has no kernel entry, so
+/// `Task.bestEffort` with no `import Sky.Core.Task` was `[E1001] Undefined
+/// name` while `Task.andThen` worked. The home's REAL exports close that gap:
+/// a name the kernel table does not list resolves to the home's own
+/// definition, as `import Sky.Core.Task as Task` would resolve it, so a future
+/// helper cannot fall through again.
+///
+/// Derived from [`KERNEL_MODULES`]: `qual` must be a bare (dot-free) entry,
+/// and the candidates are the dotted paths mapped to the same pseudo, in table
+/// order (`Sky.Core.Time` before `Std.Time`, `Sky.Cli` before `Std.Cli`).
+/// `Sky.Core.Prelude` is the Prelude, never a qualifier's home.
+pub fn implicit_qualifier_homes(qual: &str) -> Vec<&'static str> {
+    let Some(pseudo) = KERNEL_MODULES
+        .iter()
+        .find(|(k, _)| !k.contains('.') && *k == qual)
+        .map(|(_, p)| *p)
+    else {
+        return Vec::new();
+    };
+    KERNEL_MODULES
+        .iter()
+        .filter(|(k, p)| *p == pseudo && k.contains('.') && *k != "Sky.Core.Prelude")
+        .map(|(k, _)| *k)
+        .collect()
+}
+
+/// Every bare kernel qualifier (`Task`, `Maybe`, …): the qualifiers a module
+/// can use with no import.
+pub fn implicit_qualifiers() -> impl Iterator<Item = &'static str> {
+    KERNEL_MODULES
+        .iter()
+        .filter(|(k, _)| !k.contains('.'))
+        .map(|(k, _)| *k)
+}
+
 /// `staticKernelFunctions` (Module.hs:1752-1861): the known function names each
 /// kernel pseudo-module exposes. This is the source of truth for a kernel
 /// `import M exposing (..)` — it binds exactly these names (like the oracle's

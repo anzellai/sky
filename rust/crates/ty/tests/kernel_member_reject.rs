@@ -204,3 +204,44 @@ fn sortwith_via_exposing_accepts_and_is_precisely_typed() {
         "a String-returning comparator must be rejected by sortWith's precise `.sky` type"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A pure-Sky member of a bare kernel qualifier's home (`Task.bestEffort`,
+// `Task.unless`, `Task.toResult`, `Maybe.isJust`) type-checks with NO import,
+// with the precise type of its `.sky` definition. Before the fix each was
+// `[E1001] Undefined name` (`hir::implicit_qualifier_homes`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const NO_IMPORT_HEAD: &str = "module Main exposing (main)\n\
+    import Std.Log exposing (println)\n";
+
+#[test]
+fn pure_sky_members_of_an_implicit_qualifier_check_with_no_import() {
+    let src = format!(
+        "{NO_IMPORT_HEAD}\n\
+         step : Int -> Task Error (Task.Step Int Int)\n\
+         step n =\n    if n >= 3 then\n        Task.succeed (Task.Done n)\n\n    else\n        Task.succeed (Task.Loop (n + 1))\n\n\
+         main =\n    Task.run\n        (Task.bestEffort (println \"a\")\n            \
+         |> Task.andThen (\\_ -> Task.unless (Maybe.isJust (Just 1)) (println \"b\"))\n            \
+         |> Task.andThen (\\_ -> Task.toResult (Task.loop step 0))\n            \
+         |> Task.andThen (\\_ -> println \"c\")\n        )\n"
+    );
+    let codes = error_codes(&src);
+    assert!(
+        codes.is_empty(),
+        "no-import Task helpers must check; got {codes:?}"
+    );
+}
+
+#[test]
+fn pure_sky_member_with_no_import_keeps_its_precise_type() {
+    // `Task.unless : Bool -> Task e () -> Task e ()`: a String condition is a
+    // type error, so the member resolved to the typed `.sky` definition, not a
+    // fresh flexible variable.
+    let src =
+        format!("{NO_IMPORT_HEAD}\nmain =\n    Task.run (Task.unless \"yes\" (println \"b\"))\n");
+    assert!(
+        type_errors(&src) > 0,
+        "`Task.unless \"yes\"` must be a type error"
+    );
+}

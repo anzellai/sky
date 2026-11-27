@@ -399,6 +399,13 @@ fn alias_cycle(
 /// kernel pseudo-module that re-exposes a builtin (`import Sky.Core.Prelude
 /// exposing (String, Int)`) is the SAME binding as the ambient builtin, not a
 /// second one (C-14: that import used to be `[E1012] Ambiguous type String`).
+/// `name` is listed in the kernel function table of `pseudo`. Such a member
+/// stays a kernel reference under a bare qualifier, as before. Every other
+/// name may resolve to the qualifier's stdlib home.
+fn is_enumerated_kernel_member(pseudo: &str, name: &str) -> bool {
+    crate::kernel::kernel_functions(pseudo).is_some_and(|fns| fns.contains(&name))
+}
+
 fn kernel_implicit_key(con: DefId) -> TypeKey {
     TypeKey::Id(format!("def:{}", con.0))
 }
@@ -573,6 +580,10 @@ struct Resolver<'a> {
     qual_ctors: HashMap<String, HashMap<String, CtorRef>>,
     qual_types: HashMap<String, HashMap<String, TypeResEntry>>,
     import_aliases: HashMap<String, ImportSource>,
+    /// The exports of each bare kernel qualifier's home module (`Task` ->
+    /// `Sky.Core.Task`), read on demand by [`Resolver::implicit_home_exports`].
+    /// `None` when no import-free home applies.
+    implicit_homes: HashMap<String, Option<std::rc::Rc<ModuleExports>>>,
     /// Kernel pseudo-modules imported with `exposing (..)` — a lenient fallback
     /// for bare names we can't enumerate (no static kernel-function table).
     kernel_open: Vec<String>,
@@ -653,6 +664,7 @@ impl<'a> Resolver<'a> {
             qual_ctors: HashMap::new(),
             qual_types: HashMap::new(),
             import_aliases: HashMap::new(),
+            implicit_homes: HashMap::new(),
             kernel_open: Vec::new(),
             open_modules: Vec::new(),
             foreign_open: None,
@@ -1790,6 +1802,34 @@ impl<'a> Resolver<'a> {
                 self.bind_qual_from_exports(qual, &exports);
             }
         }
+    }
+
+    /// The exports of the stdlib home of the bare kernel qualifier `qual`
+    /// (`hir::implicit_qualifier_homes`), when no import of this module binds
+    /// `qual` and this module is not itself one of its homes. Cached per
+    /// qualifier; a compilation that does not carry the home yields `None`.
+    fn implicit_home_exports(&mut self, qual: &str) -> Option<std::rc::Rc<ModuleExports>> {
+        if self.import_aliases.contains_key(qual) {
+            return None;
+        }
+        if let Some(cached) = self.implicit_homes.get(qual) {
+            return cached.clone();
+        }
+        let own = self.db.module_name(self.module).to_string();
+        let homes = crate::kernel::implicit_qualifier_homes(qual);
+        let found = if homes.iter().any(|h| *h == own) {
+            None
+        } else {
+            homes
+                .iter()
+                .find_map(|p| match self.db.classify_import(p) {
+                    ImportSource::Dep(dep) if dep != self.module => Some(dep),
+                    _ => None,
+                })
+                .map(|dep| self.db.module_exports(dep))
+        };
+        self.implicit_homes.insert(qual.to_string(), found.clone());
+        found
     }
 
     fn bind_qual_from_exports(&mut self, q: &str, exports: &ModuleExports) {
@@ -3868,6 +3908,20 @@ impl<'a> Resolver<'a> {
         }
         if let Some(pseudo) = self.db.kernel_pseudo(qual) {
             let pseudo = pseudo.to_string();
+            // A member the kernel table does not list, exported by the
+            // qualifier's stdlib home (a pure-Sky helper such as
+            // `Task.bestEffort`): the home's own definition, as an import of
+            // the home would bind it.
+            if !is_enumerated_kernel_member(&pseudo, name) {
+                if let Some(ex) = self.implicit_home_exports(qual) {
+                    if let Some(def) = ex.value(name) {
+                        return Res::Def(def);
+                    }
+                    if let Some((_, ct)) = ex.ctor(name) {
+                        return Res::Ctor(to_ctor_ref(ct));
+                    }
+                }
+            }
             if let Some(err) = self.reject_unknown_kernel_member(&pseudo, qual, name, span) {
                 return err;
             }
@@ -4025,6 +4079,12 @@ impl<'a> Resolver<'a> {
             return None;
         }
         if self.db.kernel_pseudo(qual).is_some() {
+            // A constructor of the qualifier's stdlib home (`Task.Loop`).
+            if let Some(ex) = self.implicit_home_exports(qual) {
+                if let Some((_, ct)) = ex.ctor(name) {
+                    return Some(to_ctor_ref(ct));
+                }
+            }
             return None; // kernel ctor, resolved leniently (no CtorRef needed)
         }
         self.track_class_a(

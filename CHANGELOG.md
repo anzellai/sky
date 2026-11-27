@@ -41,6 +41,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   migration are bind lines too, and the runtime-narrowing count of every
   project is equal or lower (two fall by one).
 
+- **`Task.bestEffort`, `Task.unless` and `Task.toResult` work with no
+  import.** A module that used the `Task` qualifier with no `import
+  Sky.Core.Task` got `[E1001] Undefined name` for these v0.32.0 helpers,
+  because a bare kernel qualifier reached only the kernel members. A bare
+  qualifier now also reaches every export of its standard library module, so
+  the other pure-Sky members (`Task.linearBackoff`, `Task.Loop`,
+  `Maybe.isJust`, `String.containsIn`, `Http.defaultRequest`,
+  `Process.command`, `Sub.everyWithTime` and more) need no import either. An
+  import that binds the qualifier still wins.
+
 ### Migration
 
 - After upgrading to v0.32.x, run `sky fmt` once on a project whose CI runs
