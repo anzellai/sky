@@ -4880,6 +4880,9 @@ impl<'a> Ctx<'a> {
             }
             // The resolver reports every `Res::Error` it produces, and the build
             // halts on those diagnostics before lowering runs.
+            // The type checker refuses a bind line until it chooses its
+            // `andThen` (docs/design/let-bind-lines.md §4, §5).
+            Res::BindAndThen => self.ice("a bind line (`p <- e`) reached lowering untyped".into()),
             Res::Error => self.ice("an unresolved name reached lowering".into()),
         }
     }

@@ -973,6 +973,11 @@ fn record_res(res: &Res, acc: &mut Refs, ctx: &CollectCtx) {
             acc.callees.insert(*d);
         }
         Res::Foreign { .. } => acc.foreign = true,
+        // A bind line's `andThen` is chosen by the type checker, which
+        // refuses every bind line until it does (docs/design/let-bind-lines.md
+        // §4), so no partitioned app holds one yet. The chosen def is
+        // recorded here once the elaboration table exists (§5).
+        Res::BindAndThen => {}
         Res::Local(_) | Res::Ctor(_) | Res::Error => {}
     }
 }

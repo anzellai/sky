@@ -126,6 +126,17 @@ pub struct BinderDef {
     pub span: Span,
 }
 
+/// A bind line `p <- e` (docs/design/let-bind-lines.md §7): the span of its
+/// `<-` token and the synthesised `Call(Var(BindAndThen), [\p -> rest, e])` in
+/// `owner`'s body. Hover and go-to-definition on `<-` read the `andThen` the
+/// type checker chose for `call`.
+#[derive(Clone, Debug)]
+pub struct BindOcc {
+    pub owner: DefId,
+    pub span: Span,
+    pub call: ExprId,
+}
+
 /// A record-alias field declaration — the goto-def target for a field access,
 /// and the source of the DECLARED field type hover renders.
 #[derive(Clone, Debug)]
@@ -178,6 +189,8 @@ pub struct ResolveResult {
     pub type_occs: Vec<TypeOcc>,
     /// Local binder definition sites.
     pub binders: Vec<BinderDef>,
+    /// Bind lines (`p <- e`) in `let` blocks.
+    pub bind_occs: Vec<BindOcc>,
     /// Declaration id → its name-token span (value / type-con / alias / ctor).
     pub def_spans: Vec<(DefId, Span)>,
     /// Record-alias field declarations.
@@ -398,6 +411,7 @@ fn res_key(r: &Res) -> String {
         Res::Foreign { package, name } => format!("ffi:{}.{}", package.as_str(), name.as_str()),
         Res::Ctor(c) => format!("ctor:{}", c.def.0),
         Res::Local(l) => format!("local:{}", l.0),
+        Res::BindAndThen => "bind-and-then".to_string(),
         Res::Error => "error".to_string(),
     }
 }
@@ -601,6 +615,12 @@ struct Resolver<'a> {
     /// destructure pattern whose binder names were already bound by the `let`
     /// pre-pass — so the pattern's `Var` ids match the ids the body references.
     reuse_binders: bool,
+    /// Names a `let` block defines AFTER a bind line, keyed to the pattern
+    /// text of the first bind line that hides them from the code being
+    /// resolved (docs/design/let-bind-lines.md §2). Read only to add the
+    /// "a bind line splits the block" hint to an `[E1001]`. A stack: one
+    /// frame per `let` segment being resolved.
+    hidden_by_bind: Vec<HashMap<String, String>>,
     /// Non-zero suppresses diagnostics/class tracking (interpolation interior,
     /// which the oracle never rejects — doc 03 §1.6).
     quiet: u32,
@@ -649,6 +669,7 @@ impl<'a> Resolver<'a> {
             scopes: Vec::new(),
             next_local: 0,
             reuse_binders: false,
+            hidden_by_bind: Vec::new(),
             quiet: 0,
             current_owner: None,
             body: Body::default(),
@@ -2867,13 +2888,147 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// A `let` block. Its lines split at each bind line `p <- e` into
+    /// segments (docs/design/let-bind-lines.md §2):
+    ///
+    /// `Let { seg1, Call(Var(BindAndThen), [Lambda([p], Let { seg2, … body }), e]) }`
+    ///
+    /// Each segment is one recursive group, as a whole `let` with no bind
+    /// line is. `e` sees its own segment and the outer scope, never `p` or a
+    /// later segment.
     fn resolve_let(&mut self, l: &ast::LetExpr) -> ExprId {
+        let mut segments: Vec<Vec<syntax::SyntaxNode>> = vec![Vec::new()];
+        let mut binds: Vec<ast::BindBinding> = Vec::new();
+        for child in l.syntax().children() {
+            match child.kind() {
+                SyntaxKind::LetBinding | SyntaxKind::DestructureBinding => {
+                    if let Some(seg) = segments.last_mut() {
+                        seg.push(child);
+                    }
+                }
+                SyntaxKind::BindBinding => {
+                    if let Some(b) = ast::BindBinding::cast(child) {
+                        binds.push(b);
+                        segments.push(Vec::new());
+                    }
+                }
+                _ => {}
+            }
+        }
+        // The names each segment and each bind pattern defines, for the
+        // "a bind line splits the block" hint.
+        let seg_names: Vec<Vec<String>> = segments.iter().map(|s| let_line_names(s)).collect();
+        let bind_names: Vec<Vec<String>> = binds
+            .iter()
+            .map(|b| {
+                let mut acc = Vec::new();
+                if let Some(p) = b.pattern() {
+                    collect_pattern_binders(&p, &mut acc);
+                }
+                acc
+            })
+            .collect();
+        let plan = LetPlan {
+            segments,
+            binds,
+            seg_names,
+            bind_names,
+        };
+        self.resolve_let_from(l, &plan, 0)
+    }
+
+    /// Segment `i` of a split `let` and everything after it.
+    fn resolve_let_from(&mut self, l: &ast::LetExpr, plan: &LetPlan, i: usize) -> ExprId {
         self.push_scope();
-        let bindings: Vec<ast::LetBinding> = l.bindings().collect();
-        let destruct_nodes: Vec<syntax::SyntaxNode> = l
-            .syntax()
-            .children()
+        // A line of segment `i` cannot see a name of a later segment or of a
+        // later bind pattern: the first bind line after it hides them.
+        let label = plan.binds.get(i).map(bind_label);
+        let hidden_from = |skip_own_pattern: bool| -> HashMap<String, String> {
+            let mut m = HashMap::new();
+            if let Some(label) = &label {
+                for (j, names) in plan.bind_names.iter().enumerate().skip(i) {
+                    if j == i && skip_own_pattern {
+                        continue;
+                    }
+                    for n in names {
+                        m.entry(n.clone()).or_insert_with(|| label.clone());
+                    }
+                }
+                for names in plan.seg_names.iter().skip(i + 1) {
+                    for n in names {
+                        m.entry(n.clone()).or_insert_with(|| label.clone());
+                    }
+                }
+            }
+            m
+        };
+        self.hidden_by_bind.push(hidden_from(false));
+        let defs = self.resolve_let_lines(&plan.segments[i]);
+        self.hidden_by_bind.pop();
+        let body = match plan.binds.get(i) {
+            Some(b) => {
+                // `e`: its own pattern is not in scope either.
+                self.hidden_by_bind.push(hidden_from(true));
+                let e = match b.expr() {
+                    Some(e) => self.resolve_expr(&e),
+                    None => self.body.expr(Expr::Error),
+                };
+                self.hidden_by_bind.pop();
+                self.push_scope();
+                let pat = match b.pattern() {
+                    Some(p) => {
+                        self.check_linear_group(std::iter::once(p.clone()));
+                        self.resolve_pattern(&p)
+                    }
+                    None => self.body.pat(Pattern::Error),
+                };
+                let cont = self.resolve_let_from(l, plan, i + 1);
+                self.pop_scope();
+                // The Lambda and the Call are synthesised: no span. The
+                // placeholder carries the `<-` token, so a diagnostic about
+                // the choice of `andThen` points at the bind line.
+                let lam = self.body.expr(Expr::Lambda {
+                    params: vec![pat],
+                    body: cont,
+                });
+                let head = self.body.expr(Expr::Var(Res::BindAndThen));
+                let larrow = b.larrow().map(|t| self.span_of(t.text_range()));
+                if let Some(sp) = larrow {
+                    self.body.expr_spans.insert(head, sp);
+                }
+                let call = self.body.expr(Expr::Call(head, vec![lam, e]));
+                if let (Some(span), 0) = (larrow, self.quiet) {
+                    let owner = self.owner();
+                    self.result.bind_occs.push(BindOcc { owner, span, call });
+                }
+                call
+            }
+            None => match l.body() {
+                Some(b) => self.resolve_expr(&b),
+                None => self.body.expr(Expr::Error),
+            },
+        };
+        self.pop_scope();
+        // A continuation with no `=` lines is the body itself, not an empty
+        // `Let`. The block's own `Let` always stays: `resolve_expr` gives it
+        // the span of the `let` expression.
+        if i > 0 && defs.is_empty() {
+            return body;
+        }
+        self.body.expr(Expr::Let { defs, body })
+    }
+
+    /// The `=` lines of one `let` segment: one recursive group, every binder
+    /// bound before any body resolves (forward references, mutual recursion).
+    fn resolve_let_lines(&mut self, lines: &[syntax::SyntaxNode]) -> Vec<LocalDef> {
+        let bindings: Vec<ast::LetBinding> = lines
+            .iter()
+            .filter_map(|c| ast::LetBinding::cast(c.clone()))
+            .collect();
+        let destruct_nodes: Vec<syntax::SyntaxNode> = lines
+            .iter()
             .filter(|c| c.kind() == SyntaxKind::DestructureBinding)
+            .cloned()
             .collect();
 
         // pre-pass: bind all group binder names (forward references, C6). The
@@ -2905,7 +3060,7 @@ impl<'a> Resolver<'a> {
         // An annotation-only binding (`n : Int`) waits here for the define of
         // the same name that follows it.
         let mut pending_anno: Option<(Name, LetAnno)> = None;
-        for child in l.syntax().children() {
+        for child in lines.iter().cloned() {
             match child.kind() {
                 SyntaxKind::LetBinding => {
                     let Some(b) = ast::LetBinding::cast(child) else {
@@ -2998,12 +3153,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let body = match l.body() {
-            Some(b) => self.resolve_expr(&b),
-            None => self.body.expr(Expr::Error),
-        };
-        self.pop_scope();
-        self.body.expr(Expr::Let { defs, body })
+        defs
     }
 
     fn resolve_case(&mut self, c: &ast::CaseExpr) -> ExprId {
@@ -3892,10 +4042,23 @@ impl<'a> Resolver<'a> {
         // caret + excerpt (the E2001 path already does). `reason` stays on the
         // structured `class_a` entry — it was a redundant parenthetical in the
         // user-facing message.
-        let msg = match detail {
+        let mut msg = match detail {
             Some(d) => format!("Undefined name: {full}. The {d}."),
             None => format!("Undefined name: {full}"),
         };
+        // The name is defined in this `let` block, after a bind line.
+        if qualifier.is_none() {
+            if let Some(label) = self
+                .hidden_by_bind
+                .iter()
+                .rev()
+                .find_map(|frame| frame.get(name))
+            {
+                msg.push_str(&format!(
+                    ". Hint: a bind line splits the block: move this definition above `{label} <- …`"
+                ));
+            }
+        }
         let mut diag = Diagnostic::error("E1001", msg);
         if let Some(sp) = span {
             diag = diag.with_label(sp, "not defined");
@@ -4129,6 +4292,50 @@ impl<'a> Resolver<'a> {
 /// tuples / lists / cons / ctor args / parens / aliases / records). `_`
 /// (wildcard) and literal patterns introduce no binder. Used by the linearity
 /// gate; mirrors the binder set `bind_pattern_names` registers.
+/// A `let` block split at its bind lines: `segments[i]` is the `=` lines
+/// before `binds[i]` (the last segment has no bind line after it).
+struct LetPlan {
+    segments: Vec<Vec<syntax::SyntaxNode>>,
+    binds: Vec<ast::BindBinding>,
+    seg_names: Vec<Vec<String>>,
+    bind_names: Vec<Vec<String>>,
+}
+
+/// The pattern of a bind line as the hint quotes it (`( a, b )`).
+fn bind_label(b: &ast::BindBinding) -> String {
+    b.pattern()
+        .map(|p| {
+            p.syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
+}
+
+/// The names the `=` lines of one `let` segment define.
+fn let_line_names(lines: &[syntax::SyntaxNode]) -> Vec<String> {
+    let mut acc = Vec::new();
+    for line in lines {
+        match line.kind() {
+            SyntaxKind::LetBinding => {
+                if let Some(n) = ast::LetBinding::cast(line.clone()).and_then(|b| b.name()) {
+                    acc.push(n.text().to_string());
+                }
+            }
+            SyntaxKind::DestructureBinding => {
+                if let Some(p) = cst::child_pats(line).first() {
+                    collect_pattern_binders(p, &mut acc);
+                }
+            }
+            _ => {}
+        }
+    }
+    acc
+}
+
 fn collect_pattern_binders(p: &ast::Pattern, acc: &mut Vec<String>) {
     match p {
         ast::Pattern::Var(v) => {

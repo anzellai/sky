@@ -2608,6 +2608,21 @@ impl<'a> Infer<'a> {
                 }
             }
             Res::Foreign { package, name } => self.foreign_ref(&package, &name),
+            // The `andThen` of a bind line `p <- e`. Choosing it from the
+            // type of `e` is not built yet (docs/design/let-bind-lines.md §4),
+            // so a bind line is a hard error here: never a fresh type that a
+            // build would lower to wrong code.
+            Res::BindAndThen => {
+                self.errors.push(TypeError {
+                    message: "internal compiler error: this build of Sky parses bind lines \
+                              (`p <- e` in a `let` block) but cannot type them yet. Write the \
+                              line with `andThen` instead: `e |> andThen (\\p -> …)`."
+                        .to_string(),
+                    span: self.cur_span,
+                    code: "E2001",
+                });
+                self.uf.fresh_flex()
+            }
             Res::Error => self.uf.fresh_flex(),
         }
     }

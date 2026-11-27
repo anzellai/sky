@@ -696,7 +696,7 @@ impl Analysis {
                 .and_then(|p| p.functions.get(name.as_str()))
                 .map(|f| f.sky_type.clone())
                 .filter(|s| !s.is_empty()),
-            Res::Error => None,
+            Res::BindAndThen | Res::Error => None,
         }
     }
 
@@ -963,7 +963,7 @@ impl Analysis {
                     let pkg = self.ffi_for_module(module)?.resolve(package.as_str())?;
                     return ffi_binding_location(pkg, name.as_str());
                 }
-                Res::Error => None,
+                Res::BindAndThen | Res::Error => None,
             },
             Cand::Type(o) => def_span(db, &resolved, module, o.con)
                 .or_else(|| builtin_type_source(db, o.name.as_str())),
@@ -1312,7 +1312,7 @@ impl Analysis {
                         module: module.as_str().to_string(),
                         func: func.as_str().to_string(),
                     },
-                    Res::Foreign { .. } | Res::Error => return None,
+                    Res::Foreign { .. } | Res::BindAndThen | Res::Error => return None,
                 };
                 Some((t, name_span))
             }
@@ -2241,6 +2241,8 @@ fn classify_res(res: &Res) -> u32 {
         Res::Local(_) => TOK_PARAMETER,
         Res::Def(_) | Res::Kernel { .. } | Res::Foreign { .. } => TOK_FUNCTION,
         Res::Ctor(_) => TOK_ENUM_MEMBER,
+        // The `<-` of a bind line (never in `ref_occs`; kept total).
+        Res::BindAndThen => TOK_KEYWORD,
         Res::Error => TOK_VARIABLE,
     }
 }

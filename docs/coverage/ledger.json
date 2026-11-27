@@ -723,7 +723,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 118,
+      "expected_assertions": 123,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -1033,7 +1033,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3364,
+    "stdlib_entries": 3366,
     "stdlib_modules": 140,
     "surfaces_covered": 199,
     "surfaces_covered_pct": 95.2,
@@ -21312,7 +21312,7 @@
         }
       },
       "count": 897,
-      "pct_of_denominator": 26.7
+      "pct_of_denominator": 26.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -22933,8 +22933,8 @@
       "id": "apps:bundled",
       "modules_imported": 39,
       "path": "sky-bundled",
-      "refs_generous": 330,
-      "refs_qualified": 323,
+      "refs_generous": 331,
+      "refs_qualified": 324,
       "role": "Layer2",
       "sky_files": 18,
       "sky_toml_sections": []
@@ -23052,8 +23052,8 @@
       "id": "corpus:layer1",
       "modules_imported": 10,
       "path": "corpus:layer1",
-      "refs_generous": 61,
-      "refs_qualified": 53,
+      "refs_generous": 62,
+      "refs_qualified": 54,
       "role": "Layer1",
       "sky_files": 12,
       "sky_toml_sections": []
@@ -23849,8 +23849,8 @@
       "id": "examples/35-composite-generics",
       "modules_imported": 19,
       "path": "examples/35-composite-generics",
-      "refs_generous": 102,
-      "refs_qualified": 97,
+      "refs_generous": 103,
+      "refs_qualified": 98,
       "role": "Example",
       "sky_files": 6,
       "sky_toml_sections": [
@@ -23863,8 +23863,8 @@
       "id": "examples/36-composite-server",
       "modules_imported": 28,
       "path": "examples/36-composite-server",
-      "refs_generous": 119,
-      "refs_qualified": 110,
+      "refs_generous": 120,
+      "refs_qualified": 111,
       "role": "Example",
       "sky_files": 10,
       "sky_toml_sections": [
@@ -24635,8 +24635,8 @@
       "id": "flow:codegen_record_alias_ctor_collision_flow",
       "modules_imported": 6,
       "path": "rust/crates/sky/tests/codegen_record_alias_ctor_collision_flow.rs",
-      "refs_generous": 18,
-      "refs_qualified": 16,
+      "refs_generous": 19,
+      "refs_qualified": 17,
       "role": "FlowTest",
       "sky_files": 4,
       "sky_toml_sections": []
@@ -24959,8 +24959,8 @@
       "id": "tests/Core",
       "modules_imported": 11,
       "path": "tests/Core",
-      "refs_generous": 69,
-      "refs_qualified": 67,
+      "refs_generous": 70,
+      "refs_qualified": 68,
       "role": "SkySuite",
       "sky_files": 6,
       "sky_toml_sections": []
@@ -24983,8 +24983,8 @@
       "id": "tests/Json",
       "modules_imported": 2,
       "path": "tests/Json",
-      "refs_generous": 12,
-      "refs_qualified": 11,
+      "refs_generous": 13,
+      "refs_qualified": 12,
       "role": "SkySuite",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -25043,8 +25043,8 @@
       "id": "tests/Std",
       "modules_imported": 57,
       "path": "tests/Std",
-      "refs_generous": 784,
-      "refs_qualified": 753,
+      "refs_generous": 786,
+      "refs_qualified": 755,
       "role": "SkySuite",
       "sky_files": 31,
       "sky_toml_sections": []
@@ -25055,8 +25055,8 @@
       "id": "tests/conformance",
       "modules_imported": 67,
       "path": "tests/conformance",
-      "refs_generous": 1064,
-      "refs_qualified": 1037,
+      "refs_generous": 1066,
+      "refs_qualified": 1038,
       "role": "Conformance",
       "sky_files": 67,
       "sky_toml_sections": []

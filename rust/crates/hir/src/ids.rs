@@ -40,6 +40,12 @@ pub enum Res {
     /// to a package + name pair rather than a `DefId`. Never a resolver bug —
     /// tracked as class-(b) by the gate harness.
     Foreign { package: Name, name: Name },
+    /// The `andThen` of a bind line `p <- e` in a `let` block
+    /// (docs/design/let-bind-lines.md §4). The resolver puts it at the head
+    /// of the synthesised `Call(BindAndThen, [\p -> rest, e])`. It is not a
+    /// name lookup: the type checker chooses the `andThen` from the type of
+    /// `e`, so a local `andThen` never takes its place.
+    BindAndThen,
     /// Resolution failed. Resolution continues; a diagnostic was emitted (L7).
     Error,
 }
