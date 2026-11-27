@@ -43,9 +43,72 @@ pub fn format_source(src: &str) -> String {
 pub struct Formatted {
     /// The formatted source.
     pub text: String,
-    /// The 1-based first line of each top-level declaration kept exactly as
-    /// written, because formatting it would lose or move a comment.
+    /// The 1-based first line of each part kept exactly as written (a
+    /// top-level declaration, the header region, or line 1 for the whole
+    /// file), because formatting it would lose or move a comment.
     pub kept: Vec<usize>,
+    /// Each part in `kept`, in the same order, with the reason.
+    pub details: Vec<Kept>,
+}
+
+/// Which part of a file [`format_report`] kept as written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeptPart {
+    /// The `module` line and the imports.
+    Header,
+    /// One top-level declaration (an annotation and its definition are one).
+    Declaration,
+    /// The whole file: no mix of formatted and kept parts was safe.
+    File,
+}
+
+/// A comment that made a part be kept as written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptComment {
+    /// 1-based line of the comment.
+    pub line: usize,
+    /// True when code comes before the comment on its line.
+    pub trailing: bool,
+}
+
+/// One part kept as written, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kept {
+    /// 1-based first line of the part.
+    pub line: usize,
+    pub part: KeptPart,
+    /// The comment in the part that the printer cannot place (a trailing
+    /// comment first), when the part holds one.
+    pub comment: Option<KeptComment>,
+}
+
+impl Kept {
+    /// The warning text `sky fmt` prints after `file:line: `.
+    pub fn message(&self) -> String {
+        let what = match self.part {
+            KeptPart::Header => "the module header and imports are",
+            KeptPart::Declaration => "this declaration is",
+            KeptPart::File => "this file is",
+        };
+        match (&self.comment, self.part) {
+            (Some(c), _) if c.trailing => format!(
+                "{what} kept as written, because formatting would move the comment at \
+                 the end of line {}. Move that comment to its own line above to format it.",
+                c.line
+            ),
+            (Some(c), _) => format!(
+                "{what} kept as written, because the comment on line {} cannot be placed \
+                 by the formatter.",
+                c.line
+            ),
+            (None, _) => {
+                format!(
+                    "{what} kept as written, because the formatter cannot lay it out \
+                     without changing it."
+                )
+            }
+        }
+    }
 }
 
 /// Format Sky source, and say which declarations were kept as written.
@@ -56,6 +119,7 @@ pub fn format_report(src: &str) -> Formatted {
         return Formatted {
             text: parsed.reprint(),
             kept: Vec::new(),
+            details: Vec::new(),
         };
     }
     // The source's comments and significant tokens, read once: every safety
@@ -67,6 +131,7 @@ pub fn format_report(src: &str) -> Formatted {
         return Formatted {
             text: out,
             kept: Vec::new(),
+            details: Vec::new(),
         };
     }
     // Per declaration. A unit can only fail the net by losing or moving a
@@ -74,13 +139,13 @@ pub fn format_report(src: &str) -> Formatted {
     // other unit formatted. The mix is then checked as a whole; only if that
     // fails is every unit tried one at a time (the exact, slower search).
     let all: BTreeSet<usize> = units.iter().map(|u| u.0).collect();
-    let comment_lines = comment_lines(&parsed);
+    let comments = comment_lines(&parsed);
     let with_comments: Vec<usize> = units
         .iter()
         .enumerate()
         .filter(|(i, u)| {
             let end = units.get(i + 1).map_or(usize::MAX, |n| n.1);
-            comment_lines.iter().any(|&l| l >= u.1 && l < end)
+            comments.iter().any(|&(l, _)| l >= u.1 && l < end)
         })
         .map(|(_, u)| u.0)
         .collect();
@@ -134,29 +199,68 @@ pub fn format_report(src: &str) -> Formatted {
         let keep = candidate();
         let (mixed, _) = opinionated(src, &parsed, &keep);
         if !keep.is_empty() && is_safe(&want, &mixed, &keep) {
-            let kept = units
+            let details: Vec<Kept> = units
                 .iter()
-                .filter(|u| keep.contains(&u.0))
-                .map(|u| u.1 + 1)
+                .enumerate()
+                .filter(|(_, u)| keep.contains(&u.0))
+                .map(|(i, u)| {
+                    let end = units.get(i + 1).map_or(usize::MAX, |n| n.1);
+                    Kept {
+                        line: u.1 + 1,
+                        part: if u.0 == pretty::HEADER {
+                            KeptPart::Header
+                        } else {
+                            KeptPart::Declaration
+                        },
+                        comment: cause(&comments, u.1, end),
+                    }
+                })
                 .collect();
-            return Formatted { text: mixed, kept };
+            let kept = details.iter().map(|d| d.line).collect();
+            return Formatted {
+                text: mixed,
+                kept,
+                details,
+            };
         }
     }
+    // No safe mix: the whole file is kept as written, and said so.
     Formatted {
         text: parsed.reprint(),
-        kept: Vec::new(),
+        kept: vec![1],
+        details: vec![Kept {
+            line: 1,
+            part: KeptPart::File,
+            comment: cause(&comments, 0, usize::MAX),
+        }],
     }
 }
 
-/// The 0-based line of every comment token in `parsed`.
-fn comment_lines(parsed: &Parse) -> Vec<usize> {
+/// The comment in the 0-based line window `[start, end)` that most likely
+/// kept the part as written: the first trailing comment, else the first one.
+fn cause(comments: &[(usize, bool)], start: usize, end: usize) -> Option<KeptComment> {
+    let inside = || comments.iter().filter(|&&(l, _)| l >= start && l < end);
+    inside()
+        .find(|&&(_, trailing)| trailing)
+        .or_else(|| inside().next())
+        .map(|&(l, trailing)| KeptComment {
+            line: l + 1,
+            trailing,
+        })
+}
+
+/// The 0-based line of every comment token in `parsed`, and whether code
+/// comes before it on its line (a trailing comment).
+fn comment_lines(parsed: &Parse) -> Vec<(usize, bool)> {
     let mut lines = Vec::new();
     let text = parsed.syntax().to_string();
     for e in parsed.syntax().descendants_with_tokens() {
         if let Some(t) = e.into_token() {
             if matches!(t.kind(), SyntaxKind::LineComment | SyntaxKind::BlockComment) {
                 let at: usize = t.text_range().start().into();
-                lines.push(text[..at].matches('\n').count());
+                let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+                let trailing = !text[line_start..at].chars().all(|c| c == ' ' || c == '\t');
+                lines.push((text[..at].matches('\n').count(), trailing));
             }
         }
     }
@@ -214,6 +318,11 @@ struct Multisets {
     comments: BTreeMap<String, usize>,
     tokens: BTreeMap<String, usize>,
     anchors: Vec<Anchor>,
+    /// The comments inside the `module` line or an import (between its first
+    /// and last significant token), as `(node index, text)`. Parentheses are
+    /// not anchors, so a comment inside an exposing list moved out below the
+    /// closing paren would keep its anchor; this pins it inside its node.
+    in_header: Vec<(usize, String)>,
 }
 
 impl Multisets {
@@ -222,8 +331,44 @@ impl Multisets {
             comments: comment_multiset_of(parsed),
             tokens: sig_token_multiset_of(parsed),
             anchors: anchors_of(parsed),
+            in_header: header_comments_of(parsed),
         }
     }
+}
+
+/// The comments strictly inside the module header or an import node, by the
+/// node's position in the header (0 the `module` line, then each import).
+fn header_comments_of(parsed: &Parse) -> Vec<(usize, String)> {
+    use syntax::ast::AstNode;
+    let file = parsed.tree();
+    let nodes: Vec<_> = file
+        .module_header()
+        .map(|h| h.syntax().clone())
+        .into_iter()
+        .chain(file.imports().map(|i| i.syntax().clone()))
+        .collect();
+    let mut out = Vec::new();
+    for (k, node) in nodes.iter().enumerate() {
+        let sig: Vec<_> = node
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|t| !t.kind().is_trivia())
+            .collect();
+        let (Some(first), Some(last)) = (sig.first(), sig.last()) else {
+            continue;
+        };
+        let (lo, hi) = (first.text_range().end(), last.text_range().start());
+        for e in parsed.syntax().descendants_with_tokens() {
+            let Some(t) = e.into_token() else { continue };
+            if matches!(t.kind(), SyntaxKind::LineComment | SyntaxKind::BlockComment)
+                && t.text_range().start() >= lo
+                && t.text_range().end() <= hi
+            {
+                out.push((k, t.text().to_string()));
+            }
+        }
+    }
+    out
 }
 
 /// A significant token named so that the name survives re-layout: its

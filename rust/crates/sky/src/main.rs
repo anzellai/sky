@@ -12518,14 +12518,11 @@ fn status_opening_when_listening(
 
 // ---- fmt -----------------------------------------------------------------
 
-/// One stderr line per declaration `sky fmt` kept exactly as written,
-/// because formatting it would lose or move a comment.
-fn warn_kept_as_written(file: &str, kept: &[usize]) {
-    for line in kept {
-        eprintln!(
-            "sky fmt: warning: {file}:{line}: this declaration is kept as written, because \
-             formatting it would move a comment. Move the comment to its own line to format it."
-        );
+/// One stderr line per part `sky fmt` kept exactly as written (a
+/// declaration, the header region or the whole file), with its reason.
+fn warn_kept_as_written(file: &str, kept: &[fmt::Kept]) {
+    for k in kept {
+        eprintln!("sky fmt: warning: {file}:{}: {}", k.line, k.message());
     }
 }
 
@@ -12569,7 +12566,7 @@ fn cmd_fmt(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
         let report = format_report(&src);
-        warn_kept_as_written("<stdin>", &report.kept);
+        warn_kept_as_written("<stdin>", &report.details);
         let out = report.text;
         if check {
             return if out == src {
@@ -12635,7 +12632,7 @@ fn cmd_fmt(args: &[String]) -> ExitCode {
             continue;
         }
         let report = format_report(&src);
-        warn_kept_as_written(f, &report.kept);
+        warn_kept_as_written(f, &report.details);
         let out = report.text;
         if check {
             if out != src {

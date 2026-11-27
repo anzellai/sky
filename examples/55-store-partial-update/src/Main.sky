@@ -13,14 +13,19 @@ import Std.Db as Db exposing (SqlValue(..))
 import Std.Db.Store as Store exposing (Store)
 import Modernc.Org.Sqlite as _
 
-
 type alias Product =
-    { id : String, name : String, imageUrl : String, stock : Int }
+    { id : String
+    , name : String
+    , imageUrl : String
+    , stock : Int
+    }
 
 
 products : Store Product
 products =
-    Store.fromCodec "products" (Codec.auto { id = "", name = "", imageUrl = "", stock = 0 })
+    Store.fromCodec
+        "products"
+        (Codec.auto { id = "", name = "", imageUrl = "", stock = 0 })
         |> Store.primaryKey "id"
 
 
@@ -35,16 +40,33 @@ main =
         -- prints NOTHING while still exiting 0. That is what the CI gate
         -- captured into a 1-byte golden, which then matched itself green.
         _ <- Store.delete conn products "id" "p1"
-        _ <- Store.insert conn products { id = "p1", name = "Mug", imageUrl = "mug.png", stock = 10 }
+        _ <-
+            Store.insert
+                conn
+                products
+                { id = "p1", name = "Mug", imageUrl = "mug.png", stock = 10 }
         -- partial update: change name ONLY, must NOT touch imageUrl/stock
-        _ <- Store.setFields conn products (SqlString "p1") [ ( "name", SqlString "Big Mug" ) ]
+        _ <-
+            Store.setFields
+                conn
+                products
+                (SqlString "p1")
+                [ ( "name", SqlString "Big Mug" ) ]
         -- atomic decrement stock by 3
-        _ <- Store.adjust conn products (Store.eq "id" (SqlString "p1")) [ ( "stock", -3 ) ]
+        _ <-
+            Store.adjust
+                conn
+                products
+                (Store.eq "id" (SqlString "p1"))
+                [ ( "stock", -3 ) ]
         mp <- Store.findBy conn products "id" "p1"
     in
         case mp of
+
             Just p ->
-                println ("name=" ++ p.name ++ " imageUrl=" ++ p.imageUrl ++ " stock=" ++ String.fromInt p.stock)
+                println
+                    ("name=" ++ p.name ++ " imageUrl=" ++ p.imageUrl ++ " stock="
+                        ++ String.fromInt p.stock)
 
             Nothing ->
                 println "not found"

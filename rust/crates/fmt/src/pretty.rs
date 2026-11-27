@@ -36,6 +36,10 @@ struct Comment {
     text: String,
 }
 
+/// The unit key of the header region (the `module` line and the imports) in
+/// `Printer::units` and the `verbatim` set. Declarations are keyed by index.
+pub const HEADER: usize = usize::MAX;
+
 pub struct Printer {
     /// Own-line comments still to be placed, kept sorted by source line.
     comments: Vec<Comment>,
@@ -351,6 +355,41 @@ impl Printer {
     pub fn format(&mut self, file: &SourceFile) -> String {
         let mut sections: Vec<String> = Vec::new();
 
+        // The header region (the `module` line and the imports) is one unit,
+        // keyed `HEADER`. Kept as written, it is copied from its first
+        // significant line to the end of its last line, and the own-line
+        // comments inside it leave the stream.
+        let header_node = file.module_header().map(|h| h.syntax().clone());
+        let import_nodes: Vec<Import> = file.imports().collect();
+        let header_first = header_node
+            .clone()
+            .or_else(|| import_nodes.first().map(|i| i.syntax().clone()));
+        let header_last = import_nodes
+            .last()
+            .map(|i| i.syntax().clone())
+            .or_else(|| header_node.clone());
+        if let (Some(first), Some(last)) = (header_first, header_last) {
+            let start_line = self.line_of_node(&first);
+            self.units.push((HEADER, start_line));
+            if self.verbatim.contains(&HEADER) {
+                let lead = trim_trailing_newlines(&self.drain_leading(start_line));
+                if !lead.is_empty() {
+                    sections.push(lead);
+                }
+                let end_line = self.end_line_of_node(&last);
+                let start = self.line_starts[start_line];
+                let end = self
+                    .line_starts
+                    .get(end_line + 1)
+                    .copied()
+                    .unwrap_or(self.src.len());
+                sections.push(self.src[start..end].trim_end().to_string());
+                self.comments
+                    .retain(|c| c.line < start_line || c.line > end_line);
+                return self.format_decls(file, sections);
+            }
+        }
+
         if let Some(h) = file.module_header() {
             // A module-doc comment sitting ABOVE the `module` keyword must stay
             // there — it is the module's header doc (what `sky doc` reads). Drain
@@ -370,7 +409,6 @@ impl Printer {
             sections.push(format!("{lhs}{exposing}"));
         }
 
-        let import_nodes: Vec<Import> = file.imports().collect();
         if !import_nodes.is_empty() {
             // Own-line header comments sitting above the first import belong ABOVE
             // the import block. Drain them here; otherwise they fall through to the
@@ -396,6 +434,12 @@ impl Printer {
             sections.push(format!("\n{rendered}"));
         }
 
+        self.format_decls(file, sections)
+    }
+
+    /// Print the declarations (and the comments after them) below the
+    /// header sections already in `sections`, and join the file.
+    fn format_decls(&mut self, file: &SourceFile, mut sections: Vec<String>) -> String {
         // Group decls: a `name : Type` annotation immediately followed by the
         // matching `name …=…` value renders as one unit (value kind).
         let decls: Vec<Decl> = file.decls().collect();
@@ -491,8 +535,19 @@ impl Printer {
 
     fn fmt_import(&self, imp: &Import) -> String {
         let name = imp.name().map(|n| n.text()).unwrap_or_default();
+        // The alias is its node's last significant token: an upper name, or
+        // `_` for an import kept only for its Go side effects (`as _`).
         let alias = imp
-            .alias()
+            .syntax()
+            .children()
+            .find(|n| n.kind() == SyntaxKind::ImportAlias)
+            .and_then(|a| {
+                a.descendants_with_tokens()
+                    .filter_map(|e| e.into_token())
+                    .filter(|t| !t.kind().is_trivia())
+                    .last()
+            })
+            .filter(|t| t.text() != "as")
             .map(|a| format!(" as {}", a.text()))
             .unwrap_or_default();
         let prefix = format!("import {name}{alias}");
