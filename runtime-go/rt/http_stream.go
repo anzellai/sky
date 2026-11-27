@@ -663,6 +663,28 @@ func HttpStream_forEachChunk(sidArg any, bodyArg any) any {
 		}
 		expired, stop := skyDeadlineTimer()
 		defer stop()
+		// handle runs one queued event; a non-nil result ends the drain.
+		handle := func(ev streamEvent) any {
+			switch ev.kind {
+			case streamChunkEv:
+				// Call user's `body chunk` Task synchronously.
+				// SkyCall returns the body's Task value
+				// (typically func() any); anyTaskInvoke drives
+				// it to a SkyResult.
+				res := anyTaskInvoke(SkyCall(bodyArg, ev.data))
+				if res.Tag != 0 {
+					// body errored — fail-fast: abort iteration
+					// and propagate the body's Err upward.
+					return Err[any, any](res.ErrValue)
+				}
+				return nil
+			case streamDoneEv:
+				return Ok[any, any](skyUnit())
+			case streamErrEv:
+				return Err[any, any](ev.err)
+			}
+			return nil
+		}
 		for {
 			select {
 			case <-expired:
@@ -674,30 +696,33 @@ func HttpStream_forEachChunk(sidArg any, bodyArg any) any {
 					// current spool, but be defensive).
 					return Ok[any, any](skyUnit())
 				}
-				switch ev.kind {
-				case streamChunkEv:
-					// Call user's `body chunk` Task synchronously.
-					// SkyCall returns the body's Task value
-					// (typically func() any); anyTaskInvoke drives
-					// it to a SkyResult.
-					taskVal := SkyCall(bodyArg, ev.data)
-					res := anyTaskInvoke(taskVal)
-					if res.Tag != 0 {
-						// body errored — fail-fast: abort iteration
-						// and propagate the body's Err upward.
-						return Err[any, any](res.ErrValue)
-					}
-				case streamDoneEv:
-					return Ok[any, any](skyUnit())
-				case streamErrEv:
-					return Err[any, any](ev.err)
+				if r := handle(ev); r != nil {
+					return r
 				}
 			case <-sh.done:
-				// Stream was closed out-of-band (e.g. session
-				// teardown, explicit Http.Stream.close from a
-				// concurrent goroutine). Treat as clean EOF —
-				// the caller asked to stop.
-				return Ok[any, any](skyUnit())
+				// The handle is closed. The spool closes it itself at EOF
+				// and on a read error, AFTER it has queued every chunk and
+				// the Done / Errored event, so hand out what is queued
+				// first, as WebSocket.receive does (websocket_task.go). A
+				// reader that starts after the spool finished (a stream
+				// opened under a Task.timeout and drained later) otherwise
+				// lost the rest of the stream to Go's random select
+				// choice. An empty queue means an out-of-band close
+				// (session teardown, an explicit Http.Stream.close): the
+				// caller asked to stop.
+				for {
+					select {
+					case ev, open := <-sh.ch:
+						if !open {
+							return Ok[any, any](skyUnit())
+						}
+						if r := handle(ev); r != nil {
+							return r
+						}
+					default:
+						return Ok[any, any](skyUnit())
+					}
+				}
 			}
 		}
 	}
