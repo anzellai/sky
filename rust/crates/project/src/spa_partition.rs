@@ -23,7 +23,8 @@
 //! `Crypto.randomBytes`) and every function that holds a secret key go to the
 //! SERVER (see [`EFFECT_KERNELS`] and [`MIXED_KERNELS`]).
 //!
-//! This file walks `hir::resolve(module).bodies` and reads the typed HIR
+//! This file walks each body as `ty::TyDb::elaborated_body_of` gives it (a bind line with its
+//! chosen `andThen`) and reads the typed HIR
 //! (`ty::Typer::body_types`, whose `BodyTypes.exprs` is the same table the
 //! lowerer consumes) — it never re-implements resolution or inference.
 
@@ -32,6 +33,7 @@ use hir::{Body, Expr, ExprId, LocalDef, LocalId, PatId, Pattern, Res, SkyDb};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use syntax::SyntaxKind;
+use ty::TyDb;
 
 /// A `diagnostics::SourceProvider` over an already-loaded source db, keyed the
 /// same way the build driver keys its own (`FileId(module_id.index())`), so a
@@ -723,7 +725,7 @@ struct Refs {
 /// use of `update` sets `generic_update` → server.
 #[derive(Clone, Copy, Default)]
 struct CollectCtx<'a> {
-    db: Option<&'a dyn SkyDb>,
+    db: Option<&'a dyn TyDb>,
     update_def: Option<DefId>,
     /// The client-crypto opt-in ([`detect_client_crypto`]). `false` (the
     /// default) classifies every kernel exactly as before the opt-in existed.
@@ -896,7 +898,7 @@ fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
 /// The literal Msg ctor NAME of an `update` call's first argument, if it is one:
 /// a nullary ctor (`Expr::Var(Res::Ctor _)`) or an applied ctor
 /// (`Expr::Call(Var(Res::Ctor _), …)`). `None` for a dynamic / non-ctor arg.
-fn literal_ctor_name(body: &Body, db: &dyn SkyDb, e: ExprId) -> Option<String> {
+fn literal_ctor_name(body: &Body, db: &dyn TyDb, e: ExprId) -> Option<String> {
     let cref = match &body.exprs[e] {
         Expr::Var(Res::Ctor(c)) => c,
         Expr::Call(callee, _) => match &body.exprs[*callee] {
@@ -973,6 +975,10 @@ fn record_res(res: &Res, acc: &mut Refs, ctx: &CollectCtx) {
             acc.callees.insert(*d);
         }
         Res::Foreign { .. } => acc.foreign = true,
+        // The partition reads elaborated bodies (`TyDb::elaborated_body_of`):
+        // a bind line's chosen `andThen` arrives as the `Res::Def` above
+        // (docs/design/let-bind-lines.md §5). A placeholder here is a bug.
+        Res::BindAndThen => ty::unchosen_bind("the Sky.Spa partition"),
         Res::Local(_) | Res::Ctor(_) | Res::Error => {}
     }
 }
@@ -982,11 +988,11 @@ fn record_res(res: &Res, acc: &mut Refs, ctx: &CollectCtx) {
 /// helper closure into the generated `Shared` module. Read-only walk over the
 /// resolved HIR; conservative `default()` context (no Msg-precision needed here).
 /// Returns the callee `DefId`s (deduped, sorted for determinism).
-pub fn body_def_callees(db: &dyn SkyDb, module: ModuleId, def: DefId) -> Vec<DefId> {
-    let resolved = db.resolve(module);
-    let Some(body) = resolved.bodies.get(&def) else {
+pub fn body_def_callees(db: &dyn TyDb, module: ModuleId, def: DefId) -> Vec<DefId> {
+    let Some(body) = db.elaborated_body_of(module, def) else {
         return Vec::new();
     };
+    let body: &Body = &body;
     let mut acc = Refs::default();
     if let Some(root) = body.root {
         collect(body, root, &mut acc, &CollectCtx::default());
@@ -1012,14 +1018,14 @@ pub fn body_def_callees(db: &dyn SkyDb, module: ModuleId, def: DefId) -> Vec<Def
 /// free. Families + callees are each deduped + sorted for deterministic output.
 /// Never lowers, emits, or writes.
 pub fn body_effects_and_callees(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     module: ModuleId,
     def: DefId,
 ) -> (Vec<String>, Vec<DefId>) {
-    let resolved = db.resolve(module);
-    let Some(body) = resolved.bodies.get(&def) else {
+    let Some(body) = db.elaborated_body_of(module, def) else {
         return (Vec::new(), Vec::new());
     };
+    let body: &Body = &body;
     let mut acc = Refs::default();
     if let Some(root) = body.root {
         collect(body, root, &mut acc, &CollectCtx::default());
@@ -1039,14 +1045,14 @@ pub fn body_effects_and_callees(
 /// The exact symbol of a direct resolved `Ffi.kernel "<sym>"` alias.
 /// The same recognition serves feature reachability and init-effect routing;
 /// neither path grants kernel identity from a source-level function name.
-fn def_kernel_alias_symbol(db: &dyn SkyDb, def: DefId) -> Option<String> {
+fn def_kernel_alias_symbol(db: &dyn TyDb, def: DefId) -> Option<String> {
     let Some(loc) = db.def_loc(def) else {
         return None;
     };
-    let resolved = db.resolve(loc.module);
-    let Some(body) = resolved.bodies.get(&def) else {
+    let Some(body) = db.elaborated_body_of(loc.module, def) else {
         return None;
     };
+    let body: &Body = &body;
     let Some(root) = body.root else {
         return None;
     };
@@ -1065,7 +1071,7 @@ fn def_kernel_alias_symbol(db: &dyn SkyDb, def: DefId) -> Option<String> {
     None
 }
 
-fn def_is_kernel_alias_to(db: &dyn SkyDb, def: DefId, targets: &[&str]) -> bool {
+fn def_is_kernel_alias_to(db: &dyn TyDb, def: DefId, targets: &[&str]) -> bool {
     def_kernel_alias_symbol(db, def).is_some_and(|symbol| targets.contains(&symbol.as_str()))
 }
 
@@ -1073,7 +1079,7 @@ fn def_is_kernel_alias_to(db: &dyn SkyDb, def: DefId, targets: &[&str]) -> bool 
 /// from the app-only tainted binding report. Init planning must still route
 /// their server effects using exactly the partition's existing policy.
 pub(crate) fn reference_is_server_kernel(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     reference: &Res,
     client_crypto: bool,
 ) -> bool {
@@ -1090,7 +1096,8 @@ pub(crate) fn reference_is_server_kernel(
             record_ffi_symbol(&symbol, &mut refs, client_crypto);
             !refs.server_kernels.is_empty()
         }
-        _ => false,
+        Res::BindAndThen => ty::unchosen_bind("the Sky.Spa init planner"),
+        Res::Local(_) | Res::Ctor(_) | Res::Foreign { .. } | Res::Error => false,
     }
 }
 
@@ -1099,7 +1106,7 @@ pub(crate) fn reference_is_server_kernel(
 /// callees, which is where `Sub.subscribeTopic` / `Cmd.publish` land when used).
 /// Opt in to the changed wire only when the actual entry reaches a scroll
 /// constructor, through resolved defs (CAF/function aliases/helpers included).
-fn resolved_kernel_reachable(db: &dyn SkyDb, start: DefId, targets: &[&str]) -> bool {
+fn resolved_kernel_reachable(db: &dyn TyDb, start: DefId, targets: &[&str]) -> bool {
     let mut work = vec![start];
     let mut seen = HashSet::new();
     while let Some(def) = work.pop() {
@@ -1115,17 +1122,17 @@ fn resolved_kernel_reachable(db: &dyn SkyDb, start: DefId, targets: &[&str]) -> 
     }
     false
 }
-pub(crate) fn returned_scrolls_reachable(db: &dyn SkyDb, entry: ModuleId) -> bool {
+pub(crate) fn returned_scrolls_reachable(db: &dyn TyDb, entry: ModuleId) -> bool {
     def_by_name(db, entry, "main")
         .is_some_and(|main| resolved_kernel_reachable(db, main, SCROLL_KERNELS))
 }
-pub(crate) fn init_reaches_url_navigation(db: &dyn SkyDb, module: ModuleId) -> bool {
+pub(crate) fn init_reaches_url_navigation(db: &dyn TyDb, module: ModuleId) -> bool {
     def_by_name(db, module, "init")
         .is_some_and(|init| resolved_kernel_reachable(db, init, URL_NAV_KERNELS))
 }
 const URL_NAV_KERNELS: &[&str] = &["Nav_pushUrl", "Nav_replaceUrl"];
 
-fn app_reaches_kernel(db: &dyn SkyDb, graph: &Graph, targets: &[&str]) -> bool {
+fn app_reaches_kernel(db: &dyn TyDb, graph: &Graph, targets: &[&str]) -> bool {
     graph
         .nodes
         .keys()
@@ -2333,8 +2340,8 @@ pub fn analyze_checked(
                 .unwrap_or((entry, "update".to_string()));
             update_name = Some(format!("{}.{}", db.module_name(umod), uname));
             update_module_name = Some(db.module_name(umod).to_string());
-            let resolved = db.resolve(umod);
-            if let Some(body) = resolved.bodies.get(&update_def) {
+            if let Some(body) = db.elaborated_body_of(umod, update_def) {
+                let body: &Body = &body;
                 // Recover the Model field list + types from `update`'s result
                 // type — the raw material for the generator's wire records.
                 let types = ty::Typer::new(db).body_types(umod, update_def, body);
@@ -2502,7 +2509,7 @@ pub fn analyze_checked(
 /// module's `main` through the PROJECT's own defs. Reachability means dead code
 /// does not turn the opt-in on, and walking only project modules means a
 /// dependency cannot turn it on for the app.
-pub fn detect_client_crypto(db: &dyn SkyDb, entry: ModuleId, check_ids: &[ModuleId]) -> bool {
+pub fn detect_client_crypto(db: &dyn TyDb, entry: ModuleId, check_ids: &[ModuleId]) -> bool {
     let mut markers: HashSet<DefId> = HashSet::new();
     for m in ["Std.Spa", "Std.App"] {
         if let Some(mid) = db.module_by_name(m) {
@@ -2619,7 +2626,7 @@ fn client_crypto_refusals(
 /// perform leaf's constructor, through the tail scaffolding and whole-arm
 /// helper delegates. `None` when a leaf cannot be read (an opaque command, a
 /// perform whose `toMsg` is not a constructor).
-fn tail_continuations(db: &dyn SkyDb, body: &Body, e: ExprId) -> Option<Vec<String>> {
+fn tail_continuations(db: &dyn TyDb, body: &Body, e: ExprId) -> Option<Vec<String>> {
     let mut leaves: Vec<(CmdLeaf, bool)> = Vec::new();
     let mut visited: HashSet<DefId> = HashSet::new();
     collect_tail_cmd_leaves_tagged(db, body, e, false, &mut leaves, 0, &mut visited);
@@ -2641,7 +2648,7 @@ fn tail_continuations(db: &dyn SkyDb, body: &Body, e: ExprId) -> Option<Vec<Stri
 /// Whether a command-valued tail expression is `Cmd.none` on every leaf: it
 /// reads, it starts no effect, publishes nothing and navigates nowhere. `false`
 /// when a leaf cannot be read.
-fn tail_cmd_quiet(db: &dyn SkyDb, body: &Body, e: ExprId) -> bool {
+fn tail_cmd_quiet(db: &dyn TyDb, body: &Body, e: ExprId) -> bool {
     let mut leaves: Vec<(CmdLeaf, bool)> = Vec::new();
     let mut visited: HashSet<DefId> = HashSet::new();
     collect_tail_cmd_leaves_tagged(db, body, e, false, &mut leaves, 0, &mut visited);
@@ -2651,12 +2658,7 @@ fn tail_cmd_quiet(db: &dyn SkyDb, body: &Body, e: ExprId) -> bool {
 /// The model parameter local and body expression of a hook `f a0 … model …`
 /// whose model parameter is at `idx`: a lambda value (`\req model -> …`), a
 /// function def, or a value def naming another def. `None` when unreadable.
-fn hook_body(
-    db: &dyn SkyDb,
-    d: DefId,
-    idx: usize,
-    depth: usize,
-) -> Option<(Body, LocalId, ExprId)> {
+fn hook_body(db: &dyn TyDb, d: DefId, idx: usize, depth: usize) -> Option<(Body, LocalId, ExprId)> {
     if depth > FRESH_DEPTH {
         return None;
     }
@@ -2798,10 +2800,10 @@ fn init_model_server_reads(
     let Some(loc) = db.def_loc(init_def) else {
         return Vec::new();
     };
-    let resolved = db.resolve(loc.module);
-    let Some(body) = resolved.bodies.get(&init_def) else {
+    let Some(body) = db.elaborated_body_of(loc.module, init_def) else {
         return Vec::new();
     };
+    let body: &Body = &body;
     let Some(root) = body.root else {
         return Vec::new();
     };
@@ -2881,10 +2883,10 @@ fn def_reaches_genuine_effect(
     if db.module_name(loc.module) == "Std.Spa" {
         return false;
     }
-    let resolved = db.resolve(loc.module);
-    let Some(body) = resolved.bodies.get(&d) else {
+    let Some(body) = db.elaborated_body_of(loc.module, d) else {
         return false;
     };
+    let body: &Body = &body;
     let Some(root) = body.root else {
         return false;
     };
@@ -2937,7 +2939,7 @@ enum UpdateField {
 }
 
 /// Find the def named `name` in module `m`.
-fn def_by_name(db: &dyn SkyDb, m: ModuleId, name: &str) -> Option<DefId> {
+fn def_by_name(db: &dyn TyDb, m: ModuleId, name: &str) -> Option<DefId> {
     db.resolve(m)
         .top_defs
         .iter()
@@ -2966,8 +2968,8 @@ pub fn find_config_field_def(
     let mut order = vec![entry];
     order.extend(check_ids.iter().copied().filter(|m| *m != entry));
     for mid in order {
-        let resolved = db.resolve(mid);
-        for (_def, body) in &resolved.bodies {
+        for body in ty::elaborated_bodies(db, mid) {
+            let body: &Body = &body;
             if let Some(f) = find_config_field(body, &config_defs, field) {
                 if let Expr::Var(Res::Def(d)) = &body.exprs[f] {
                     return Some(*d);
@@ -3007,7 +3009,7 @@ pub fn guard_readset(db: &skydb::SkyDatabase, entry: ModuleId) -> GuardReads {
         return GuardReads::NoGuard;
     };
     let def = td.def;
-    let target = resolved.bodies.get(&def).and_then(|body| {
+    let target = db.elaborated_body_of(entry, def).and_then(|body| {
         if body.params.len() >= 2 {
             return Some(def);
         }
@@ -3173,7 +3175,7 @@ pub fn hold_free_pairs(
 /// field. Returns the update DefId (the common case), a lambda body, or an
 /// "unavailable" reason for a non-name shape (partial app).
 fn find_config_update_field(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     check_ids: &[ModuleId],
     entry: ModuleId,
     config_defs: &[DefId],
@@ -3182,8 +3184,8 @@ fn find_config_update_field(
     let mut order = vec![entry];
     order.extend(check_ids.iter().copied().filter(|m| *m != entry));
     for mid in order {
-        let resolved = db.resolve(mid);
-        for (_def, body) in &resolved.bodies {
+        for body in ty::elaborated_bodies(db, mid) {
+            let body: &Body = &body;
             if let Some(field) = find_config_field(body, config_defs, "update") {
                 return match &body.exprs[field] {
                     Expr::Var(Res::Def(d)) => UpdateField::Def(*d),
@@ -3213,7 +3215,7 @@ fn find_config_update_field(
 /// record). Recognising all three lets the auto-split analysis (and the
 /// differential fuzzer) read `update` straight from an `App.app`/`App.web` app
 /// without the `App -> Spa` source synthesis the build path performs.
-fn app_config_defs(db: &dyn SkyDb) -> Vec<DefId> {
+fn app_config_defs(db: &dyn TyDb) -> Vec<DefId> {
     let mut out = Vec::new();
     if let Some(m) = db.module_by_name("Std.Spa") {
         if let Some(d) = def_by_name(db, m, "config") {
@@ -3325,7 +3327,7 @@ impl Graph {
     }
 
     /// A human reason for why `d` is server-tainted.
-    fn reason_for(&self, db: &dyn SkyDb, d: DefId) -> String {
+    fn reason_for(&self, db: &dyn TyDb, d: DefId) -> String {
         if let Some(node) = self.nodes.get(&d) {
             if let Some(r) = &node.direct {
                 return format!("seed: {r}");
@@ -3368,7 +3370,7 @@ const SPA_UNSUPPORTED_MODULES: &[(&str, &str)] = &[(
 
 /// The refusal for a program that reaches a module in
 /// [`SPA_UNSUPPORTED_MODULES`], or `None`.
-fn spa_unsupported_module(db: &dyn SkyDb, graph: &Graph) -> Option<String> {
+fn spa_unsupported_module(db: &dyn TyDb, graph: &Graph) -> Option<String> {
     let mut hits: Vec<&str> = Vec::new();
     for def in graph.nodes.keys() {
         let Some(loc) = db.def_loc(*def) else {
@@ -3388,14 +3390,14 @@ fn spa_unsupported_module(db: &dyn SkyDb, graph: &Graph) -> Option<String> {
     }
 }
 
-fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId], client_crypto: bool) -> Graph {
+fn build_graph(db: &dyn TyDb, check_ids: &[ModuleId], client_crypto: bool) -> Graph {
     let mut nodes: HashMap<DefId, DefNode> = HashMap::new();
     let mut work: Vec<DefId> = Vec::new();
     let mut seen: HashSet<DefId> = HashSet::new();
 
     // Seed with all app top-level defs.
     for mid in check_ids {
-        for (def, _) in &db.resolve(*mid).bodies {
+        for def in db.resolve(*mid).bodies.keys() {
             if seen.insert(*def) {
                 work.push(*def);
             }
@@ -3443,8 +3445,7 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId], client_crypto: bool) -> G
             );
             continue;
         }
-        let resolved = db.resolve(loc.module);
-        let Some(body) = resolved.bodies.get(&def) else {
+        let Some(body) = db.elaborated_body_of(loc.module, def) else {
             // A referenced def with no body in its module — opaque, conservative.
             nodes.insert(
                 def,
@@ -3458,6 +3459,7 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId], client_crypto: bool) -> G
             );
             continue;
         };
+        let body: &Body = &body;
         let mut acc = Refs::default();
         if let Some(root) = body.root {
             // Conservative ctx: `update` is an ordinary callee here, so a helper
@@ -3720,7 +3722,7 @@ struct ArmFacts {
 /// arms; cycles terminate). Match scoped-call names to arm keys by name.
 #[allow(clippy::too_many_arguments)]
 fn classify_case_arms(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     graph: &Graph,
     body: &Body,
     arms: &[hir::CaseBranch],
@@ -4011,7 +4013,7 @@ fn cmd_kernel_kind(module: &str, func: &str) -> Option<CmdDefKind> {
     }
 }
 
-fn cmd_def_kind(db: &dyn SkyDb, d: DefId) -> CmdDefKind {
+fn cmd_def_kind(db: &dyn TyDb, d: DefId) -> CmdDefKind {
     if def_is_kernel_alias_to(db, d, SCROLL_KERNELS) {
         CmdDefKind::Scroll
     } else if def_is_kernel_alias_to(db, d, &["Cmd_perform"]) {
@@ -4081,7 +4083,7 @@ fn collect_guarded_tail_cmd_exprs(body: &Body, e: ExprId, out: &mut Vec<ExprId>)
 /// Statically resolve a command expression into its leaves. FAIL-CLOSED: any
 /// shape the resolver cannot read becomes [`CmdLeaf::Unresolvable`], which stops
 /// the triggering branch from being chained (never a silently-dropped write).
-fn resolve_cmd_leaves(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut Vec<CmdLeaf>) {
+fn resolve_cmd_leaves(db: &dyn TyDb, body: &Body, e: ExprId, out: &mut Vec<CmdLeaf>) {
     let mut visited: HashSet<DefId> = HashSet::new();
     resolve_cmd_leaves_rec(db, body, e, out, 0, &mut visited);
 }
@@ -4093,7 +4095,7 @@ fn resolve_cmd_leaves(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut Vec<CmdL
 /// the narrow pattern-2 `client_result` subset: it reports every resolvable
 /// `ToMsg` regardless of whether the branch is auto-split-chainable. Sorted +
 /// deduped; empty for a branch with no resolvable continuation.
-pub(crate) fn arm_continuation_msgs(db: &dyn SkyDb, body: &Body, arm_body: ExprId) -> Vec<String> {
+pub(crate) fn arm_continuation_msgs(db: &dyn TyDb, body: &Body, arm_body: ExprId) -> Vec<String> {
     let mut cmd_exprs: Vec<ExprId> = Vec::new();
     collect_guarded_tail_cmd_exprs(body, arm_body, &mut cmd_exprs);
     let mut out: Vec<String> = Vec::new();
@@ -4119,7 +4121,7 @@ pub(crate) fn arm_continuation_msgs(db: &dyn SkyDb, body: &Body, arm_body: ExprI
 const CMD_RESOLVE_DEPTH: usize = 12;
 
 fn resolve_cmd_leaves_rec(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     e: ExprId,
     out: &mut Vec<CmdLeaf>,
@@ -4286,7 +4288,7 @@ fn let_bound_fn_body(body: &Body, l: LocalId) -> Option<ExprId> {
 /// Is `callee` the stdlib list function whose kernel symbol is `sym`
 /// (`List.map` → `List_map`)? Matches both a `Sky.Core.List` def (a
 /// `Ffi.kernel` alias) and a direct kernel reference.
-fn is_list_kernel(db: &dyn SkyDb, body: &Body, callee: ExprId, sym: &str) -> bool {
+fn is_list_kernel(db: &dyn TyDb, body: &Body, callee: ExprId, sym: &str) -> bool {
     match &body.exprs[callee] {
         Expr::Var(Res::Def(d)) => def_is_kernel_alias_to(db, *d, &[sym]),
         Expr::Var(Res::Kernel { module, func }) => {
@@ -4305,7 +4307,7 @@ fn is_list_kernel(db: &dyn SkyDb, body: &Body, callee: ExprId, sym: &str) -> boo
 /// `repeated` (they run once per element). Any other shape is `Unresolvable`
 /// (fail closed).
 fn resolve_cmd_list_leaves(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     e: ExprId,
     out: &mut Vec<CmdLeaf>,
@@ -4402,7 +4404,7 @@ fn resolve_cmd_list_leaves(
 /// `Unresolvable`). `Std.Cmd` / `Std.Spa` helpers are not walked here — those are
 /// caught by `cmd_def_kind` (the kernel aliases) before reaching this.
 fn resolve_helper_cmd(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     d: DefId,
     out: &mut Vec<CmdLeaf>,
     depth: usize,
@@ -4416,11 +4418,11 @@ fn resolve_helper_cmd(
         out.push(CmdLeaf::Unresolvable);
         return;
     };
-    let resolved = db.resolve(loc.module);
-    let Some(hbody) = resolved.bodies.get(&d) else {
+    let Some(hbody) = db.elaborated_body_of(loc.module, d) else {
         out.push(CmdLeaf::Unresolvable);
         return;
     };
+    let hbody: &Body = &hbody;
     let Some(root) = hbody.root else {
         out.push(CmdLeaf::Unresolvable);
         return;
@@ -4449,7 +4451,7 @@ fn resolve_helper_cmd(
 /// BEFORE the whole-arm-delegate branch, so a `guard model (\_ -> …)` keeps its
 /// stricter (guarded) treatment and a plain delegate `record v model` is crossed.
 fn collect_tail_cmd_leaves_tagged(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     e: ExprId,
     guarded: bool,
@@ -4535,7 +4537,7 @@ fn collect_tail_cmd_leaves_tagged(
 /// mirror [`resolve_helper_cmd`]; a body we cannot read yields
 /// [`CmdLeaf::Unresolvable`] (fail-closed).
 fn collect_delegate_tail_cmd_leaves(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     d: DefId,
     guarded: bool,
     out: &mut Vec<(CmdLeaf, bool)>,
@@ -4546,12 +4548,10 @@ fn collect_delegate_tail_cmd_leaves(
         out.push((CmdLeaf::Unresolvable, guarded));
         return;
     }
-    let resolved = db.def_loc(d).map(|loc| db.resolve(loc.module));
-    match resolved
-        .as_ref()
-        .and_then(|r| r.bodies.get(&d))
-        .and_then(|b| b.root.map(|root| (b, root)))
-    {
+    let hbody = db
+        .def_loc(d)
+        .and_then(|loc| db.elaborated_body_of(loc.module, d));
+    match hbody.as_ref().and_then(|b| b.root.map(|root| (&**b, root))) {
         Some((hbody, root)) => {
             collect_tail_cmd_leaves_tagged(db, hbody, root, guarded, out, depth, visited)
         }
@@ -4564,7 +4564,7 @@ fn collect_delegate_tail_cmd_leaves(
 /// Whether an `update` arm reaches code that runs only in the client: a
 /// client-effect kernel (`Std.Native`, and with `withClientCrypto` the
 /// device-key members), directly or through a callee.
-fn arm_reaches_client_only(db: &dyn SkyDb, graph: &Graph, body: &Body, e: ExprId) -> bool {
+fn arm_reaches_client_only(db: &dyn TyDb, graph: &Graph, body: &Body, e: ExprId) -> bool {
     let mut acc = Refs::default();
     let ctx = CollectCtx {
         client_crypto: graph.client_crypto,
@@ -4598,7 +4598,7 @@ fn arm_reaches_client_only(db: &dyn SkyDb, graph: &Graph, body: &Body, e: ExprId
 /// examples/75-ai-everywhere opens the database and replays a device
 /// recording through `Device.provider`, and its server arm's follow-up was
 /// read as a `Std.Native` residual the split could not extract.
-fn task_refs_client_effect(db: &dyn SkyDb, tref: &Refs) -> bool {
+fn task_refs_client_effect(db: &dyn TyDb, tref: &Refs) -> bool {
     let mut families: BTreeSet<String> = BTreeSet::new();
     let mut server = false;
     let mut visited: HashSet<DefId> = HashSet::new();
@@ -4615,7 +4615,7 @@ fn task_refs_client_effect(db: &dyn SkyDb, tref: &Refs) -> bool {
 /// The client-effect families a task reaches, and whether it reaches a server
 /// effect, directly or through its callees.
 fn task_effect_sides(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     acc: &Refs,
     families: &mut BTreeSet<String>,
     server: &mut bool,
@@ -4637,10 +4637,10 @@ fn task_effect_sides(
         if db.module_name(loc.module) == "Std.Spa" {
             continue;
         }
-        let resolved = db.resolve(loc.module);
-        let Some(body) = resolved.bodies.get(c) else {
+        let Some(body) = db.elaborated_body_of(loc.module, *c) else {
             continue;
         };
+        let body: &Body = &body;
         let Some(root) = body.root else {
             continue;
         };
@@ -4652,7 +4652,7 @@ fn task_effect_sides(
 
 /// Whether evaluating `d`'s body reaches a `Std.Native` CLIENT effect through its
 /// callees — the client-effect twin of [`def_reaches_genuine_effect`].
-fn def_reaches_client_effect(db: &dyn SkyDb, d: DefId, visited: &mut HashSet<DefId>) -> bool {
+fn def_reaches_client_effect(db: &dyn TyDb, d: DefId, visited: &mut HashSet<DefId>) -> bool {
     if !visited.insert(d) {
         return false;
     }
@@ -4664,10 +4664,10 @@ fn def_reaches_client_effect(db: &dyn SkyDb, d: DefId, visited: &mut HashSet<Def
     if db.module_name(loc.module) == "Std.Spa" {
         return false;
     }
-    let resolved = db.resolve(loc.module);
-    let Some(body) = resolved.bodies.get(&d) else {
+    let Some(body) = db.elaborated_body_of(loc.module, d) else {
         return false;
     };
+    let body: &Body = &body;
     let Some(root) = body.root else {
         return false;
     };
@@ -4682,7 +4682,7 @@ fn def_reaches_client_effect(db: &dyn SkyDb, d: DefId, visited: &mut HashSet<Def
 }
 
 /// Record every constructor NAME (`Res::Ctor`) built directly in `e`'s subtree.
-fn walk_ctor_names(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTreeSet<String>) {
+fn walk_ctor_names(db: &dyn TyDb, body: &Body, e: ExprId, out: &mut BTreeSet<String>) {
     // One level per level of the tree it walks: grow the stack on demand.
     base::ensure_stack(|| match &body.exprs[e] {
         Expr::Var(Res::Ctor(c)) => {
@@ -4773,8 +4773,8 @@ fn client_hook_ctors(
         return out;
     }
     for mid in check_ids {
-        let resolved = db.resolve(*mid);
-        for body in resolved.bodies.values() {
+        for body in ty::elaborated_bodies(db, *mid) {
+            let body: &Body = &body;
             for (_, expr) in body.exprs.iter() {
                 if let Expr::Call(callee, args) = expr {
                     if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
@@ -4792,7 +4792,7 @@ fn client_hook_ctors(
 }
 
 fn collect_constructed_ctors(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     def: DefId,
     out: &mut BTreeSet<String>,
     visited: &mut HashSet<DefId>,
@@ -4805,10 +4805,10 @@ fn collect_constructed_ctors(
         let Some(loc) = db.def_loc(def) else {
             return;
         };
-        let resolved = db.resolve(loc.module);
-        let Some(body) = resolved.bodies.get(&def) else {
+        let Some(body) = db.elaborated_body_of(loc.module, def) else {
             return;
         };
+        let body: &Body = &body;
         let Some(root) = body.root else {
             return;
         };
@@ -4822,7 +4822,7 @@ fn collect_constructed_ctors(
 }
 
 /// Every constructor built by an EXPRESSION (a client arm body), transitively.
-fn expr_constructed_ctors(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTreeSet<String>) {
+fn expr_constructed_ctors(db: &dyn TyDb, body: &Body, e: ExprId, out: &mut BTreeSet<String>) {
     walk_ctor_names(db, body, e, out);
     let mut acc = Refs::default();
     collect(body, e, &mut acc, &CollectCtx::default());
@@ -5592,7 +5592,7 @@ const IO_DELEGATE_DEPTH: usize = 8;
 ///     field-preserving ⇒ `writes_whole_model`. Under-approximating (dropping a
 ///     real write) is a correctness bug — on any doubt we send MORE (§14 B1).
 fn compute_branch_io(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     arm_body: ExprId,
     pat: PatId,
@@ -5673,7 +5673,7 @@ const FRESH_DEPTH: usize = 8;
 /// model (see [`model_is_fresh`])? Walks `let` / `if` / `case`, a let-bound
 /// pair returned by name, and a whole-arm helper delegate. Anything else (a
 /// guard wrapper, a parameter, an opaque call) is not proven: `false`.
-fn tail_is_fresh(db: &dyn SkyDb, body: &Body, e: ExprId, depth: usize) -> bool {
+fn tail_is_fresh(db: &dyn TyDb, body: &Body, e: ExprId, depth: usize) -> bool {
     if depth > FRESH_DEPTH {
         return false;
     }
@@ -5706,7 +5706,7 @@ fn tail_is_fresh(db: &dyn SkyDb, body: &Body, e: ExprId, depth: usize) -> bool {
 /// constant (`{ emptyModel | … }`), and a helper whose body is. An update of a
 /// parameter or local (`{ model | … }`), a bare parameter, or an opaque value is
 /// not proven: `false`.
-fn model_is_fresh(db: &dyn SkyDb, body: &Body, e: ExprId, depth: usize) -> bool {
+fn model_is_fresh(db: &dyn TyDb, body: &Body, e: ExprId, depth: usize) -> bool {
     if depth > FRESH_DEPTH {
         return false;
     }
@@ -5746,10 +5746,10 @@ fn model_is_fresh(db: &dyn SkyDb, body: &Body, e: ExprId, depth: usize) -> bool 
 }
 
 /// A top-level def's resolved body and root expression.
-fn def_root(db: &dyn SkyDb, d: DefId) -> Option<(Body, ExprId)> {
+fn def_root(db: &dyn TyDb, d: DefId) -> Option<(Body, ExprId)> {
     let loc = db.def_loc(d)?;
-    let resolved = db.resolve(loc.module);
-    let b = resolved.bodies.get(&d)?;
+    let b = db.elaborated_body_of(loc.module, d)?;
+    let b: &Body = &b;
     let root = b.root?;
     Some((b.clone(), root))
 }
@@ -5836,7 +5836,7 @@ fn pattern_locals(body: &Body, pat: PatId, out: &mut Vec<LocalId>) {
 /// The context of one read walk: the body, its model parameter, the bare-model
 /// tail returns the write walk recorded, and the destructure binders.
 struct ReadCtx<'a> {
-    db: &'a dyn SkyDb,
+    db: &'a dyn TyDb,
     body: &'a Body,
     model_local: Option<LocalId>,
     allowed_bare: &'a HashSet<ExprId>,
@@ -5957,17 +5957,17 @@ impl ReadCtx<'_> {
 /// the helper's body is asked [`ReadCtx::carries`] with that parameter as the
 /// model. An unresolvable helper (a kernel alias, a parameter past its arity)
 /// may: `true`.
-fn helper_carries_param(db: &dyn SkyDb, f: DefId, i: usize, depth: usize) -> bool {
+fn helper_carries_param(db: &dyn TyDb, f: DefId, i: usize, depth: usize) -> bool {
     if depth > IO_DELEGATE_DEPTH {
         return true;
     }
     let Some(loc) = db.def_loc(f) else {
         return true;
     };
-    let resolved = db.resolve(loc.module);
-    let Some(body) = resolved.bodies.get(&f) else {
+    let Some(body) = db.elaborated_body_of(loc.module, f) else {
         return true;
     };
+    let body: &Body = &body;
     let Some(root) = body.root else {
         return true;
     };
@@ -6219,7 +6219,7 @@ fn collect_reads(
 /// contributes nothing here. It is `None` in every arm-level walk.
 #[allow(clippy::too_many_arguments)]
 fn collect_writes_tail(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     e: ExprId,
     model_local: Option<LocalId>,
@@ -6399,7 +6399,7 @@ fn collect_writes_tail(
 /// over-approximation. This never contradicts `collect_writes_tail`: a shape
 /// that sets `writes_whole_model` there makes `always_written` unused here.
 fn collect_write_leaves(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     e: ExprId,
     model_local: Option<LocalId>,
@@ -6530,7 +6530,7 @@ fn collect_write_leaves(
 /// its own body. `None` when the shape is not modelled (the caller then treats
 /// nothing as always written, the sound over-approximation).
 fn model_always_writes(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     e: ExprId,
     model_local: Option<LocalId>,
@@ -6635,7 +6635,7 @@ fn model_always_writes(
 
 /// What helper `f` assigns on every path to its parameter at index `i`.
 fn helper_always_writes_at(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     f: DefId,
     i: usize,
     depth: usize,
@@ -6644,8 +6644,8 @@ fn helper_always_writes_at(
         return None;
     }
     let loc = db.def_loc(f)?;
-    let resolved = db.resolve(loc.module);
-    let body = resolved.bodies.get(&f)?;
+    let body = db.elaborated_body_of(loc.module, f)?;
+    let body: &Body = &body;
     let root = body.root?;
     let mlocal = param_local_at(body, i)?;
     let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
@@ -6657,7 +6657,7 @@ fn helper_always_writes_at(
 /// its continuation parameter adding no leaf (that path's leaves are the arm's
 /// inline lambda). `None` when the body cannot be modelled.
 fn guard_reject_leaves(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     guard: DefId,
     model_arg_idx: usize,
     cont_arg_idx: usize,
@@ -6667,8 +6667,8 @@ fn guard_reject_leaves(
         return None;
     }
     let loc = db.def_loc(guard)?;
-    let resolved = db.resolve(loc.module);
-    let body = resolved.bodies.get(&guard)?;
+    let body = db.elaborated_body_of(loc.module, guard)?;
+    let body: &Body = &body;
     let root = body.root?;
     let mlocal = param_local_at(body, model_arg_idx)?;
     let clocal = param_local_at(body, cont_arg_idx)?;
@@ -6688,7 +6688,7 @@ fn guard_reject_leaves(
 /// EVERY response leaf. Empty when the leaves could not all be modelled (sound
 /// over-approximation — every written field then rides the request).
 fn always_written_of(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     arm_body: ExprId,
     model_local: Option<LocalId>,
@@ -6741,18 +6741,13 @@ fn param_local_at(body: &Body, i: usize) -> Option<LocalId> {
 /// resolved. Uses `model_write_shape` (a bare-`Model` return), NOT the
 /// tuple-based `inherit_delegate_writes` (which analyses a `(Model, Cmd)` arm
 /// tail).
-fn helper_writeset_at(
-    db: &dyn SkyDb,
-    f: DefId,
-    i: usize,
-    depth: usize,
-) -> Option<BTreeSet<String>> {
+fn helper_writeset_at(db: &dyn TyDb, f: DefId, i: usize, depth: usize) -> Option<BTreeSet<String>> {
     if depth > IO_DELEGATE_DEPTH {
         return None;
     }
     let loc = db.def_loc(f)?;
-    let resolved = db.resolve(loc.module);
-    let body = resolved.bodies.get(&f)?;
+    let body = db.elaborated_body_of(loc.module, f)?;
+    let body: &Body = &body;
     let root = body.root?;
     let mlocal = param_local_at(body, i)?;
     let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
@@ -6767,7 +6762,7 @@ fn helper_writeset_at(
 /// tail is analysed by the SAME `collect_writes_tail` machinery, which already
 /// fails closed to the whole model for a fresh record or an opaque producer.
 fn inherit_delegate_writes(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     f: DefId,
     i: usize,
     write_fields: &mut BTreeSet<String>,
@@ -6782,11 +6777,11 @@ fn inherit_delegate_writes(
         *writes_whole = true;
         return;
     };
-    let resolved = db.resolve(loc.module);
-    let Some(body) = resolved.bodies.get(&f) else {
+    let Some(body) = db.elaborated_body_of(loc.module, f) else {
         *writes_whole = true;
         return;
     };
+    let body: &Body = &body;
     let (Some(root), Some(mlocal)) = (body.root, param_local_at(body, i)) else {
         *writes_whole = true;
         return;
@@ -6832,7 +6827,7 @@ struct GuardWrapper {
 /// both positions (so its own I/O is not analysable). This is the fail-closed
 /// gate: a shape that does not MATCH the guard-wrapper is never narrowed.
 fn detect_guard_wrapper(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     callee: ExprId,
     args: &[ExprId],
@@ -6869,8 +6864,8 @@ fn detect_guard_wrapper(
     // model and continuation positions, so its model I/O + its continuation are
     // both identifiable. Otherwise fail closed to the whole model.
     let loc = db.def_loc(*guard)?;
-    let resolved = db.resolve(loc.module);
-    let gbody = resolved.bodies.get(guard)?;
+    let gbody = db.elaborated_body_of(loc.module, *guard)?;
+    let gbody: &Body = &gbody;
     gbody.root?;
     param_local_at(gbody, model_arg_idx)?;
     param_local_at(gbody, cont_arg_idx)?;
@@ -6889,7 +6884,7 @@ fn detect_guard_wrapper(
 /// unioned by the caller. Fail-closed: an unresolvable guard, a missing plain
 /// parameter, or a tail the walk cannot bound sets `writes_whole` (sound).
 fn collect_guard_wrapper_writes(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     guard: DefId,
     model_arg_idx: usize,
     cont_arg_idx: usize,
@@ -6905,11 +6900,11 @@ fn collect_guard_wrapper_writes(
         *writes_whole = true;
         return;
     };
-    let resolved = db.resolve(loc.module);
-    let Some(body) = resolved.bodies.get(&guard) else {
+    let Some(body) = db.elaborated_body_of(loc.module, guard) else {
         *writes_whole = true;
         return;
     };
+    let body: &Body = &body;
     let (Some(root), Some(mlocal), Some(clocal)) = (
         body.root,
         param_local_at(body, model_arg_idx),
@@ -6941,13 +6936,13 @@ fn collect_guard_wrapper_writes(
 /// resolved (the caller then reads the whole model). Reuses the arm-level walks
 /// (writes first to populate the bare-return set, then reads) so a helper is
 /// analysed exactly as an arm body would be.
-fn helper_readset(db: &dyn SkyDb, f: DefId, i: usize, depth: usize) -> Option<BTreeSet<String>> {
+fn helper_readset(db: &dyn TyDb, f: DefId, i: usize, depth: usize) -> Option<BTreeSet<String>> {
     if depth > IO_DELEGATE_DEPTH {
         return None;
     }
     let loc = db.def_loc(f)?;
-    let resolved = db.resolve(loc.module);
-    let body = resolved.bodies.get(&f)?;
+    let body = db.elaborated_body_of(loc.module, f)?;
+    let body: &Body = &body;
     let root = body.root?;
     // A parameter the helper never binds reads nothing (`guard msg _`), and a
     // record pattern reads exactly the fields it names (`guard msg { role }`).
@@ -7006,7 +7001,7 @@ fn helper_readset(db: &dyn SkyDb, f: DefId, i: usize, depth: usize) -> Option<BT
 /// `Record`, an opaque producer, a helper that is not field-preserving), so the
 /// caller over-approximates to the whole model (sound — never drops a write).
 fn model_write_shape(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     e: ExprId,
     model_local: Option<LocalId>,
@@ -7310,7 +7305,7 @@ fn model_param_local(body: &Body) -> Option<LocalId> {
 /// The DIRECT (non-compose) server reason for an arm: its own server kernel /
 /// FFI, a non-`update` server callee, or a generic `update` use. `None` → the
 /// arm is server only if it composes a server arm (handled by the fixpoint).
-fn arm_direct_reason(db: &dyn SkyDb, acc: &Refs, graph: &Graph) -> Option<String> {
+fn arm_direct_reason(db: &dyn TyDb, acc: &Refs, graph: &Graph) -> Option<String> {
     if let Some(reason) = acc.direct_server_reason() {
         return Some(reason);
     }
@@ -7366,7 +7361,7 @@ const CLIENT_PLAN_DEPTH: usize = IO_DELEGATE_DEPTH;
 ///
 /// `src` is the source of the module that declares `update`.
 fn client_model_plan(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     graph: &Graph,
     body: &Body,
     arm_body: ExprId,
@@ -7375,7 +7370,7 @@ fn client_model_plan(
     src: &str,
 ) -> Result<ClientModelPlan, ClientModelHold> {
     struct Walk<'a> {
-        db: &'a dyn SkyDb,
+        db: &'a dyn TyDb,
         update_def: Option<DefId>,
         // Helpers with a client copy, and their splice expression ids.
         copied: BTreeMap<DefId, Vec<(ExprId, PlanSpliceKind)>>,
@@ -7430,6 +7425,12 @@ fn client_model_plan(
                     }
                     Ok(())
                 }
+                // A bind line in tail position: the synthesised call has no
+                // source of its own to splice (a splice is a source edit), so
+                // it is never walked as a helper call of `andThen`. A `( model,
+                // cmd )` tuple is never a bind line's monad, so a well-typed arm
+                // does not reach here (docs/design/let-bind-lines.md §6).
+                Expr::Call(..) if is_bind_call(body, e) => Err(shape_hold("a bind line block")),
                 Expr::Call(callee, args) => self.helper(body, *callee, args.len(), out),
                 Expr::Binop { op, rhs, .. } if op.as_str() == "|>" => self.piped(body, *rhs, out),
                 Expr::Binop { op, lhs, .. } if op.as_str() == "<|" => self.piped(body, *lhs, out),
@@ -7503,11 +7504,11 @@ fn client_model_plan(
                 .db
                 .def_loc(d)
                 .ok_or_else(|| shape_hold("a call to an unknown helper"))?;
-            let resolved = self.db.resolve(loc.module);
-            let hbody = resolved
-                .bodies
-                .get(&d)
+            let hbody = self
+                .db
+                .elaborated_body_of(loc.module, d)
                 .ok_or_else(|| shape_hold(&format!("a call to `{name}`, which has no body")))?;
+            let hbody: &Body = &hbody;
             let root = hbody
                 .root
                 .ok_or_else(|| shape_hold(&format!("a call to `{name}`, which has no body")))?;
@@ -7572,11 +7573,13 @@ fn client_model_plan(
         let Some(loc) = db.def_loc(*d) else {
             return Err(shape_hold("a call to an unknown helper"));
         };
-        let resolved = db.resolve(loc.module);
-        let Some((hbody, root)) = resolved.bodies.get(d).and_then(|b| b.root.map(|r| (b, r)))
+        let Some((hbody, root)) = db
+            .elaborated_body_of(loc.module, *d)
+            .and_then(|b| b.root.map(|r| (b, r)))
         else {
             return Err(shape_hold("a call to a helper with no body"));
         };
+        let hbody: &Body = &hbody;
         let skip: HashSet<ExprId> = sp.iter().map(|(e, _)| *e).collect();
         collect(
             hbody,
@@ -7650,11 +7653,10 @@ fn client_model_plan(
             .entry(loc.module)
             .or_insert_with(|| db.module_parse(loc.module).syntax().text().to_string())
             .clone();
-        let resolved = db.resolve(loc.module);
-        let hbody = resolved
-            .bodies
-            .get(d)
+        let hbody = db
+            .elaborated_body_of(loc.module, *d)
             .ok_or_else(|| shape_hold("a call to a helper with no body"))?;
+        let hbody: &Body = &hbody;
         let mut hs = Vec::new();
         for (e, k) in sp {
             hs.push(splice_of(hbody, &msrc, *e, k)?);
@@ -7678,6 +7680,21 @@ fn client_model_plan(
     })
 }
 
+/// Is `e` the synthesised call of a bind line `p <- e` (docs/design/
+/// let-bind-lines.md §2): `andThen (\p -> rest) e` with no span of its own,
+/// in an elaborated body (`TyDb::elaborated_body_of`). A hand-written call
+/// always has a span.
+pub(crate) fn is_bind_call(body: &Body, e: ExprId) -> bool {
+    match &body.exprs[e] {
+        Expr::Call(_, args) => {
+            args.len() == 2
+                && body.expr_span(e).is_none()
+                && matches!(&body.exprs[args[0]], Expr::Lambda { params, .. } if params.len() == 1)
+        }
+        _ => false,
+    }
+}
+
 /// A node's span can carry its leading trivia (the newline and indent before
 /// it): the span of its text alone. `None` when the span does not fit `src`.
 fn trim_span(src: &str, r: (u32, u32)) -> Option<(u32, u32)> {
@@ -7697,13 +7714,14 @@ fn trim_span(src: &str, r: (u32, u32)) -> Option<(u32, u32)> {
 /// navigation. Unknown
 /// commands fail closed only in a scroll-enabled app. This reads resolved
 /// command leaves, never source names or model read/write sets.
-pub(crate) fn returned_scroll_heads(db: &dyn SkyDb, module: ModuleId) -> Option<HashSet<String>> {
+pub(crate) fn returned_scroll_heads(db: &dyn TyDb, module: ModuleId) -> Option<HashSet<String>> {
     let resolved = db.resolve(module);
     let td = resolved
         .top_defs
         .iter()
         .find(|t| t.name.as_str() == "update")?;
-    let body = resolved.bodies.get(&td.def)?;
+    let body = db.elaborated_body_of(module, td.def)?;
+    let body: &Body = &body;
     let mut refs = Refs::default();
     let case = find_top_case(body, body.root?, &mut refs, &CollectCtx::default())?;
     let Expr::Case { branches, .. } = &body.exprs[case] else {
@@ -7760,7 +7778,7 @@ pub(crate) fn returned_scroll_heads(db: &dyn SkyDb, module: ModuleId) -> Option<
     Some(heads)
 }
 
-pub fn update_leaf_cmd_spans(db: &dyn SkyDb, module: ModuleId, src: &str) -> Vec<(u32, u32)> {
+pub fn update_leaf_cmd_spans(db: &dyn TyDb, module: ModuleId, src: &str) -> Vec<(u32, u32)> {
     fn walk(body: &Body, e: ExprId, src: &str, out: &mut Vec<(u32, u32)>) {
         // One level per level of the tree it walks: grow the stack on demand.
         base::ensure_stack(|| match &body.exprs[e] {
@@ -7786,6 +7804,14 @@ pub fn update_leaf_cmd_spans(db: &dyn SkyDb, module: ModuleId, src: &str) -> Vec
                 }
             }
             Expr::Lambda { body: b, .. } => walk(body, *b, src, out),
+            // A bind line `p <- e`: the synthesised `andThen (\p -> rest) e`
+            // has no span of its own; its leaves are in `rest`
+            // (docs/design/let-bind-lines.md §6).
+            Expr::Call(_, args) if is_bind_call(body, e) => {
+                if let Expr::Lambda { body: lb, .. } = &body.exprs[args[0]] {
+                    walk(body, *lb, src, out);
+                }
+            }
             Expr::Call(_, args) => {
                 if let Some(last) = args.last() {
                     if let Expr::Lambda { body: lb, .. } = &body.exprs[*last] {
@@ -7804,9 +7830,10 @@ pub fn update_leaf_cmd_spans(db: &dyn SkyDb, module: ModuleId, src: &str) -> Vec
     else {
         return Vec::new();
     };
-    let Some(body) = resolved.bodies.get(&td.def) else {
+    let Some(body) = db.elaborated_body_of(module, td.def) else {
         return Vec::new();
     };
+    let body: &Body = &body;
     let Some(root) = body.root else {
         return Vec::new();
     };
@@ -7854,7 +7881,7 @@ fn arm_ctor_key(body: &Body, pat: hir::PatId) -> Option<String> {
 }
 
 fn classify_lambda_update(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     graph: &Graph,
     _module: ModuleId,
     body: &Body,
@@ -7903,7 +7930,7 @@ fn find_top_case(body: &Body, e: ExprId, shared: &mut Refs, ctx: &CollectCtx) ->
 }
 
 /// Turn a branch's verdict from its collected refs.
-fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerdict {
+fn verdict(db: &dyn TyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerdict {
     // Server iff: direct server kernel/FFI, OR a reachable callee is server.
     if let Some(reason) = acc.direct_server_reason() {
         return BranchVerdict {
@@ -8763,6 +8790,74 @@ mod configured_entry_point_tests {
         assert!(
             !names.iter().any(|n| n.ends_with(".update")),
             "the configured sibling update must not be listed as tainted; got {names:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod bind_line_tests {
+    use std::path::PathBuf;
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    }
+
+    /// `update_leaf_cmd_spans` (the differential fuzzer's leaf tags) walks
+    /// through a bind block (docs/design/let-bind-lines.md §6): the
+    /// synthesised `andThen (\p -> rest) e` has no span of its own, so a leaf
+    /// command that holds a bind block is taken whole, by the span of the
+    /// command as written, never by the `<-` placeholder.
+    #[test]
+    fn leaf_command_spans_are_found_with_a_bind_block() {
+        let dir = std::env::temp_dir().join(format!("sky-bind-leaves-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"bind-leaves\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+        )
+        .unwrap();
+        let src = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.Cmd as Cmd
+
+type Msg
+    = Go String
+    | Got (Result Error Int)
+
+update : Msg -> Int -> ( Int, Cmd Msg )
+update msg model =
+    case msg of
+        Go s ->
+            let
+                m = String.length s + model
+            in
+            ( m, Cmd.perform (let k <- Task.succeed m in Task.succeed (k + 1)) Got )
+
+        Got _ ->
+            ( model, Cmd.none )
+
+main =
+    update (Go "1") 0
+"#;
+        std::fs::write(dir.join("src/Main.sky"), src).unwrap();
+        let (db, entry, _) = crate::build::load_source_db(&repo_root(), &dir, None).unwrap();
+        let spans = super::update_leaf_cmd_spans(&db, entry, src);
+        let _ = std::fs::remove_dir_all(&dir);
+        let texts: Vec<&str> = spans
+            .iter()
+            .map(|(a, b)| &src[*a as usize..*b as usize])
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "Cmd.perform (let k <- Task.succeed m in Task.succeed (k + 1)) Got",
+                "Cmd.none"
+            ],
+            "the leaf under the bind block and the plain leaf"
         );
     }
 }

@@ -1,0 +1,103 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Error as Error exposing (Error)
+import Std.Cmd as Cmd
+import Std.App as App
+import Std.Sub as Sub exposing (Sub)
+import Std.Ui as Ui exposing (Element)
+import Std.Sync as Sync exposing (Ref)
+
+type Page
+    = HomePage
+
+type alias Model =
+    { count : Int
+    , note : String
+    , page : Page
+    }
+
+type Msg
+    = Bump
+    | Parse String
+    | Saved (Result Error Int)
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, note = "", page = HomePage }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Bump ->
+            ( { model | count = model.count + 1 }
+            , Cmd.perform
+                  (let
+                      ref <- Sync.newRef model.count
+                      v <- Sync.get ref
+                      next = v * 10 + 7
+                      _ <- Sync.set next ref
+                      final <- Sync.get ref
+                  in
+                      Task.succeed final)
+                  Saved
+            )
+
+        Parse s ->
+            let
+                parsed =
+                    let
+                        a <- String.toInt s
+                        b <- String.toInt (s ++ "1")
+                    in
+                        Just (a + b)
+            in
+                ( { model | count = Maybe.withDefault (-1) parsed }, Cmd.none )
+
+        Saved r ->
+            case r of
+
+                Ok n ->
+                    ( { model | note = "saved " ++ String.fromInt n }
+                    , Cmd.none
+                    )
+
+                Err e ->
+                    ( { model | note = Error.toString e }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text ("count=" ++ String.fromInt model.count)
+        , Ui.text ("note=" ++ model.note)
+        , Ui.button [] { onPress = Just Bump, label = Ui.text "bump" }
+        , Ui.button [] { onPress = Just (Parse "4"), label = Ui.text "parse" }
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound HomePage
+
+
+main =
+    App.run appDef

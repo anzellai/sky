@@ -21,17 +21,23 @@ import Sky.Test as Test exposing (Test)
 --    wrong string, not a silent success. ──
 b64rt : String -> String
 b64rt s =
-    Result.withDefault "<<B64-DECODE-ERR>>" (Encoding.base64Decode (Encoding.base64Encode s))
+    Result.withDefault
+        "<<B64-DECODE-ERR>>"
+        (Encoding.base64Decode (Encoding.base64Encode s))
 
 
 urlrt : String -> String
 urlrt s =
-    Result.withDefault "<<URL-DECODE-ERR>>" (Encoding.urlDecode (Encoding.urlEncode s))
+    Result.withDefault
+        "<<URL-DECODE-ERR>>"
+        (Encoding.urlDecode (Encoding.urlEncode s))
 
 
 hexrt : String -> String
 hexrt s =
-    Result.withDefault "<<HEX-DECODE-ERR>>" (Encoding.hexDecode (Encoding.hexEncode s))
+    Result.withDefault
+        "<<HEX-DECODE-ERR>>"
+        (Encoding.hexDecode (Encoding.hexEncode s))
 
 
 -- Multi-byte adversarial fixtures. 世 and 界 are each 3 UTF-8 bytes; 😀 is 4.
@@ -298,6 +304,7 @@ tests =
 maybeToResult : Maybe a -> Result String a
 maybeToResult m =
     case m of
+
         Just x ->
             Ok x
 

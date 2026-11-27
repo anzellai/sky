@@ -23,6 +23,7 @@ use hir::{Body, Expr, ExprId, LocalDef, PatId, Pattern, Res, SkyDb};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use syntax::ast;
+use ty::TyDb;
 
 /// A single external capability bucket a module can touch. The set is
 /// deliberately small + fixed so the diagram stays readable — one node per
@@ -1504,7 +1505,7 @@ fn split_api_spec(spec: &str) -> (String, String) {
 /// module (`Payments.handleWebhook`) — used for a raw `api` endpoint whose
 /// handler often lives in another module; a plain `Sky.Http.Server` route keeps
 /// the bare def name. `<inline>` for a lambda / non-def handler.
-fn handler_name(db: &dyn SkyDb, body: &Body, args: &[ExprId], idx: usize, qualify: bool) -> String {
+fn handler_name(db: &dyn TyDb, body: &Body, args: &[ExprId], idx: usize, qualify: bool) -> String {
     args.get(idx)
         .and_then(|a| match &body.exprs[*a] {
             Expr::Var(Res::Def(hd)) => db.def_loc(*hd).map(|l| {
@@ -1529,13 +1530,13 @@ fn handler_name(db: &dyn SkyDb, body: &Body, args: &[ExprId], idx: usize, qualif
 ///     `Std.App.api "METHOD /path" h` → [`EndpointKind::RawApi`] (CSRF-exempt).
 /// Returns the endpoints plus two shape facts: `has_std_app_ui` (any `Std.App`
 /// route/api) and `has_http_routes` (any `Sky.Http.Server` route). Read-only.
-fn recover_endpoints(db: &dyn SkyDb, check_ids: &[ModuleId]) -> (Vec<HttpEndpoint>, bool, bool) {
+fn recover_endpoints(db: &dyn TyDb, check_ids: &[ModuleId]) -> (Vec<HttpEndpoint>, bool, bool) {
     let mut out: BTreeSet<HttpEndpoint> = BTreeSet::new();
     let mut has_std_app_ui = false;
     let mut has_http_routes = false;
     for mid in check_ids {
-        let resolved = db.resolve(*mid);
-        for (_d, body) in &resolved.bodies {
+        for body in ty::elaborated_bodies(db, *mid) {
+            let body: &Body = &body;
             let Some(root) = body.root else { continue };
             let mut ids: Vec<ExprId> = Vec::new();
             walk_exprs(body, root, &mut |e| ids.push(e));
@@ -1628,11 +1629,11 @@ fn recover_endpoints(db: &dyn SkyDb, check_ids: &[ModuleId]) -> (Vec<HttpEndpoin
 /// whose first argument is a string literal. Sorted and deduped. (`Store.project`
 /// takes a `List Table`, not a name string, so it is not a source here.)
 /// Read-only.
-fn collect_db_tables(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Vec<String> {
+fn collect_db_tables(db: &dyn TyDb, check_ids: &[ModuleId]) -> Vec<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
     for mid in check_ids {
-        let resolved = db.resolve(*mid);
-        for (_d, body) in &resolved.bodies {
+        for body in ty::elaborated_bodies(db, *mid) {
+            let body: &Body = &body;
             let Some(root) = body.root else { continue };
             let mut ids: Vec<ExprId> = Vec::new();
             walk_exprs(body, root, &mut |e| ids.push(e));
@@ -2458,7 +2459,7 @@ pub struct TelemetryReport {
 /// Classify a resolved callee as a telemetry call. Returns the display call name
 /// (`Log.info`, `Analytics.track`) and its sink, or `None` when the callee is
 /// not a `Std.Log` / `Std.Analytics` function.
-fn telemetry_callee(db: &dyn SkyDb, res: &Res) -> Option<(String, Sink)> {
+fn telemetry_callee(db: &dyn TyDb, res: &Res) -> Option<(String, Sink)> {
     let (full, name): (String, String) = match res {
         Res::Def(d) => {
             let loc = db.def_loc(*d)?;
@@ -2470,7 +2471,10 @@ fn telemetry_callee(db: &dyn SkyDb, res: &Res) -> Option<(String, Sink)> {
         // Belt-and-suspenders: if a logging/analytics function ever resolves as a
         // bare kernel rather than a Sky-source def, catch it by pseudo-module.
         Res::Kernel { module, func } => (module.as_str().to_string(), func.as_str().to_string()),
-        _ => return None,
+        // The diagram reads elaborated bodies: a bind line names its chosen
+        // `andThen` as a `Res::Def` (docs/design/let-bind-lines.md §5).
+        Res::BindAndThen => ty::unchosen_bind("the diagram telemetry scan"),
+        Res::Local(_) | Res::Ctor(_) | Res::Foreign { .. } | Res::Error => return None,
     };
     let is_log = full == "Std.Log" || full == "Log";
     let is_analytics = full == "Std.Analytics" || full == "Analytics";
@@ -2504,7 +2508,7 @@ fn first_str_arg(body: &Body, args: &[ExprId]) -> String {
 /// Walk one expression subtree, recording every telemetry call site into `out`.
 /// Read-only; mirrors the exhaustive traversal in [`crate::spa_partition`].
 fn walk_telemetry(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     module_name: &str,
     body: &Body,
     e: ExprId,
@@ -2583,7 +2587,7 @@ fn walk_telemetry(
 }
 
 fn walk_telemetry_localdef(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     module_name: &str,
     body: &Body,
     d: &LocalDef,
@@ -2614,8 +2618,8 @@ pub fn analyze_telemetry(
     let mut calls: Vec<TelemetryCall> = Vec::new();
     for mid in &check_ids {
         let name = db.module_name(*mid).to_string();
-        let resolved = db.resolve(*mid);
-        for (_def, body) in &resolved.bodies {
+        for body in ty::elaborated_bodies(&db, *mid) {
+            let body: &Body = &body;
             if let Some(root) = body.root {
                 walk_telemetry(&db, &name, body, root, &mut calls);
             }
@@ -3111,7 +3115,7 @@ fn walk_exprs(body: &Body, e: ExprId, f: &mut dyn FnMut(ExprId)) {
 /// constructor, return `(ctor name, owning-union DefId)`. `None` for any other
 /// value (a variable, a helper call, a literal) — which the navigation scan
 /// treats as a dynamic (run-time-chosen) page target.
-fn value_ctor(db: &dyn SkyDb, body: &Body, e: ExprId) -> Option<(String, DefId)> {
+fn value_ctor(db: &dyn TyDb, body: &Body, e: ExprId) -> Option<(String, DefId)> {
     match &body.exprs[e] {
         Expr::Var(Res::Ctor(cref)) => {
             let nm = db.def_loc(cref.def)?.name.as_str().to_string();
@@ -3148,7 +3152,7 @@ fn find_dispatch_case(body: &Body) -> Option<ExprId> {
 
 /// The constructor names of a union declared as `name` in `module`, in source
 /// order — read from the module's parse tree. Empty when the union is not found.
-fn union_variants(db: &dyn SkyDb, module: ModuleId, name: &str) -> Vec<String> {
+fn union_variants(db: &dyn TyDb, module: ModuleId, name: &str) -> Vec<String> {
     let tree = db.module_parse(module).tree();
     for d in tree.decls() {
         if let ast::Decl::Union(u) = d {
@@ -3217,8 +3221,8 @@ pub fn analyze_journey(
     let mut route_union: Option<DefId> = None;
     let mut api_endpoints: Vec<String> = Vec::new();
     for mid in &check_ids {
-        let resolved = db.resolve(*mid);
-        for (_d, body) in &resolved.bodies {
+        for body in ty::elaborated_bodies(&db, *mid) {
+            let body: &Body = &body;
             let Some(root) = body.root else { continue };
             let mut ids: Vec<ExprId> = Vec::new();
             walk_exprs(body, root, &mut |e| ids.push(e));
@@ -3269,8 +3273,8 @@ pub fn analyze_journey(
     // value assigned to that field (a variable / helper call).
     let mut branches_raw: Vec<(String, Vec<(String, Option<(String, DefId)>)>)> = Vec::new();
     if let Some((umod, udef)) = update_ref {
-        let resolved = db.resolve(umod);
-        if let Some(body) = resolved.bodies.get(&udef) {
+        if let Some(body) = db.elaborated_body_of(umod, udef) {
+            let body: &Body = &body;
             if let Some(case_e) = find_dispatch_case(body) {
                 if let Expr::Case { branches, .. } = &body.exprs[case_e] {
                     for br in branches {
@@ -4346,7 +4350,7 @@ pub struct FlowReport {
 /// The Msg union DefId — the union `update`'s dispatch `case` matches on. Its
 /// constructors are the app's user actions; a value of one of them in a view is
 /// a handler the user can trigger.
-fn msg_union_of_update(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Option<DefId> {
+fn msg_union_of_update(db: &dyn TyDb, check_ids: &[ModuleId]) -> Option<DefId> {
     for mid in check_ids {
         let resolved = db.resolve(*mid);
         let Some(td) = resolved
@@ -4356,9 +4360,10 @@ fn msg_union_of_update(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Option<DefId> 
         else {
             continue;
         };
-        let Some(body) = resolved.bodies.get(&td.def) else {
+        let Some(body) = db.elaborated_body_of(*mid, td.def) else {
             continue;
         };
+        let body: &Body = &body;
         let Some(case_e) = find_dispatch_case(body) else {
             continue;
         };
@@ -4378,7 +4383,7 @@ fn msg_union_of_update(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Option<DefId> 
 /// and the project defs the expression references (returned for a transitive
 /// follow). Used per body by [`view_msgs_in`].
 fn collect_msgs_and_refs(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     e: ExprId,
     msg_union: DefId,
@@ -4413,7 +4418,7 @@ fn collect_msgs_and_refs(
 /// walked once) and a hard node cap, so a cyclic or huge view cannot loop or blow
 /// up. Real views nest several helper calls deep, hence the transitive walk.
 fn view_msgs_in(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     e: ExprId,
     msg_union: DefId,
@@ -4436,10 +4441,10 @@ fn view_msgs_in(
             break;
         }
         let Some(loc) = db.def_loc(d) else { continue };
-        let resolved = db.resolve(loc.module);
-        let Some(dbody) = resolved.bodies.get(&d) else {
+        let Some(dbody) = db.elaborated_body_of(loc.module, d) else {
             continue;
         };
+        let dbody: &Body = &dbody;
         let Some(droot) = dbody.root else { continue };
         collect_msgs_and_refs(
             db,
@@ -4460,7 +4465,7 @@ fn view_msgs_in(
 /// when no page-dispatching view was found (then the caller falls back to the
 /// whole inventory on every page).
 fn analyze_view_msgs(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     check_ids: &[ModuleId],
     msg_union: Option<DefId>,
     page_names: &HashSet<String>,
@@ -4479,8 +4484,9 @@ fn analyze_view_msgs(
     // coincidental one-arm match is not mistaken for the router.
     let mut best: Option<(usize, ModuleId, DefId, ExprId)> = None;
     for mid in check_ids {
-        let resolved = db.resolve(*mid);
-        for (d, body) in &resolved.bodies {
+        for body in ty::elaborated_bodies(db, *mid) {
+            let d = &body.def();
+            let body: &Body = &body;
             let Some(root) = body.root else { continue };
             let mut cases: Vec<ExprId> = Vec::new();
             walk_exprs(body, root, &mut |e| {
@@ -4511,10 +4517,10 @@ fn analyze_view_msgs(
     };
     // Re-resolve the winning module + walk each page arm for the Msgs its view
     // (and the view helpers it calls) can dispatch.
-    let resolved = db.resolve(mid);
-    let Some(body) = resolved.bodies.get(&def) else {
+    let Some(body) = db.elaborated_body_of(mid, def) else {
         return (out, false);
     };
+    let body: &Body = &body;
     let Expr::Case { branches, .. } = &body.exprs[case_e] else {
         return (out, false);
     };
@@ -4760,7 +4766,7 @@ fn is_self_ref(host: &str, own: &[String]) -> bool {
 /// A non-literal URL target (`Http.get someVar`) contributes the marker host
 /// `*dynamic*` so a dynamic egress is never silently dropped.
 fn http_hosts_in(
-    db: &dyn SkyDb,
+    db: &dyn TyDb,
     body: &Body,
     e: ExprId,
     project_modules: &HashSet<ModuleId>,
@@ -4769,7 +4775,7 @@ fn http_hosts_in(
     const CAP: usize = 4000;
     let mut queue: Vec<DefId> = Vec::new();
     let mut seen: HashSet<DefId> = HashSet::new();
-    let visit = |db: &dyn SkyDb,
+    let visit = |db: &dyn TyDb,
                  body: &Body,
                  e: ExprId,
                  out: &mut BTreeSet<String>,
@@ -4820,10 +4826,10 @@ fn http_hosts_in(
             continue;
         }
         let Some(loc) = db.def_loc(d) else { continue };
-        let resolved = db.resolve(loc.module);
-        let Some(dbody) = resolved.bodies.get(&d) else {
+        let Some(dbody) = db.elaborated_body_of(loc.module, d) else {
             continue;
         };
+        let dbody: &Body = &dbody;
         let Some(droot) = dbody.root else { continue };
         visit(db, dbody, droot, out, &mut queue);
     }
@@ -4888,9 +4894,10 @@ pub fn analyze_flow(
         else {
             continue;
         };
-        let Some(body) = resolved.bodies.get(&td.def) else {
+        let Some(body) = db.elaborated_body_of(*mid, td.def) else {
             continue;
         };
+        let body: &Body = &body;
         let Some(case_e) = find_dispatch_case(body) else {
             break;
         };
@@ -4925,9 +4932,10 @@ pub fn analyze_flow(
         else {
             continue;
         };
-        let Some(body) = resolved.bodies.get(&td.def) else {
+        let Some(body) = db.elaborated_body_of(*mid, td.def) else {
             continue;
         };
+        let body: &Body = &body;
         let Some(case_e) = find_dispatch_case(body) else {
             break;
         };
@@ -4954,9 +4962,10 @@ pub fn analyze_flow(
     for mid in &check_ids {
         let resolved = db.resolve(*mid);
         for td in &resolved.top_defs {
-            let Some(body) = resolved.bodies.get(&td.def) else {
+            let Some(body) = db.elaborated_body_of(*mid, td.def) else {
                 continue;
             };
+            let body: &Body = &body;
             let Some(root) = body.root else { continue };
             let mut ids: Vec<ExprId> = Vec::new();
             walk_exprs(body, root, &mut |x| ids.push(x));
@@ -7097,7 +7106,7 @@ pub struct MockScaffold {
 
 /// If `callee` resolves to a `Sky.Core.Http` function, its name (`get`, `post`,
 /// `request`, `withUrl`, `withMethod`, …); else `None`.
-fn http_def_name(db: &dyn SkyDb, body: &Body, callee: ExprId) -> Option<String> {
+fn http_def_name(db: &dyn TyDb, body: &Body, callee: ExprId) -> Option<String> {
     if let Expr::Var(Res::Def(d)) = &body.exprs[callee] {
         if let Some(loc) = db.def_loc(*d) {
             if db.module_name(loc.module) == "Sky.Core.Http" {
@@ -7158,9 +7167,10 @@ pub fn scaffold_mocks(
         let mname = db.module_name(*mid).to_string();
         let resolved = db.resolve(*mid);
         for td in &resolved.top_defs {
-            let Some(body) = resolved.bodies.get(&td.def) else {
+            let Some(body) = db.elaborated_body_of(*mid, td.def) else {
                 continue;
             };
+            let body: &Body = &body;
             let Some(root) = body.root else {
                 continue;
             };

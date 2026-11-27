@@ -106,24 +106,19 @@ handleCreate cfg db req =
 
 insertTodo : Db -> AuthClaims -> TodoCreate -> Task Error Response
 insertTodo db claims payload =
-    Crypto.randomToken 12
-        |> Task.andThen
-               (\todoId ->
-                   Time.unixMillis ()
-                       |> Task.andThen
-                              (\nowMs ->
-                                  let
-                                      todo =
-                                          { id = todoId
-                                          , userId = claims.userId
-                                          , text = payload.text
-                                          , done = False
-                                          , createdAt = nowMs
-                                          }
-                                  in
-                                      Store.insert db todosStore todo
-                                          |> Task.andThen
-                                                 (\_ -> publishTodoCreated todo)))
+    let
+        todoId <- Crypto.randomToken 12
+        nowMs <- Time.unixMillis ()
+        todo =
+            { id = todoId
+            , userId = claims.userId
+            , text = payload.text
+            , done = False
+            , createdAt = nowMs
+            }
+        _ <- Store.insert db todosStore todo
+    in
+        publishTodoCreated todo
 
 
 -- Task-shaped publish.  Returns the subscriber count, but the route
@@ -164,25 +159,23 @@ handleDelete cfg db req =
 
 deleteIfOwned : Db -> AuthClaims -> String -> Task Error Response
 deleteIfOwned db claims todoId =
-    Store.findBy db todosStore "id" todoId
-        |> Task.andThen
-               (\maybeTodo ->
-                   case maybeTodo of
+    let
+        maybeTodo <- Store.findBy db todosStore "id" todoId
+    in
+        case maybeTodo of
 
-                       Nothing ->
-                           Task.succeed (errorJson 404 "todo not found")
+            Nothing ->
+                Task.succeed (errorJson 404 "todo not found")
 
-                       Just todo ->
-                           if todo.userId /= claims.userId then
-                               Task.succeed (errorJson 403 "not your todo")
+            Just todo ->
+                if todo.userId /= claims.userId then
+                    Task.succeed (errorJson 403 "not your todo")
 
-                           else
-                               Store.delete db todosStore "id" todoId
-                                   |> Task.andThen
-                                          (\_ ->
-                                              Task.succeed
-                                                  (Server.json
-                                                      "{\"deleted\":true}")))
+                else
+                    let
+                        _ <- Store.delete db todosStore "id" todoId
+                    in
+                        Task.succeed (Server.json "{\"deleted\":true}")
 
 
 -- ─── Helpers ───────────────────────────────────────────────────────

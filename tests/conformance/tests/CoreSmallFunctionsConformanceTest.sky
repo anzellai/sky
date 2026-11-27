@@ -21,15 +21,12 @@ dot xs ys =
 
 row : String -> Int -> Bool -> String
 row name qty paid =
-    name
-        ++ ":"
-        ++ String.fromInt qty
+    name ++ ":" ++ String.fromInt qty
         ++ (if paid then
-                "+"
+               "+"
 
-            else
-                "-"
-           )
+           else
+               "-")
 
 
 -- Split a line into words of letters and digits; everything else separates.
@@ -45,15 +42,13 @@ tokens line =
 
             else
                 ( "", done ++ [ current ] )
-
-        ( last, words ) =
-            List.foldl step ( "", [] ) (String.toList line)
+        ( last, words ) = List.foldl step ( "", [] ) (String.toList line)
     in
-    if last == "" then
-        words
+        if last == "" then
+            words
 
-    else
-        words ++ [ last ]
+        else
+            words ++ [ last ]
 
 
 tests : List Test

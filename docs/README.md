@@ -14,7 +14,7 @@ plans, audits, the retired compilers) is in [`history/`](history/).
 * [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md): current gotchas and
   workarounds.
 * [`migration/`](migration/): what changes between minors (`v0.27.md`,
-  `v0.28.md`, `v0.29.md`, `v0.30.md`, `v0.31.md`), as loud, loud at run time and silent.
+  `v0.28.md`, `v0.29.md`, `v0.30.md`, `v0.31.md`, `v0.32.md`), as loud, loud at run time and silent.
 * [`sky-toml.md`](sky-toml.md): every `sky.toml` key and environment variable.
 
 ## One entry point: `Std.App`
@@ -137,6 +137,8 @@ and `Std.Ai.Memory.Pg`. Training and evaluation: `Std.Ai.Dataset`,
 ## Language and interop
 
 * [`language/`](language/): syntax, types, pattern matching, modules.
+  [Bind lines](language/syntax.md#bind-lines) (`p <- e` in a `let` block,
+  v0.32.0) chain Tasks, Results, Maybes and decoders with no nesting.
 * [`errors/`](errors/): the error model and one page per diagnostic code.
 * [`ffi/`](ffi/): Go interop and binding generation.
 

@@ -186,22 +186,19 @@ firewall act =
 
 replyBody : Ctx -> Ticket -> Task Error String
 replyBody ctx ticket =
-    Durable.step
-        ctx
-        chatCodec
-        "draft"
-        (Provider.chat
-            provider
-            [ Provider.system "Draft a short, kind reply."
-            , Provider.user ticket.text
-            ])
-        |> Task.andThen
-               (\draft ->
-                   Durable.step
-                       ctx
-                       Codec.string
-                       "send"
-                       (send ticket draft.content))
+    let
+        draft <-
+            Durable.step
+                ctx
+                chatCodec
+                "draft"
+                (Provider.chat
+                    provider
+                    [ Provider.system "Draft a short, kind reply."
+                    , Provider.user ticket.text
+                    ])
+    in
+        Durable.step ctx Codec.string "send" (send ticket draft.content)
 
 
 send : Ticket -> String -> Task Error String

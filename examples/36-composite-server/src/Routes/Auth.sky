@@ -56,30 +56,19 @@ registerUser cfg db creds =
             logAndFail "register.hashFailed" e
 
         Ok passwordHash ->
-            Time.unixMillis ()
-                |> Task.andThen
-                       (\nowMs ->
-                           let
-                               nowS = nowMs // 1000
-                               fields =
-                                   Dict.empty |> Dict.insert "email" creds.email
-                                       |> Dict.insert
-                                              "password_hash"
-                                              passwordHash
-                                       |> Dict.insert
-                                              "created_at"
-                                              (String.fromInt nowMs)
-                           in
-                               Db.insertRow db "users" fields
-                                   |> Task.andThen
-                                          (\rowId ->
-                                              issueToken
-                                                  cfg
-                                                  nowS
-                                                  { userId = rowId
-                                                  , email = creds.email
-                                                  , exp = 0
-                                                  }))
+            let
+                nowMs <- Time.unixMillis ()
+                nowS = nowMs // 1000
+                fields =
+                    Dict.empty |> Dict.insert "email" creds.email
+                        |> Dict.insert "password_hash" passwordHash
+                        |> Dict.insert "created_at" (String.fromInt nowMs)
+                rowId <- Db.insertRow db "users" fields
+            in
+                issueToken
+                    cfg
+                    nowS
+                    { userId = rowId, email = creds.email, exp = 0 }
 
 
 handleLogin : Config -> Db -> Request -> Task Error Response

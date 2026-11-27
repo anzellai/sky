@@ -1,0 +1,39 @@
+---
+source: crates/syntax/tests/bind_lines.rs
+expression: tree_dump(&parse)
+---
+SourceFile
+  ValueDecl
+    ParamList
+      PatVar
+    LetExpr
+      BindBinding
+        PatVar
+        CallExpr
+          QualRefExpr
+          FieldAccess
+            RefExpr
+      BindBinding
+        PatVar
+        CallExpr
+          RefExpr
+          RefExpr
+      LetBinding
+        ParamList
+        RecordExpr
+          RecordField
+            RefExpr
+      BindBinding
+        PatWildcard
+        CallExpr
+          QualRefExpr
+          ParenExpr
+            CallExpr
+              RefExpr
+              RefExpr
+              RefExpr
+          FieldAccess
+            RefExpr
+      CallExpr
+        QualRefExpr
+        RefExpr

@@ -979,11 +979,23 @@ fn numeric_queries_share_owner_and_keep_revision_results_isolated() {
         );
         assert_eq!(
             *current_pick,
-            ty::numeric::compute_numeric_elaboration(&eager, &fx.db, fx.lib_id, pick)
+            ty::numeric::compute_numeric_elaboration(
+                &eager,
+                &fx.db,
+                fx.lib_id,
+                pick,
+                &ty::TyDb::elaborated_body_of(&fx.db, fx.lib_id, pick).unwrap()
+            )
         );
         assert_eq!(
             *current_main,
-            ty::numeric::compute_numeric_elaboration(&eager, &fx.db, fx.app_id, main)
+            ty::numeric::compute_numeric_elaboration(
+                &eager,
+                &fx.db,
+                fx.app_id,
+                main,
+                &ty::TyDb::elaborated_body_of(&fx.db, fx.app_id, main).unwrap()
+            )
         );
         let fresh = Fixture::build(source, caller, OTHER_V1);
         let fresh_pick = fresh

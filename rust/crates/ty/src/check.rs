@@ -230,6 +230,14 @@ impl<'a> Typer<'a> {
     /// body-only-inferred `number`. Kept SEPARATE from `body_types` so the
     /// lowerer's typed table — and therefore codegen — is byte-for-byte
     /// unchanged (the LSP is additive).
+    /// The body of top-level `def` as every pass after inference reads it
+    /// ([`crate::TyDb::elaborated_body_of`]): a bind line carries the `andThen`
+    /// the check path chose, so typing it here never chooses again.
+    pub fn elaborated_body(&self, def: DefId) -> Option<crate::ElaboratedBody> {
+        let module = self.db.def_loc(def)?.module;
+        self.db.elaborated_body_of(module, def)
+    }
+
     pub fn body_types_annotated(&self, def: DefId, body: &Body) -> BodyTypes {
         let mut infer = Infer::new(&self.world, self.db.as_sky_db())
             .with_self_def(Some(def))
@@ -473,6 +481,9 @@ fn regex_literals(body: &Body, sky: &dyn hir::SkyDb) -> Vec<(ExprId, String)> {
                 {
                     lit(*rhs)
                 }
+                // An operator resolves to a kernel or a def, never to a bind line
+                // placeholder (that is only ever a `Call` head).
+                Res::BindAndThen => unreachable!("a bind line placeholder as an operator"),
                 _ => None,
             },
             _ => None,
@@ -726,16 +737,28 @@ fn checked_combinator_hint(
             .is_some_and(|l| l.name.as_str() == name && sky.module_name(l.module) == module),
         _ => false,
     };
-    // Only an error inside a call of one of them: another mistake in the same
-    // def keeps its own message.
-    let (module, _, name) = NEWLY_CHECKED.iter().find(|(m, p, n)| {
-        body.exprs.iter().any(|(e, _)| {
-            is(head(e), m, p, n)
-                && body.expr_span(e).is_some_and(|sp| {
-                    sp.file == at.file && sp.range.0 <= at.range.0 && at.range.1 <= sp.range.1
-                })
+    // Only an error whose innermost enclosing call (or pipe) is a call of one
+    // of them: a clash in a call nested in its arguments
+    // (`Result.map f (Decode.decodeString dbDecoder s)`) is that call's, and
+    // another mistake in the same def keeps its own message.
+    let innermost = body
+        .exprs
+        .iter()
+        .filter(|(_, x)| match x {
+            Expr::Call(..) => true,
+            Expr::Binop { op, .. } => matches!(op.as_str(), "|>" | "<|"),
+            _ => false,
         })
-    })?;
+        .filter_map(|(e, _)| {
+            let sp = body.expr_span(e)?;
+            (sp.file == at.file && sp.range.0 <= at.range.0 && at.range.1 <= sp.range.1)
+                .then_some((sp.range.1 - sp.range.0, e))
+        })
+        .min_by_key(|(len, _)| *len)
+        .map(|(_, e)| e)?;
+    let (module, _, name) = NEWLY_CHECKED
+        .iter()
+        .find(|(m, p, n)| is(head(innermost), m, p, n))?;
     let short = module.rsplit('.').next().unwrap_or(module);
     Some(format!(
         "since v0.27.0 `{short}.{name}` is type-checked (it had no signature, so any \
@@ -1331,11 +1354,19 @@ fn check_modules_with_world_reporting(
                 }
                 None => infer.infer_def(body),
             };
-            for err in infer
-                .errors
-                .iter()
-                .chain(world.app_group_errors.get(def).into_iter().flatten())
-            {
+            // A recursive group's error that the def's own run also found
+            // (the same code, place and text) is reported once.
+            let own = &infer.errors;
+            let group_only = world
+                .app_group_errors
+                .get(def)
+                .into_iter()
+                .flatten()
+                .filter(|g| {
+                    !own.iter()
+                        .any(|e| e.code == g.code && e.span == g.span && e.message == g.message)
+                });
+            for err in own.iter().chain(group_only) {
                 out.type_errors += 1;
                 out.diagnostics.push(Diagnostic {
                     severity: Severity::Error,
@@ -1389,6 +1420,16 @@ fn check_modules_with_world_reporting(
             // list is computed once. The scans below look types up by `ExprId`
             // (last recording wins) and rebuild only what they read.
             let (recorded, table) = infer.recorded_expr_table();
+            // The scans after inference read the body with this run's bind-line
+            // choices in place (the check path's choice, the one every later
+            // pass reads through `TyDb::elaborated_body_of`;
+            // docs/design/let-bind-lines.md §5). The type errors above and the
+            // exhaustiveness pass below read the bind lines themselves.
+            let choices = crate::BindElaboration {
+                choices: infer.take_bind_choices().into_iter().collect(),
+            };
+            let elaborated = crate::elaborate_with(body, || Arc::new(choices));
+            let post: &Body = elaborated.as_deref().unwrap_or(body);
             // The solved snapshot owns its data. No scan below needs the UF,
             // inference environments or local/generalisation scratch.
             drop(infer);
@@ -1412,18 +1453,18 @@ fn check_modules_with_world_reporting(
             // (concrete / rigid-quantifier elements are silent — see
             // `codec_elem.rs`).
             let expr_ty = crate::tytable::ExprTypes::new(&recorded, &table);
-            codec_elem::scan_body(body, &expr_ty, sky, &dname, &mut codec_elems);
+            codec_elem::scan_body(post, &expr_ty, sky, &dname, &mut codec_elems);
 
             // ---- [E2010] form-submit handler ---------------------------
-            crate::form_submit::scan_body(body, &expr_ty, sky, &dname, &mut form_submits);
+            crate::form_submit::scan_body(post, &expr_ty, sky, &dname, &mut form_submits);
 
             // ---- [E2013] a Sky value where a Go interface is required ---
-            crate::ffi_iface::scan_body(body, &expr_ty, sky, &dname, &mut ffi_ifaces);
+            crate::ffi_iface::scan_body(post, &expr_ty, sky, &dname, &mut ffi_ifaces);
 
             // ---- [E2011] literal pub/sub topic (collected; compared below,
             // across every module under check) --------------------------
             crate::pubsub_topic::scan_body(
-                body,
+                post,
                 &expr_ty,
                 sky,
                 &mname,
@@ -1433,7 +1474,14 @@ fn check_modules_with_world_reporting(
             );
 
             // exhaustiveness (warnings, not type errors)
-            let warns = exhaustive::check_body(body, &world);
+            let mut warns = exhaustive::check_body(body, &world, &module_src);
+            // A pattern span starts at the trivia before it: point at the
+            // pattern itself, as the type errors above do.
+            for w in &mut warns {
+                for l in &mut w.labels {
+                    l.span = trim_leading_ws(&module_src, l.span);
+                }
+            }
             out.exhaustiveness_warnings += warns.len();
             out.diagnostics.extend(warns);
 

@@ -14,74 +14,427 @@
 //! * **Semantics-preserving + no data loss** — the opinionated output is
 //!   accepted only when it (a) re-parses with zero error nodes, (b) preserves
 //!   every comment verbatim (own-line *and* trailing — closing the oracle's
-//!   `Format.hs:18` data-loss hole), and (c) preserves the multiset of
-//!   significant tokens (no dropped name / literal / operator). Any failure
-//!   falls the whole file back to the lossless reprint.
+//!   `Format.hs:18` data-loss hole) and in place (each comment keeps the
+//!   significant token just before it and just after it, named by text and
+//!   occurrence, so a moved comment fails the net), and (c) preserves the multiset of
+//!   significant tokens (no dropped name / literal / operator). On a failure
+//!   the fallback is per top-level declaration: every declaration that
+//!   formats safely is formatted, and a declaration the printer cannot lay
+//!   out without losing a comment is kept exactly as written
+//!   ([`format_report`] names it). Only when that mix is not safe either does
+//!   the whole file fall back to the lossless reprint.
 //!
 //! Broken input (error nodes) always takes the lossless path (L8).
 
 mod pretty;
 
 use base::FileId;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use syntax::{parse, Parse, SyntaxKind};
 
-/// Format Sky source into canonical, opinionated layout — falling back to a
-/// lossless, trivia-preserving reprint whenever the opinionated pass cannot be
-/// proven safe + idempotent for this file (see the module docs).
+/// Format Sky source into canonical, opinionated layout — keeping a
+/// declaration exactly as written when the opinionated pass cannot be proven
+/// safe + idempotent for it (see the module docs).
 pub fn format_source(src: &str) -> String {
-    let parsed = parse(src, FileId(0));
-    // Broken input: never re-lay-out; reprint verbatim (L8).
-    if parsed.error_node_count() > 0 {
-        return parsed.reprint();
-    }
-    match opinionated(src, &parsed) {
-        Some(out) if is_safe(src, &out) => out,
-        _ => parsed.reprint(),
+    format_report(src).text
+}
+
+/// The result of [`format_report`].
+pub struct Formatted {
+    /// The formatted source.
+    pub text: String,
+    /// The 1-based first line of each part kept exactly as written (a
+    /// top-level declaration, the header region, or line 1 for the whole
+    /// file), because formatting it would lose or move a comment.
+    pub kept: Vec<usize>,
+    /// Each part in `kept`, in the same order, with the reason.
+    pub details: Vec<Kept>,
+}
+
+/// Which part of a file [`format_report`] kept as written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeptPart {
+    /// The `module` line and the imports.
+    Header,
+    /// One top-level declaration (an annotation and its definition are one).
+    Declaration,
+    /// The whole file: no mix of formatted and kept parts was safe.
+    File,
+}
+
+/// A comment that made a part be kept as written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptComment {
+    /// 1-based line of the comment.
+    pub line: usize,
+    /// True when code comes before the comment on its line.
+    pub trailing: bool,
+}
+
+/// One part kept as written, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kept {
+    /// 1-based first line of the part.
+    pub line: usize,
+    pub part: KeptPart,
+    /// The comment in the part that the printer cannot place (a trailing
+    /// comment first), when the part holds one.
+    pub comment: Option<KeptComment>,
+}
+
+impl Kept {
+    /// The warning text `sky fmt` prints after `file:line: `.
+    pub fn message(&self) -> String {
+        let what = match self.part {
+            KeptPart::Header => "the module header and imports are",
+            KeptPart::Declaration => "this declaration is",
+            KeptPart::File => "this file is",
+        };
+        match (&self.comment, self.part) {
+            (Some(c), _) if c.trailing => format!(
+                "{what} kept as written, because formatting would move the comment at \
+                 the end of line {}. Move that comment to its own line above to format it.",
+                c.line
+            ),
+            (Some(c), _) => format!(
+                "{what} kept as written, because the comment on line {} cannot be placed \
+                 by the formatter.",
+                c.line
+            ),
+            (None, _) => {
+                format!(
+                    "{what} kept as written, because the formatter cannot lay it out \
+                     without changing it."
+                )
+            }
+        }
     }
 }
 
+/// Format Sky source, and say which declarations were kept as written.
+pub fn format_report(src: &str) -> Formatted {
+    let parsed = parse(src, FileId(0));
+    // Broken input: never re-lay-out; reprint verbatim (L8).
+    if parsed.error_node_count() > 0 {
+        return Formatted {
+            text: parsed.reprint(),
+            kept: Vec::new(),
+            details: Vec::new(),
+        };
+    }
+    // The source's comments and significant tokens, read once: every safety
+    // check below compares an output against them.
+    let want = Multisets::of(&parsed);
+    let none = BTreeSet::new();
+    let (out, units) = opinionated(src, &parsed, &none);
+    if is_safe(&want, &out, &none) {
+        return Formatted {
+            text: out,
+            kept: Vec::new(),
+            details: Vec::new(),
+        };
+    }
+    // Per declaration. A unit can only fail the net by losing or moving a
+    // comment, so first try each unit that HOLDS a comment on its own, every
+    // other unit formatted. The mix is then checked as a whole; only if that
+    // fails is every unit tried one at a time (the exact, slower search).
+    let all: BTreeSet<usize> = units.iter().map(|u| u.0).collect();
+    let comments = comment_lines(&parsed);
+    let with_comments: Vec<usize> = units
+        .iter()
+        .enumerate()
+        .filter(|(i, u)| {
+            let end = units.get(i + 1).map_or(usize::MAX, |n| n.1);
+            comments.iter().any(|&(l, _)| l >= u.1 && l < end)
+        })
+        .map(|(_, u)| u.0)
+        .collect();
+    let keep_of = |candidates: &mut dyn Iterator<Item = usize>| {
+        let mut keep = BTreeSet::new();
+        for unit in candidates {
+            let mut others = all.clone();
+            others.remove(&unit);
+            let (one, _) = opinionated(src, &parsed, &others);
+            if !is_safe(&want, &one, &others) {
+                keep.insert(unit);
+            }
+        }
+        keep
+    };
+    // Each unit that holds a comment is checked ON ITS OWN: its source lines
+    // are formatted as a file by themselves and put through the same net. A
+    // top-level declaration is self-contained, so this decides it in time
+    // that grows with the file's size, not with size × units (a 10,000-line
+    // commented file took tens of seconds with one whole-file pass per unit).
+    // The mix is still checked as a whole below.
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+    let unsafe_alone = || -> BTreeSet<usize> {
+        let mut found = BTreeSet::new();
+        for (i, u) in units.iter().enumerate() {
+            if !with_comments.contains(&u.0) {
+                continue;
+            }
+            let end = units
+                .get(i + 1)
+                .map_or(lines.len(), |n| n.1)
+                .min(lines.len());
+            let slice: String = lines[u.1.min(end)..end].concat();
+            let p = parse(&slice, FileId(0));
+            let alone_safe = p.error_node_count() == 0 && {
+                let want_alone = Multisets::of(&p);
+                let (out, _) = opinionated(&slice, &p, &BTreeSet::new());
+                is_safe(&want_alone, &out, &BTreeSet::new())
+            };
+            if !alone_safe {
+                found.insert(u.0);
+            }
+        }
+        found
+    };
+    // The slow exact search (one whole-file pass per unit) runs only when the
+    // fast choice does not give a safe file. Each candidate is built lazily.
+    let candidates: [&dyn Fn() -> BTreeSet<usize>; 2] =
+        [&unsafe_alone, &|| keep_of(&mut all.iter().copied())];
+    for candidate in candidates {
+        let keep = candidate();
+        let (mixed, _) = opinionated(src, &parsed, &keep);
+        if !keep.is_empty() && is_safe(&want, &mixed, &keep) {
+            let details: Vec<Kept> = units
+                .iter()
+                .enumerate()
+                .filter(|(_, u)| keep.contains(&u.0))
+                .map(|(i, u)| {
+                    let end = units.get(i + 1).map_or(usize::MAX, |n| n.1);
+                    Kept {
+                        line: u.1 + 1,
+                        part: if u.0 == pretty::HEADER {
+                            KeptPart::Header
+                        } else {
+                            KeptPart::Declaration
+                        },
+                        comment: cause(&comments, u.1, end),
+                    }
+                })
+                .collect();
+            let kept = details.iter().map(|d| d.line).collect();
+            return Formatted {
+                text: mixed,
+                kept,
+                details,
+            };
+        }
+    }
+    // No safe mix: the whole file is kept as written, and said so.
+    Formatted {
+        text: parsed.reprint(),
+        kept: vec![1],
+        details: vec![Kept {
+            line: 1,
+            part: KeptPart::File,
+            comment: cause(&comments, 0, usize::MAX),
+        }],
+    }
+}
+
+/// The comment in the 0-based line window `[start, end)` that most likely
+/// kept the part as written: the first trailing comment, else the first one.
+fn cause(comments: &[(usize, bool)], start: usize, end: usize) -> Option<KeptComment> {
+    let inside = || comments.iter().filter(|&&(l, _)| l >= start && l < end);
+    inside()
+        .find(|&&(_, trailing)| trailing)
+        .or_else(|| inside().next())
+        .map(|&(l, trailing)| KeptComment {
+            line: l + 1,
+            trailing,
+        })
+}
+
+/// The 0-based line of every comment token in `parsed`, and whether code
+/// comes before it on its line (a trailing comment).
+fn comment_lines(parsed: &Parse) -> Vec<(usize, bool)> {
+    let mut lines = Vec::new();
+    let text = parsed.syntax().to_string();
+    for e in parsed.syntax().descendants_with_tokens() {
+        if let Some(t) = e.into_token() {
+            if matches!(t.kind(), SyntaxKind::LineComment | SyntaxKind::BlockComment) {
+                let at: usize = t.text_range().start().into();
+                let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+                let trailing = !text[line_start..at].chars().all(|c| c == ' ' || c == '\t');
+                lines.push((text[..at].matches('\n').count(), trailing));
+            }
+        }
+    }
+    lines
+}
+
 /// `sky fmt --check`: is `src` already formatted? True when a format pass is a
-/// no-op (byte-identical). The CLI turns `false` into a non-zero exit.
+/// no-op (byte-identical). A declaration kept as written does not count, so
+/// only a declaration that formats and would change makes it false. The CLI
+/// turns `false` into a non-zero exit.
 pub fn is_formatted(src: &str) -> bool {
     format_source(src) == src
 }
 
-/// Run the opinionated printer once. Returns `None` if the file has no module
-/// content to lay out (defensive — the reprint path handles it).
-fn opinionated(src: &str, parsed: &Parse) -> Option<String> {
+/// Run the opinionated printer once, with the units in `verbatim` (by the
+/// index of their first decl) kept as written. Returns the text and every
+/// unit printed (its first decl index and 0-based first line).
+fn opinionated(
+    src: &str,
+    parsed: &Parse,
+    verbatim: &BTreeSet<usize>,
+) -> (String, Vec<(usize, usize)>) {
     let root = parsed.syntax();
     let file = parsed.tree();
-    let mut printer = pretty::Printer::new(src, &root);
-    Some(printer.format(&file))
+    let mut printer = pretty::Printer::new(src, &root).with_verbatim(verbatim.clone());
+    let out = printer.format(&file);
+    (out, printer.units)
 }
 
 /// The safety net: accept the opinionated output only when it is provably a
 /// semantics-preserving, idempotent reformat.
-fn is_safe(src: &str, out: &str) -> bool {
+fn is_safe(want: &Multisets, out: &str, verbatim: &BTreeSet<usize>) -> bool {
     let out_parse = parse(out, FileId(0));
     // (a) re-parses cleanly.
     if out_parse.error_node_count() > 0 {
         return false;
     }
-    // (b) comments preserved verbatim (own-line AND trailing).
-    if comment_multiset(src) != comment_multiset(out) {
+    // (b) comments preserved verbatim (own-line AND trailing), each between
+    //     the same two significant tokens as in the source (its anchor), and
+    //     (c) significant tokens preserved (parens excluded — the printer may
+    //     add grouping parens around complex call arguments, never drop a
+    //     name).
+    if Multisets::of(&out_parse) != *want {
         return false;
     }
-    // (c) significant tokens preserved (parens excluded — the printer may add
-    //     grouping parens around complex call arguments, never drop a name).
-    if sig_token_multiset(src) != sig_token_multiset(out) {
-        return false;
-    }
-    // (d) idempotent: a second opinionated pass reproduces `out` exactly.
-    match opinionated(out, &out_parse) {
-        Some(twice) => twice == out,
-        None => false,
+    // (d) idempotent: a second opinionated pass (keeping the same units as
+    //     written) reproduces `out` exactly.
+    opinionated(out, &out_parse, verbatim).0 == out
+}
+
+/// The comment multiset, the significant-token multiset and the comment
+/// anchors of one parse.
+#[derive(PartialEq, Eq)]
+struct Multisets {
+    comments: BTreeMap<String, usize>,
+    tokens: BTreeMap<String, usize>,
+    anchors: Vec<Anchor>,
+    /// The comments inside the `module` line or an import (between its first
+    /// and last significant token), as `(node index, text)`. Parentheses are
+    /// not anchors, so a comment inside an exposing list moved out below the
+    /// closing paren would keep its anchor; this pins it inside its node.
+    in_header: Vec<(usize, String)>,
+}
+
+impl Multisets {
+    fn of(parsed: &Parse) -> Self {
+        Multisets {
+            comments: comment_multiset_of(parsed),
+            tokens: sig_token_multiset_of(parsed),
+            anchors: anchors_of(parsed),
+            in_header: header_comments_of(parsed),
+        }
     }
 }
 
-fn comment_multiset(src: &str) -> BTreeMap<String, usize> {
-    let parsed = parse(src, FileId(0));
+/// The comments strictly inside the module header or an import node, by the
+/// node's position in the header (0 the `module` line, then each import).
+fn header_comments_of(parsed: &Parse) -> Vec<(usize, String)> {
+    use syntax::ast::AstNode;
+    let file = parsed.tree();
+    let nodes: Vec<_> = file
+        .module_header()
+        .map(|h| h.syntax().clone())
+        .into_iter()
+        .chain(file.imports().map(|i| i.syntax().clone()))
+        .collect();
+    let mut out = Vec::new();
+    for (k, node) in nodes.iter().enumerate() {
+        let sig: Vec<_> = node
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|t| !t.kind().is_trivia())
+            .collect();
+        let (Some(first), Some(last)) = (sig.first(), sig.last()) else {
+            continue;
+        };
+        let (lo, hi) = (first.text_range().end(), last.text_range().start());
+        for e in parsed.syntax().descendants_with_tokens() {
+            let Some(t) = e.into_token() else { continue };
+            if matches!(t.kind(), SyntaxKind::LineComment | SyntaxKind::BlockComment)
+                && t.text_range().start() >= lo
+                && t.text_range().end() <= hi
+            {
+                out.push((k, t.text().to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// A significant token named so that the name survives re-layout: its
+/// comparison key (see [`sig_key`]) and how many tokens with that key come
+/// before it in the file.
+type TokenId = (String, usize);
+
+/// Where one comment sits: the significant token just before it and just
+/// after it (`None` at the start or end of the file), its position among the
+/// comments in that same gap, and its text. A formatted output must give
+/// every comment the same anchor, so a comment that the printer moves to
+/// another place fails the safety net even though the comment multiset is
+/// the same.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct Anchor {
+    before: Option<TokenId>,
+    after: Option<TokenId>,
+    in_gap: usize,
+    text: String,
+}
+
+/// The anchor of every comment in `parsed`, sorted. One walk over the tokens.
+/// Parentheses are not anchors: the printer adds and drops grouping parens.
+fn anchors_of(parsed: &Parse) -> Vec<Anchor> {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut before: Option<TokenId> = None;
+    // Comments since the last significant token, waiting for their `after`.
+    let mut pending: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for e in parsed.syntax().descendants_with_tokens() {
+        let Some(t) = e.into_token() else { continue };
+        let k = t.kind();
+        if matches!(k, SyntaxKind::LineComment | SyntaxKind::BlockComment) {
+            pending.push(t.text().to_string());
+            continue;
+        }
+        if k.is_trivia() || matches!(k, SyntaxKind::LParen | SyntaxKind::RParen) {
+            continue;
+        }
+        let key = sig_key(&t);
+        let n = seen.entry(key.clone()).or_insert(0);
+        let id = (key, *n);
+        *n += 1;
+        for (in_gap, text) in pending.drain(..).enumerate() {
+            out.push(Anchor {
+                before: before.clone(),
+                after: Some(id.clone()),
+                in_gap,
+                text,
+            });
+        }
+        before = Some(id);
+    }
+    for (in_gap, text) in pending.drain(..).enumerate() {
+        out.push(Anchor {
+            before: before.clone(),
+            after: None,
+            in_gap,
+            text,
+        });
+    }
+    out.sort();
+    out
+}
+
+fn comment_multiset_of(parsed: &Parse) -> BTreeMap<String, usize> {
     let mut m = BTreeMap::new();
     for e in parsed.syntax().descendants_with_tokens() {
         if let Some(t) = e.into_token() {
@@ -93,8 +446,7 @@ fn comment_multiset(src: &str) -> BTreeMap<String, usize> {
     m
 }
 
-fn sig_token_multiset(src: &str) -> BTreeMap<String, usize> {
-    let parsed = parse(src, FileId(0));
+fn sig_token_multiset_of(parsed: &Parse) -> BTreeMap<String, usize> {
     let mut m = BTreeMap::new();
     for e in parsed.syntax().descendants_with_tokens() {
         if let Some(t) = e.into_token() {
@@ -102,21 +454,25 @@ fn sig_token_multiset(src: &str) -> BTreeMap<String, usize> {
             if k.is_trivia() || matches!(k, SyntaxKind::LParen | SyntaxKind::RParen) {
                 continue;
             }
-            // Float literals are re-rendered in Haskell `show` notation
-            // (`0.05` -> `5.0e-2`); compare by numeric value so the (value-
-            // preserving) reformat is accepted while a dropped literal is not.
-            let key = if k == SyntaxKind::Float {
-                match t.text().parse::<f64>() {
-                    Ok(v) => format!("f64:{}", v.to_bits()),
-                    Err(_) => t.text().to_string(),
-                }
-            } else {
-                t.text().to_string()
-            };
-            *m.entry(key).or_insert(0) += 1;
+            *m.entry(sig_key(&t)).or_insert(0) += 1;
         }
     }
     m
+}
+
+/// The comparison key of a significant token. Float literals are re-rendered
+/// in Haskell `show` notation (`0.05` -> `5.0e-2`); compare by numeric value
+/// so the (value-preserving) reformat is accepted while a dropped literal is
+/// not.
+fn sig_key(t: &syntax::SyntaxToken) -> String {
+    if t.kind() == SyntaxKind::Float {
+        match t.text().parse::<f64>() {
+            Ok(v) => format!("f64:{}", v.to_bits()),
+            Err(_) => t.text().to_string(),
+        }
+    } else {
+        t.text().to_string()
+    }
 }
 
 #[cfg(test)]
@@ -348,7 +704,7 @@ mod tests {
         // The opinionated printer itself, not the lossless fallback, must keep
         // the layout: a fallback would hide a moved comment.
         let parsed = parse(src, FileId(0));
-        let printed = opinionated(src, &parsed).unwrap_or_default();
+        let printed = opinionated(src, &parsed, &BTreeSet::new()).0;
         assert_eq!(printed, src, "the printer moved code or a comment");
         assert_eq!(
             format_source(src),

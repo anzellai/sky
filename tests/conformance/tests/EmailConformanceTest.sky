@@ -54,11 +54,13 @@ noHeaders =
 validHeader : String -> String -> Email.Header
 validHeader name value =
     case Email.header name value of
+
         Ok h ->
             h
 
         Err _ ->
-            Email.listUnsubscribe { url = "refused:" ++ name, mailto = Nothing, oneClick = False }
+            Email.listUnsubscribe
+                { url = "refused:" ++ name, mailto = Nothing, oneClick = False }
 
 
 campaignHeader : Email.Header
@@ -69,6 +71,7 @@ campaignHeader =
 isOk : Result e a -> Bool
 isOk r =
     case r of
+
         Ok _ ->
             True
 
@@ -101,10 +104,7 @@ pdfAttachment =
 
 csvAttachment : Email.Attachment
 csvAttachment =
-    { filename = "rows.csv"
-    , mimeType = "text/csv"
-    , content = "a,b;1,2"
-    }
+    { filename = "rows.csv", mimeType = "text/csv", content = "a,b;1,2" }
 
 
 -- | A message with EVERY field set to a non-default value. Applying one
@@ -138,10 +138,7 @@ fullAttachment =
 -- | A SesConfig with every field non-default (setter-isolation fixture).
 fullSes : Email.SesConfig
 fullSes =
-    { region = "eu-west-2"
-    , key = "AKIAEXAMPLE"
-    , secret = "ses-secret"
-    }
+    { region = "eu-west-2", key = "AKIAEXAMPLE", secret = "ses-secret" }
 
 
 -- | An SmtpConfig with every field non-default (setter-isolation fixture).
@@ -160,6 +157,7 @@ fullSmtp =
 providerLabel : EmailProvider -> String
 providerLabel provider =
     case provider of
+
         Resend key ->
             "resend:" ++ key
 
@@ -170,11 +168,7 @@ providerLabel provider =
             "sendgrid:" ++ key
 
         Smtp cfg ->
-            "smtp:"
-                ++ cfg.host
-                ++ ":"
-                ++ String.fromInt cfg.port
-                ++ "/"
+            "smtp:" ++ cfg.host ++ ":" ++ String.fromInt cfg.port ++ "/"
                 ++ cfg.user
                 ++ "/"
                 ++ cfg.pass

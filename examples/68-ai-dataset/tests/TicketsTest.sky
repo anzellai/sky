@@ -65,14 +65,12 @@ tests =
           "the same rows freeze to the same digest, with the scrub counts"
           (\_ ->
               ok
-                  (File.tempDir "tickets"
-                      |> Task.andThen
-                             (\dir ->
-                                 freezeInto dir
-                                     |> Task.andThen
-                                            (\a ->
-                                                freezeInto dir
-                                                    |> Task.map (\b -> ( a, b )))))
+                  (let
+                      dir <- File.tempDir "tickets"
+                      a <- freezeInto dir
+                      b <- freezeInto dir
+                  in
+                      Task.succeed ( a, b ))
                   (\( a, b ) ->
                       Test.equal
                           ( True

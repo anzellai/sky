@@ -99,7 +99,8 @@ impl Variance {
 /// * `Task`, `Cmd`, `Sub`: descriptions of effects; the parameter is only ever
 ///   produced.
 /// * `Decoder` (`Sky.Core.Json.Decode`, kernel-implicit) and
-///   `Std.Config.Decoder`: a decoder only produces its value.
+///   `Std.Config.Decoder`, `Std.Db.Decode.Decoder`: a decoder only produces
+///   its value.
 /// * `Std.Html.Html`, `Std.Html.Attributes.Attribute`,
 ///   `Std.Html.Attributes.Event`: `msg` is reached only through `String -> msg`
 ///   style handlers, which are covariant in `msg`.
@@ -128,7 +129,11 @@ pub const COVARIANT_STDLIB: &[&str] = &[
     "Cmd",
     "Sub",
     "Decoder",
+    // v0.32.0: the bare `Decoder` is written as its home's key
+    // (`hir::KERNEL_IMPLICIT_HOMES`), and `Std.Db.Decode` has its own.
+    "Sky.Core.Json.Decode.Decoder",
     "Std.Config.Decoder",
+    "Std.Db.Decode.Decoder",
     "Std.Html.Html",
     "Std.Html.Attributes.Attribute",
     "Std.Html.Attributes.Event",

@@ -70,11 +70,37 @@ const CLAIM_SITES: &[(&str, &str)] = &[
     ("README.md", "**Status: v"),
     ("AGENTS.md", "Current line: **v"),
     ("docs/KNOWN_LIMITATIONS.md", "# Known limitations (v"),
+    // VERSIONING.md said "Current line: **v0.30.x**" through the whole v0.31
+    // line and into v0.32.0: it was not in this list, so nothing saw it.
+    ("VERSIONING.md", "Current line: **v"),
+    // SECURITY.md's supported-versions row stated v0.23.x for nine minors.
+    ("SECURITY.md", "Latest 0.x line (currently **v"),
 ];
+
+/// `(major, minor)` of `[workspace.package] version` in rust/Cargo.toml, the
+/// one version source. The claim sites are checked against it directly (and
+/// `the_workspace_version_is_the_newest_changelog_heading` ties it to the
+/// changelog), so a bump without the doc edit goes red at once.
+fn workspace_minor_line() -> (u32, u32) {
+    let v = workspace_version();
+    let mut it = v.split('.');
+    match (
+        it.next().and_then(|s| s.parse().ok()),
+        it.next().and_then(|s| s.parse().ok()),
+    ) {
+        (Some(maj), Some(min)) => (maj, min),
+        _ => panic!("workspace version `{v}` is not `X.Y.Z`"),
+    }
+}
 
 #[test]
 fn docs_that_state_a_current_version_state_the_current_one() {
-    let (maj, min) = current_minor_line();
+    let (maj, min) = workspace_minor_line();
+    assert_eq!(
+        (maj, min),
+        current_minor_line(),
+        "the workspace version and CHANGELOG.md's newest heading name different lines"
+    );
     let expected = format!("v{maj}.{min}.x");
     let mut stale = Vec::new();
 

@@ -135,25 +135,85 @@ pub fn scan(root: &Path) -> Result<Report, String> {
         bad_exclusions: Vec::new(),
         floor_ok: false,
     };
+    let mut to_check: Vec<&String> = Vec::new();
     for f in &files {
         if let Some(i) = exclusions.iter().position(|x| matches(&x.pattern, f)) {
             used[i] = true;
             report.excluded += 1;
-            continue;
+        } else {
+            to_check.push(f);
         }
+    }
+    // Each file is checked on its own, so the files are split across the
+    // available cores; the verdicts are then merged in the sorted file order,
+    // so the report does not depend on the thread count.
+    #[derive(Clone, Copy)]
+    enum Verdict {
+        Skipped,
+        Formatted,
+        NotUtf8,
+        Unparsable,
+        Unformatted,
+    }
+    let check = |f: &String| -> Verdict {
         // A tracked file deleted in the working tree is not ours to judge.
         let Ok(bytes) = std::fs::read(root.join(f)) else {
-            continue;
+            return Verdict::Skipped;
         };
-        report.checked += 1;
         let Ok(src) = String::from_utf8(bytes) else {
-            report.unparsable.push(format!("{f} (not UTF-8)"));
-            continue;
+            return Verdict::NotUtf8;
         };
         if !project::parse_errors(&src, f).is_empty() {
-            report.unparsable.push(f.clone());
+            Verdict::Unparsable
         } else if !fmt::is_formatted(&src) {
-            report.unformatted.push(f.clone());
+            Verdict::Unformatted
+        } else {
+            Verdict::Formatted
+        }
+    };
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .clamp(1, 8);
+    // A shared counter hands out the next file, so one slow file does not hold
+    // a whole fixed block of others behind it.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut verdicts = vec![Verdict::Skipped; to_check.len()];
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(f) = to_check.get(i) else { break };
+                        done.push((i, check(f)));
+                    }
+                    done
+                })
+            })
+            .collect();
+        for h in handles {
+            for (i, v) in h.join().expect("a sky-fmt-check worker panicked") {
+                verdicts[i] = v;
+            }
+        }
+    });
+    for (f, v) in to_check.iter().zip(verdicts) {
+        match v {
+            Verdict::Skipped => {}
+            Verdict::Formatted => report.checked += 1,
+            Verdict::NotUtf8 => {
+                report.checked += 1;
+                report.unparsable.push(format!("{f} (not UTF-8)"));
+            }
+            Verdict::Unparsable => {
+                report.checked += 1;
+                report.unparsable.push((*f).clone());
+            }
+            Verdict::Unformatted => {
+                report.checked += 1;
+                report.unformatted.push((*f).clone());
+            }
         }
     }
     for (x, used) in exclusions.iter().zip(&used) {

@@ -28,8 +28,7 @@ import Sky.Test as Test exposing (Test)
 fixture : (String -> Task Error a) -> Result Error a
 fixture body =
     Task.run
-        (File.tempDir "sky-conf-file-"
-            |> Task.andThen File.realPath
+        (File.tempDir "sky-conf-file-" |> Task.andThen File.realPath
             |> Task.andThen
                    (\dir ->
                        Task.sequence
@@ -37,10 +36,14 @@ fixture body =
                            , File.mkdirAll (dir ++ "/outside")
                            , File.writeFile (dir ++ "/root/sub/f.txt") "hello"
                            , File.writeFile (dir ++ "/outside/secret") "s"
-                           , Process.run "ln" [ "-s", "sub/f.txt", dir ++ "/root/link" ]
-                               |> Task.map (\_ -> ())
-                           , Process.run "ln" [ "-s", "../outside", dir ++ "/root/escape" ]
-                               |> Task.map (\_ -> ())
+                           , Process.run
+                                 "ln"
+                                 [ "-s", "sub/f.txt", dir ++ "/root/link" ]
+                                 |> Task.map (\_ -> ())
+                           , Process.run
+                                 "ln"
+                                 [ "-s", "../outside", dir ++ "/root/escape" ]
+                                 |> Task.map (\_ -> ())
                            ]
                            |> Task.andThen (\_ -> body dir)))
 
@@ -86,7 +89,8 @@ casResult expected =
                        Sync.compareAndSwap expected 9 ref
                            |> Task.andThen
                                   (\swapped ->
-                                      Sync.get ref |> Task.map (\v -> ( swapped, v )))))
+                                      Sync.get ref
+                                          |> Task.map (\v -> ( swapped, v )))))
 
 
 lockedTotal : Result Error Int
@@ -98,9 +102,11 @@ lockedTotal =
                        List.range 1 50
                            |> List.map
                                   (\_ ->
-                                      Sync.withLock lock
+                                      Sync.withLock
+                                          lock
                                           (Sync.get ref
-                                              |> Task.andThen (\v -> Sync.set (v + 1) ref)))
+                                              |> Task.andThen
+                                                     (\v -> Sync.set (v + 1) ref)))
                            |> Task.parallel
                            |> Task.andThen (\_ -> Sync.get ref)))
 
@@ -111,8 +117,11 @@ lockedFailure =
         (Sync.newMutex ()
             |> Task.andThen
                    (\lock ->
-                       Sync.withLock lock (Task.fail (Error.invalidInput "inside"))
-                           |> Task.onError (\_ -> Sync.withLock lock (Task.succeed 7))))
+                       Sync.withLock
+                           lock
+                           (Task.fail (Error.invalidInput "inside"))
+                           |> Task.onError
+                                  (\_ -> Sync.withLock lock (Task.succeed 7))))
 
 
 drain : Sync.Queue Int -> List (Maybe Int) -> Task Error (List (Maybe Int))
@@ -121,6 +130,7 @@ drain q acc =
         |> Task.andThen
                (\m ->
                    case m of
+
                        Just _ ->
                            drain q (acc ++ [ m ])
 
@@ -134,7 +144,12 @@ queueFifo =
         (Sync.newQueue 3
             |> Task.andThen
                    (\q ->
-                       Task.sequence [ Sync.push 1 q, Sync.push 2 q, Sync.push 3 q, Sync.close q ]
+                       Task.sequence
+                           [ Sync.push 1 q
+                           , Sync.push 2 q
+                           , Sync.push 3 q
+                           , Sync.close q
+                           ]
                            |> Task.andThen (\_ -> drain q [])))
 
 
@@ -142,7 +157,8 @@ pushAfterClose : Result Error ()
 pushAfterClose =
     Task.run
         (Sync.newQueue 1
-            |> Task.andThen (\q -> Sync.close q |> Task.andThen (\_ -> Sync.push 1 q)))
+            |> Task.andThen
+                   (\q -> Sync.close q |> Task.andThen (\_ -> Sync.push 1 q)))
 
 
 popWithinEmpty : Result Error (Maybe Int)
@@ -158,23 +174,22 @@ producerConsumer =
                    (\q ->
                        let
                            producer =
-                               List.range 1 20
-                                   |> List.map (\n -> Sync.push n q)
+                               List.range 1 20 |> List.map (\n -> Sync.push n q)
                                    |> Task.sequence
                                    |> Task.andThen (\_ -> Sync.close q)
                                    |> Task.map (\_ -> 0)
-
                            consumer =
                                drain q []
-                                   |> Task.map (List.filterMap identity >> List.foldl (\a b -> a + b) 0)
+                                   |> Task.map
+                                          (List.filterMap identity
+                                              >> List.foldl (\a b -> a + b) 0)
                        in
-                       Task.parallel [ producer, consumer ] |> Task.map (List.foldl (\a b -> a + b) 0)))
-
+                           Task.parallel [ producer, consumer ]
+                               |> Task.map (List.foldl (\a b -> a + b) 0)))
 
 type Shape
     = Circle Float
     | Label String
-
 
 type Color
     = Red
@@ -187,6 +202,7 @@ type Color
 missingKind : String
 missingKind =
     case Task.run (File.stat "/definitely/not/here") of
+
         Err (Error.Error Error.NotFound _) ->
             "notfound"
 
@@ -202,6 +218,7 @@ missingKind =
 bytesRoundTrip : Result Error (List Int)
 bytesRoundTrip =
     case Bytes.fromBase64 "iVBORwD//oAK" of
+
         Nothing ->
             Ok []
 
@@ -209,7 +226,8 @@ bytesRoundTrip =
             fixture
                 (\dir ->
                     File.writeBytes (dir ++ "/blob.bin") blob
-                        |> Task.andThen (\_ -> File.readFileBytes (dir ++ "/blob.bin")))
+                        |> Task.andThen
+                               (\_ -> File.readFileBytes (dir ++ "/blob.bin")))
 
 
 tests : List Test

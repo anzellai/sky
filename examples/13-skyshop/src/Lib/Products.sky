@@ -195,13 +195,7 @@ deleteProduct productId =
         result = Db.deleteDoc "products" productId
         _ = println ("[PRODUCT] Deleted: " ++ productId)
     in
-        case result of
-
-            Ok v ->
-                Ok v
-
-            Err e ->
-                Err e
+        result
 
 
 listProductImages productId =
@@ -244,10 +238,4 @@ deleteProductImage imageId =
         result = Db.deleteDoc "product_images" imageId
         _ = println ("[IMAGE] Deleted: " ++ imageId)
     in
-        case result of
-
-            Ok v ->
-                Ok v
-
-            Err e ->
-                Err e
+        result

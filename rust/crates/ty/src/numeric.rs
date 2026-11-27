@@ -123,16 +123,15 @@ pub(crate) fn numeric_scheme(world: &World, def: DefId) -> Option<&Scheme> {
         .or_else(|| world.app_check_sigs.get(&def))
 }
 
+/// `body` is the def's [`crate::ElaboratedBody`]: a bind line reads the
+/// `andThen` the check path chose, as lowering does.
 pub fn compute_numeric_elaboration(
     world: &World,
     db: &dyn hir::SkyDb,
     module: base::ModuleId,
     def: DefId,
+    body: &hir::Body,
 ) -> NumericElaboration {
-    let resolved = db.resolve(module);
-    let Some(body) = resolved.bodies.get(&def) else {
-        return NumericElaboration::default();
-    };
     let scheme = numeric_scheme(world, def);
     let has_number = |s: &Scheme| s.vars.iter().any(|n| numeric_name(n.as_str()));
     let relevant = scheme.is_some_and(has_number)

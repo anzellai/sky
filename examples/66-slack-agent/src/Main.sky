@@ -134,53 +134,44 @@ botBody : Ctx -> Mention -> Task Error Reply
 botBody ctx mention =
     -- Step 1: the model call. Journalled, so a resume replays the answer and
     -- never re-bills the model.
-    Durable.step
-        ctx
-        chatCodec
-        "llm"
-        (Provider.chat
-            provider
-            [ Provider.system systemPrompt, Provider.user mention.text ])
-        |> Task.andThen
-               (\resp ->
-                   let
-                       answer = resp.content
-                       postAction =
-                           Policy.action "slack.post" mention.channel Policy.Low
-                   in
-                       Durable.step
-                           ctx
-                           Codec.string
-                           "reply"
-                           (Policy.gate
-                               firewall
-                               postAction
-                               (postMessage
-                                   mention.channel
-                                   mention.threadTs
-                                   answer)
-                               |> Task.map outcomeSummary)
-                           |> Task.andThen
-                                  (\posted ->
-                                      -- Step 2: the outbound Slack post, through the firewall.
-                                      -- Step 3: record the token + cost trace for this run.
-                                      Durable.step
-                                          ctx
-                                          Codec.string
-                                          "trace"
-                                          (recordTrace
-                                              (Durable.conn ctx)
-                                              (Trace.forResponse
-                                                  (Durable.runId ctx)
-                                                  modelName
-                                                  priceBook
-                                                  resp)
-                                              |> Task.map (\_ -> "ok"))
-                                          |> Task.map
-                                                 (\_ ->
-                                                     { reply = answer
-                                                     , posted = posted
-                                                     })))
+    let
+        resp <-
+            Durable.step
+                ctx
+                chatCodec
+                "llm"
+                (Provider.chat
+                    provider
+                    [ Provider.system systemPrompt, Provider.user mention.text ])
+        answer = resp.content
+        postAction = Policy.action "slack.post" mention.channel Policy.Low
+        -- Step 2: the outbound Slack post, through the firewall.
+        posted <-
+            Durable.step
+                ctx
+                Codec.string
+                "reply"
+                (Policy.gate
+                    firewall
+                    postAction
+                    (postMessage mention.channel mention.threadTs answer)
+                    |> Task.map outcomeSummary)
+        -- Step 3: record the token + cost trace for this run.
+        _ <-
+            Durable.step
+                ctx
+                Codec.string
+                "trace"
+                (recordTrace
+                    (Durable.conn ctx)
+                    (Trace.forResponse
+                        (Durable.runId ctx)
+                        modelName
+                        priceBook
+                        resp)
+                    |> Task.map (\_ -> "ok"))
+    in
+        Task.succeed { reply = answer, posted = posted }
 
 
 -- Record a priced trace row, or fail with the Err of a book in two currencies.
@@ -355,14 +346,14 @@ with the HTTP server (see `main`).
 -}
 poller : Db -> Task Error ()
 poller db =
-    Durable.poll db [ Durable.erase botDef ]
-        |> Task.andThen
-               (\didWork ->
-                   if didWork then
-                       poller db
+    let
+        didWork <- Durable.poll db [ Durable.erase botDef ]
+    in
+        if didWork then
+            poller db
 
-                   else
-                       Time.sleep 1000 |> Task.andThen (\_ -> poller db))
+        else
+            Time.sleep 1000 |> Task.andThen (\_ -> poller db)
 
 
 -- ─── Boot ────────────────────────────────────────────────────────
@@ -381,14 +372,12 @@ startServer db =
 
 main : Task Error ()
 main =
-    Db.connect ()
-        |> Task.andThen
-               (\db ->
-                   Durable.setup db |> Task.andThen (\_ -> Trace.setup db)
-                       |> Task.andThen
-                              (\_ ->
-                                  -- Server and poller run as parallel goroutines; both
-                                  -- return `Task Error ()`, and neither returns in
-                                  -- normal operation.
-                                  Task.parallel [ poller db, startServer db ]
-                                      |> Task.map (\_ -> ())))
+    let
+        db <- Db.connect ()
+        _ <- Durable.setup db
+        _ <- Trace.setup db
+    in
+        -- Server and poller run as parallel goroutines; both
+        -- return `Task Error ()`, and neither returns in
+        -- normal operation.
+        Task.parallel [ poller db, startServer db ] |> Task.map (\_ -> ())

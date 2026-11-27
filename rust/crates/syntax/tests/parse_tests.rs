@@ -787,7 +787,7 @@ fn two_misused_words_in_one_declaration_name_the_first() {
     assert_one_named("f type if =\n    of\n", "type");
     // a misused word, then a mistake that no rename fixes: no proof, so the
     // parser's own message stays
-    assert_one_plain("f type =\n    1 +\n", "expected Eq");
+    assert_one_plain("f type =\n    1 +\n", "expected `=`");
     // the chain never renames a keyword that the plain parse accepted
     assert_one_named("f x =\n    if x then 1 else of\n", "of");
     assert_one_plain("f x =\n    if then 1 else 2\n", "expected an expression");
@@ -834,9 +834,9 @@ fn a_valid_keyword_is_never_named_as_misused() {
     // The messages are the parser's own, as v0.27.11 reports them.
     assert_one_plain(
         "module Main exposing main\n\n\nmain =\n    1\n",
-        "expected LParen",
+        "expected `(`",
     );
-    assert_one_plain("f x =\n    if x 1 else 2\n", "expected ThenKw");
+    assert_one_plain("f x =\n    if x 1 else 2\n", "expected `then`");
     assert_one_plain("f x =\n    if then 1 else 2\n", "expected an expression");
     assert_one_plain(
         "f x =\n    case of\n        _ ->\n            1\n",
@@ -860,8 +860,8 @@ fn a_keyword_in_an_incomplete_construct_is_not_named() {
     // the unit into a function call that parses, but that does not make the
     // keyword misused. The messages are the parser's own, as v0.27.11
     // reports them.
-    assert_one_plain("g y =\n    if y\n", "expected ThenKw");
-    assert_one_plain("g y =\n    case y\n", "expected OfKw");
+    assert_one_plain("g y =\n    if y\n", "expected `then`");
+    assert_one_plain("g y =\n    case y\n", "expected `of`");
     assert_one_unnamed("g y =\n    let\n        z\n");
     assert_one_unnamed("g x =\n    let\n        ( a, b )\n\n\nq p =\n    p\n");
 }
@@ -1107,4 +1107,51 @@ fn a_chain_never_passes_through_a_keyword_in_its_valid_place() {
         "g y =\n    [ if y then 1 else 2\n    , then\n    ]\n",
         "then",
     );
+}
+
+/// Every kind's name in a parser message is source text in backticks or plain
+/// words, never a Rust identifier such as `InKw` or `RParen`.
+#[test]
+fn no_kind_renders_as_an_internal_name() {
+    for &k in SyntaxKind::KINDS {
+        let d = k.describe();
+        let internal = format!("{k:?}");
+        assert!(!d.contains(&internal), "{internal} renders as {d:?}");
+        let plain = d.starts_with('`') && d.ends_with('`') && d.len() > 2;
+        let words = d
+            .split(' ')
+            .all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase()));
+        assert!(plain || words, "{internal} renders as {d:?}");
+    }
+}
+
+/// A `let` block with no `in` names the `in` keyword as it is written.
+#[test]
+fn a_missing_in_is_named_as_written() {
+    let parsed = p("go =\n    let\n        a <- Task.succeed 1\n    Task.succeed a\n");
+    let msgs: Vec<_> = parsed.errors().iter().map(|d| d.message.clone()).collect();
+    assert_eq!(msgs, vec!["expected `in`".to_string()], "{msgs:?}");
+}
+
+/// Every message an `expect` can give, for each kind the grammar expects.
+#[test]
+fn expected_token_messages_use_source_text() {
+    for (src, want) in [
+        ("go =\n    let\n        a = 1\n    a\n", "expected `in`"),
+        ("f type =\n    1 +\n", "expected `=`"),
+        ("f x =\n    if x 1 else 2\n", "expected `then`"),
+        ("g y =\n    case y\n", "expected `of`"),
+        ("f x =\n    (x\n", "expected `)`"),
+    ] {
+        let parsed = p(src);
+        let msgs: Vec<_> = parsed.errors().iter().map(|d| d.message.clone()).collect();
+        assert!(msgs.iter().any(|m| m == want), "{src:?}: {msgs:?}");
+        for m in &msgs {
+            for &k in SyntaxKind::KINDS {
+                let name = format!("{k:?}");
+                let named = m.split(|c: char| !c.is_alphanumeric()).any(|w| w == name);
+                assert!(!named, "{src:?}: {m:?} names {name}");
+            }
+        }
+    }
 }

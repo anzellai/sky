@@ -38,6 +38,29 @@ shout =
 -- Task.andThen : (a -> Task e b) -> Task e a -> Task e b
 ```
 
+When a later step needs the result of an earlier one, write the steps as
+**bind lines** in a `let` block. `name <- task` runs the task and names its
+result for the rest of the block, so the chain reads top to bottom:
+
+```elm
+bump : Ref Int -> Task Error Int
+bump ref =
+    let
+        before <- Sync.get ref
+        next = before + 1
+        _ <- Sync.set next ref
+    in
+        Task.succeed next
+```
+
+This is the same program as `Sync.get ref |> Task.andThen (\before -> …)`,
+with no nesting. `=` lines name plain values between the bind lines. Three
+helpers in `Sky.Core.Task` fit this style: `Task.bestEffort t` runs `t` and
+ignores its error, `Task.unless cond t` runs `t` only when `cond` is `False`,
+and `Task.toResult t` gives the outcome of `t` as a `Result`, so you can
+handle the error of one step with a `case`. See
+[Bind lines](../language/syntax.md#bind-lines).
+
 When does a task actually run? At an *entry point* — a CLI `main`, an HTTP handler
 returning its response, or `Cmd.perform` in a web app. Those are the boundaries
 where Sky executes the recipe. In between, effects stay values you can pass

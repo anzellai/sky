@@ -241,13 +241,10 @@ getDoc collection docId =
 
 
 getDocWithClient client collection docId =
-    case getCollection client collection of
-
-        Err e ->
-            Err e
-
-        Ok colRef ->
-            getDocInner colRef docId
+    let
+        colRef <- getCollection client collection
+    in
+        getDocInner colRef docId
 
 
 getDocInner colRef docId =
@@ -306,13 +303,10 @@ setDoc collection docId data =
 
 
 setDocWithClient client collection docId data =
-    case getCollection client collection of
-
-        Err e ->
-            Err e
-
-        Ok colRef ->
-            setDocInner colRef docId data
+    let
+        colRef <- getCollection client collection
+    in
+        setDocInner colRef docId data
 
 
 setDocInner colRef docId data =
@@ -349,13 +343,10 @@ queryDocs collection =
 
 
 queryDocsWithClient client collection =
-    case getCollection client collection of
-
-        Err e ->
-            Err e
-
-        Ok colRef ->
-            queryDocsInner colRef
+    let
+        colRef <- getCollection client collection
+    in
+        queryDocsInner colRef
 
 
 queryDocsInner colRef =
@@ -379,13 +370,10 @@ queryWhere collection field op value =
 
 
 queryWhereWithClient client collection field op value =
-    case getCollection client collection of
-
-        Err e ->
-            Err e
-
-        Ok colRef ->
-            queryWhereInner colRef field op value
+    let
+        colRef <- getCollection client collection
+    in
+        queryWhereInner colRef field op value
 
 
 queryWhereInner colRef field op value =
@@ -419,13 +407,10 @@ queryWhereOrder collection field op value orderField dir =
 
 
 queryWhereOrderWithClient client collection field op value orderField dir =
-    case getCollection client collection of
-
-        Err e ->
-            Err e
-
-        Ok colRef ->
-            queryWhereOrderInner colRef field op value orderField dir
+    let
+        colRef <- getCollection client collection
+    in
+        queryWhereOrderInner colRef field op value orderField dir
 
 
 queryWhereOrderInner colRef field op value orderField dir =
@@ -470,13 +455,10 @@ deleteDoc collection docId =
 
 
 deleteDocWithClient client collection docId =
-    case getCollection client collection of
-
-        Err e ->
-            Err e
-
-        Ok colRef ->
-            deleteDocInner colRef docId
+    let
+        colRef <- getCollection client collection
+    in
+        deleteDocInner colRef docId
 
 
 deleteDocInner colRef docId =

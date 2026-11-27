@@ -29,8 +29,8 @@
 
 use super::axes::{
     Assignment, Axis, Stratum, ALIAS_NAMES, ANON_ROLE, AS_BINDER, COLLIDER, COLLISION, DICT_KEY,
-    EDGE, EQ_PAIR, ERASURE, GA_SLOT, GFR_SITE, IMPORT_SHAPE, INNER, LETREC_GROUP, LET_USES,
-    POSITION, QUAL_USE, SHADOW, TASK_CALLEE,
+    EDGE, EQ_PAIR, ERASURE, GA_SLOT, GFR_SITE, IMPORT_SHAPE, INNER, LB_MONAD, LETREC_GROUP,
+    LET_USES, POSITION, QUAL_USE, SHADOW, TASK_CALLEE,
 };
 use super::gen;
 use super::runner;
@@ -114,6 +114,10 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
         // `go build`. Each site is a different program, so the site axis is
         // witnessed.
         "generic_fn_record_slot" => (GFR_SITE, "poly_def"),
+        // v0.32.0. Each type a bind line chains is a different program: a
+        // different `andThen` (a kernel entry for Task, Result and Maybe, the
+        // JSON decoder module's for `Decoder`), so the type axis is witnessed.
+        "let_bind" => (LB_MONAD, "maybe"),
         other => panic!("no axis-under-test declared for stratum {other:?}"),
     }
 }

@@ -46,6 +46,7 @@ map fn r =
             Err e
 
 
+andThen : (a -> Result e b) -> Result e a -> Result e b
 andThen fn r =
     case r of
 

@@ -583,9 +583,11 @@ pub static GATES: &[Gate] = &[
                 // v0.29.6 generic_fn_record_slot stratum (+48 cases, 844 → 892),
                 // and the v0.30.0 deadline surface (+2 cases, 892 → 894),
                 // and the v0.30.0 breaker surface (+2 cases, 894 → 896),
-                // and the v0.31.0 i18n surface (+2 cases, 896 → 898).
-                from: "n_min = 898",
-                to: "n_min = 899",
+                // and the v0.31.0 i18n surface (+2 cases, 896 → 898),
+                // and the v0.32.0 let_bind stratum and bind-line defects
+                // (+150 cases, 898 → 1048).
+                from: "n_min = 1048",
+                to: "n_min = 1049",
             },
         }]),
         body: bodies::corpus_manifest,

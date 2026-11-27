@@ -4,7 +4,8 @@
 -- a JSON string.  Compose with `field` / `at` / `index` / `map` /
 -- `andThen`; run via `decodeString`.
 module Sky.Core.Json.Decode exposing
-    ( string
+    ( Decoder
+    , string
     , int
     , float
     , bool
@@ -35,6 +36,15 @@ module Sky.Core.Json.Decode exposing
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Dict exposing (Dict)
+
+-- | A way to read an `a` from JSON. Opaque: build one with the
+-- combinators below and run it with `decodeString` or `decodeValue`.
+-- It is a different type from `Std.Db.Decode.Decoder`,
+-- `Std.Config.Decoder` and `Std.Xml.Decode.Decoder`. The bare name
+-- `Decoder`, which every module can write without an import, is this
+-- type (`hir::KERNEL_IMPLICIT_HOMES`).
+type Decoder a
+    = Decoder_OPAQUE
 
 
 -- ─── Primitive decoders ────────────────────────────────────────────

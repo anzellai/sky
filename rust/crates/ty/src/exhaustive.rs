@@ -2,78 +2,266 @@
 //! conservative-but-real: **only ADT-constructor and Bool heads force
 //! coverage** — a wildcard/var/irrefutable head covers the rest, and
 //! infinite-domain literal (Int/String/…) and list heads are NOT forced (we do
-//! not over-report). Warns `E3001` on a genuine missing constructor.
+//! not over-report). Warns `E3001` on a genuine missing constructor, and on a
+//! refutable pattern in a binder position ([`check_binder`], v0.32.0).
 
 use crate::sig::World;
 use hir::{Body, Expr, ExprId, PatId, Pattern};
 use std::collections::BTreeSet;
 
 /// Walk every `case` in a body, returning one `E3001` diagnostic per
-/// non-exhaustive ADT/Bool match.
-pub fn check_body(body: &Body, world: &World) -> Vec<diagnostics::Diagnostic> {
+/// non-exhaustive ADT/Bool match, and one per refutable pattern in a binder
+/// position (a parameter or a `let` destructure, see [`check_binder`]).
+pub fn check_body(body: &Body, world: &World, src: &str) -> Vec<diagnostics::Diagnostic> {
     let mut out = Vec::new();
+    for &p in &body.params {
+        check_binder(body, world, p, Binder::Parameter, &mut out);
+    }
     if let Some(root) = body.root {
-        walk(body, world, root, &mut out);
+        walk(body, world, src, root, &mut out);
     }
     out
 }
 
-fn walk(body: &Body, world: &World, e: ExprId, out: &mut Vec<diagnostics::Diagnostic>) {
+/// Where a pattern binds with no second branch to fall back on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Binder {
+    /// A parameter of a top-level or `let`-bound function.
+    Parameter,
+    /// A lambda parameter.
+    LambdaParameter,
+    /// The pattern of a `let` destructure (`let ( a, b ) = pair`).
+    LetDestructure,
+    /// The pattern of a bind line in a `let` block (v0.32.0).
+    BindLine,
+}
+
+impl Binder {
+    fn describe(self) -> &'static str {
+        match self {
+            Binder::Parameter => "a function parameter",
+            Binder::LambdaParameter => "a lambda parameter",
+            Binder::LetDestructure => "a `let` destructure",
+            Binder::BindLine => "a bind line",
+        }
+    }
+}
+
+/// The first sub-pattern of `p` that can fail to match a value of its type,
+/// or `None` when `p` matches every value (it is IRREFUTABLE).
+///
+/// Total: a variable, `_`, `()`, a record pattern, a tuple or an alias of
+/// total patterns, and a constructor of a ONE-variant union whose arguments
+/// are total. The union is found through `CtorRef::type_` (its `DefId`), never
+/// by name (doc 13, D1). Refutable: a literal, a `Bool`, a list or cons
+/// pattern, a constructor of a union with two or more variants, and a
+/// constructor that did not resolve. `Pattern::Error` counts as total, so a
+/// parse error is not reported a second time.
+pub fn first_refutable(body: &Body, world: &World, p: PatId) -> Option<PatId> {
+    match &body.pats[p] {
+        Pattern::Anything | Pattern::Var(_) | Pattern::Unit | Pattern::Record(_) => None,
+        Pattern::Error => None,
+        Pattern::Alias(inner, _) => first_refutable(body, world, *inner),
+        Pattern::Tuple(xs) => xs.iter().find_map(|&x| first_refutable(body, world, x)),
+        Pattern::Ctor { ctor, args, .. } => {
+            let one_variant = ctor
+                .as_ref()
+                .and_then(|cr| world.union_members_by_def.get(&cr.type_))
+                .is_some_and(|members| members.len() == 1);
+            if one_variant {
+                args.iter().find_map(|&a| first_refutable(body, world, a))
+            } else {
+                Some(p)
+            }
+        }
+        Pattern::Bool(_)
+        | Pattern::Chr(_)
+        | Pattern::Str(_)
+        | Pattern::Int(_)
+        | Pattern::Float(_)
+        | Pattern::List(_)
+        | Pattern::Cons(..) => Some(p),
+    }
+}
+
+/// Report `[E3001]` when the pattern `p`, in the binder position `at`, can
+/// fail to match. ONE check for every binder position: function parameters,
+/// lambda parameters, `let` destructures and bind lines.
+pub fn check_binder(
+    body: &Body,
+    world: &World,
+    p: PatId,
+    at: Binder,
+    out: &mut Vec<diagnostics::Diagnostic>,
+) {
+    let Some(bad) = first_refutable(body, world, p) else {
+        return;
+    };
+    let labels = body
+        .pat_span(bad)
+        .or_else(|| body.pat_span(p))
+        .map(|span| {
+            vec![diagnostics::Label {
+                span,
+                message: "this pattern does not match every value".to_string(),
+            }]
+        })
+        .unwrap_or_default();
+    out.push(diagnostics::Diagnostic {
+        severity: diagnostics::Severity::Warning,
+        code: diagnostics::Code("E3001".to_string()),
+        message: format!(
+            "This pattern in {} does not match every value, and there is no other branch \
+             to take. Use a `case` with a branch for each shape instead.",
+            at.describe()
+        ),
+        labels,
+        suggestion: Some(
+            "Bind a variable here and match it with `case … of`, which must cover every value."
+                .to_string(),
+        ),
+    });
+}
+
+/// `[E3001]` for a refutable bind-line pattern ([`Binder::BindLine`]), with
+/// a message that names the bind line and the values it does not match:
+/// "`Just x <- …` does not match `Nothing`; use `case`".
+fn check_bind_line(
+    body: &Body,
+    world: &World,
+    src: &str,
+    p: PatId,
+    out: &mut Vec<diagnostics::Diagnostic>,
+) {
+    let mut found = Vec::new();
+    check_binder(body, world, p, Binder::BindLine, &mut found);
+    let Some(mut d) = found.pop() else { return };
+    let text = body
+        .pat_span(p)
+        .and_then(|s| src.get(s.range.0 as usize..s.range.1 as usize))
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && t.len() <= 40 && !t.contains('\n'))
+        .unwrap_or("…");
+    let bad = first_refutable(body, world, p).unwrap_or(p);
+    let missing: Vec<String> = match &body.pats[bad] {
+        Pattern::Ctor { ctor, name, .. } => ctor
+            .as_ref()
+            .and_then(|cr| world.union_members_by_def.get(&cr.type_))
+            // A builtin constructor (`Just`, `Ok`) is known by name only.
+            .or_else(|| {
+                world
+                    .ctor_union
+                    .get(name.as_str())
+                    .and_then(|u| world.union_ctors.get(u))
+            })
+            .map(|ms| {
+                ms.iter()
+                    .filter(|m| m.as_str() != name.as_str())
+                    .map(|m| format!("`{m}`"))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Pattern::Bool(b) => vec![format!("`{}`", if *b { "False" } else { "True" })],
+        _ => Vec::new(),
+    };
+    let what = if missing.is_empty() {
+        "every value".to_string()
+    } else {
+        missing.join(" or ")
+    };
+    d.message = format!(
+        "The bind line `{text} <- …` does not match {what}, and a bind line has no other \
+         branch to take. Use `case` to handle each shape."
+    );
+    out.push(d);
+}
+
+fn walk(body: &Body, world: &World, src: &str, e: ExprId, out: &mut Vec<diagnostics::Diagnostic>) {
     // A body is as deep as its longest spine: a left-nested `|>` pipeline or a
     // generated record codec puts one level here per step. Grow the stack on
     // demand rather than overflow it (the other expression walkers do the same).
-    base::ensure_stack(|| walk_guarded(body, world, e, out))
+    base::ensure_stack(|| walk_guarded(body, world, src, e, out))
 }
 
-fn walk_guarded(body: &Body, world: &World, e: ExprId, out: &mut Vec<diagnostics::Diagnostic>) {
+fn walk_guarded(
+    body: &Body,
+    world: &World,
+    src: &str,
+    e: ExprId,
+    out: &mut Vec<diagnostics::Diagnostic>,
+) {
     match &body.exprs[e] {
         Expr::Case { subject, branches } => {
-            walk(body, world, *subject, out);
+            walk(body, world, src, *subject, out);
             check_case(body, world, *subject, branches, out);
             for br in branches {
-                walk(body, world, br.body, out);
+                walk(body, world, src, br.body, out);
             }
         }
         Expr::List(xs) | Expr::Tuple(xs) => {
             for &x in xs {
-                walk(body, world, x, out);
+                walk(body, world, src, x, out);
             }
         }
         Expr::Record(fs) => {
             for (_, v) in fs {
-                walk(body, world, *v, out);
+                walk(body, world, src, *v, out);
             }
         }
         Expr::Update { base, fields } => {
-            walk(body, world, *base, out);
+            walk(body, world, src, *base, out);
             for (_, v) in fields {
-                walk(body, world, *v, out);
+                walk(body, world, src, *v, out);
             }
         }
-        Expr::Negate(x) | Expr::Access(x, _) => walk(body, world, *x, out),
-        Expr::Lambda { body: b, .. } => walk(body, world, *b, out),
+        Expr::Negate(x) | Expr::Access(x, _) => walk(body, world, src, *x, out),
+        Expr::Lambda { params, body: b } => {
+            for &p in params {
+                check_binder(body, world, p, Binder::LambdaParameter, out);
+            }
+            walk(body, world, src, *b, out)
+        }
+        // A bind line `p <- e`: the lambda's parameter is the bind pattern.
+        Expr::Call(f, args)
+            if matches!(body.exprs[*f], Expr::Var(hir::Res::BindAndThen)) && args.len() == 2 =>
+        {
+            match &body.exprs[args[0]] {
+                Expr::Lambda { params, body: b } if params.len() == 1 => {
+                    check_bind_line(body, world, src, params[0], out);
+                    walk(body, world, src, *b, out);
+                }
+                _ => walk(body, world, src, args[0], out),
+            }
+            walk(body, world, src, args[1], out);
+        }
         Expr::Call(f, args) => {
-            walk(body, world, *f, out);
+            walk(body, world, src, *f, out);
             for &a in args {
-                walk(body, world, a, out);
+                walk(body, world, src, a, out);
             }
         }
         Expr::Binop { lhs, rhs, .. } => {
-            walk(body, world, *lhs, out);
-            walk(body, world, *rhs, out);
+            walk(body, world, src, *lhs, out);
+            walk(body, world, src, *rhs, out);
         }
         Expr::If { arms, els } => {
             for (c, t) in arms {
-                walk(body, world, *c, out);
-                walk(body, world, *t, out);
+                walk(body, world, src, *c, out);
+                walk(body, world, src, *t, out);
             }
-            walk(body, world, *els, out);
+            walk(body, world, src, *els, out);
         }
         Expr::Let { defs, body: b } => {
             for d in defs {
-                walk(body, world, d.body, out);
+                if let Some(p) = d.pat {
+                    check_binder(body, world, p, Binder::LetDestructure, out);
+                }
+                for &p in &d.params {
+                    check_binder(body, world, p, Binder::Parameter, out);
+                }
+                walk(body, world, src, d.body, out);
             }
-            walk(body, world, *b, out);
+            walk(body, world, src, *b, out);
         }
         // Leaves — no sub-expression to descend into. Listed EXPLICITLY (not a
         // `_` catch-all) so that adding a NEW child-bearing `Expr` variant is a

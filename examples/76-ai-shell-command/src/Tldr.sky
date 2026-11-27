@@ -173,33 +173,33 @@ fetchOne : String -> Page -> Task Error String
 fetchOne dir p =
     let
         path = cachePath dir p
+        cached <- File.exists path
     in
-        File.exists path
-            |> Task.andThen
-                   (\cached ->
-                       if cached then
-                           File.readFile path |> Task.andThen (checked p)
+        if cached then
+            File.readFile path |> Task.andThen (checked p)
 
-                       else
-                           Http.get (url p)
-                               |> Task.andThen
-                                      (\r ->
-                                          if r.status == 200 then
-                                              checked p r.body
+        else
+            download path p
 
-                                          else
-                                              Task.fail
-                                                  (Error.network
-                                                      ("tldr page " ++ p.folder
-                                                          ++ "/"
-                                                          ++ p.program
-                                                          ++ ": HTTP "
-                                                          ++ String.fromInt
-                                                                 r.status)))
-                               |> Task.andThen
-                                      (\text ->
-                                          File.writeFile path text
-                                              |> Task.map (\_ -> text)))
+
+-- | Fetch a page, check it against its pin, and keep it in the cache.
+download : String -> Page -> Task Error String
+download path p =
+    let
+        r <- Http.get (url p)
+        text <-
+            if r.status == 200 then
+                checked p r.body
+
+            else
+                Task.fail
+                    (Error.network
+                        ("tldr page " ++ p.folder ++ "/" ++ p.program
+                            ++ ": HTTP "
+                            ++ String.fromInt r.status))
+        _ <- File.writeFile path text
+    in
+        Task.succeed text
 
 
 checked : Page -> String -> Task Error String

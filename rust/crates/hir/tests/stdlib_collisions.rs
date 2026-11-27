@@ -37,6 +37,18 @@ use std::path::{Path, PathBuf};
 /// A new entry here is a decision, not a formality: prefer a name that does not
 /// collide. The failure message lists the module pairs for each name.
 const EXPECTED_COLLISIONS: &[&str] = &[
+    // v0.32.0: Sky.Core.Json.Decode and Std.Db.Decode declare their own
+    // `Decoder` (a row decoder is not a JSON decoder), beside Std.Config's.
+    // A program that exposes two of them with `(..)` and writes the bare
+    // `Decoder` gets `[E1012]`: qualify it (`DbDecode.Decoder`). Breaking
+    // line in the v0.32.0 CHANGELOG.
+    "type Decoder",
+    // v0.32.0: Task.toResult (run a Task and get its outcome as a Result; the
+    // name pairs with Task.fromResult), beside Maybe.toResult. A program that
+    // exposes Sky.Core.Maybe and Sky.Core.Task with `(..)` and uses the bare
+    // name gets `[E1012]`: write `Task.toResult` / `Maybe.toResult`. Breaking
+    // line in the v0.32.0 CHANGELOG.
+    "value toResult",
     // v0.31.0: Json.Decode.dict / Json.Encode.dict (Elm's names) and
     // Std.Codec.dict, which already existed. A program that exposes two of
     // Json.Decode, Json.Encode and Std.Codec with `(..)` and uses the bare
@@ -923,4 +935,21 @@ fn e1012_points_a_v0_30_name_at_the_v0_30_guide() {
     let snap = hir::stdlib_history::new_since("Std.Money", "sum").expect("a v0.29.2 name");
     assert_eq!(snap.release, "v0.29.1");
     assert_eq!(snap.migration, "docs/migration/v0.29.md#new-stdlib-names");
+}
+
+#[test]
+fn e1012_points_v0_31_and_v0_32_names_at_their_guides() {
+    // A name new in v0.31.0 is new since v0.30.0 (the last v0.30 release) and
+    // links the v0.31 guide. A name new in v0.32.0 is new since v0.31.2 and
+    // links the v0.32 guide.
+    for (module, name) in [("Std.Codec", "char"), ("Std.Time", "zones")] {
+        let snap = hir::stdlib_history::new_since(module, name).expect("a v0.31.0 name");
+        assert_eq!(snap.release, "v0.30.0", "{module}.{name}");
+        assert_eq!(snap.migration, "docs/migration/v0.31.md#new-stdlib-names");
+    }
+    for name in ["bestEffort", "unless", "toResult"] {
+        let snap = hir::stdlib_history::new_since("Sky.Core.Task", name).expect("a v0.32.0 name");
+        assert_eq!(snap.release, "v0.31.2", "Task.{name}");
+        assert_eq!(snap.migration, "docs/migration/v0.32.md#new-stdlib-names");
+    }
 }

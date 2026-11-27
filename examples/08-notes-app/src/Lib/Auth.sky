@@ -103,18 +103,18 @@ checkCredentials password user =
 -- PermissionDenied; DB errors surface upstream.
 authenticateUser : String -> String -> Result Error User
 authenticateUser email password =
-    case Task.run (Store.findBy Db.conn Db.userStore "email" email) of
+    let
+        found <- Task.run (Store.findBy Db.conn Db.userStore "email" email)
+    in
+        case found of
 
-        Err e ->
-            Err e
+            Nothing ->
+                Err
+                    (Error.permissionDenied
+                        |> Error.withMessage "Invalid email or password.")
 
-        Ok Nothing ->
-            Err
-                (Error.permissionDenied
-                    |> Error.withMessage "Invalid email or password.")
-
-        Ok (Just user) ->
-            checkCredentials password user
+            Just user ->
+                checkCredentials password user
 
 
 -- createSession : Result Error String — generates a token, inserts the row,
@@ -125,14 +125,9 @@ createSession userId =
         token = generateToken ()
         newSession =
             { id = 0, userId = userId, token = token, createdAt = "" }
+        _ <- Task.run (Store.insert Db.conn Db.sessionStore newSession)
     in
-        case Task.run (Store.insert Db.conn Db.sessionStore newSession) of
-
-            Ok _ ->
-                Ok token
-
-            Err e ->
-                Err e
+        Ok token
 
 
 -- getSessionUser : Result Error (Maybe SessionUser). A JOIN (users ⋈
@@ -140,40 +135,36 @@ createSession userId =
 -- runs the SQL and decodes each row into the typed `SessionUser` projection.
 getSessionUser : String -> Result Error (Maybe SessionUser)
 getSessionUser sessionToken =
-    case Task.run
-             (Store.selectRaw
-                 Db.conn
-                 Db.sessionUserCodec
-                 "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON u.id = s.user_id WHERE s.token = ? LIMIT 1"
-                 [ SqlString sessionToken ]) of
-
-        Err e ->
-            Err e
-
-        Ok rows ->
-            Ok (List.head rows)
+    Task.run
+        (Store.selectRaw
+            Db.conn
+            Db.sessionUserCodec
+            "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON u.id = s.user_id WHERE s.token = ? LIMIT 1"
+            [ SqlString sessionToken ])
+        |> Result.map List.head
 
 
 -- verifyEmail : Result Error String — flip verified=1 for the row matching the
 -- verification token (only while still unverified), via a typed read-write.
 verifyEmail : String -> Result Error String
 verifyEmail token =
-    case Task.run (findByToken token) of
+    let
+        found <- Task.run (findByToken token)
+    in
+        case found of
 
-        Err e ->
-            Err e
+            Nothing ->
+                Ok "Your email has been verified! You can now sign in."
 
-        Ok Nothing ->
-            Ok "Your email has been verified! You can now sign in."
-
-        Ok (Just user) ->
-            case Task.run
-                     (Store.update Db.conn Db.userStore { user | verified = 1 }) of
-
-                Err e ->
-                    Err e
-
-                Ok _ ->
+            Just user ->
+                let
+                    _ <-
+                        Task.run
+                            (Store.update
+                                Db.conn
+                                Db.userStore
+                                { user | verified = 1 })
+                in
                     Ok "Your email has been verified! You can now sign in."
 
 

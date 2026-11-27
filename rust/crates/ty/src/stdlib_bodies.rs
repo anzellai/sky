@@ -136,7 +136,9 @@ pub fn check_stdlib_modules(stdlib: &[(String, syntax::Parse)]) -> StdlibReport 
             .to_string();
         let mut errors = Vec::new();
         for d in &out.diagnostics {
-            if d.severity != Severity::Error {
+            // `[E3001]` is a warning in the checker and a hard error in every
+            // build (`project::build`), so the stdlib gate counts it too.
+            if d.severity != Severity::Error && d.code.0 != "E3001" {
                 continue;
             }
             if d.code.0 == "E1004" {

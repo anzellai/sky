@@ -18,7 +18,6 @@ import Sky.Core.Tuple as Tuple
 import Sky.Core.Error as Error
 import Sky.Test as Test exposing (Test)
 
-
 -- A Result whose Ok type is a record, so the Maybe that comes back is typed
 -- by the record, not by a primitive.
 type alias Point =
@@ -30,8 +29,10 @@ type alias Point =
 parsePoint : String -> Result Error Point
 parsePoint s =
     case String.split "," s of
+
         [ a, b ] ->
             case ( String.toInt a, String.toInt b ) of
+
                 ( Just x, Just y ) ->
                     Ok { x = x, y = y }
 

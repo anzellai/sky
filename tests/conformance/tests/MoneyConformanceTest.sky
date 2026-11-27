@@ -26,7 +26,7 @@ import Sky.Test as Test exposing (Test)
 -- a wrong result rather than a silent zero masking a bug.
 dec : String -> Dec.Decimal
 dec s =
-    Result.withDefault (Dec.fromInt -999999) (Dec.fromString s)
+    Result.withDefault (Dec.fromInt (-999999)) (Dec.fromString s)
 
 
 -- Format the head of an allocation list with its ISO code, or a sentinel.
@@ -61,7 +61,9 @@ mismatchNames a b r =
         Err e ->
             Test.equal
                 ( True, True )
-                ( String.contains a (Error.toString e), String.contains b (Error.toString e) )
+                ( String.contains a (Error.toString e)
+                , String.contains b (Error.toString e)
+                )
 
         Ok _ ->
             Test.fail "expected an Err for two currencies"
@@ -77,9 +79,24 @@ namesOp op r =
         Err e ->
             ( op
             , String.contains ("Money." ++ op ++ ": ") (Error.toString e)
-                && List.all
-                       (\o -> o == op || not (String.contains ("Money." ++ o ++ ":") (Error.toString e)))
-                       [ "add", "sub", "sum", "compare", "lt", "lte", "gt", "gte", "convert", "fromString" ]
+                  && List.all
+                         (\o ->
+                             o == op
+                                 || not
+                                        (String.contains
+                                            ("Money." ++ o ++ ":")
+                                            (Error.toString e)))
+                         [ "add"
+                         , "sub"
+                         , "sum"
+                         , "compare"
+                         , "lt"
+                         , "lte"
+                         , "gt"
+                         , "gte"
+                         , "convert"
+                         , "fromString"
+                         ]
             )
 
         Ok _ ->
@@ -97,10 +114,10 @@ isErr r =
             False
 
 
-
 halfRates : Money.Rates
 halfRates =
     Money.rates [ ( Money.USD, Money.EUR, dec "0.5" ) ]
+
 
 tests : List Test
 tests =

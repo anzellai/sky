@@ -39,6 +39,7 @@ re p =
 errorText : String -> String
 errorText p =
     case compile p of
+
         Ok _ ->
             ""
 

@@ -455,24 +455,32 @@ impl Analysis {
         let module = ModuleId(idx as u32);
         let resolved = db.resolve(module);
         let typer = Typer::new(db);
-        let md = match self.cand_at(db, &resolved, module, off) {
-            Some(Cand::Ref(o)) => self.hover_ref(&typer, &resolved, db, o),
-            Some(Cand::Field(o)) => self.hover_field(&typer, db, &resolved, module, o),
-            Some(Cand::FieldDecl(f)) => Some(self.render_field_decl(f, None)),
-            Some(Cand::Type(o)) => Some(self.type_def_markdown(db, o.con, o.name.as_str())),
-            Some(Cand::Def { def, .. }) => self.hover_def(&typer, db, def),
-            // A type VARIABLE in an annotation (`Maybe a`) is not an occurrence
-            // the resolver indexes; answer from the tree.
-            None => match type_name_at(&self.docs[idx].parse, off) {
-                Some(TypeName::Var(v)) => Some(format!("```sky\n{v}\n```\n\nType variable")),
-                // A type name the resolver leaves nominal (a kernel-implicit
-                // `Cmd`/`Sub`/`Decoder`, a kernel-qualified type): answer by name.
-                Some(TypeName::Con(n)) => Some(self.type_name_markdown(db, &n)),
-                Some(TypeName::BoolLit(b)) => Some(with_doc(
-                    format!("```sky\n{b} : Bool\n```"),
-                    docs::builtin_type("Bool").map(|(_, d)| d.to_string()),
-                )),
-                None => None,
+        let md = if let Some(b) = bind_at(&resolved, off) {
+            self.hover_bind(&typer, db, module, b)
+        } else {
+            None
+        };
+        let md = match md {
+            Some(md) => Some(md),
+            None => match self.cand_at(db, &resolved, module, off) {
+                Some(Cand::Ref(o)) => self.hover_ref(&typer, db, o),
+                Some(Cand::Field(o)) => self.hover_field(&typer, db, &resolved, module, o),
+                Some(Cand::FieldDecl(f)) => Some(self.render_field_decl(f, None)),
+                Some(Cand::Type(o)) => Some(self.type_def_markdown(db, o.con, o.name.as_str())),
+                Some(Cand::Def { def, .. }) => self.hover_def(&typer, db, def),
+                // A type VARIABLE in an annotation (`Maybe a`) is not an occurrence
+                // the resolver indexes; answer from the tree.
+                None => match type_name_at(&self.docs[idx].parse, off) {
+                    Some(TypeName::Var(v)) => Some(format!("```sky\n{v}\n```\n\nType variable")),
+                    // A type name the resolver leaves nominal (a kernel-implicit
+                    // `Cmd`/`Sub`/`Decoder`, a kernel-qualified type): answer by name.
+                    Some(TypeName::Con(n)) => Some(self.type_name_markdown(db, &n)),
+                    Some(TypeName::BoolLit(b)) => Some(with_doc(
+                        format!("```sky\n{b} : Bool\n```"),
+                        docs::builtin_type("Bool").map(|(_, d)| d.to_string()),
+                    )),
+                    None => None,
+                },
             },
         }?;
         Some(Hover {
@@ -484,16 +492,10 @@ impl Analysis {
         })
     }
 
-    fn hover_ref(
-        &self,
-        typer: &Typer,
-        resolved: &ResolveResult,
-        db: &dyn SkyDb,
-        o: &RefOcc,
-    ) -> Option<String> {
+    fn hover_ref(&self, typer: &Typer, db: &dyn SkyDb, o: &RefOcc) -> Option<String> {
         let name = self.slice(o.span).trim().to_string();
         let ty = self
-            .ref_type_string(typer, resolved, db, o)
+            .ref_type_string(typer, db, o)
             .unwrap_or_else(|| "?".to_string());
         let doc = match &o.res {
             Res::Ctor(cr)
@@ -508,7 +510,10 @@ impl Analysis {
             }
             Res::Def(d) | Res::Ctor(hir::CtorRef { def: d, .. }) => self.def_doc(db, *d),
             Res::Kernel { module, func } => self.kernel_doc(db, module.as_str(), func.as_str()),
-            _ => None,
+            // A reference occurrence is a written name: never a bind line's
+            // placeholder (those are `bind_occs`, hovered by `hover_bind`).
+            Res::BindAndThen => None,
+            Res::Local(_) | Res::Foreign { .. } | Res::Error => None,
         };
         Some(with_doc(format!("```sky\n{name} : {ty}\n```"), doc))
     }
@@ -649,13 +654,7 @@ impl Analysis {
     /// pass-3 inferred scheme, then the body-inferred result; `Res::Kernel` /
     /// `Res::Ctor` read their scheme; `Res::Local` reads the owning body's
     /// per-local table (doc 10 §"resolve at call head → infer signature").
-    fn ref_type_string(
-        &self,
-        typer: &Typer,
-        resolved: &ResolveResult,
-        db: &dyn SkyDb,
-        o: &RefOcc,
-    ) -> Option<String> {
+    fn ref_type_string(&self, typer: &Typer, db: &dyn SkyDb, o: &RefOcc) -> Option<String> {
         match &o.res {
             Res::Def(d) => self.def_sig_string(typer, db, *d),
             // A kernel with no pinned scheme (a builtin like `identity`) answers
@@ -679,7 +678,8 @@ impl Analysis {
                 })
                 .map(|s| s.ty.render_pretty()),
             Res::Local(l) => {
-                let body = resolved.bodies.get(&o.owner)?;
+                let body = typer.elaborated_body(o.owner)?;
+                let body: &hir::Body = &body;
                 typer
                     .body_types_annotated(o.owner, body)
                     .local(*l)
@@ -696,7 +696,7 @@ impl Analysis {
                 .and_then(|p| p.functions.get(name.as_str()))
                 .map(|f| f.sky_type.clone())
                 .filter(|s| !s.is_empty()),
-            Res::Error => None,
+            Res::BindAndThen | Res::Error => None,
         }
     }
 
@@ -740,9 +740,8 @@ impl Analysis {
                 // hovers its inferred type instead of `?`. For a same-module def
                 // the owner IS the current module, so this is byte-identical to
                 // the old current-module-only path.
-                let owner = db.def_loc(d)?.module;
-                let owner_resolved = db.resolve(owner);
-                let body = owner_resolved.bodies.get(&d)?;
+                let body = typer.elaborated_body(d)?;
+                let body: &hir::Body = &body;
                 // A bound the checker enforces (`comparable`, `number`, …) is
                 // part of the signature: show it (`List comparable -> …`).
                 if let Some(s) = typer.bounded_scheme(d, body) {
@@ -765,7 +764,7 @@ impl Analysis {
         module: ModuleId,
         o: &FieldOcc,
     ) -> Option<String> {
-        let info = field_info(typer, resolved, o);
+        let info = field_info(typer, o);
         match self.find_field_decl(db, resolved, module, o.field.as_str(), &info) {
             Some(FieldMatch {
                 decl,
@@ -928,6 +927,51 @@ impl Analysis {
         Some(md)
     }
 
+    /// Hover on the `<-` of a bind line `p <- e`: the `andThen` the type
+    /// checker chose for it, with its type, and the type `p` binds
+    /// (docs/design/let-bind-lines.md §7). Read from the check path's choice
+    /// (`TyDb::bind_elaboration_of`) and the elaborated body, never chosen here.
+    fn hover_bind(
+        &self,
+        typer: &Typer,
+        db: &dyn TyDb,
+        module: ModuleId,
+        b: &hir::BindOcc,
+    ) -> Option<String> {
+        let Some(d) = chosen_and_then(db, module, b) else {
+            return Some(
+                "A bind line: the rest of the block is chained with the `andThen` of the \
+                 type of the expression after `<-`. No `andThen` is chosen yet (see the \
+                 error on this line)."
+                    .to_string(),
+            );
+        };
+        let loc = db.def_loc(d)?;
+        let qualified = format!("{}.{}", db.module_name(loc.module), loc.name.as_str());
+        let sig = self
+            .def_sig_string(typer, db, d)
+            .unwrap_or_else(|| "?".to_string());
+        let body = typer.elaborated_body(b.owner)?;
+        let bound = match &body.exprs[b.call] {
+            hir::Expr::Call(_, args) if args.len() == 2 => typer
+                .body_types_annotated(b.owner, &body)
+                .expr(args[1])
+                .map(|t| match &t {
+                    Ty::App(_, xs) if !xs.is_empty() => xs[xs.len() - 1].clone(),
+                    _ => t,
+                }),
+            _ => None,
+        };
+        let mut md = format!("```sky\n{qualified} : {sig}\n```\n\nA bind line: the rest of the block is the function `{qualified}` chains after the expression on the right of `<-`.");
+        if let Some(t) = bound {
+            md.push_str(&format!(
+                " The pattern on the left binds `{}`.",
+                t.render_pretty()
+            ));
+        }
+        Some(md)
+    }
+
     // ---- goto-definition ----------------------------------------------
 
     pub fn goto(&self, url: &Url, pos: Position) -> Option<Location> {
@@ -937,6 +981,11 @@ impl Analysis {
         let db = self.db();
         let module = ModuleId(idx as u32);
         let resolved = db.resolve(module);
+        // The `<-` of a bind line goes to the `andThen` the checker chose.
+        if let Some(b) = bind_at(&resolved, off) {
+            let d = chosen_and_then(db, module, b)?;
+            return self.location(def_span(db, &resolved, module, d)?);
+        }
         let cand = self.cand_at(db, &resolved, module, off)?;
         let span = match cand {
             // On a declaration name → jump to the definition site (from an
@@ -963,13 +1012,13 @@ impl Analysis {
                     let pkg = self.ffi_for_module(module)?.resolve(package.as_str())?;
                     return ffi_binding_location(pkg, name.as_str());
                 }
-                Res::Error => None,
+                Res::BindAndThen | Res::Error => None,
             },
             Cand::Type(o) => def_span(db, &resolved, module, o.con)
                 .or_else(|| builtin_type_source(db, o.name.as_str())),
             Cand::Field(o) => {
                 let typer = Typer::new(db);
-                let info = field_info(&typer, &resolved, o);
+                let info = field_info(&typer, o);
                 self.find_field_decl(db, &resolved, module, o.field.as_str(), &info)
                     .map(|m| m.decl.span)
             }
@@ -1046,11 +1095,14 @@ impl Analysis {
         let typer = Typer::new(db);
         let ty = match &cand.res {
             Res::Local(l) => {
-                let body = resolved.bodies.get(&cand.owner)?;
+                let body = typer.elaborated_body(cand.owner)?;
+                let body: &hir::Body = &body;
                 typer.body_types_annotated(cand.owner, body).local(*l)
             }
             Res::Def(d) => typer.value_sig(*d).map(|s| s.ty.clone()),
-            _ => None,
+            // A written name: never a bind line placeholder (`bind_occs`).
+            Res::BindAndThen => None,
+            Res::Kernel { .. } | Res::Ctor(_) | Res::Foreign { .. } | Res::Error => None,
         }?;
         if let Ty::Record(fields, _) = &ty {
             return Some(
@@ -1312,7 +1364,7 @@ impl Analysis {
                         module: module.as_str().to_string(),
                         func: func.as_str().to_string(),
                     },
-                    Res::Foreign { .. } | Res::Error => return None,
+                    Res::Foreign { .. } | Res::BindAndThen | Res::Error => return None,
                 };
                 Some((t, name_span))
             }
@@ -1981,14 +2033,49 @@ impl Analysis {
                 else {
                     continue;
                 };
-                let Some(obody) = resolved.bodies.get(&binder.owner) else {
+                let Some(obody) = typer.elaborated_body(binder.owner) else {
                     continue;
                 };
+                let obody: &hir::Body = &obody;
                 let bt = body_cache
                     .entry(binder.owner)
                     .or_insert_with(|| typer.body_types_annotated(binder.owner, obody));
                 if let Some(ty) = bt.local(binder.local) {
                     hints.push(type_hint(text, e, &ty.render_pretty()));
+                }
+            }
+            // The names a bind line (`p <- e`) binds: each is a parameter of
+            // the synthesised continuation, typed by the elaborated body.
+            for bb in let_expr
+                .syntax()
+                .children()
+                .filter_map(ast::BindBinding::cast)
+            {
+                let Some(p) = bb.pattern() else { continue };
+                for tok in p
+                    .syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|e| e.into_token())
+                    .filter(|t| t.kind() == SyntaxKind::LowerIdent)
+                {
+                    let r = tok.text_range();
+                    let (s, e) = (u32::from(r.start()), u32::from(r.end()));
+                    if e < lo || s > hi {
+                        continue;
+                    }
+                    let Some(binder) = resolved.binders.iter().find(|bd| bd.span.range == (s, e))
+                    else {
+                        continue;
+                    };
+                    let Some(obody) = typer.elaborated_body(binder.owner) else {
+                        continue;
+                    };
+                    let bt = body_cache
+                        .entry(binder.owner)
+                        .or_insert_with(|| typer.body_types_annotated(binder.owner, &obody));
+                    if let Some(ty) = bt.local(binder.local) {
+                        hints.push(type_hint(text, e, &ty.render_pretty()));
+                    }
                 }
             }
         }
@@ -2040,9 +2127,10 @@ impl Analysis {
             if span.range.1 < lo || span.range.0 > hi {
                 continue; // decl name doesn't intersect the requested range
             }
-            let Some(body) = resolved.bodies.get(&def) else {
+            let Some(body) = typer.elaborated_body(def) else {
                 continue;
             };
+            let body: &hir::Body = &body;
             let bt = typer.body_types_annotated(def, body);
             let Some(ty) = bt.signature.or(bt.result) else {
                 continue;
@@ -2108,7 +2196,7 @@ impl Analysis {
             .trim()
             .to_string();
         let typer = Typer::new(db);
-        let ty = self.ref_type_string(&typer, &resolved, db, head_occ)?;
+        let ty = self.ref_type_string(&typer, db, head_occ)?;
 
         Some(build_signature(&name, &ty, active))
     }
@@ -2131,7 +2219,10 @@ fn res_is_def(res: &Res, d: DefId) -> bool {
     match res {
         Res::Def(x) => *x == d,
         Res::Ctor(cr) => cr.def == d,
-        _ => false,
+        // A bind line placeholder names no def until the checker chooses one;
+        // rename and references read the chosen def through `bind_occs`.
+        Res::BindAndThen => false,
+        Res::Local(_) | Res::Kernel { .. } | Res::Foreign { .. } | Res::Error => false,
     }
 }
 
@@ -2241,6 +2332,8 @@ fn classify_res(res: &Res) -> u32 {
         Res::Local(_) => TOK_PARAMETER,
         Res::Def(_) | Res::Kernel { .. } | Res::Foreign { .. } => TOK_FUNCTION,
         Res::Ctor(_) => TOK_ENUM_MEMBER,
+        // The `<-` of a bind line (never in `ref_occs`; kept total).
+        Res::BindAndThen => TOK_KEYWORD,
         Res::Error => TOK_VARIABLE,
     }
 }
@@ -2275,6 +2368,8 @@ fn classify_token(
         Int | HexInt | Float => Some(TOK_NUMBER),
         ModuleKw | ExposingKw | ImportKw | AsKw | TypeKw | AliasKw | IfKw | ThenKw | ElseKw
         | CaseKw | OfKw | LetKw | InKw | TrueKw | FalseKw => Some(TOK_KEYWORD),
+        // The `<-` of a bind line (`p <- e`) is a keyword of the `let` block.
+        LArrow => Some(TOK_KEYWORD),
         Op | Arrow | Backslash | Pipe | DotDot | Eq | Colon | Colon2 => Some(TOK_OPERATOR),
         LowerIdent | UpperIdent => {
             // A module qualifier (`M.`) is a namespace, not the thing after it.
@@ -2442,15 +2537,16 @@ struct FieldMatch {
     certain: bool,
 }
 
-fn field_info(typer: &Typer, resolved: &ResolveResult, o: &FieldOcc) -> FieldInfo {
+fn field_info(typer: &Typer, o: &FieldOcc) -> FieldInfo {
     let mut info = FieldInfo {
         field: None,
         names: Vec::new(),
         closed: false,
     };
-    let Some(body) = resolved.bodies.get(&o.owner) else {
+    let Some(body) = typer.elaborated_body(o.owner) else {
         return info;
     };
+    let body: &hir::Body = &body;
     let bt = typer.body_types_annotated(o.owner, body);
     let record = match &o.recv {
         FieldRecv::Access(e) | FieldRecv::Record(e) => bt.expr(*e),
@@ -3255,4 +3351,18 @@ fn stdlib_dir(root: Option<&Path>) -> Option<PathBuf> {
         .map(Path::to_path_buf)
         .or_else(|| std::env::current_dir().ok())?;
     project::assets_root_for(&start).map(|r| r.join("sky-stdlib"))
+}
+
+/// The bind line whose `<-` is at `off` (docs/design/let-bind-lines.md §7).
+fn bind_at(resolved: &ResolveResult, off: u32) -> Option<&hir::BindOcc> {
+    resolved.bind_occs.iter().find(|b| contains(b.span, off))
+}
+
+/// The `andThen` the type checker chose for bind line `b` (the check path's
+/// choice, `TyDb::bind_elaboration_of`). `None` when the checker refused it.
+fn chosen_and_then(db: &dyn TyDb, module: ModuleId, b: &hir::BindOcc) -> Option<DefId> {
+    match db.bind_elaboration_of(module, b.owner).choice(b.call)? {
+        Res::Def(d) => Some(*d),
+        _ => None,
+    }
 }

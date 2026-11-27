@@ -17,17 +17,17 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 898
+n_min = 1048
 n_iso = 61
 n_iso_ceiling = 62
-n_iso_static = 164
+n_iso_static = 218
 n_iso_static_ceiling = 300
-class_v = 897
+class_v = 1047
 class_d = 1
 family_S = 222
-family_L = 513
+family_L = 609
 family_E = 10
-family_R = 153
+family_R = 207
 family_F = 0
 
 [[case]]
@@ -9587,6 +9587,1254 @@ expect     = "accept"
 stdout     = "41/7"
 
 [[case]]
+id         = "let_bind/annotated-task-name-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "name", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-name-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "name", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-name-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "name", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-name-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "name", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-name-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "name", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-name-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "name", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-tuple-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "tuple", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-tuple-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "tuple", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-tuple-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "tuple", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-tuple-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "tuple", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-tuple-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "tuple", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-tuple-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "tuple", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-record-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "record", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-record-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "record", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-record-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "record", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-record-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "record", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-record-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "record", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-record-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "record", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-wild-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "wild", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-wild-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "wild", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-wild-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "wild", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-wild-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "wild", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-task-wild-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "task", lb_pattern = "wild", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-task-wild-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "task", lb_pattern = "wild", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-name-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "name", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-name-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "name", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-name-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "name", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-name-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "name", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-name-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "name", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-name-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "name", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-tuple-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "tuple", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-tuple-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "tuple", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-tuple-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "tuple", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-tuple-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "tuple", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-tuple-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "tuple", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-tuple-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "tuple", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-record-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "record", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-record-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "record", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-record-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "record", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-record-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "record", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-record-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "record", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-record-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "record", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-wild-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "wild", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-wild-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "wild", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-wild-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "wild", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-wild-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "wild", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-result-wild-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "result", lb_pattern = "wild", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-result-wild-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "result", lb_pattern = "wild", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-name-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "name", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-name-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "name", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-name-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "name", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-name-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "name", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-name-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "name", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-name-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "name", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-tuple-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "tuple", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-tuple-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "tuple", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-tuple-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "tuple", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-tuple-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "tuple", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-tuple-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "tuple", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-tuple-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "tuple", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-record-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "record", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-record-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "record", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-record-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "record", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-record-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "record", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-record-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "record", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-record-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "record", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-wild-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "wild", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-wild-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "wild", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-wild-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "wild", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-wild-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "wild", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-maybe-wild-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "maybe", lb_pattern = "wild", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-maybe-wild-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "maybe", lb_pattern = "wild", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-name-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "name", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-name-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "name", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-name-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "name", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-name-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "name", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-name-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "name", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-name-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "name", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-tuple-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "tuple", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-tuple-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "tuple", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-tuple-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "tuple", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-tuple-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "tuple", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-tuple-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "tuple", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-tuple-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "tuple", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-record-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "record", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-record-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "record", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-record-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "record", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-record-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "record", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-record-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "record", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-record-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "record", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-wild-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "wild", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-wild-first"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "wild", lb_position = "first" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-wild-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "wild", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-wild-middle"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "wild", lb_position = "middle" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/annotated-decoder-wild-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "annotated", lb_monad = "decoder", lb_pattern = "wild", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_bind/unannotated-decoder-wild-last"
+family     = "L"
+stratum    = "let_bind"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { lb_annot = "unannotated", lb_monad = "decoder", lb_pattern = "wild", lb_position = "last" }
+coordinate = "v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
 id         = "reject_matrix/arity_over-plain-bare"
 family     = "R"
 stratum    = "reject_matrix"
@@ -11726,6 +12974,762 @@ axes       = { defect = "regex_invalid_literal", rimport = "exposing_list", rpos
 coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
 expect     = "reject"
 code       = "E2014"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_outside_let-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_outside_let", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E0001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_outside_let-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_outside_let", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E0001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_outside_let-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_outside_let", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E0001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_outside_let-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_outside_let", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E0001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_outside_let-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_outside_let", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E0001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_outside_let-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_outside_let", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E0001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_outside_let-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_outside_let", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E0001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_outside_let-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_outside_let", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E0001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_outside_let-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_outside_let", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E0001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_split_scope-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_split_scope", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_split_scope-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_split_scope", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_split_scope-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_split_scope", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_split_scope-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_split_scope", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_split_scope-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_split_scope", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_split_scope-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_split_scope", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_split_scope-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_split_scope", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_split_scope-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_split_scope", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_split_scope-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_split_scope", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_needs_type-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_needs_type", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2015"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_needs_type-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_needs_type", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2015"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_needs_type-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_needs_type", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2015"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_needs_type-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_needs_type", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2015"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_needs_type-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_needs_type", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2015"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_needs_type-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_needs_type", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2015"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_needs_type-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_needs_type", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2015"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_needs_type-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_needs_type", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2015"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_needs_type-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_needs_type", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2015"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_no_andthen-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_no_andthen", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2016"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_no_andthen-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_no_andthen", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2016"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_no_andthen-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_no_andthen", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2016"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_no_andthen-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_no_andthen", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2016"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_no_andthen-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_no_andthen", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2016"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_no_andthen-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_no_andthen", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2016"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_no_andthen-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_no_andthen", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2016"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_no_andthen-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_no_andthen", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2016"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_no_andthen-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_no_andthen", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2016"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_refutable_pattern-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_refutable_pattern", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_refutable_pattern-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_refutable_pattern", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_refutable_pattern-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_refutable_pattern", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_refutable_pattern-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_refutable_pattern", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_refutable_pattern-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_refutable_pattern", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_refutable_pattern-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_refutable_pattern", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_refutable_pattern-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_refutable_pattern", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_refutable_pattern-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_refutable_pattern", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_refutable_pattern-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_refutable_pattern", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_mixed_types-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_mixed_types", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_mixed_types-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_mixed_types", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_mixed_types-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_mixed_types", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_mixed_types-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_mixed_types", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_mixed_types-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_mixed_types", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_mixed_types-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_mixed_types", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_mixed_types-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_mixed_types", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_mixed_types-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_mixed_types", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/bind_mixed_types-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "bind_mixed_types", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
 twin       = true
 
 [[case]]

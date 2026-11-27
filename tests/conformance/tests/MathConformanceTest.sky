@@ -31,7 +31,7 @@ near diff =
             else
                 diff
     in
-        magnitude < 0.0000001
+        magnitude < 1.0e-7
 
 
 -- T5.0 regression guards: a bare Math constant used DIRECTLY (NOT wrapped in an
@@ -99,6 +99,7 @@ pairUp x =
 sumRec : List number -> number
 sumRec xs =
     case xs of
+
         [] ->
             0
 

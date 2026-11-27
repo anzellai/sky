@@ -30,44 +30,27 @@ check t f =
 -- Seed, draft a reply for the first ticket, send it, read the desk back.
 flow : Task Error ( List Tickets.Ticket, String, Int )
 flow =
-    Tickets.open
-        |> Task.andThen
-               (\db ->
-                   Tickets.seed db |> Task.andThen (\_ -> Tickets.seed db)
-                       |> Task.andThen (\_ -> Tickets.all db)
-                       |> Task.andThen
-                              (\ts ->
-                                  case ts of
+    let
+        db <- Tickets.open
+        _ <- Tickets.seed db
+        _ <- Tickets.seed db
+        ts <- Tickets.all db
+    in
+        case ts of
 
-                                      first :: _ ->
-                                          Assist.draft first.body
-                                              |> Task.andThen
-                                                     (\text ->
-                                                         Tickets.send
-                                                             db
-                                                             first
-                                                             text
-                                                             |> Task.andThen
-                                                                    (\_ ->
-                                                                        Tickets.all
-                                                                            db)
-                                                             |> Task.andThen
-                                                                    (\after ->
-                                                                        Dataset.countRows
-                                                                            (Tickets.accepted
-                                                                                Assist.systemPrompt
-                                                                                db)
-                                                                            |> Task.map
-                                                                                   (\n ->
-                                                                                       ( after
-                                                                                       , text
-                                                                                       , n
-                                                                                       ))))
+            first :: _ ->
+                let
+                    text <- Assist.draft first.body
+                    _ <- Tickets.send db first text
+                    after <- Tickets.all db
+                    n <-
+                        Dataset.countRows
+                            (Tickets.accepted Assist.systemPrompt db)
+                in
+                    Task.succeed ( after, text, n )
 
-                                      [] ->
-                                          Task.fail
-                                              (Error.invalidInput
-                                                  "no tickets were seeded")))
+            [] ->
+                Task.fail (Error.invalidInput "no tickets were seeded")
 
 
 tests : List Test

@@ -16,6 +16,7 @@ use super::axes::{
     LET_SITE, LET_USES, LIST_IMPORT, NESTED_PAYLOAD, QUAL_PATH, QUAL_USE, STEP_SITE, TASK_CALLEE,
     TASK_LINK, TASK_RESULT, UNION_REP,
 };
+use super::axes::{LB_ANNOT, LB_MONAD, LB_PATTERN, LB_POSITION};
 use super::gen::{Body, SURVIVOR, UPDATED};
 
 // ---------------------------------------------------------------------------
@@ -764,5 +765,75 @@ pub fn generic_fn_record_slot(a: &Assignment) -> (Body, String) {
             check,
         },
         "41/7".to_string(),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// let_bind (v0.32.0)
+// ---------------------------------------------------------------------------
+
+/// A bind line `p <- e` among the `=` lines of one `let` block (#342). The
+/// block is `lo = 10`, `hi = lo + 1` and the bind line, in the order the
+/// position axis picks, and its `in` body wraps `lo + hi + bound` in the
+/// type's own constructor. The bind line gives 21 through its pattern (a
+/// name `n`, a tuple or record of `20` and `1`, or `_` with a literal `21`
+/// in the body), so a correct program prints `42`. A bind line that chained
+/// the wrong `andThen`, dropped a segment, or bound the pattern wrongly
+/// fails to build or prints another number. `hi` reads `lo` across the
+/// split when the bind line is in the middle, which is legal: a later
+/// segment sees the earlier ones.
+pub fn let_bind(a: &Assignment) -> (Body, String) {
+    let (ty, pure, run) = match a.get(LB_MONAD) {
+        "task" => ("Task Error Int", "Task.succeed", "showR (Task.run block)"),
+        "result" => ("Result Error Int", "Ok", "showR block"),
+        "maybe" => ("Maybe Int", "Just", "showM block"),
+        "decoder" => (
+            "Decode.Decoder Int",
+            "Decode.succeed",
+            "showR (Decode.decodeString block \"null\")",
+        ),
+        other => panic!("let_bind: unknown lb_monad {other:?}"),
+    };
+    let (bind, bound) = match a.get(LB_PATTERN) {
+        "name" => (format!("n <- {pure} 21"), "n"),
+        "tuple" => (format!("( n, m ) <- {pure} ( 20, 1 )"), "(n + m)"),
+        "record" => (
+            format!("{{ n, m }} <- {pure} {{ n = 20, m = 1 }}"),
+            "(n + m)",
+        ),
+        "wild" => (format!("_ <- {pure} 99"), "21"),
+        other => panic!("let_bind: unknown lb_pattern {other:?}"),
+    };
+    let lo = "lo = 10".to_string();
+    let hi = "hi = lo + 1".to_string();
+    let lines = match a.get(LB_POSITION) {
+        "first" => [bind, lo, hi],
+        "middle" => [lo, bind, hi],
+        "last" => [lo, hi, bind],
+        other => panic!("let_bind: unknown lb_position {other:?}"),
+    };
+    let sig = match a.get(LB_ANNOT) {
+        "annotated" => format!("block : {ty}\n"),
+        "unannotated" => String::new(),
+        other => panic!("let_bind: unknown lb_annot {other:?}"),
+    };
+    let block_lines = lines
+        .iter()
+        .map(|l| format!("        {l}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let decls = format!(
+        "showR : Result e Int -> String\nshowR r =\n    case r of\n        Ok v ->\n            String.fromInt v\n\n        Err _ ->\n            \"err\"\n\n\n\
+         showM : Maybe Int -> String\nshowM m =\n    case m of\n        Just v ->\n            String.fromInt v\n\n        Nothing ->\n            \"nothing\"\n\n\n\
+         {sig}block =\n    let\n{block_lines}\n    in\n    {pure} (lo + hi + {bound})\n"
+    );
+    (
+        Body {
+            imports: "import Sky.Core.Error exposing (Error)\nimport Sky.Core.Json.Decode as Decode\nimport Sky.Core.String as String\nimport Sky.Core.Task as Task\n"
+                .to_string(),
+            decls,
+            check: run.to_string(),
+        },
+        "42".to_string(),
     )
 }

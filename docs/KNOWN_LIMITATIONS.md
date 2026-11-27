@@ -1,4 +1,4 @@
-# Known limitations (v0.31.x)
+# Known limitations (v0.32.x)
 
 Active limitations users still hit at HEAD. Each entry explains the gap,
 why it exists, and the workaround. Closures across the v0.15 / v0.16 /
@@ -14,7 +14,10 @@ under `docs/history/`. This file lists ONLY what's still active at HEAD.
 
 1. **No higher-kinded types.** No `Functor` / `Monad` / `Applicative`
    classes. Sky's type system is Hindley-Milner (intentional). Use
-   concrete types and explicit `andThen` / `map` per ADT.
+   concrete types and explicit `andThen` / `map` per ADT. A bind line in a
+   `let` block (`p <- e`, v0.32.0) chains with the `andThen` of the type of
+   `e`, chosen when the program compiles: it needs no type class, and one
+   block chains one type (`docs/language/syntax.md`, "Bind lines").
 
 2. **No `where` clauses.** Use `let…in` instead. Intentional —
    one bindings construct, two would be a needless surface.

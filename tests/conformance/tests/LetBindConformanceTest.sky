@@ -1,0 +1,243 @@
+module LetBindConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for bind lines in `let` (`p <- e`, v0.32.0,
+-- docs/design/let-bind-lines.md). A bind line chains with the `andThen` of
+-- the type of `e`: each case runs a block written with bind lines and the
+-- same block written by hand with `andThen`, and expects the same answer.
+
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Test as Test exposing (Test)
+import Std.Sync as Sync
+
+
+counterBind : Task Error Int
+counterBind =
+    let
+        ref <- Sync.newRef 10
+        _ <- Sync.update (\n -> n * 3) ref
+        now <- Sync.get ref
+        ctx = { now = now }
+        _ <- Sync.set (ctx.now + 1) ref
+        final <- Sync.get ref
+    in
+        Task.succeed (final + ctx.now)
+
+
+counterHand : Task Error Int
+counterHand =
+    Sync.newRef 10
+        |> Task.andThen
+               (\ref ->
+                   Sync.update (\n -> n * 3) ref
+                       |> Task.andThen
+                              (\_ ->
+                                  Sync.get ref
+                                      |> Task.andThen
+                                             (\now ->
+                                                 let
+                                                     ctx = { now = now }
+                                                 in
+                                                     Sync.set (ctx.now + 1) ref
+                                                         |> Task.andThen
+                                                                (\_ ->
+                                                                    Sync.get ref
+                                                                        |> Task.andThen
+                                                                               (\final ->
+                                                                                   Task.succeed
+                                                                                       (final
+                                                                                           + ctx.now))))))
+
+
+toIntR : String -> Result Error Int
+toIntR s =
+    Result.fromMaybe
+        (Error.invalidInput ("not a number: " ++ s))
+        (String.toInt s)
+
+
+sumBind : String -> String -> Result Error Int
+sumBind a b =
+    let
+        x <- toIntR a
+        y <- toIntR b
+        ( p, q ) = ( x * 2, y )
+    in
+        Ok (p + q)
+
+
+sumHand : String -> String -> Result Error Int
+sumHand a b =
+    toIntR a
+        |> Result.andThen
+               (\x ->
+                   toIntR b
+                       |> Result.andThen
+                              (\y ->
+                                  let
+                                      ( p, q ) = ( x * 2, y )
+                                  in
+                                      Ok (p + q)))
+
+
+divBind : Maybe Int -> Maybe Int -> Maybe Int
+divBind ma mb =
+    let
+        a <- ma
+        b <- mb
+    in
+        if b == 0 then
+            Nothing
+
+        else
+            Just (a // b)
+
+
+divHand : Maybe Int -> Maybe Int -> Maybe Int
+divHand ma mb =
+    ma
+        |> Maybe.andThen
+               (\a ->
+                   mb
+                       |> Maybe.andThen
+                              (\b ->
+                                  if b == 0 then
+                                      Nothing
+
+                                  else
+                                      Just (a // b)))
+
+
+repeatBind : Decode.Decoder String
+repeatBind =
+    let
+        n <- Decode.field "n" Decode.int
+        s <- Decode.field "s" Decode.string
+    in
+        Decode.succeed (String.repeat n s)
+
+
+repeatHand : Decode.Decoder String
+repeatHand =
+    Decode.field "n" Decode.int
+        |> Decode.andThen
+               (\n ->
+                   Decode.field "s" Decode.string
+                       |> Decode.andThen
+                              (\s -> Decode.succeed (String.repeat n s)))
+
+
+-- Recursion through a bind line runs at a constant Go stack (the Task
+-- trampoline), as recursion through `Task.andThen` does.
+countBind : Int -> Int -> Task Error Int
+countBind n acc =
+    if n == 0 then
+        Task.succeed acc
+
+    else
+        let
+            _ <- Task.succeed ()
+        in
+            countBind (n - 1) (acc + 1)
+
+-- A pattern that matches every value: a tuple, a record, a one-variant union.
+type Pair
+    = Pair Int Int
+
+
+shapesBind : Task Error Int
+shapesBind =
+    let
+        ( a, b ) <- Task.succeed ( 1, 2 )
+        { c } <- Task.succeed { c = 3 }
+        (Pair d e) <- Task.succeed (Pair 4 5)
+    in
+        Task.succeed (a + b + c + d + e)
+
+
+-- The head is known only after the bind line: `t` is pinned to a Task by a
+-- later line of the block.
+lateBind t =
+    let
+        a <- t
+        _ = Task.map identity t
+    in
+        Task.succeed (a * 2)
+
+
+showD : Result Error String -> String
+showD r =
+    case r of
+
+        Ok v ->
+            "Ok " ++ v
+
+        Err _ ->
+            "Err"
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "a Task block with Std.Sync equals the hand-written andThen chain"
+          (\_ -> Test.equal (Task.run counterHand) (Task.run counterBind))
+    , Test.test
+          "a Task block gives 61"
+          (\_ -> Test.equal (Ok 61) (Task.run counterBind))
+    , Test.test
+          "a Result block equals the hand-written chain, Ok and Err"
+          (\_ ->
+              Test.equal
+                  ( Result.toMaybe (sumHand "4" "5")
+                  , Result.toMaybe (sumHand "4" "x")
+                  )
+                  ( Result.toMaybe (sumBind "4" "5")
+                  , Result.toMaybe (sumBind "4" "x")
+                  ))
+    , Test.test
+          "a Maybe block equals the hand-written chain"
+          (\_ ->
+              Test.equal
+                  ( divHand (Just 9) (Just 3)
+                  , divHand (Just 9) Nothing
+                  , divHand (Just 9) (Just 0)
+                  )
+                  ( divBind (Just 9) (Just 3)
+                  , divBind (Just 9) Nothing
+                  , divBind (Just 9) (Just 0)
+                  ))
+    , Test.test
+          "a JSON Decoder block equals the hand-written chain"
+          (\_ ->
+              Test.equal
+                  ( showD
+                        (Decode.decodeString
+                            repeatHand
+                            "{\"n\": 3, \"s\": \"ab\"}")
+                  , showD (Decode.decodeString repeatHand "{}")
+                  )
+                  ( showD
+                        (Decode.decodeString
+                            repeatBind
+                            "{\"n\": 3, \"s\": \"ab\"}")
+                  , showD (Decode.decodeString repeatBind "{}")
+                  ))
+    , Test.test
+          "two million recursions through a bind line finish"
+          (\_ -> Test.equal (Ok 2000000) (Task.run (countBind 2000000 0)))
+    , Test.test
+          "tuple, record and one-variant patterns bind"
+          (\_ -> Test.equal (Ok 15) (Task.run shapesBind))
+    , Test.test
+          "a head known only after the bind line"
+          (\_ -> Test.equal (Ok 42) (Task.run (lateBind (Task.succeed 21))))
+    ]
+
+
+main =
+    Test.runMain tests

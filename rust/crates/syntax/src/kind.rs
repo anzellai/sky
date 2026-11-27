@@ -76,6 +76,7 @@ syntax_kinds! {
     DotDot,
     Pipe,
     Arrow,
+    LArrow,
     Backslash,
     Op,
     LParen,
@@ -170,6 +171,7 @@ syntax_kinds! {
     LetExpr,
     LetBinding,
     DestructureBinding,
+    BindBinding,
     CaseExpr,
     MatchArm,
 
@@ -195,6 +197,133 @@ impl SyntaxKind {
 impl From<SyntaxKind> for rowan::SyntaxKind {
     fn from(k: SyntaxKind) -> Self {
         rowan::SyntaxKind(k as u16)
+    }
+}
+
+impl SyntaxKind {
+    /// How a parser message names this kind: a token by its source text in
+    /// backticks (`in`, `=`, `)`), a class of tokens or a node by plain words
+    /// (a name, an expression). The one mapping every "expected …" message
+    /// uses, so no message shows an internal kind name. The match is total:
+    /// a new kind fails the build until it is named.
+    pub fn describe(self) -> &'static str {
+        use SyntaxKind as K;
+        match self {
+            K::Whitespace => "a space",
+            K::Newline => "a new line",
+            K::LineComment | K::BlockComment => "a comment",
+            K::Int | K::HexInt => "an integer",
+            K::Float => "a float",
+            K::String | K::MultilineString | K::StringChunk => "a string",
+            K::Char => "a character",
+            K::LowerIdent => "a name",
+            K::UpperIdent => "a capitalised name",
+            K::ModuleKw => "`module`",
+            K::ExposingKw => "`exposing`",
+            K::ImportKw => "`import`",
+            K::AsKw => "`as`",
+            K::TypeKw => "`type`",
+            K::AliasKw => "`alias`",
+            K::IfKw => "`if`",
+            K::ThenKw => "`then`",
+            K::ElseKw => "`else`",
+            K::CaseKw => "`case`",
+            K::OfKw => "`of`",
+            K::LetKw => "`let`",
+            K::InKw => "`in`",
+            K::TrueKw => "`True`",
+            K::FalseKw => "`False`",
+            K::Eq => "`=`",
+            K::Colon => "`:`",
+            K::Colon2 => "`::`",
+            K::Dot => "`.`",
+            K::DotDot => "`..`",
+            K::Pipe => "`|`",
+            K::Arrow => "`->`",
+            K::LArrow => "`<-`",
+            K::Backslash => "`\\`",
+            K::Op => "an operator",
+            K::LParen => "`(`",
+            K::RParen => "`)`",
+            K::LBrack => "`[`",
+            K::RBrack => "`]`",
+            K::LBrace => "`{`",
+            K::RBrace => "`}`",
+            K::Comma => "`,`",
+            K::Underscore => "`_`",
+            K::InterpOpen => "`{{`",
+            K::InterpClose => "`}}`",
+            K::Error => "a token",
+            K::Eof => "the end of the file",
+            K::SourceFile => "a module",
+            K::ModuleHeader => "a module header",
+            K::ModuleName => "a module name",
+            K::ExposingList | K::ImportExposing => "an exposing list",
+            K::ExposedValue | K::ExposedType | K::ExposedOperator => "an exposed name",
+            K::ExposedCtorList => "a constructor list",
+            K::Import => "an import",
+            K::ImportAlias => "an import alias",
+            K::ValueDecl => "a definition",
+            K::TypeAnnoDecl => "a type annotation",
+            K::UnionDecl => "a type declaration",
+            K::AliasDecl => "a type alias",
+            K::ParamList => "parameters",
+            K::TypeVarList => "type variables",
+            K::UnionVariantList | K::UnionVariant => "a constructor",
+            K::TypeFun
+            | K::TypeApp
+            | K::TypeVar
+            | K::TypeCon
+            | K::TypeQual
+            | K::TypeRecord
+            | K::TypeTuple
+            | K::TypeUnit
+            | K::TypeParen
+            | K::RowVar => "a type",
+            K::TypeRecordField => "a record field type",
+            K::PatWildcard
+            | K::PatVar
+            | K::PatCtor
+            | K::PatCtorQual
+            | K::PatList
+            | K::PatCons
+            | K::PatTuple
+            | K::PatUnit
+            | K::PatRecord
+            | K::PatAlias
+            | K::PatInt
+            | K::PatFloat
+            | K::PatString
+            | K::PatChar
+            | K::PatBool
+            | K::PatParen
+            | K::PatNegate => "a pattern",
+            K::Literal
+            | K::MultilineLiteral
+            | K::Interpolation
+            | K::RefExpr
+            | K::QualRefExpr
+            | K::AccessorExpr
+            | K::FieldAccess
+            | K::ListExpr
+            | K::TupleExpr
+            | K::UnitExpr
+            | K::RecordExpr
+            | K::RecordUpdate
+            | K::ParenExpr
+            | K::NegateExpr
+            | K::BinExpr
+            | K::CallExpr
+            | K::LambdaExpr
+            | K::IfExpr
+            | K::LetExpr
+            | K::CaseExpr => "an expression",
+            K::RecordField => "a record field",
+            K::ElseIf => "`else if`",
+            K::LetBinding | K::DestructureBinding | K::BindBinding => "a let binding",
+            K::MatchArm => "a case branch",
+            K::Tombstone => "a token",
+        }
     }
 }
 

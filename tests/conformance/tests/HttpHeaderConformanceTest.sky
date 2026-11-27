@@ -41,7 +41,8 @@ response headers =
 
 canonicalRequest : Server.Request
 canonicalRequest =
-    request [ ( "X-Sky-Api-Key", "k1" ), ( "Content-Type", "application/json" ) ]
+    request
+        [ ( "X-Sky-Api-Key", "k1" ), ( "Content-Type", "application/json" ) ]
 
 
 lowerRequest : Server.Request

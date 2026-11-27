@@ -47,6 +47,12 @@ const PAT_ATOM_START: TokenSet = TokenSet::new(&[
     FalseKw,
 ]);
 
+/// The tokens an expression line in a `let` block can start with: an
+/// argument atom, or a `let`, `case`, `if`, a lambda or a negation. A line
+/// that starts with another token is no expression, and keeps the
+/// diagnostic it had before the bare-line rule.
+const BARE_LINE_START: TokenSet = ARG_START.union(TokenSet::new(&[LetKw, CaseKw, IfKw, Backslash]));
+
 const DECL_START: TokenSet = TokenSet::new(&[TypeKw, LowerIdent, UpperIdent]);
 
 /// The tokens that begin a lexical top-level unit when they start a line at
@@ -103,10 +109,12 @@ pub(crate) fn source_file(p: &mut Parser) {
     p.begin_unit();
     if p.at(ModuleKw) {
         module_header(p);
+        rest_of_unit(p);
     }
     p.begin_unit();
     while p.at(ImportKw) {
         import_decl(p);
+        rest_of_unit(p);
         p.begin_unit();
     }
     // top-level anchor is column 1: a decl body continues while col > 1.
@@ -141,6 +149,23 @@ pub(crate) fn source_file(p: &mut Parser) {
 }
 
 // ---- module header + imports --------------------------------------------
+
+/// Tokens left in the header's or an import's unit after it parsed (`module
+/// Main exposing (main) <- x`). They go into one ERROR node with one
+/// diagnostic, so the imports after it still parse as imports: leaving them
+/// to the declaration loop would read each later `import` as a broken
+/// declaration, a cascade of follow-on errors.
+fn rest_of_unit(p: &mut Parser) {
+    if p.at_end() {
+        return;
+    }
+    let m = p.start();
+    p.error("expected a new line: the module header and each import end at the end of their line");
+    while !p.at_end() {
+        p.bump();
+    }
+    m.complete(p, Error);
+}
 
 fn module_name(p: &mut Parser) {
     let m = p.start();
@@ -285,7 +310,7 @@ fn value_or_anno(p: &mut Parser) {
             pattern_app(p);
         }
         pl.complete(p, ParamList);
-        p.expect(Eq);
+        expect_eq(p);
         let body_col = p.col();
         p.with_indent(body_col, |p| {
             expr(p);
@@ -605,6 +630,7 @@ fn pattern_paren(p: &mut Parser) -> CompletedMarker {
     }
     let is_tuple = p.with_indent(0, |p| {
         pattern(p);
+        misplaced_bind(p);
         let mut tuple = false;
         while p.at(Comma) {
             tuple = true;
@@ -613,6 +639,7 @@ fn pattern_paren(p: &mut Parser) -> CompletedMarker {
                 break;
             }
             pattern(p);
+            misplaced_bind(p);
         }
         p.expect(RParen);
         tuple
@@ -626,11 +653,13 @@ fn pattern_list(p: &mut Parser) -> CompletedMarker {
     p.with_indent(0, |p| {
         if !p.at(RBrack) {
             pattern(p);
+            misplaced_bind(p);
             while p.eat(Comma) {
                 if p.at(RBrack) {
                     break;
                 }
                 pattern(p);
+                misplaced_bind(p);
             }
         }
         p.expect(RBrack);
@@ -647,6 +676,7 @@ fn pattern_record(p: &mut Parser) -> CompletedMarker {
                 break;
             }
             p.expect(LowerIdent);
+            misplaced_bind(p);
             if !p.eat(Comma) {
                 break;
             }
@@ -670,6 +700,18 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> CompletedMarker {
     }
     let mut lhs = app_expr(p);
     loop {
+        if p.at(LArrow) && p.at_continuation() {
+            // `a <- b` in an expression: a bind line written outside the
+            // head of a `let` line (design §1). Diagnose it, and keep the
+            // rest of the expression in the same ERROR node so one misuse
+            // gives one diagnostic.
+            let m = lhs.precede(p);
+            p.error(BIND_OUTSIDE_LET);
+            p.bump(); // <-
+            expr_bp(p, 0);
+            lhs = m.complete(p, Error);
+            continue;
+        }
         if !operator_continues(p) {
             break;
         }
@@ -1014,7 +1056,7 @@ fn record_expr(p: &mut Parser) -> CompletedMarker {
             }
             let fm = p.start();
             p.expect(LowerIdent);
-            p.expect(Eq);
+            expect_eq(p);
             expr(p);
             fm.complete(p, RecordField);
             if !p.eat(Comma) {
@@ -1041,6 +1083,7 @@ fn lambda_expr(p: &mut Parser) -> CompletedMarker {
         pattern_app(p);
     }
     pl.complete(p, ParamList);
+    misplaced_bind(p);
     p.expect(Arrow);
     expr(p);
     m.complete(p, LambdaExpr)
@@ -1067,11 +1110,12 @@ fn let_expr(p: &mut Parser) -> CompletedMarker {
     if p.at(InKw) || p.at_end() {
         p.error("expected a let binding");
     }
+    let mut after_anno = false;
     loop {
         if p.at(InKw) || p.at_end() {
             break;
         }
-        let_binding(p, anchor);
+        after_anno = let_binding(p, anchor, after_anno) == LetLine::Annotation;
         if p.at(InKw) {
             break;
         }
@@ -1086,7 +1130,213 @@ fn let_expr(p: &mut Parser) -> CompletedMarker {
     m.complete(p, LetExpr)
 }
 
-fn let_binding(p: &mut Parser, anchor: u32) {
+/// The diagnostic for a `<-` outside a `let` line's head (design §1).
+pub(crate) const BIND_OUTSIDE_LET: &str =
+    "`<-` is a bind line; write it as a line of a `let` block";
+
+/// The diagnostic for `x : T` directly before a bind line (design §2).
+const ANNOTATION_ON_BIND_LINE: &str = "An annotation cannot go on a bind line. \
+     Remove the annotation line before it, and annotate the expression after `<-` \
+     instead: give the function it calls a type, e.g. `fetch : String -> Task Error User`.";
+
+/// A `<-` in a case-arm pattern (`v <- x -> 1`).
+const BIND_IN_CASE_ARM: &str = "a case arm uses `->`; a bind line `p <- e` goes in a `let` block";
+
+/// A `let` line with a `<-` whose left side is not a bind-line pattern
+/// (design §1). One rule for every such left side.
+pub(crate) const BIND_LINE_FORM: &str = "a bind line is `pattern <- expression`. \
+     The pattern is a name, `_`, `()`, or a pattern in parentheses, \
+     e.g. `( a, b ) <- e`, `(x as y) <- e`. A function goes on an `=` line.";
+
+/// A `let` line that starts with `<-`.
+pub(crate) const BIND_LINE_NEEDS_PATTERN: &str =
+    "a bind line needs a pattern: write `_ <- e` to run `e` and drop its result";
+
+/// An unparenthesised tuple pattern on an `=` line (`a, b = e`).
+const BARE_TUPLE_PATTERN: &str = "put the pattern in parentheses: `( a, b ) = e`";
+
+/// What kind of line `let_binding` parsed.
+#[derive(PartialEq, Eq)]
+enum LetLine {
+    Annotation,
+    Equals,
+    Bind,
+}
+
+/// `=` where a binding wants one. A `<-` there is the bind-line misuse
+/// (`f a <- t`, `x <- t` at the top level): it is consumed with the
+/// bind-line diagnostic so the expression after it still parses.
+fn expect_eq(p: &mut Parser) {
+    if p.at(LArrow) {
+        p.err_and_bump(BIND_OUTSIDE_LET);
+    } else {
+        p.expect(Eq);
+    }
+}
+
+/// A `<-` after a pattern or a parameter list where no bind line can be (a
+/// case-arm pattern, a lambda or function parameter, a pattern inside
+/// brackets): the bind-line misuse. The `<-` and the expression after it go
+/// into one ERROR node with the bind-line diagnostic, so the misuse gives one
+/// diagnostic and the rest of the construct still parses.
+fn misplaced_bind(p: &mut Parser) {
+    misplaced_bind_with(p, BIND_OUTSIDE_LET);
+}
+
+/// `misplaced_bind` with a hint for the position.
+fn misplaced_bind_with(p: &mut Parser, hint: &str) {
+    if p.at(LArrow) {
+        let m = p.start();
+        p.error(hint);
+        p.bump(); // <-
+        expr(p);
+        m.complete(p, Error);
+    }
+}
+
+/// `pat <- expr`: the pattern is already parsed under `m`.
+fn bind_line_rest(p: &mut Parser, m: crate::parser::Marker, anchor: u32) {
+    p.bump(); // <-
+              // `x <- y <- e`: a second `<-` on the line. One `[E0001]`, and the
+              // `y <-` goes into an ERROR node so `e` still parses as the line's
+              // expression.
+              // A nested `let` on the line owns its own `<-`.
+    while let Some(off) = p
+        .let_line_arrow(anchor)
+        .filter(|&o| o > 0 && (0..o).all(|i| p.nth(i) != LetKw))
+    {
+        let start = p.pos();
+        let last = p.let_line_last(anchor);
+        let pat = p
+            .short_text(start, start + off - 1)
+            .unwrap_or("p")
+            .to_string();
+        let e = p
+            .short_text(start + off + 1, last)
+            .unwrap_or("e")
+            .to_string();
+        let err = p.start();
+        p.error(format!(
+            "one bind line binds one pattern: put `{pat} <- {e}` on its own line above"
+        ));
+        for _ in 0..=off {
+            p.bump();
+        }
+        err.complete(p, Error);
+    }
+    p.with_indent(anchor, |p| {
+        expr(p);
+    });
+    m.complete(p, BindBinding);
+}
+
+/// `x = <- e`: an `=` line whose expression starts with `<-` (the `=` is
+/// just consumed; the line's pattern starts at token `start`). One
+/// `[E0001]` naming the bind line, the `<-` in an ERROR node, and `e` still
+/// parses as the line's expression.
+fn eq_then_arrow(p: &mut Parser, anchor: u32, start: usize) {
+    if !p.at(LArrow) {
+        return;
+    }
+    let pat = p
+        .short_text(start, p.pos().saturating_sub(2))
+        .unwrap_or("p")
+        .to_string();
+    let last = p.let_line_last(anchor);
+    let e = p.short_text(p.pos() + 1, last).unwrap_or("e").to_string();
+    p.err_and_bump(format!(
+        "write `{pat} <- {e}`: a bind line uses `<-` in place of `=`"
+    ));
+}
+
+/// A `let` line with a `<-` at `off` tokens from the cursor, before any
+/// `=` of its own. Its left side is a bind-line pattern when it parses as a
+/// pattern that ends at the `<-`, and, when it starts with a lowercase name,
+/// is that name alone (as on an `=` line, `x as y` and `x :: xs` need
+/// parentheses, and `g x` is a function head). Any other left side is one
+/// `[E0001]` with the bind-line form, and the expression after `<-` still
+/// parses.
+fn bind_line(p: &mut Parser, anchor: u32, after_anno: bool, off: usize) -> LetLine {
+    let m = p.start();
+    if off == 0 {
+        p.error(BIND_LINE_NEEDS_PATTERN);
+        bind_line_rest(p, m, anchor);
+        return LetLine::Bind;
+    }
+    let lower_head = p.at(LowerIdent);
+    let cp = p.checkpoint();
+    pattern(p);
+    let is_pattern = !p.errored_since(&cp)
+        && p.at(LArrow)
+        && p.consumed_since(&cp) == off
+        && (!lower_head || off == 1);
+    if is_pattern {
+        if after_anno {
+            p.error(ANNOTATION_ON_BIND_LINE);
+        }
+    } else {
+        p.rewind(cp);
+        let e = p.start();
+        for _ in 0..off {
+            p.bump();
+        }
+        p.error(BIND_LINE_FORM);
+        e.complete(p, Error);
+    }
+    bind_line_rest(p, m, anchor);
+    LetLine::Bind
+}
+
+/// The diagnostic for a `let` line with neither `=` nor `<-` (a bare
+/// expression). `line` is the line's text when it is short, else its first
+/// word and `…`.
+pub(crate) fn bare_let_line(line: &str) -> std::string::String {
+    format!(
+        "a line in a `let` block needs `=` or `<-`. To run an effect and drop its result, \
+         write `_ <- {line}`; to name a value, write `name = {line}`"
+    )
+}
+
+/// A `let` line with neither `=` nor `<-` (`println "x"`): one `[E0001]` at
+/// the line's start, and the line parses as an expression in an ERROR node.
+fn bare_let_line_rest(p: &mut Parser, anchor: u32, last: usize) {
+    let text = p.text_to(last);
+    let shown = if text.contains('\n') || text.chars().count() > 40 {
+        let head: std::string::String = text
+            .split(|c: char| c.is_whitespace())
+            .next()
+            .unwrap_or("")
+            .to_string();
+        format!("{head} …")
+    } else {
+        text.to_string()
+    };
+    let m = p.start();
+    p.error_on_line(bare_let_line(&shown), last);
+    let cp = p.checkpoint();
+    p.with_indent(anchor, |p| {
+        expr(p);
+    });
+    // A line no expression starts (`)`): take its tokens, so the block
+    // moves on.
+    if p.consumed_since(&cp) == 0 {
+        while !p.at_end() && p.pos_le(last) {
+            p.bump();
+        }
+    }
+    m.complete(p, Error);
+}
+
+fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
+    if let Some(off) = p.let_line_arrow(anchor) {
+        return bind_line(p, anchor, after_anno, off);
+    }
+    if p.at_any(BARE_LINE_START) || (p.at(Op) && p.cur_text() == "-") {
+        if let Some(last) = p.let_line_bare(anchor) {
+            bare_let_line_rest(p, anchor, last);
+            return LetLine::Equals;
+        }
+    }
     if p.at(LowerIdent) && p.nth(1) == Colon {
         // `name : Type` annotation binding
         let m = p.start();
@@ -1096,9 +1346,11 @@ fn let_binding(p: &mut Parser, anchor: u32) {
             ty(p);
         });
         m.complete(p, LetBinding);
-    } else if p.at(LowerIdent) {
+        LetLine::Annotation
+    } else if p.at(LowerIdent) && !matches!(p.nth(1), Colon2 | Comma) {
         // `name pat* = expr`
         let m = p.start();
+        let start = p.pos();
         p.bump(); // name
         let pl = p.start();
         while p.at_any(PAT_ATOM_START) && !p.at(Eq) {
@@ -1107,20 +1359,48 @@ fn let_binding(p: &mut Parser, anchor: u32) {
             pattern_app(p);
         }
         pl.complete(p, ParamList);
-        p.expect(Eq);
+        let eq = p.at(Eq);
+        expect_eq(p);
+        if eq {
+            eq_then_arrow(p, anchor, start);
+        }
         p.with_indent(anchor, |p| {
             expr(p);
         });
         m.complete(p, LetBinding);
+        LetLine::Equals
     } else {
-        // destructure: `(a, b) = e`, `{ x } = r`, `Just x = m`, `_ = e`
+        // destructure: `(a, b) = e`, `{ x } = r`, `Just x = m`, `_ = e`.
         let m = p.start();
+        let start = p.pos();
         pattern(p);
-        p.expect(Eq);
+        if p.at(Comma) {
+            // `a, b = e`: a tuple pattern without its parentheses. One
+            // diagnostic, and the rest of the line goes into one ERROR node.
+            let e = p.start();
+            p.error(BARE_TUPLE_PATTERN);
+            while p.eat(Comma) {
+                pattern(p);
+            }
+            if p.eat(Eq) {
+                p.with_indent(anchor, |p| {
+                    expr(p);
+                });
+            }
+            e.complete(p, Error);
+            m.complete(p, DestructureBinding);
+            return LetLine::Equals;
+        }
+        if p.eat(Eq) {
+            eq_then_arrow(p, anchor, start);
+        } else {
+            p.expect(Eq);
+        }
         p.with_indent(anchor, |p| {
             expr(p);
         });
         m.complete(p, DestructureBinding);
+        LetLine::Equals
     }
 }
 
@@ -1154,6 +1434,7 @@ fn case_expr(p: &mut Parser) -> CompletedMarker {
 fn match_arm(p: &mut Parser, pat_col: u32) {
     let m = p.start();
     pattern(p);
+    misplaced_bind_with(p, BIND_IN_CASE_ARM);
     p.expect(Arrow);
     // arm body binds `withIndent (max patCol bodyCol)` so the next sibling arm
     // is not slurped into this body (doc 03 §5.5).

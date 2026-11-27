@@ -49,6 +49,14 @@ greet { name, age } =
 
 Records can be destructured in function parameters as well as case branches.
 
+A pattern in a function parameter, a lambda parameter or a `let` destructure
+must match every value, because there is no second branch to take (v0.32.0).
+A variable, `_`, `()`, a record, a tuple, an alias and the constructor of a
+type with one variant are accepted there, also nested. A literal, a list or
+cons pattern, `True` / `False` and a constructor of a type with two or more
+variants (`\(Just x) -> x`) are `[E3001]`: match them with `case`. The
+pattern of a [bind line](syntax.md#bind-lines) (`p <- e`) follows the same rule.
+
 ## Nested patterns
 
 ```elm

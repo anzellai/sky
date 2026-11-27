@@ -39,11 +39,7 @@ import Std.Ui.Font as Font
 import Domain exposing (Note)
 import Persist
 
-
-
 -- ─── Model + Msg ───────────────────────────────────────────────────
-
-
 type alias Model =
     { notes : List Note
     , selected : Int
@@ -51,7 +47,6 @@ type alias Model =
     , draftBody : String
     , query : String
     }
-
 
 type Msg
     = -- PURE (client-local, zero round-trip)
@@ -66,10 +61,7 @@ type Msg
     | Delete Int
 
 
-
 -- ─── Pure helpers (client-safe) ────────────────────────────────────
-
-
 findNote : Int -> List Note -> Maybe Note
 findNote id notes =
     List.find (\n -> n.id == id) notes
@@ -78,16 +70,18 @@ findNote id notes =
 visibleNotes : Model -> List Note
 visibleNotes model =
     let
-        q =
-            String.toLower (String.trim model.query)
+        q = String.toLower (String.trim model.query)
     in
-    if String.isEmpty q then
-        model.notes
-
-    else
-        List.filter
-            (\n -> String.contains q (String.toLower (n.title ++ " " ++ n.body)))
+        if String.isEmpty q then
             model.notes
+
+        else
+            List.filter
+                (\n ->
+                    String.contains
+                        q
+                        (String.toLower (n.title ++ " " ++ n.body)))
+                model.notes
 
 
 cardTitle : Note -> String
@@ -102,15 +96,13 @@ cardTitle note =
 snippet : String -> String
 snippet body =
     let
-        one =
-            String.trim body
+        one = String.trim body
     in
-    if String.isEmpty one then
-        "No content yet"
+        if String.isEmpty one then
+            "No content yet"
 
-    else
-        String.left 52 one
-
+        else
+            String.left 52 one
 
 
 -- ─── init ──────────────────────────────────────────────────────────
@@ -118,35 +110,27 @@ snippet body =
 -- `Task.succeed` is client-safe (it dispatches a Msg; it is not an effect), so
 -- it survives verbatim into the wasm frontend; the `Load` branch it triggers is
 -- the effect, and that becomes a boot RPC (`POST /_rpc/Load`).
-
-
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { notes = []
-      , selected = 0
-      , draftTitle = ""
-      , draftBody = ""
-      , query = ""
-      }
+    ( { notes = [], selected = 0, draftTitle = "", draftBody = "", query = "" }
     , Cmd.perform (Task.succeed ()) (\_ -> Load)
     )
 
 
-
 -- ─── update ────────────────────────────────────────────────────────
-
-
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         -- PURE — pick a note into the editor. Zero network.
         Select id ->
             case findNote id model.notes of
+
                 Just n ->
                     ( { model
-                        | selected = id
-                        , draftTitle = n.title
-                        , draftBody = n.body
+                          | selected = id
+                          , draftTitle = n.title
+                          , draftBody = n.body
                       }
                     , Cmd.none
                     )
@@ -175,17 +159,16 @@ update msg model =
         -- only persisted as the body of the NEXT "New note".)
         Create ->
             let
-                newId =
-                    Persist.createNote "" ""
+                newId = Persist.createNote "" ""
             in
-            ( { model
-                | notes = Persist.loadNotes ()
-                , draftTitle = ""
-                , draftBody = ""
-                , selected = newId
-              }
-            , Cmd.none
-            )
+                ( { model
+                      | notes = Persist.loadNotes ()
+                      , draftTitle = ""
+                      , draftBody = ""
+                      , selected = newId
+                  }
+                , Cmd.none
+                )
 
         -- SERVER — write the drafts into the selected note. With no note
         -- selected (a fresh editor), Save creates one from the drafts and
@@ -196,14 +179,17 @@ update msg model =
                     newId =
                         Persist.createNote model.draftTitle model.draftBody
                 in
-                ( { model | notes = Persist.loadNotes (), selected = newId }
-                , Cmd.none
-                )
+                    ( { model | notes = Persist.loadNotes (), selected = newId }
+                    , Cmd.none
+                    )
 
             else
                 ( { model
-                    | notes =
-                        Persist.updateNote model.selected model.draftTitle model.draftBody
+                      | notes =
+                          Persist.updateNote
+                              model.selected
+                              model.draftTitle
+                              model.draftBody
                   }
                 , Cmd.none
                 )
@@ -211,19 +197,16 @@ update msg model =
         -- SERVER — delete a note by id, return the fresh list.
         Delete id ->
             ( { model
-                | notes = Persist.deleteNote id
-                , selected = 0
-                , draftTitle = ""
-                , draftBody = ""
+                  | notes = Persist.deleteNote id
+                  , selected = 0
+                  , draftTitle = ""
+                  , draftBody = ""
               }
             , Cmd.none
             )
 
 
-
 -- ─── Palette ───────────────────────────────────────────────────────
-
-
 pageBg : Ui.Color
 pageBg =
     Ui.rgb255 243 244 246
@@ -274,10 +257,7 @@ danger =
     Ui.rgb255 220 38 38
 
 
-
 -- ─── view (rich Std.Ui, cross-platform Element) ────────────────────
-
-
 hid : String -> Ui.Attribute msg
 hid v =
     Ui.htmlAttribute "id" v
@@ -292,33 +272,32 @@ header model =
         , Ui.spacing 12
         , Background.color headerBg
         , Border.shadow
-            { offsetX = 0
-            , offsetY = 1
-            , blur = 3
-            , spread = 0
-            , color = Ui.rgba 0 0 0 0.25
-            }
+              { offsetX = 0
+              , offsetY = 1
+              , blur = 3
+              , spread = 0
+              , color = Ui.rgba 0 0 0 0.25
+              }
         ]
-        [ Ui.el [ Font.size 19, Font.bold, Font.color white ] (Ui.text "Sky Notes")
+        [ Ui.el
+              [ Font.size 19, Font.bold, Font.color white ]
+              (Ui.text "Sky Notes")
         , Ui.el
-            [ Font.size 13, Font.color (Ui.rgb255 148 163 184) ]
-            (Ui.text (String.fromInt (List.length model.notes) ++ " saved"))
+              [ Font.size 13, Font.color (Ui.rgb255 148 163 184) ]
+              (Ui.text (String.fromInt (List.length model.notes) ++ " saved"))
         ]
 
 
 noteCard : Model -> Note -> Element Msg
 noteCard model note =
     let
-        isSel =
-            note.id == model.selected
-
+        isSel = note.id == model.selected
         cardBg =
             if isSel then
                 accentSoft
 
             else
                 panelBg
-
         edge =
             if isSel then
                 accent
@@ -326,32 +305,33 @@ noteCard model note =
             else
                 borderCol
     in
-    Ui.column
-        [ hid ("note-" ++ String.fromInt note.id)
-        , Ui.width Ui.fill
-        , Ui.padding 12
-        , Ui.spacing 4
-        , Background.color cardBg
-        , Border.width 1
-        , Border.color edge
-        , Border.rounded 10
-        , Ui.pointer
-        , Ev.onClick (Select note.id)
-        ]
-        [ Ui.el
-            [ Font.size 15
-            , Font.semiBold
-            , Font.color
-                (if isSel then
-                    accent
-
-                 else
-                    textDark
-                )
+        Ui.column
+            [ hid ("note-" ++ String.fromInt note.id)
+            , Ui.width Ui.fill
+            , Ui.padding 12
+            , Ui.spacing 4
+            , Background.color cardBg
+            , Border.width 1
+            , Border.color edge
+            , Border.rounded 10
+            , Ui.pointer
+            , Ev.onClick (Select note.id)
             ]
-            (Ui.text (cardTitle note))
-        , Ui.el [ Font.size 12, Font.color textMuted ] (Ui.text (snippet note.body))
-        ]
+            [ Ui.el
+                  [ Font.size 15
+                  , Font.semiBold
+                  , Font.color
+                        (if isSel then
+                            accent
+
+                        else
+                            textDark)
+                  ]
+                  (Ui.text (cardTitle note))
+            , Ui.el
+                  [ Font.size 12, Font.color textMuted ]
+                  (Ui.text (snippet note.body))
+            ]
 
 
 sidebar : Model -> Element Msg
@@ -422,76 +402,77 @@ editor model =
         , Ui.spacing 16
         ]
         [ Ui.input
-            [ hid "title-input"
-            , Ui.width Ui.fill
-            , Ui.paddingXY 14 12
-            , Font.size 22
-            , Font.semiBold
-            , Font.color textDark
-            , Background.color white
-            , Border.width 1
-            , Border.color borderCol
-            , Border.rounded 10
-            , Ui.htmlAttribute "value" model.draftTitle
-            , Ui.htmlAttribute "placeholder" "Note title"
-            , Ev.onInput DraftTitle
-            ]
-
+              [ hid "title-input"
+              , Ui.width Ui.fill
+              , Ui.paddingXY 14 12
+              , Font.size 22
+              , Font.semiBold
+              , Font.color textDark
+              , Background.color white
+              , Border.width 1
+              , Border.color borderCol
+              , Border.rounded 10
+              , Ui.htmlAttribute "value" model.draftTitle
+              , Ui.htmlAttribute "placeholder" "Note title"
+              , Ev.onInput DraftTitle
+              ]
         -- the body is a real multi-line <textarea> that GROWS to fill the editor
         -- and scrolls its own overflow (scrollbarY), not the page.
         , Input.multiline
-            [ hid "body-input"
-            , Ui.width Ui.fill
-            , Ui.height Ui.fill
-            , Ui.padding 14
-            , Font.size 15
-            , Font.color textDark
-            , Background.color white
-            , Border.width 1
-            , Border.color borderCol
-            , Border.rounded 10
-            , Ui.scrollbarY
-            ]
-            { onChange = DraftBody
-            , text = model.draftBody
-            , placeholder = Nothing
-            , label = Input.labelHidden "Note body"
-            , spellcheck = True
-            }
-
-        , Ui.row [ Ui.spacing 12 ]
-            [ Ui.button
-                [ hid "save-btn"
-                , Ui.paddingXY 22 12
-                , Font.semiBold
-                , Font.color white
-                , Background.color accent
-                , Border.rounded 10
-                , Background.hoverColor (Ui.rgb255 67 56 202)
-                ]
-                { onPress = Just Save, label = Ui.text "Save" }
-            , Ui.button
-                [ hid "delete-btn"
-                , Ui.paddingXY 22 12
-                , Font.semiBold
-                , Font.color danger
-                , Background.color white
-                , Border.width 1
-                , Border.color borderCol
-                , Border.rounded 10
-                ]
-                { onPress = Just (Delete model.selected), label = Ui.text "Delete" }
-            ]
+              [ hid "body-input"
+              , Ui.width Ui.fill
+              , Ui.height Ui.fill
+              , Ui.padding 14
+              , Font.size 15
+              , Font.color textDark
+              , Background.color white
+              , Border.width 1
+              , Border.color borderCol
+              , Border.rounded 10
+              , Ui.scrollbarY
+              ]
+              { onChange = DraftBody
+              , text = model.draftBody
+              , placeholder = Nothing
+              , label = Input.labelHidden "Note body"
+              , spellcheck = True
+              }
+        , Ui.row
+              [ Ui.spacing 12 ]
+              [ Ui.button
+                    [ hid "save-btn"
+                    , Ui.paddingXY 22 12
+                    , Font.semiBold
+                    , Font.color white
+                    , Background.color accent
+                    , Border.rounded 10
+                    , Background.hoverColor (Ui.rgb255 67 56 202)
+                    ]
+                    { onPress = Just Save, label = Ui.text "Save" }
+              , Ui.button
+                    [ hid "delete-btn"
+                    , Ui.paddingXY 22 12
+                    , Font.semiBold
+                    , Font.color danger
+                    , Background.color white
+                    , Border.width 1
+                    , Border.color borderCol
+                    , Border.rounded 10
+                    ]
+                    { onPress = Just (Delete model.selected)
+                    , label = Ui.text "Delete"
+                    }
+              ]
         ]
 
 
 view : Model -> any
 view model =
-    Ui.layout []
+    Ui.layout
+        []
         (Ui.column
             [ hid "app-shell"
             , Ui.width Ui.fill
-
             -- `height fill` (not `vh 100 + clip`) fills the viewport when content
             -- is short — the base CSS makes the app root at least 100vh — but LETS
             -- THE SHELL GROW and the page scroll when it isn't: on a phone the
@@ -500,11 +481,11 @@ view model =
             -- height and cut the buttons off below the fold.
             , Ui.height Ui.fill
             , Background.color pageBg
-            , Font.family "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+            , Font.family
+                  "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
             , Font.color textDark
             ]
             [ header model
-
             -- Sidebar + editor. RESPONSIVE DECISION: a `wrappedRow` with two
             -- fill-PORTION panes (sidebar 1 : editor 3) that each carry a
             -- min-width. On a desktop the mins both fit, so the portions split
@@ -518,15 +499,9 @@ view model =
             -- fill each wrapped mobile row. `Std.Ui` maps this straight onto CSS
             -- flexbox (flex-grow + flex-wrap), so it is one layout, no @media.
             , Ui.wrappedRow
-                [ hid "main"
-                , Ui.width Ui.fill
-                , Ui.height Ui.fill
-                ]
-                [ sidebar model
-                , editor model
-                ]
-            ]
-        )
+                  [ hid "main", Ui.width Ui.fill, Ui.height Ui.fill ]
+                  [ sidebar model, editor model ]
+            ])
 
 
 subscriptions : Model -> Sub Msg
@@ -535,6 +510,8 @@ subscriptions _ =
 
 
 main : Task Error ()
+
+
 appDef =
     App.web
         { init = init

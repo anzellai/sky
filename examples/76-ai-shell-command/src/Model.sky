@@ -114,11 +114,11 @@ job version =
 -- trainer runs detached) is followed again.
 train : Train.Job -> Task Error Train.Adapter
 train j =
-    Db.open "sqlite" (home ++ "/shell.db")
-        |> Task.andThen
-               (\db ->
-                   Train.start db j
-                       |> Task.andThen (\_ -> Task.loop (step db j) (-1)))
+    let
+        db <- Db.open "sqlite" (home ++ "/shell.db")
+        _ <- Train.start db j
+    in
+        Task.loop (step db j) (-1)
 
 
 step : Db -> Train.Job -> Int -> Task Error (Task.Step Int Train.Adapter)
@@ -132,25 +132,17 @@ step db j shown =
                            Task.succeed (Task.Done adapter)
 
                        Nothing ->
-                           Train.poll db [ j ]
-                               |> Task.andThen
-                                      (\worked ->
-                                          if worked then
-                                              Task.succeed ()
+                           let
+                               worked <- Train.poll db [ j ]
+                               _ <- Task.unless worked (Time.sleep 500)
+                               p <- Train.progress j
+                           in
+                               if p.step /= shown && modBy 25 p.step == 0 then
+                                   println (progressLine p)
+                                       |> Task.map (\_ -> Task.Loop p.step)
 
-                                          else
-                                              Time.sleep 500)
-                               |> Task.andThen (\_ -> Train.progress j)
-                               |> Task.andThen
-                                      (\p ->
-                                          if p.step /= shown
-                                              && modBy 25 p.step == 0 then
-                                              println (progressLine p)
-                                                  |> Task.map
-                                                         (\_ -> Task.Loop p.step)
-
-                                          else
-                                              Task.succeed (Task.Loop shown)))
+                               else
+                                   Task.succeed (Task.Loop shown))
 
 
 progressLine : Train.Progress -> String

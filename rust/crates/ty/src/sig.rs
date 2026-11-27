@@ -41,6 +41,10 @@ pub struct World {
     /// The ordinary lowering type world does not consume this channel.
     pub app_check_sigs: HashMap<DefId, Scheme>,
     pub(crate) app_group_errors: HashMap<DefId, Vec<crate::infer::TypeError>>,
+    /// CHECK-only: the unannotated app defs whose inference for
+    /// `app_check_sigs` reported an error. A bind line on a call of one
+    /// whose head stays unknown gives no second `[E2015]` (`crate::bind`).
+    pub(crate) app_failed_defs: std::collections::HashSet<DefId>,
     /// CHECK-ONLY override of an ANNOTATED def's scheme, as callers see it
     /// (v0.27.0). Two writers:
     /// * pass 6 (D-ANY): the signature with every `any` filled from the body
@@ -1084,6 +1088,17 @@ impl World {
                             }
                         })
                         .collect();
+                    // A bind line chooses its `andThen` from a type, not a
+                    // name, so it has no `Res::Def` edge. Order every
+                    // candidate first, conservatively
+                    // (docs/design/let-bind-lines.md §4).
+                    if crate::bind::body_has_bind(&resolved.bodies[d]) {
+                        deps.extend(
+                            crate::bind::candidate_and_thens(db, m)
+                                .iter()
+                                .filter_map(|c| indices.get(c).copied()),
+                        );
+                    }
                     deps.sort_unstable();
                     deps.dedup();
                     deps
@@ -1093,8 +1108,13 @@ impl World {
                 if group.len() == 1 {
                     let def = defs[group[0]];
                     let mut infer = Infer::new(self, db).with_self_def(Some(def));
-                    if let Some(scheme) = infer.infer_def_scheme(&resolved.bodies[&def], true) {
+                    let scheme = infer.infer_def_scheme(&resolved.bodies[&def], true);
+                    let failed = !infer.errors.is_empty();
+                    if let Some(scheme) = scheme {
                         self.app_check_sigs.insert(def, scheme);
+                    }
+                    if failed {
+                        self.app_failed_defs.insert(def);
                     }
                 } else {
                     let members: Vec<_> = group
@@ -1105,6 +1125,7 @@ impl World {
                     for (def, scheme, errors) in inferred {
                         self.app_check_sigs.insert(def, scheme);
                         if !errors.is_empty() {
+                            self.app_failed_defs.insert(def);
                             self.app_group_errors.insert(def, errors);
                         }
                     }
@@ -1306,11 +1327,18 @@ impl World {
     /// (passes 1-6, e.g. `World::build`) so the value matches the bulk pass
     /// exactly. Fetches the def's own body via `def_loc` + `resolve` (revision-safe
     /// inside a salsa query — every live `DefId` names an interned `DefKey`).
-    pub fn record_result_scheme_for(&self, db: &dyn SkyDb, def: DefId) -> Option<Scheme> {
+    /// `body_in` gives the def's body in its module as the passes after
+    /// inference read it ([`crate::ElaboratedBody`]): this runs on the check
+    /// world, so a bind line reads the check path's choice.
+    pub fn record_result_scheme_for(
+        &self,
+        db: &dyn SkyDb,
+        def: DefId,
+        body_in: impl FnOnce(ModuleId) -> Option<crate::ElaboratedBody>,
+    ) -> Option<Scheme> {
         let loc = db.def_loc(def)?;
-        let resolved = db.resolve(loc.module);
-        let body = resolved.bodies.get(&def)?;
-        self.admit_record_result(db, def, body)
+        let body = body_in(loc.module)?;
+        self.admit_record_result(db, def, &body)
     }
 
     /// Pass 4 (see `build`). Register precise stdlib combinator schemes into the
@@ -2266,6 +2294,15 @@ fn resolve_type_names(db: &dyn SkyDb, m: ModuleId, t: &ast::Type, keys: TypeKeys
     )
 }
 
+/// The qualified key of a kernel-implicit type's HOME declaration
+/// (`hir::KERNEL_IMPLICIT_HOMES`), when the home module declares it. `None`
+/// keeps the bare "module unknown" name.
+fn kernel_home_key(keys: TypeKeys<'_>, base: &str) -> Option<String> {
+    let home = hir::kernel_implicit_home(base)?;
+    let key = crate::nominal::qualify(home, base);
+    keys.union.contains(&key).then_some(key)
+}
+
 /// Walk a `Ty` (whose `App` names may be qualified — `"Q.Name"`) and rewrite any
 /// name HIR resolves to a declared alias OR union into its module-qualified key;
 /// every other name collapses to its bare final segment (the pre-#164 form). See
@@ -2363,7 +2400,23 @@ fn rewrite_alias_refs(
                             if known {
                                 return Ty::App(Name::new(&key), args);
                             }
+                        } else if loc.kind == DefKind::TypeCon {
+                            // A kernel-implicit type with a HOME
+                            // (`hir::KERNEL_IMPLICIT_HOMES`) is the home's own
+                            // declaration, not a "module unknown" wildcard: the
+                            // bare `Decoder` is the JSON decoder, and it must not
+                            // unify with `Std.Db.Decode.Decoder` (v0.32.0).
+                            if let Some(key) = kernel_home_key(keys, base) {
+                                return Ty::App(Name::new(&key), args);
+                            }
                         }
+                    }
+                } else if full == base {
+                    // The same name written bare with no import: HIR leaves a
+                    // kernel-implicit type unbound (`type_con_at`), and it means
+                    // the same home declaration.
+                    if let Some(key) = kernel_home_key(keys, base) {
+                        return Ty::App(Name::new(&key), args);
                     }
                 }
                 Ty::App(Name::new(base), args)

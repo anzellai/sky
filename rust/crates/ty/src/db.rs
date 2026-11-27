@@ -69,12 +69,43 @@ pub trait TyDb: SkyDb {
         module: ModuleId,
         def: DefId,
     ) -> Arc<crate::numeric::NumericElaboration> {
+        let Some(body) = self.elaborated_body_of(module, def) else {
+            return Arc::default();
+        };
         Arc::new(crate::numeric::compute_numeric_elaboration(
             &self.check_world(),
             self.as_sky_db(),
             module,
             def,
+            &body,
         ))
+    }
+
+    /// The `andThen` chosen for each bind line (`p <- e`) of a def, made on
+    /// the CHECK path ([`crate::compute_bind_elaboration`]). Every pass after
+    /// inference reads this table and never chooses again
+    /// (docs/design/let-bind-lines.md §4). Empty for a def with no bind line.
+    fn bind_elaboration_of(&self, module: ModuleId, def: DefId) -> Arc<crate::BindElaboration> {
+        Arc::new(crate::compute_bind_elaboration(
+            &self.check_world(),
+            self.as_sky_db(),
+            module,
+            def,
+        ))
+    }
+
+    /// THE body of a def for every pass after type inference
+    /// (docs/design/let-bind-lines.md §5): the shared body when the def has
+    /// no bind line, else a copy with each placeholder replaced by the
+    /// `andThen` [`TyDb::bind_elaboration_of`] chose. `None` for a def with no
+    /// body. The salsa backend memoises the copy per def, so `sky watch`
+    /// never reads one from an older revision.
+    fn elaborated_body_of(&self, module: ModuleId, def: DefId) -> Option<crate::ElaboratedBody> {
+        let owner = self.resolve(module);
+        let elaborated = crate::bind::elaborate_with(owner.bodies.get(&def)?, || {
+            self.bind_elaboration_of(module, def)
+        });
+        crate::ElaboratedBody::new(owner, def, elaborated)
     }
 
     /// This database viewed as the resolution interface, so a `TyDb` value can be
@@ -114,10 +145,30 @@ pub fn compute_body_types_with(
     module: ModuleId,
     def: DefId,
 ) -> BodyTypes {
+    compute_body_types_elaborated(world, overlay, None, db, module, def)
+}
+
+/// [`compute_body_types_with`] for a def whose bind lines (`p <- e`) have
+/// their `andThen` chosen on the check path (`elab`,
+/// [`crate::BindElaboration`]): the body is inferred with each placeholder
+/// replaced by the chosen `Res`, so the chosen def is instantiated with this
+/// lowering-path scheme exactly as a hand-written `M.andThen` is, and the
+/// lowering never chooses again (docs/design/let-bind-lines.md §4, §5).
+/// ExprIds are unchanged, so the table keys stay valid.
+pub fn compute_body_types_elaborated(
+    world: &World,
+    overlay: Option<&RecordOverlay>,
+    elab: Option<&crate::BindElaboration>,
+    db: &dyn SkyDb,
+    module: ModuleId,
+    def: DefId,
+) -> BodyTypes {
     let resolved = db.resolve(module);
-    let Some(body) = resolved.bodies.get(&def) else {
+    let Some(raw) = resolved.bodies.get(&def) else {
         return BodyTypes::default();
     };
+    let elaborated = elab.and_then(|e| crate::bind::elaborate_body(raw, e));
+    let body = elaborated.as_ref().unwrap_or(raw);
     let mut infer = Infer::new(world, db)
         .with_self_def(Some(def))
         .with_inferred(true)
@@ -234,7 +285,21 @@ impl TyDb for hir::SourceDb {
         // `record_result_sigs` (byte-identical to the pre-split eager behaviour;
         // passes 5-6 are `!use_inferred`-gated so they never perturb lowering).
         let world = World::build(self);
-        Arc::new(compute_body_types(&world, self, module, def))
+        // A def with a bind line is typed with the check path's choices.
+        let has_bind = self
+            .resolve(module)
+            .bodies
+            .get(&def)
+            .is_some_and(crate::bind::body_has_bind);
+        let elab = has_bind.then(|| crate::compute_bind_elaboration(&world, self, module, def));
+        Arc::new(compute_body_types_elaborated(
+            &world,
+            None,
+            elab.as_ref(),
+            self,
+            module,
+            def,
+        ))
     }
     fn as_sky_db(&self) -> &dyn SkyDb {
         self

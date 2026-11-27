@@ -41,68 +41,66 @@ main =
 
 open : String -> Task Error World
 open dir =
-    Db.open "sqlite" (dir ++ "/registry.db")
-        |> Task.andThen
-               (\db ->
-                   Registry.openConfigured db ("file://" ++ dir ++ "/store")
-                       |> Task.map (\reg -> { dir = dir, db = db, reg = reg }))
+    let
+        db <- Db.open "sqlite" (dir ++ "/registry.db")
+        reg <- Registry.openConfigured db ("file://" ++ dir ++ "/store")
+    in
+        Task.succeed { dir = dir, db = db, reg = reg }
 
 
 story : World -> Task Error ()
 story w =
-    registerVersion w "support-v1" "11"
-        |> Task.andThen
-               (\v1 ->
-                   registerVersion w "support-v2" "12"
-                       |> Task.map (\v2 -> ( v1, v2 )))
-        |> Task.andThen
-               (\( v1, v2 ) ->
-                   evaluate w 1 v1 |> Task.andThen (\_ -> evaluate w 2 v2)
-                       |> Task.map (\_ -> ( v1, v2 )))
-        |> Task.andThen
-               (\( v1, v2 ) -> promoteFirst w v1 |> Task.map (\_ -> ( v1, v2 )))
-        |> Task.andThen (\( _, v2 ) -> tryPromote w v2 |> Task.map (\_ -> v2))
-        |> Task.andThen (\v2 -> forceAndRollBack w v2)
-        |> Task.andThen (\_ -> showLineage w)
+    let
+        v1 <- registerVersion w "support-v1" "11"
+        v2 <- registerVersion w "support-v2" "12"
+        _ <- evaluate w 1 v1
+        _ <- evaluate w 2 v2
+        _ <- promoteFirst w v1
+        _ <- tryPromote w v2
+        _ <- forceAndRollBack w v2
+    in
+        showLineage w
 
 
 registerVersion : World -> String -> String -> Task Error Registry.Version
 registerVersion w name seed =
-    Support.adapterFile w.dir name
-        |> Task.andThen
-               (\adapter ->
-                   Registry.register
-                       w.reg
-                       "support-lora"
-                       adapter
-                       (Support.lineage seed))
-        |> Task.andThen
-               (\v ->
-                   println
-                       ("registered " ++ Registry.label v ++ "  adapter sha256:"
-                           ++ String.left 12 v.digest
-                           ++ "  base sha256:"
-                           ++ String.left 12 v.baseDigest)
-                       |> Task.map (\_ -> v))
+    let
+        adapter <- Support.adapterFile w.dir name
+        v <-
+            Registry.register
+                w.reg
+                "support-lora"
+                adapter
+                (Support.lineage seed)
+        _ <-
+            println
+                ("registered " ++ Registry.label v ++ "  adapter sha256:"
+                    ++ String.left 12 v.digest
+                    ++ "  base sha256:"
+                    ++ String.left 12 v.baseDigest)
+    in
+        Task.succeed v
 
 
 -- Run the suite with the version's label as the candidate, so a passing
 -- report names exactly this version, and attach it.
 evaluate : World -> Int -> Registry.Version -> Task Error ()
 evaluate w n v =
-    Eval.runAs (Registry.label v) w.db (Support.candidateFor n) Support.suite
-        |> Task.andThen
-               (\report ->
-                   Registry.attachReport w.reg v report
-                       |> Task.andThen
-                              (\_ ->
-                                  println
-                                      ("evaluated " ++ Registry.label v ++ "  "
-                                          ++ String.fromInt report.passed
-                                          ++ " of "
-                                          ++ String.fromInt
-                                                 (List.length report.cases)
-                                          ++ " passed")))
+    let
+        report <-
+            Eval.runAs
+                (Registry.label v)
+                w.db
+                (Support.candidateFor n)
+                Support.suite
+        _ <- Registry.attachReport w.reg v report
+    in
+        println
+            ("evaluated " ++ Registry.label v ++ "  "
+                ++ String.fromInt report.passed
+                ++ " of "
+                ++ String.fromInt (List.length report.cases)
+                ++ " passed")
 
 
 -- `promoteChecked` re-applies the gate to the attached report and promotes

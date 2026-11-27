@@ -33,20 +33,10 @@ createComment ideaId authorId content =
             , content = content
             , createdAt = ""
             }
+        _ <- Task.run (Store.insert Db.conn Db.commentStore comment)
+        _ = println ("[COMMENT] Added on " ++ ideaId ++ " by " ++ authorId)
     in
-        case Task.run (Store.insert Db.conn Db.commentStore comment) of
-
-            Err e ->
-                Err e
-
-            Ok _ ->
-                let
-                    _ =
-                        println
-                            ("[COMMENT] Added on " ++ ideaId ++ " by "
-                                ++ authorId)
-                in
-                    Ok ()
+        Ok ()
 
 
 -- getComments : comment + author name (LEFT JOIN) → typed CommentRow via selectRaw.

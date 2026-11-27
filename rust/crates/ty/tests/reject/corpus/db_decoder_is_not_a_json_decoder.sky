@@ -1,0 +1,31 @@
+-- gate: reject
+-- defect: a `Std.Db.Decode` row decoder passed to `Json.Decode.decodeString`
+-- rust: reject [E2001] `Std.Db.Decode.Decoder` is its own nominal type
+--
+-- Before v0.32.0 `Std.Db.Decode` wrote its signatures with the kernel-implicit
+-- bare `Decoder` (`hir::KERNEL_IMPLICIT_TYPES`), the same nominal type that
+-- `Sky.Core.Json.Decode` uses. A row decoder is a different runtime value (it
+-- reads SQL columns, not JSON), so this program passed `sky check` and then
+-- panicked in `rt.AsInt` at run time. `Std.Db.Decode` now declares its own
+-- opaque `type Decoder a`, so the two decoders cannot mix.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Json.Decode as Decode
+import Std.Db.Decode as DbDecode
+import Std.Log exposing (println)
+
+
+dbDec : Decode.Decoder Int
+dbDec =
+    DbDecode.int "age"
+
+
+main =
+    case Decode.decodeString dbDec "{\"age\": 3}" of
+
+        Ok n ->
+            println ("ok " ++ String.fromInt n)
+
+        Err _ ->
+            println "err"

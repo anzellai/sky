@@ -61,35 +61,25 @@ highlightInParagraph =
 
 rowInParagraph : Ui.Element msg
 rowInParagraph =
-    Ui.paragraph
-        []
-        [ Ui.row [] [ Ui.text "a", Ui.text "b" ]
-        , Ui.text " tail"
-        ]
+    Ui.paragraph [] [ Ui.row [] [ Ui.text "a", Ui.text "b" ], Ui.text " tail" ]
 
 
 -- Same `el`, no paragraph parent. Must be untouched by the fix.
 elInColumn : Ui.Element msg
 elInColumn =
-    Ui.column
-        []
-        [ Ui.el [ Font.bold ] (Ui.text "Sky.Live") ]
+    Ui.column [] [ Ui.el [ Font.bold ] (Ui.text "Sky.Live") ]
 
 
 rowInColumn : Ui.Element msg
 rowInColumn =
-    Ui.column
-        []
-        [ Ui.row [] [ Ui.text "a" ] ]
+    Ui.column [] [ Ui.row [] [ Ui.text "a" ] ]
 
 
 -- A paragraph nested in a column is still a block-level <p>: the fix
 -- must not make the paragraph ITSELF inline, only its children.
 paragraphInColumn : Ui.Element msg
 paragraphInColumn =
-    Ui.column
-        []
-        [ Ui.paragraph [] [ Ui.text "body" ] ]
+    Ui.column [] [ Ui.paragraph [] [ Ui.text "body" ] ]
 
 
 linkInParagraph : Ui.Element msg

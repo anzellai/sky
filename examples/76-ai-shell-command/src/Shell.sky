@@ -66,29 +66,23 @@ type alias Reading =
 
 collect : Int -> Process.Process -> Task Error Ran
 collect limitMs proc =
-    Process.closeStdin proc
-        |> Task.andThen
-               (\_ ->
-                   Task.loop
-                       (readStep limitMs proc)
-                       { offset = 0, out = "", waited = 0 })
-        |> Task.andThen
-               (\( out, timedOut ) ->
-                   (if timedOut then
-                       Process.kill proc Process.Kill
+    let
+        _ <- Process.closeStdin proc
+        ( out, timedOut ) <-
+            Task.loop
+                (readStep limitMs proc)
+                { offset = 0, out = "", waited = 0 }
+        _ <-
+            if timedOut then
+                Process.kill proc Process.Kill
 
-                   else
-                       Task.succeed ())
-                       |> Task.andThen (\_ -> Process.wait proc)
-                       |> Task.andThen
-                              (\status ->
-                                  Process.close proc
-                                      |> Task.map
-                                             (\_ ->
-                                                 { stdout = out
-                                                 , exit = exitCode status
-                                                 , timedOut = timedOut
-                                                 })))
+            else
+                Task.succeed ()
+        status <- Process.wait proc
+        _ <- Process.close proc
+    in
+        Task.succeed
+            { stdout = out, exit = exitCode status, timedOut = timedOut }
 
 
 readStep : Int -> Process.Process -> Reading -> Task Error (Task.Step Reading ( String, Bool ))

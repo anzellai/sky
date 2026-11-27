@@ -191,11 +191,23 @@ fn numeric_metadata_keeps_instantiation_and_literal_identity() {
             .unwrap()
             .def
     };
-    let big = ty::numeric::compute_numeric_elaboration(&world, &db, module, get("big"));
+    let big = ty::numeric::compute_numeric_elaboration(
+        &world,
+        &db,
+        module,
+        get("big"),
+        &ty::TyDb::elaborated_body_of(&db, module, get("big")).unwrap(),
+    );
     assert!(big.errors.is_empty(), "{:?}", big.errors);
     assert_eq!(big.top_params, 1);
     assert!(big.expressions.values().any(|s|matches!(s,ty::numeric::NumericShape::Number(p) if p.binder==ty::numeric::NumericBinder::Top)));
-    let caller = ty::numeric::compute_numeric_elaboration(&world, &db, module, get("b"));
+    let caller = ty::numeric::compute_numeric_elaboration(
+        &world,
+        &db,
+        module,
+        get("b"),
+        &ty::TyDb::elaborated_body_of(&db, module, get("b")).unwrap(),
+    );
     assert!(caller.errors.is_empty(), "{:?}", caller.errors);
     assert!(caller
         .references
@@ -223,7 +235,13 @@ fn numeric_metadata_keeps_local_quantifier_before_instances_collapse() {
         .find(|d| d.name.as_str() == "b")
         .unwrap()
         .def;
-    let info = ty::numeric::compute_numeric_elaboration(&world, &db, module, def);
+    let info = ty::numeric::compute_numeric_elaboration(
+        &world,
+        &db,
+        module,
+        def,
+        &ty::TyDb::elaborated_body_of(&db, module, def).unwrap(),
+    );
     assert!(info.errors.is_empty(), "{:?}", info.errors);
     assert_eq!(
         info.local_params.values().copied().collect::<Vec<_>>(),

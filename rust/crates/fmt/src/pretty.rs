@@ -36,11 +36,22 @@ struct Comment {
     text: String,
 }
 
+/// The unit key of the header region (the `module` line and the imports) in
+/// `Printer::units` and the `verbatim` set. Declarations are keyed by index.
+pub const HEADER: usize = usize::MAX;
+
 pub struct Printer {
     /// Own-line comments still to be placed, kept sorted by source line.
     comments: Vec<Comment>,
     line_starts: Vec<usize>,
     src: String,
+    /// Top-level units (by the index of their first decl) to print exactly as
+    /// written: units the opinionated printer cannot lay out without losing
+    /// a comment (see `crate::format_report`).
+    verbatim: std::collections::BTreeSet<usize>,
+    /// Every top-level unit printed: the index of its first decl and its
+    /// 0-based first source line.
+    pub units: Vec<(usize, usize)>,
 }
 
 /// When a record type may stay on one line.
@@ -55,6 +66,26 @@ enum RecordRule {
     /// one line when it fits, like a record expression. The source layout is
     /// not a signal here: the old printer broke every such record.
     Nested,
+}
+
+/// The shape of the unit at decl `i`: whether it is a value kind, and how
+/// many decls it takes (an annotation and its value are one unit), as
+/// `Printer::decl_unit` groups them.
+fn unit_shape(decls: &[Decl], i: usize) -> (bool, usize) {
+    match &decls[i] {
+        Decl::TypeAnno(anno) => {
+            let anno_name = anno.name().map(|t| t.text().to_string());
+            if let Some(Decl::Value(v)) = decls.get(i + 1) {
+                let vn = v.name().map(|t| t.text().to_string());
+                if anno_name.is_some() && anno_name == vn {
+                    return (true, 2);
+                }
+            }
+            (true, 1)
+        }
+        Decl::Value(_) => (true, 1),
+        Decl::Alias(_) | Decl::Union(_) => (false, 1),
+    }
 }
 
 fn width(s: &str) -> usize {
@@ -110,7 +141,36 @@ impl Printer {
             comments,
             line_starts,
             src: src.to_string(),
+            verbatim: Default::default(),
+            units: Vec::new(),
         }
+    }
+
+    /// Print the units whose first decl index is in `verbatim` exactly as
+    /// written.
+    pub fn with_verbatim(mut self, verbatim: std::collections::BTreeSet<usize>) -> Printer {
+        self.verbatim = verbatim;
+        self
+    }
+
+    /// The source text of decls `i .. i + n`, from the first significant
+    /// token to the end of the last one's line (a trailing comment on it is
+    /// kept), and the own-line comments inside it taken off the stream.
+    fn verbatim_unit(&mut self, decls: &[Decl], i: usize, n: usize) -> String {
+        let first = decls[i].syntax();
+        let last = decls[i + n - 1].syntax();
+        let start_line = self.line_of_node(first);
+        let end_line = self.end_line_of_node(last);
+        let start = self.line_starts[start_line];
+        let end = self
+            .line_starts
+            .get(end_line + 1)
+            .copied()
+            .unwrap_or(self.src.len());
+        let text = self.src[start..end].trim_end().to_string();
+        self.comments
+            .retain(|c| c.line < start_line || c.line > end_line);
+        text
     }
 
     /// The source slice spanning a node's significant tokens only (leading and
@@ -218,14 +278,61 @@ impl Printer {
         out
     }
 
-    /// End-of-decl mop-up: drain remaining own-line comments below the body but
-    /// before `next_line`, each at its own source column. Filters column 0 so
-    /// top-level headers still route to the next decl's start-of-decl drain.
-    fn drain_inner_until(&mut self, next_line: usize) -> String {
+    /// Drain every own-line comment above `node_line`, whatever its column,
+    /// each at its own source column. Used at the top level, where a comment
+    /// in the gap before a declaration (or before the imports, or above the
+    /// module header) belongs to that gap. An indented one keeps its column,
+    /// so a commented-out code block keeps its shape. Leaving it queued would
+    /// let a permissive drain inside the next declaration's body take it.
+    fn drain_leading(&mut self, node_line: usize) -> String {
         let mut out = String::new();
         let mut kept = Vec::with_capacity(self.comments.len());
         for c in std::mem::take(&mut self.comments) {
-            if c.line < next_line && c.col > 0 {
+            if c.line < node_line {
+                out.push_str(&render_comment(c.col, &c));
+            } else {
+                kept.push(c);
+            }
+        }
+        self.comments = kept;
+        out
+    }
+
+    /// Drain every own-line comment in the line window `[low, high)`, each at
+    /// its own source column. Used in a top-level gap that sits inside one
+    /// unit (between an annotation and its definition) or between two
+    /// imports, so the comment stays in that gap.
+    fn drain_between_at_own_col(&mut self, low: usize, high: usize) -> String {
+        let mut out = String::new();
+        let mut kept = Vec::with_capacity(self.comments.len());
+        for c in std::mem::take(&mut self.comments) {
+            if c.line >= low && c.line < high {
+                out.push_str(&render_comment(c.col, &c));
+            } else {
+                kept.push(c);
+            }
+        }
+        self.comments = kept;
+        out
+    }
+
+    /// End-of-decl mop-up: drain remaining own-line comments below the body but
+    /// before `next_line`, each at its own source column. Only the indented
+    /// comments ABOVE the gap's first column-0 comment are body trailers: that
+    /// column-0 comment and everything after it (indented or not) route to the
+    /// next decl's start-of-decl drain, so the gap keeps its source order.
+    fn drain_inner_until(&mut self, next_line: usize) -> String {
+        let cutoff = self
+            .comments
+            .iter()
+            .filter(|c| c.line < next_line && c.col == 0)
+            .map(|c| c.line)
+            .min()
+            .unwrap_or(next_line);
+        let mut out = String::new();
+        let mut kept = Vec::with_capacity(self.comments.len());
+        for c in std::mem::take(&mut self.comments) {
+            if c.line < cutoff && c.col > 0 {
                 out.push_str(&render_comment(c.col, &c));
             } else {
                 kept.push(c);
@@ -248,13 +355,48 @@ impl Printer {
     pub fn format(&mut self, file: &SourceFile) -> String {
         let mut sections: Vec<String> = Vec::new();
 
+        // The header region (the `module` line and the imports) is one unit,
+        // keyed `HEADER`. Kept as written, it is copied from its first
+        // significant line to the end of its last line, and the own-line
+        // comments inside it leave the stream.
+        let header_node = file.module_header().map(|h| h.syntax().clone());
+        let import_nodes: Vec<Import> = file.imports().collect();
+        let header_first = header_node
+            .clone()
+            .or_else(|| import_nodes.first().map(|i| i.syntax().clone()));
+        let header_last = import_nodes
+            .last()
+            .map(|i| i.syntax().clone())
+            .or_else(|| header_node.clone());
+        if let (Some(first), Some(last)) = (header_first, header_last) {
+            let start_line = self.line_of_node(&first);
+            self.units.push((HEADER, start_line));
+            if self.verbatim.contains(&HEADER) {
+                let lead = trim_trailing_newlines(&self.drain_leading(start_line));
+                if !lead.is_empty() {
+                    sections.push(lead);
+                }
+                let end_line = self.end_line_of_node(&last);
+                let start = self.line_starts[start_line];
+                let end = self
+                    .line_starts
+                    .get(end_line + 1)
+                    .copied()
+                    .unwrap_or(self.src.len());
+                sections.push(self.src[start..end].trim_end().to_string());
+                self.comments
+                    .retain(|c| c.line < start_line || c.line > end_line);
+                return self.format_decls(file, sections);
+            }
+        }
+
         if let Some(h) = file.module_header() {
             // A module-doc comment sitting ABOVE the `module` keyword must stay
             // there — it is the module's header doc (what `sky doc` reads). Drain
             // it before emitting the header; otherwise it falls through to the
             // first import/decl drain and lands below the module line.
             let mod_line = self.line_of_node(h.syntax());
-            let lead = trim_trailing_newlines(&self.drain_before(0, mod_line));
+            let lead = trim_trailing_newlines(&self.drain_leading(mod_line));
             if !lead.is_empty() {
                 sections.push(lead);
             }
@@ -267,36 +409,55 @@ impl Printer {
             sections.push(format!("{lhs}{exposing}"));
         }
 
-        let import_nodes: Vec<Import> = file.imports().collect();
         if !import_nodes.is_empty() {
             // Own-line header comments sitting above the first import belong ABOVE
             // the import block. Drain them here; otherwise they fall through to the
             // first decl's start-of-decl drain and get emitted below the imports.
             let first_line = self.line_of_node(import_nodes[0].syntax());
-            let lead = trim_trailing_newlines(&self.drain_before(0, first_line));
+            let lead = trim_trailing_newlines(&self.drain_leading(first_line));
             if !lead.is_empty() {
                 sections.push(format!("\n{lead}"));
             }
-            let rendered = import_nodes
-                .iter()
-                .map(|i| self.fmt_import(i))
-                .collect::<Vec<_>>()
-                .join("\n");
+            // A comment between two imports stays above the import below it.
+            let mut lines = Vec::with_capacity(import_nodes.len());
+            let mut prev_end: Option<usize> = None;
+            for imp in &import_nodes {
+                let line = self.line_of_node(imp.syntax());
+                let gap = match prev_end {
+                    Some(end) => self.drain_between_at_own_col(end + 1, line),
+                    None => String::new(),
+                };
+                lines.push(format!("{gap}{}", self.fmt_import(imp)));
+                prev_end = Some(self.end_line_of_node(imp.syntax()));
+            }
+            let rendered = lines.join("\n");
             sections.push(format!("\n{rendered}"));
         }
 
+        self.format_decls(file, sections)
+    }
+
+    /// Print the declarations (and the comments after them) below the
+    /// header sections already in `sections`, and join the file.
+    fn format_decls(&mut self, file: &SourceFile, mut sections: Vec<String>) -> String {
         // Group decls: a `name : Type` annotation immediately followed by the
         // matching `name …=…` value renders as one unit (value kind).
         let decls: Vec<Decl> = file.decls().collect();
         let next_lines = decl_next_lines(self, &decls);
         let mut i = 0;
         while i < decls.len() {
-            // Drain this decl's own-line header comments (col 0) BEFORE walking
-            // its body, so a lambda body's permissive drain cannot slurp a
-            // section header that belongs above this decl.
+            // Drain every own-line comment above this decl, whatever its
+            // column, BEFORE walking its body, so a drain inside the body
+            // cannot slurp a comment that sits in the gap above this decl.
             let node_line = self.line_of_node(decls[i].syntax());
-            let drained = self.drain_before(0, node_line);
-            let (unit, is_value, consumed) = self.decl_unit(&decls, i);
+            let drained = self.drain_leading(node_line);
+            self.units.push((i, node_line));
+            let (unit, is_value, consumed) = if self.verbatim.contains(&i) {
+                let (is_value, consumed) = unit_shape(&decls, i);
+                (self.verbatim_unit(&decls, i, consumed), is_value, consumed)
+            } else {
+                self.decl_unit(&decls, i)
+            };
             // Body-trailer comments below this unit, before the next decl.
             let nl = next_lines[i + consumed - 1];
             let post = trim_trailing_newlines(&self.drain_inner_until_opt(nl));
@@ -338,8 +499,14 @@ impl Printer {
                     let vn = v.name().map(|t| t.text().to_string());
                     if anno_name.is_some() && anno_name == vn {
                         let sig = self.fmt_anno(anno);
+                        // A comment between the annotation and the
+                        // definition stays there, at its own column.
+                        let gap = self.drain_between_at_own_col(
+                            self.end_line_of_node(anno.syntax()) + 1,
+                            self.line_of_node(v.syntax()),
+                        );
                         let val = self.fmt_value(v);
-                        return (format!("{sig}\n{val}"), true, 2);
+                        return (format!("{sig}\n{gap}{val}"), true, 2);
                     }
                 }
                 (self.fmt_anno(anno), true, 1)
@@ -368,8 +535,19 @@ impl Printer {
 
     fn fmt_import(&self, imp: &Import) -> String {
         let name = imp.name().map(|n| n.text()).unwrap_or_default();
+        // The alias is its node's last significant token: an upper name, or
+        // `_` for an import kept only for its Go side effects (`as _`).
         let alias = imp
-            .alias()
+            .syntax()
+            .children()
+            .find(|n| n.kind() == SyntaxKind::ImportAlias)
+            .and_then(|a| {
+                a.descendants_with_tokens()
+                    .filter_map(|e| e.into_token())
+                    .filter(|t| !t.kind().is_trivia())
+                    .last()
+            })
+            .filter(|t| t.text() != "as")
             .map(|a| format!(" as {}", a.text()))
             .unwrap_or_default();
         let prefix = format!("import {name}{alias}");
@@ -496,7 +674,7 @@ impl Printer {
         format!("type alias {name}{vars_str} =\n{}{body}", indent(STEP))
     }
 
-    fn fmt_union(&self, u: &syntax::ast::UnionDecl) -> String {
+    fn fmt_union(&mut self, u: &syntax::ast::UnionDecl) -> String {
         let name = u.name().map(|t| t.text().to_string()).unwrap_or_default();
         let vars = type_var_list(u.syntax());
         let vars_str = if vars.is_empty() {
@@ -504,18 +682,21 @@ impl Printer {
         } else {
             format!(" {}", vars.join(" "))
         };
-        let ctors: Vec<String> = u.variants().iter().map(|v| self.fmt_ctor(v)).collect();
-        let body = match ctors.as_slice() {
-            [] => String::new(),
-            [c] => format!("\n{}= {c}", indent(STEP)),
-            [c, rest @ ..] => {
-                let mut s = format!("\n{}= {c}", indent(STEP));
-                for r in rest {
-                    s.push_str(&format!("\n{}| {r}", indent(STEP)));
-                }
-                s
-            }
-        };
+        // A comment between the header and a variant, or between two
+        // variants, stays above the variant below it, at the variant indent.
+        let mut prev_end = self.line_of_node(u.syntax());
+        let mut body = String::new();
+        for (k, v) in u.variants().iter().enumerate() {
+            let line = self.line_of_node(v.syntax());
+            let gap = self.drain_gap(STEP, prev_end, line);
+            let lead = if k == 0 { "= " } else { "| " };
+            body.push_str(&format!(
+                "\n{gap}{}{lead}{}",
+                indent(STEP),
+                self.fmt_ctor(v)
+            ));
+            prev_end = self.end_line_of_node(v.syntax());
+        }
         format!("type {name}{vars_str}{body}")
     }
 
@@ -1225,14 +1406,22 @@ impl Printer {
                 None => format!("{name} : "),
             };
         }
-        // Destructure binding: `pat = expr`.
-        if b.kind() == SyntaxKind::DestructureBinding {
+        // Destructure binding `pat = expr`, or bind line `pat <- expr`.
+        if matches!(
+            b.kind(),
+            SyntaxKind::DestructureBinding | SyntaxKind::BindBinding
+        ) {
             let pat = pattern_children(b)
                 .first()
                 .map(|p| self.fmt_pattern(p))
                 .unwrap_or_default();
             let (lead, body) = self.binding_rhs(col, b);
-            return self.binding_body(col, &pat, &lead, body);
+            let op = if b.kind() == SyntaxKind::BindBinding {
+                "<-"
+            } else {
+                "="
+            };
+            return self.binding_body_op(col, &pat, op, &lead, body);
         }
         // Value binding: `name pat* = expr`.
         let name = first_lower(b);
@@ -1264,12 +1453,25 @@ impl Printer {
     }
 
     fn binding_body(&self, col: usize, lhs: &str, lead: &str, body: Option<String>) -> String {
+        self.binding_body_op(col, lhs, "=", lead, body)
+    }
+
+    /// `lhs op body` on one line when it fits, else `lhs op` with the body on
+    /// the next line one step in. `op` is `=` or a bind line's `<-`.
+    fn binding_body_op(
+        &self,
+        col: usize,
+        lhs: &str,
+        op: &str,
+        lead: &str,
+        body: Option<String>,
+    ) -> String {
         let body = body.unwrap_or_default();
-        let one_line = format!("{lhs} = {body}");
+        let one_line = format!("{lhs} {op} {body}");
         if lead.is_empty() && !body.contains('\n') && col + width(&one_line) <= 76 {
             one_line
         } else {
-            format!("{lhs} =\n{lead}{}{body}", indent(col + STEP))
+            format!("{lhs} {op}\n{lead}{}{body}", indent(col + STEP))
         }
     }
 
@@ -1628,7 +1830,7 @@ fn let_bindings(node: &SyntaxNode) -> Vec<SyntaxNode> {
         .filter(|n| {
             matches!(
                 n.kind(),
-                SyntaxKind::LetBinding | SyntaxKind::DestructureBinding
+                SyntaxKind::LetBinding | SyntaxKind::DestructureBinding | SyntaxKind::BindBinding
             )
         })
         .collect()

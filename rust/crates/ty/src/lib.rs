@@ -13,6 +13,7 @@
 
 use base::Name;
 
+mod bind;
 mod check;
 pub mod codec_elem;
 pub mod counters;
@@ -38,11 +39,15 @@ pub mod tytable;
 mod unify;
 pub mod variance;
 
+pub use bind::{
+    bind_calls, body_has_bind, candidate_and_thens, compute_bind_elaboration, elaborate_body,
+    elaborate_with, elaborated_bodies, unchosen_bind, BindElaboration, ElaboratedBody,
+};
 pub use check::{
     check_modules, check_modules_with_world, check_modules_with_world_without_report_types,
     undefined_types, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
 };
-pub use db::{compute_body_types, compute_body_types_with, TyDb};
+pub use db::{compute_body_types, compute_body_types_elaborated, compute_body_types_with, TyDb};
 pub use infer::RecordOverlay;
 pub use sig::{
     body_updates_a_param, caller_param_records, callsite_param_records_for, declared_param_record,
@@ -50,6 +55,9 @@ pub use sig::{
     variant_arg_types_qualified, wants_callsite_harvest, CallerParamRecords, ParamRecordSeen,
     World, WorldDecls,
 };
+// The one irrefutability check (v0.32.0): every binder position, including the
+// bind lines of a `let` block, calls it.
+pub use exhaustive::{check_binder, first_refutable, Binder};
 pub use unify::{SuperType, UnionFind};
 
 /// An arena-allocated type-variable id. Replaces `UF.Point` pointer identity
@@ -300,6 +308,13 @@ impl Ty {
     /// `main : t30` into `main : a` and `{ r61 | count : Int }` into
     /// `{ a | count : Int }`.
     pub fn render_pretty(&self) -> String {
+        self.render_pretty_avoiding(&std::collections::HashSet::new())
+    }
+
+    /// Like [`render_pretty`](Self::render_pretty), but a generated name is
+    /// never one of `avoid` (the names in scope where a message points, so
+    /// a type variable does not read as a value of the program).
+    pub fn render_pretty_avoiding(&self, avoid: &std::collections::HashSet<String>) -> String {
         let mut kept = std::collections::HashSet::new();
         self.for_each_var(&mut |n| {
             if !is_internal_var(n) {
@@ -309,6 +324,7 @@ impl Ty {
         let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let mut counter = 0usize;
         let mut used: std::collections::HashSet<String> = kept.clone();
+        used.extend(avoid.iter().cloned());
         self.for_each_var(&mut |n| {
             if is_internal_var(n) && !map.contains_key(n) {
                 // A minted bounded variable (`comparable12`) shows as its

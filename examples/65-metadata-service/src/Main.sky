@@ -37,17 +37,17 @@ seedCount =
 
 main : Task Error ()
 main =
-    Db.connect ()
-        |> Task.andThen
-               (\db ->
-                   -- Startup DB setup is best-effort: a transient DB hiccup
-                   -- must not crash the boot. If schema/seed fail, the server
-                   -- still starts (reads will surface the error per-request,
-                   -- and /healthz stays DB-free), so the process never exits
-                   -- on start.
-                   setupSchema db |> Task.andThen (\_ -> seed db)
-                       |> Task.onError (\_ -> Task.succeed ())
-                       |> Task.andThen (\_ -> startServer db))
+    let
+        db <- Db.connect ()
+        -- Startup DB setup is best-effort: a transient DB hiccup
+        -- must not crash the boot. If schema/seed fail, the server
+        -- still starts (reads will surface the error per-request,
+        -- and /healthz stays DB-free), so the process never exits
+        -- on start.
+        _ <-
+            Task.bestEffort (setupSchema db |> Task.andThen (\_ -> seed db))
+    in
+        startServer db
 
 
 -- ─── Startup: schema + seed (idempotent) ─────────────────────────

@@ -450,6 +450,28 @@ pub const GFR_SITE: Axis = Axis::new("gfr_site", &["poly_def", "poly_update", "c
 /// the lowering with different inferred types (doc 13 D3).
 pub const GFR_ANNOT: Axis = Axis::new("gfr_annot", &["annotated", "unannotated"]);
 
+/// **Which type a bind line chains** (v0.32.0, #342). A bind line `p <- e`
+/// in a `let` block chooses its `andThen` from the type of `e`: the Task,
+/// Result and Maybe heads are kernel-implicit (a fixed table), the JSON
+/// `Decoder` is a declared opaque type whose module exposes `andThen`.
+pub const LB_MONAD: Axis = Axis::new("lb_monad", &["task", "result", "maybe", "decoder"]);
+
+/// **The pattern on the left of `<-`** (v0.32.0): a name, a tuple, a record
+/// or `_`. Each is the parameter of the continuation lambda the bind line
+/// becomes, so each lowers to a different destructure.
+pub const LB_PATTERN: Axis = Axis::new("lb_pattern", &["name", "tuple", "record", "wild"]);
+
+/// **Where the bind line sits among the lines of the block** (v0.32.0). The
+/// line splits the block into segments: `first` leaves every `=` line in the
+/// continuation, `middle` splits them, `last` makes the `in` body the whole
+/// continuation.
+pub const LB_POSITION: Axis = Axis::new("lb_position", &["first", "middle", "last"]);
+
+/// **Whether the def that holds the block is annotated** (v0.32.0). The
+/// `andThen` is chosen from the inferred type of `e`; the annotation is a
+/// second source of that type (doc 13 D3).
+pub const LB_ANNOT: Axis = Axis::new("lb_annot", &["annotated", "unannotated"]);
+
 /// **How a Task-returning function reaches a `Task.andThen` chain.** A
 /// parameter `f : Int -> Task Error ()` called in a middle link whose result
 /// the next link ignores (`\_ -> …`) was typed `SkyTask[E, any]` by inference
@@ -742,6 +764,14 @@ pub const STRATA: &[Stratum] = &[
         // One module: the alias, the slot and the literal are all local.
         isolated: false,
     },
+    // ---- v0.32.0 ------------------------------------------------------------
+    Stratum {
+        name: "let_bind",
+        axes: &[LB_MONAD, LB_PATTERN, LB_POSITION, LB_ANNOT],
+        coordinate: Some("v0.32.0: `state <- Sync.get ref` between `=` lines of one `let` (#342)"),
+        // One module, one `let`: nothing here depends on a neighbour.
+        isolated: false,
+    },
 ];
 
 /// Whether a point in a stratum's cross is a real case.
@@ -915,6 +945,14 @@ pub fn pinned_coordinate(stratum: &str) -> Option<Assignment> {
                 .with(GFR_SLOT, "just")
                 .with(GFR_SITE, "poly_update")
                 .with(GFR_ANNOT, "annotated"),
+        ),
+        // v0.32.0: the design example, a Task bind line between `=` lines.
+        "let_bind" => Some(
+            Assignment::new()
+                .with(LB_MONAD, "task")
+                .with(LB_PATTERN, "name")
+                .with(LB_POSITION, "middle")
+                .with(LB_ANNOT, "annotated"),
         ),
         _ => None,
     }

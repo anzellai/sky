@@ -47,11 +47,9 @@ import Std.Sub as Sub
 -- The mock streaming server runs on :8765 (see ../mock/main.go).
 -- Override via SKY_MOCK_STREAM_URL if you want to point at a real
 -- upstream (LLM API, SSE endpoint, etc.).
-
 mockStreamUrl : String
 mockStreamUrl =
     "http://localhost:8765/stream"
-
 
 -- ─── Model ───────────────────────────────────────────────────────
 type alias PromptForm =
@@ -99,6 +97,7 @@ init _ =
 subscriptions : Model -> Sub.Sub Msg
 subscriptions model =
     case model.activeStream of
+
         Just sid ->
             HttpStream.chunks sid Chunked
 
@@ -216,24 +215,28 @@ view model =
         []
         [ styleNode [] pageStyles
         , div
-              [class "app"]
+              [ class "app" ]
               [ header
-                    [class "topbar"]
-                    [ h1 [] [text "Sky.Live · streaming chat"]
+                    [ class "topbar" ]
+                    [ h1 [] [ text "Sky.Live · streaming chat" ]
                     , p
-                          [class "hint"]
-                          [text
-                              "Type a prompt; the reply paints token-by-token via Sky.Core.Http.Stream."]
+                          [ class "hint" ]
+                          [ text
+                                "Type a prompt; the reply paints token-by-token via Sky.Core.Http.Stream."
+                          ]
                     ]
-              , div [class "content"]
+              , div
+                    [ class "content" ]
                     [ historyView model.history
                     , liveReplyView model
                     , composerView model
                     , noticeView model.notice
                     ]
               , footer
-                    [class "footer"]
-                    [text "Mock upstream: localhost:8765/stream (see mock/main.go) — 20 chunks @ 100 ms."]
+                    [ class "footer" ]
+                    [ text
+                          "Mock upstream: localhost:8765/stream (see mock/main.go) — 20 chunks @ 100 ms."
+                    ]
               ]
         ]
 
@@ -241,31 +244,37 @@ view model =
 historyView : List String -> Html Msg
 historyView history =
     if List.isEmpty history then
-        div [class "history empty"] [text "(no replies yet — send a prompt below)"]
+        div
+            [ class "history empty" ]
+            [ text "(no replies yet — send a prompt below)" ]
 
     else
-        div [class "history"] (List.map historyRow history)
+        div [ class "history" ] (List.map historyRow history)
 
 
 historyRow : String -> Html Msg
 historyRow reply =
-    div [class "history-row"] [text reply]
+    div [ class "history-row" ] [ text reply ]
 
 
 liveReplyView : Model -> Html Msg
 liveReplyView model =
     case model.activeStream of
+
         Just _ ->
             div
                 [ class "live-reply", id "live-reply" ]
-                [ div [class "live-reply-label"] [text "Streaming..."]
-                , div [class "live-reply-text"] [text model.reply]
-                , div [class "live-reply-meta"]
-                      [text ("(" ++ String.fromInt model.chunkCount ++ " chunks)")]
+                [ div [ class "live-reply-label" ] [ text "Streaming..." ]
+                , div [ class "live-reply-text" ] [ text model.reply ]
+                , div
+                      [ class "live-reply-meta" ]
+                      [ text
+                            ("(" ++ String.fromInt model.chunkCount ++ " chunks)")
+                      ]
                 ]
 
         Nothing ->
-            div [class "live-reply idle"] []
+            div [ class "live-reply idle" ] []
 
 
 composerView : Model -> Html Msg
@@ -273,30 +282,35 @@ composerView model =
     let
         disabledAttr =
             case model.activeStream of
-                Just _ -> [disabled True]
-                Nothing -> []
+
+                Just _ ->
+                    [ disabled True ]
+
+                Nothing ->
+                    []
     in
         form
             [ class "composer", onSubmit SendPrompt ]
             [ input
                   ([ name "prompt"
-                   , id "prompt-input"
-                   , placeholder "Ask the mock anything..."
-                   , autocomplete "off"
-                   ] ++ disabledAttr)
+                  , id "prompt-input"
+                  , placeholder "Ask the mock anything..."
+                  , autocomplete "off"
+                  ]
+                      ++ disabledAttr)
             , button
                   ([ type_ "submit", class "primary" ] ++ disabledAttr)
-                  [text "Send"]
+                  [ text "Send" ]
             ]
 
 
 noticeView : String -> Html Msg
 noticeView notice =
     if notice == "" then
-        span [class "notice empty"] []
+        span [ class "notice empty" ] []
 
     else
-        div [class "notice", id "notice"] [text notice]
+        div [ class "notice", id "notice" ] [ text notice ]
 
 
 -- ─── App wiring ──────────────────────────────────────────────────

@@ -112,6 +112,115 @@ parity n =
 A cycle through a plain value (`a = f 1` where `f` reads `a`) is not allowed:
 it has no value to start from.
 
+## Bind lines
+
+A line `p <- e` in a `let` block is a **bind line** (v0.32.0). It runs `e`
+and names its result `p` for the rest of the block. The later lines of the
+block and the `in` body are the continuation:
+
+```elm
+let
+    stats <- Sync.get ref
+    next = stats + 1
+    _ <- Sync.set next ref
+in
+    Task.succeed next
+```
+
+is the same program as
+
+```elm
+Sync.get ref
+    |> Task.andThen
+           (\stats ->
+               let
+                   next = stats + 1
+               in
+                   Sync.set next ref
+                       |> Task.andThen (\_ -> Task.succeed next))
+```
+
+A full program:
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.Log exposing (println)
+import Std.Sync as Sync exposing (Ref)
+
+
+bump : Ref Int -> Task Error Int
+bump ref =
+    let
+        before <- Sync.get ref
+        next = before + 1
+        _ <- Sync.set next ref
+    in
+        Task.succeed next
+
+
+parsePoint : String -> String -> Maybe ( Int, Int )
+parsePoint a b =
+    let
+        x <- String.toInt a
+        y <- String.toInt b
+    in
+        Just ( x, y )
+
+
+main =
+    let
+        ref <- Sync.newRef 41
+        n <- bump ref
+    in
+        println (String.fromInt n)
+```
+
+The rules:
+
+- **The `andThen` comes from the type of `e`.** A `Task` chains with
+  `Task.andThen`, a `Result` with `Result.andThen`, a `Maybe` with
+  `Maybe.andThen`, and a decoder with its own module's `andThen`
+  (`Json.Decode`, `Std.Db.Decode`, `Std.Config`, `Std.Xml.Decode`). Your own
+  type works when its module exposes `andThen : (a -> T b) -> T a -> T b`.
+  Nothing else is looked up: a local name `andThen` is never used.
+- **One type per block.** All bind lines of one block chain the same type, and
+  the `in` body has that type too. A `Maybe` bind line after a `Task` bind line
+  is `[E2001]`. Bridge the value first (`Task.fromResult`, `Result.fromMaybe`),
+  or use a nested `let` for the other type.
+- **`=` lines and `<-` lines mix in any order.** A bind line splits the block
+  into parts. Each part is one group, as a whole `let` is: its lines may refer
+  to each other in any order, and local functions may call each other. A line
+  sees the parts above it and not the parts below it. A reference to a name
+  defined below a bind line is `[E1001]`, and the hint says to move the
+  definition above the bind line.
+- **The pattern must match every value**: a name, `_`, `()`, a tuple, a
+  record, an alias, or the constructor of a type with one variant. `(Just x)
+  <- e` is `[E3001]`. Use `case` on the result.
+- **The type of `e` must be known.** When it is still a type variable at the
+  end of the definition the line is `[E2015]`
+  ([BIND NEEDS A TYPE](../errors/E2015-bind-needs-a-type.md)): annotate the
+  definition or the function `e` calls. A type with no `andThen` (an `Int`, a
+  `List`) is `[E2016]` ([NO ANDTHEN](../errors/E2016-no-andthen.md)).
+- **No annotation line on a bind line.** `x : T` directly above `x <- e` is a
+  parse error. Annotate the expression after `<-` instead.
+- **`<-` is valid only as a line of a `let` block.** Anywhere else it is a
+  parse error `[E0001]` that says so. `<-` is not an operator, and Sky still
+  has no custom operators.
+- **A block may end with a bind line.** The `in` body is then the whole
+  continuation.
+- **Recursion through a bind line is stack-safe** for a `Task`, the same as
+  recursion through `Task.andThen`.
+
+`sky fmt` keeps each bind line on one line when it fits, and puts a long `e`
+on the lines below `<-`. The language server shows the chosen `andThen` and
+the bound type when you hover `<-`, and go-to-definition on `<-` opens that
+`andThen` (`docs/tooling/lsp.md`).
+
 ## Case / of
 
 ```elm
@@ -195,7 +304,9 @@ html =
 | `&&` `\|\|` | Boolean |
 
 No custom operators — language constraint. Any other operator is a compile
-error (`[E1014] UNKNOWN OPERATOR`): "not equal" is `/=`, never `!=`.
+error (`[E1014] UNKNOWN OPERATOR`): "not equal" is `/=`, never `!=`. `<-` is
+not an operator: it is valid only as a [bind line](#bind-lines) of a `let`
+block, and anywhere else it is a parse error `[E0001]`.
 
 ## Comments
 
@@ -275,7 +386,7 @@ binding. When the parse
 accepted the word and read more of its construct before it failed, the word
 is in its valid place and is never named, even though renaming it would make
 the unit parse as a function call: `if y` with no `then` gives
-`expected ThenKw`, `case y` with no `of` gives `expected OfKw`, and a `let`
+``expected `then` ``, `case y` with no `of` gives ``expected `of` ``, and a `let`
 cut off after its first binding keeps the parser's message.
 
 On top of that, a trial must prove the word is the cause. Read as a
@@ -297,8 +408,10 @@ The earliest word that qualifies is named. This finds the word even where the
 parse fails a few tokens later (`x ++ if` fails at the end of the line) or at
 a valid keyword (`if if then …` names the second `if`, not `then`). When no
 word qualifies, the parser's own message stays, so a keyword in its valid
-place is never named: `module Main exposing main` gives `expected LParen`,
-and `if x 1 else 2` gives `expected ThenKw`.
+place is never named: `module Main exposing main` gives ``expected `(` ``,
+and `if x 1 else 2` gives ``expected `then` ``. A parser message names a
+token by its source text and a class by plain words (a name, a type), never
+by an internal kind name.
 
 A `case` needs at least one branch. `case x of` with no branch is
 `expected a case branch`. A `let` needs at least one binding. `let in x` is

@@ -159,12 +159,30 @@ mod view_memo;
 struct DefBody {
     owner: std::sync::Arc<hir::ResolveResult>,
     def: DefId,
+    /// The body with each bind line's placeholder replaced by the `andThen`
+    /// the type checker chose (`ty::elaborate_body`), for a def with a bind
+    /// line. ExprIds are those of the shared body.
+    elaborated: Option<std::sync::Arc<Body>>,
+}
+
+impl From<ty::ElaboratedBody> for DefBody {
+    fn from(b: ty::ElaboratedBody) -> Self {
+        let (owner, def, elaborated) = b.into_parts();
+        DefBody {
+            owner,
+            def,
+            elaborated,
+        }
+    }
 }
 
 impl std::ops::Deref for DefBody {
     type Target = Body;
     fn deref(&self) -> &Body {
-        &self.owner.bodies[&self.def]
+        match &self.elaborated {
+            Some(b) => b,
+            None => &self.owner.bodies[&self.def],
+        }
     }
 }
 
@@ -173,6 +191,9 @@ impl std::ops::Deref for DefBody {
 #[cfg(test)]
 impl std::ops::DerefMut for DefBody {
     fn deref_mut(&mut self) -> &mut Body {
+        if let Some(b) = &mut self.elaborated {
+            return std::sync::Arc::make_mut(b);
+        }
         std::sync::Arc::make_mut(&mut self.owner)
             .bodies
             .get_mut(&self.def)
@@ -388,6 +409,13 @@ fn lower_program_impl(
     let mut roots: Vec<DefId> = Vec::new();
     let mut candidates: BTreeMap<DefId, (ModuleId, Vec<DefId>)> = BTreeMap::new();
     let mut resolved_by_module = HashMap::new();
+    // Every body as the passes after inference read it
+    // (`TyDb::elaborated_body_of`): a bind line (`p <- e`) has the type
+    // checker's chosen `andThen` in place of the placeholder
+    // (docs/design/let-bind-lines.md §5). The reference closure below
+    // follows the chosen def, and every pass reads this body.
+    let mut elaborated: HashMap<DefId, ty::ElaboratedBody> = HashMap::new();
+
     // Every top-level definition with a body, for a coverage build: the ones
     // the program never lowers are reported as functions that never ran.
     let mut cov_all_tops: Vec<(DefId, String, String)> = Vec::new();
@@ -413,7 +441,7 @@ fn lower_program_impl(
             def_spans.entry(*d).or_insert(*sp);
         }
         for td in &resolved.top_defs {
-            if let Some(body) = resolved.bodies.get(&td.def) {
+            if let Some(body) = db.elaborated_body_of(m, td.def) {
                 if cfg.coverage {
                     cov_all_tops.push((td.def, mname.clone(), td.name.as_str().to_string()));
                 }
@@ -427,7 +455,8 @@ fn lower_program_impl(
                 if is_root {
                     roots.push(td.def);
                 }
-                candidates.insert(td.def, (m, body_def_refs(body)));
+                candidates.insert(td.def, (m, body_def_refs(&body)));
+                elaborated.insert(td.def, body);
             }
         }
         resolved_by_module.insert(m, resolved);
@@ -451,7 +480,7 @@ fn lower_program_impl(
         }
         let resolved = &resolved_by_module[m];
         let (Some(body), Some(td)) = (
-            resolved.bodies.get(d),
+            elaborated.get(d),
             resolved.top_defs.iter().find(|td| td.def == *d),
         ) else {
             continue;
@@ -466,10 +495,7 @@ fn lower_program_impl(
             DefEntry {
                 module_name: db.module_name(*m).to_string(),
                 name: td.name.as_str().to_string(),
-                body: DefBody {
-                    owner: std::sync::Arc::clone(resolved),
-                    def: *d,
-                },
+                body: DefBody::from(body.clone()),
                 types,
                 task_discards,
                 numeric,
@@ -1615,6 +1641,9 @@ fn compute_def_effect(
                     Res::Def(d2) => note_def(d2, &mut eff, &mut es),
                     _ => {}
                 },
+                // Lowering reads the elaborated body: a bind line names its
+                // chosen `andThen` as an ordinary `Res::Def` above.
+                Expr::Var(Res::BindAndThen) => ty::unchosen_bind("the effect scan"),
                 _ => {}
             }
         }
@@ -4880,6 +4909,14 @@ impl<'a> Ctx<'a> {
             }
             // The resolver reports every `Res::Error` it produces, and the build
             // halts on those diagnostics before lowering runs.
+            // Lowering reads the body with every bind line elaborated to the
+            // `andThen` the type checker chose (`DefEntry::body`). A placeholder
+            // left means the checker made no choice, and it reported that bind
+            // line, so the build halted before lowering
+            // (docs/design/let-bind-lines.md §4, §5).
+            Res::BindAndThen => {
+                self.ice("a bind line (`p <- e`) reached lowering with no chosen `andThen`".into())
+            }
             Res::Error => self.ice("an unresolved name reached lowering".into()),
         }
     }
@@ -7139,6 +7176,28 @@ impl<'a> Ctx<'a> {
                 return self.coerce_if_needed(call, actual);
             }
         }
+        // `Result.mapError f r` (the Prelude kernel path) over a proven
+        // `rt.SkyResult[E, A]` and a callback proven at `func(E) F`: the typed
+        // generic `rt.Result_mapErrorT[E, F, A]`. Same plan and proof as the
+        // `Sky.Core.Result` def path (`map_error_plan`). Unproven: the erased
+        // call, as before.
+        if args.len() == 2 && go == "rt.Result_mapError" {
+            if let Some((targs, slots, ret)) = self.map_error_plan(args) {
+                let fe = self.lower_expr(args[0], &slots[0]);
+                let r = self.lower_expr(args[1], &slots[1]);
+                if fe.ty == slots[0] && r.ty == slots[1] {
+                    self.register_used(&targs);
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall("rt.Result_mapErrorT".into(), targs, vec![fe, r]),
+                        ret,
+                    );
+                    return self.coerce_if_needed(call, actual);
+                }
+                let wf = self.widen(fe);
+                let wr = self.widen(r);
+                return self.kernel_call_lowered(go, vec![wf, wr], actual);
+            }
+        }
         // `List.take k` / `List.drop k` over a proven Int and slice: the typed
         // twins `rt.List_takeT[T]` / `List_dropT[T]` are a re-slice, O(1),
         // where the erased kernels reflect-widen the whole list and the slot
@@ -7606,6 +7665,16 @@ impl<'a> Ctx<'a> {
                     b,
                 ))
             }
+            // mapError fn r — see `map_error_plan`.
+            "rt.Result_mapErrorT" => {
+                let (targs, slots, ret) = self.map_error_plan(args)?;
+                Some((sym, targs, slots, ret))
+            }
+            // andThen fn m — see `and_then_plan`.
+            "rt.Maybe_andThenT" | "rt.Result_andThenT" => {
+                let (targs, slots, ret) = self.and_then_plan(args, sym == "rt.Result_andThenT")?;
+                Some((sym, targs, slots, ret))
+            }
             // any pred list
             "rt.List_anyT" => {
                 let Ok(a) = self.probe_goty(args[1]).into_slice() else {
@@ -7668,6 +7737,118 @@ impl<'a> Ctx<'a> {
             return None;
         }
         Some((vec![e, a.clone()], vec![a.clone(), r.clone()], a))
+    }
+
+    /// `Maybe.andThen fn m` / `Result.andThen fn r` (a hand-written chain, or
+    /// the `andThen` a bind line chose) whose argument and continuation lower
+    /// to proven Go types: the typed generic `rt.Maybe_andThenT[A, B]` /
+    /// `rt.Result_andThenT[E, A, B]` (`rt.go`), with `fn` lowered at
+    /// `func(A) rt.SkyMaybe[B]` and `m` at `rt.SkyMaybe[A]`.
+    ///
+    /// Doc 14: origin R12 (`Sky.Core.Maybe.andThen` erases to
+    /// `func(func(any) rt.SkyMaybe[any], rt.SkyMaybe[any]) rt.SkyMaybe[any]`,
+    /// `lower_def`), which surfaces at the CALLER as R1 (`rt.MaybeCoerce[any]`
+    /// on the argument, `rt.MaybeCoerce[B]` on the result) and, once the call
+    /// site types its continuation, as R2 (an eta wrapper with an `rt.AsInt`
+    /// per parameter). Lever §5.3, a typed entry point for a Sky def (the
+    /// def-path form of §5.5, as `result_with_default_plan`). Floor check
+    /// (§1): `A`, `B` (and `E`) are read off the Go types the argument and the
+    /// continuation lower to, and `provable` refuses `any`, a type parameter
+    /// and an anonymous struct, so both shapes are known at emit time. A func
+    /// payload keeps the erased call (the eta lever decides those). Unproven:
+    /// the erased call, byte-identical. Gate: `coerce-floor` and
+    /// `project/tests/and_then_no_new_narrowing.rs`.
+    fn and_then_plan(
+        &mut self,
+        args: &[ExprId],
+        result: bool,
+    ) -> Option<(Vec<GoTy>, Vec<GoTy>, GoTy)> {
+        if args.len() != 2 {
+            return None;
+        }
+        let m = self.probe_goty(args[1]);
+        let GoTy::Named(n, ta) = &m else {
+            return None;
+        };
+        let (head, want) = if result {
+            ("rt.SkyResult", 2)
+        } else {
+            ("rt.SkyMaybe", 1)
+        };
+        if n != head || ta.len() != want {
+            return None;
+        }
+        let a = ta[want - 1].clone();
+        let prefix: Vec<GoTy> = ta[..want - 1].to_vec();
+        if !provable(&m) || matches!(a, GoTy::Func(..)) {
+            return None;
+        }
+        let (ps, r) = closure::split_function_type(&self.probe_goty(args[0]), 1)?;
+        if ps != vec![a.clone()] {
+            return None;
+        }
+        let GoTy::Named(rn, rta) = &r else {
+            return None;
+        };
+        if rn != head || rta.len() != want || rta[..want - 1] != prefix[..] {
+            return None;
+        }
+        let b = rta[want - 1].clone();
+        if !provable(&r) || matches!(b, GoTy::Func(..)) {
+            return None;
+        }
+        if !self.callback_reaches_slot(args[0], &[a.clone()], &r) {
+            return None;
+        }
+        let mut targs = prefix;
+        targs.push(a.clone());
+        targs.push(b);
+        let cb = GoTy::Func(vec![a], Box::new(r.clone()));
+        Some((targs, vec![cb, m], r))
+    }
+
+    /// `Result.mapError fn r` whose argument and callback lower to proven Go
+    /// types: the typed generic `rt.Result_mapErrorT[E, F, A]` (`rt.go`),
+    /// with `fn` lowered at `func(E) F` and `r` at `rt.SkyResult[E, A]`. A
+    /// bind line per step with its own `mapError` (`x <- step |>
+    /// Result.mapError tag`) then keeps the chain on `rt.Result_andThenT`.
+    ///
+    /// Doc 14: origin R5 on the Prelude kernel path (`rt.Result_mapError`
+    /// returns `any`, which the slot narrows back with `rt.ResultCoerceOk`
+    /// and a per-field `rt.As*`) and R12 on the `Sky.Core.Result` def path
+    /// (the def erases to `any`, so its callback gains an eta wrapper with an
+    /// `rt.Coerce` per parameter). Lever §5.3, a typed entry point. Floor
+    /// check (§1): `E`, `A` are read off the Go type the argument lowers to
+    /// and `F` off the callback's, and `provable` refuses `any`, a type
+    /// parameter and an anonymous struct, so every shape is known at emit
+    /// time. A func payload keeps the erased call. Unproven: the erased call,
+    /// byte-identical. Gate: `coerce-floor` and
+    /// `project/tests/and_then_no_new_narrowing.rs`.
+    fn map_error_plan(&mut self, args: &[ExprId]) -> Option<(Vec<GoTy>, Vec<GoTy>, GoTy)> {
+        if args.len() != 2 {
+            return None;
+        }
+        let r = self.probe_goty(args[1]);
+        let GoTy::Named(n, ta) = &r else {
+            return None;
+        };
+        if n != "rt.SkyResult" || ta.len() != 2 || !provable(&r) {
+            return None;
+        }
+        let (e, a) = (ta[0].clone(), ta[1].clone());
+        if matches!(a, GoTy::Func(..)) || matches!(e, GoTy::Func(..)) {
+            return None;
+        }
+        let (ps, f) = closure::split_function_type(&self.probe_goty(args[0]), 1)?;
+        if ps != vec![e.clone()] || !provable(&f) || matches!(f, GoTy::Func(..)) {
+            return None;
+        }
+        if !self.callback_reaches_slot(args[0], &[e.clone()], &f) {
+            return None;
+        }
+        let out = GoTy::Named("rt.SkyResult".into(), vec![f.clone(), a.clone()]);
+        let cb = GoTy::Func(vec![e.clone()], Box::new(f.clone()));
+        Some((vec![e, f, a], vec![cb, r], out))
     }
 
     /// Keep the declarations of the named types in `targs` past the
@@ -11272,6 +11453,9 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
         "rt.Result_withDefaultT",
         2,
     ),
+    ("Sky.Core.Maybe", "andThen", "rt.Maybe_andThenT", 2),
+    ("Sky.Core.Result", "andThen", "rt.Result_andThenT", 2),
+    ("Sky.Core.Result", "mapError", "rt.Result_mapErrorT", 2),
 ];
 
 /// The UNARY list kernels whose typed twin returns a Go PRIMITIVE, keyed by the
@@ -12287,6 +12471,7 @@ mod shared_body_owner_tests {
                 DefBody {
                     owner: std::sync::Arc::clone(&resolved),
                     def: *def,
+                    elaborated: None,
                 }
             })
             .collect();
@@ -12328,6 +12513,7 @@ mod shared_body_owner_tests {
         let mut edited = DefBody {
             owner: std::sync::Arc::clone(&first.owner),
             def: first.def,
+            elaborated: None,
         };
         let replacement = edited.exprs.alloc(Expr::Int(99));
         edited.root = Some(replacement);

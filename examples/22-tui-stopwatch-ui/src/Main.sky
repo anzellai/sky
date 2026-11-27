@@ -57,7 +57,9 @@ type Msg
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { running = False, elapsedMs = 0, accumulatedMs = 0, startedAt = 0 }, Cmd.none )
+    ( { running = False, elapsedMs = 0, accumulatedMs = 0, startedAt = 0 }
+    , Cmd.none
+    )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -77,17 +79,34 @@ update msg model =
                 ( { model | startedAt = now }, Cmd.none )
 
             else
-                ( { model | elapsedMs = model.accumulatedMs + (now - model.startedAt) }, Cmd.none )
+                ( { model
+                      | elapsedMs =
+                          model.accumulatedMs + (now - model.startedAt)
+                  }
+                , Cmd.none
+                )
 
         Toggle ->
             if model.running then
-                ( { model | running = False, accumulatedMs = model.elapsedMs, startedAt = 0 }, Cmd.none )
+                ( { model
+                      | running = False
+                      , accumulatedMs = model.elapsedMs
+                      , startedAt = 0
+                  }
+                , Cmd.none
+                )
 
             else
                 ( { model | running = True, startedAt = 0 }, Cmd.none )
 
         Reset ->
-            ( { running = False, elapsedMs = 0, accumulatedMs = 0, startedAt = 0 }, Cmd.none )
+            ( { running = False
+              , elapsedMs = 0
+              , accumulatedMs = 0
+              , startedAt = 0
+              }
+            , Cmd.none
+            )
 
         Quit ->
             ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )

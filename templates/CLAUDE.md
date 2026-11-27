@@ -12,7 +12,7 @@
 > Upgrading a project to a new Sky minor? Each migration guide lists every
 > change, old code and new code, as loud, loud at run time or silent:
 > https://github.com/anzellai/sky/tree/main/docs/migration (`v0.27.md`,
-> `v0.28.md`, `v0.29.md`, `v0.30.md`, `v0.31.md`).
+> `v0.28.md`, `v0.29.md`, `v0.30.md`, `v0.31.md`, `v0.32.md`).
 > Numeric instantiation and function application follow the rules in
 > https://github.com/anzellai/sky/blob/main/docs/language/types.md.
 > Task execution and tuple discard rules are in
@@ -217,6 +217,78 @@ decoder rejects (it used to return the default). Run `sky test` and exercise
 each JSON input once after the upgrade. Where a lenient fallback is intended,
 write it out (`Decode.oneOf [ dec, Decode.succeed default ]`); do not loosen a
 decoder only to make a test pass. See AGENTS.md "JSON decoding is strict".
+
+### After an upgrade to v0.32.0, write effect chains with bind lines
+
+Sky v0.32.0 adds bind lines: `p <- e` as a line of a `let` block runs `e` and
+names its result for the rest of the block (AGENTS.md, "Effect and
+control-flow style"). When you edit a right-drifting `Task.andThen (\x -> …)`
+chain, rewrite it as bind lines. Do not rewrite a flat pipeline that is
+already clear.
+
+```elm
+-- Before
+recordVisit ref =
+    Sync.get ref
+        |> Task.andThen
+               (\stats ->
+                   Time.now ()
+                       |> Task.andThen
+                              (\now ->
+                                  let
+                                      next =
+                                          { stats | visits = stats.visits + 1, lastSeen = now }
+                                  in
+                                      Sync.set next ref
+                                          |> Task.andThen (\_ -> Task.succeed next)))
+
+-- After
+recordVisit ref =
+    let
+        stats <- Sync.get ref
+        now <- Time.now ()
+        next = { stats | visits = stats.visits + 1, lastSeen = now }
+        _ <- Sync.set next ref
+    in
+        Task.succeed next
+```
+
+Replace a local `bestEffort` or `unless` helper with `Task.bestEffort` and
+`Task.unless`. To handle the error of one step only, use `Task.toResult` and a
+`case`, not a `Task.onError` around the whole block:
+
+```elm
+flush queue =
+    let
+        pending <- Sync.get queue
+        _ <-
+            Task.unless
+                (List.isEmpty pending)
+                (send pending |> Task.retryWith (Task.exponentialBackoff 3 200))
+        _ <- Sync.set [] queue
+    in
+        Task.bestEffort (println "flushed")
+
+
+loadProfile id =
+    let
+        user <- fetchUser id
+        avatar <- Task.toResult (fetchAvatar user)
+    in
+        case avatar of
+            Ok url ->
+                Task.succeed { name = user.name, avatar = url }
+
+            Err _ ->
+                Task.succeed { name = user.name, avatar = "/default.png" }
+```
+
+A module that imports `Sky.Core.Task` and `Sky.Core.Maybe` with `exposing (..)`
+and writes a bare `toResult` gets `[E1012]`: write `Task.toResult` or
+`Maybe.toResult`. A row, TOML or XML decoder written as the bare `Decoder` is
+`[E2001]` (write `DbDecode.Decoder`, `Config.Decoder`, `XmlDecode.Decoder`),
+and a refutable pattern in a parameter is `[E3001]`. `docs/migration/v0.32.md`
+lists every change.
 
 ### After an upgrade to v0.31.0, check JSON with repeated keys and Dict wire shapes
 

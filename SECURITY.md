@@ -42,7 +42,7 @@ security fixes.
 
 | Version | Supported |
 |---|---|
-| Latest 0.x line (currently **v0.23.x**) | ✅ |
+| Latest 0.x line (currently **v0.32.x**) | ✅ |
 | Any older 0.x release | ❌ (upgrade to the latest) |
 
 See [`VERSIONING.md`](VERSIONING.md) for the full versioning and release policy,

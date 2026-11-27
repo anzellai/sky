@@ -28,6 +28,7 @@ import Sky.Test as Test exposing (Test)
 gzipRT : String -> Result Error String
 gzipRT s =
     case Task.run (Compression.gzip s) of
+
         Err e ->
             Err e
 
@@ -39,6 +40,7 @@ gzipRT s =
 zstdRT : String -> Result Error String
 zstdRT s =
     case Task.run (Compression.zstdCompress s) of
+
         Err e ->
             Err e
 

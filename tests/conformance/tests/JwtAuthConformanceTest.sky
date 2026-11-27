@@ -49,9 +49,7 @@ signWith secret c =
 -- A claim set that is valid for a long time (exp far in the future).
 validClaims : Jwt.Claims
 validClaims =
-    Jwt.claims
-        |> Jwt.subject "u1"
-        |> Jwt.issuer "sky-conf"
+    Jwt.claims |> Jwt.subject "u1" |> Jwt.issuer "sky-conf"
         |> Jwt.expiresAt 9999999999
 
 
@@ -83,8 +81,12 @@ headPayloadOf tok =
 -- an `alg:none` header the way an attacker would.
 b64u : String -> String
 b64u s =
-    String.replace "=" ""
-        (String.replace "/" "_"
+    String.replace
+        "="
+        ""
+        (String.replace
+            "/"
+            "_"
             (String.replace "+" "-" (Encoding.base64Encode s)))
 
 

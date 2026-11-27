@@ -50,11 +50,11 @@ main =
 
 boot : () -> Task Error ()
 boot _ =
-    Config.load ()
-        |> Task.andThen
-               (\cfg ->
-                   Time.unixMillis ()
-                       |> Task.andThen (\bootMs -> withCache cfg bootMs))
+    let
+        cfg <- Config.load ()
+        bootMs <- Time.unixMillis ()
+    in
+        withCache cfg bootMs
 
 
 withCache : Config -> Int -> Task Error ()

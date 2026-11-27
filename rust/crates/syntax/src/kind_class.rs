@@ -131,6 +131,8 @@ pub const KIND_CLASSES: &[(SyntaxKind, KindClass)] = &[
     (DotDot, PUNCT),
     (Pipe, PUNCT),
     (Arrow, PUNCT),
+    // `<-`: the bind line of a `let` block (docs/design/let-bind-lines.md).
+    (LArrow, PUNCT),
     (Backslash, PUNCT),
     // The operator SET is user-facing and BinExpr does not distinguish `+`
     // from `|>` / `::` / `++` — precedence and associativity are per-operator.
@@ -224,6 +226,7 @@ pub const KIND_CLASSES: &[(SyntaxKind, KindClass)] = &[
     (LetExpr, KindClass::Construct),
     (LetBinding, KindClass::Construct),
     (DestructureBinding, KindClass::Construct),
+    (BindBinding, KindClass::Construct),
     (CaseExpr, KindClass::Construct),
     (MatchArm, KindClass::Construct),
     // ---- builder internal ----
@@ -325,11 +328,11 @@ mod tests {
         let constructs = construct_kinds().len();
         let total = kind_count();
         assert_eq!(
-            total, 122,
+            total, 124,
             "SyntaxKind count changed — reclassify, then update this pin"
         );
         assert_eq!(
-            constructs, 79,
+            constructs, 80,
             "construct count changed ({constructs} of {total}) — intentional? update this pin \
              in the same commit that changes KIND_CLASSES"
         );

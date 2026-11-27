@@ -1,0 +1,22 @@
+-- gate: reject
+-- defect: a refutable pattern as a parameter of a `let`-bound function
+-- rust: reject [E3001] a binder pattern must match every value; use `case`
+--
+-- The same rule as a top-level parameter: `first (x :: _)` has no answer for
+-- the empty list.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+total : List Int -> Int
+total xs =
+    let
+        first (x :: _) = x
+    in
+        first xs
+
+
+main =
+    println (String.fromInt (total []))

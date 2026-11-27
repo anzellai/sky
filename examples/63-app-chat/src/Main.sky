@@ -50,17 +50,12 @@ import Std.Ui.Font as Font
 import Domain exposing (Message)
 import Persist
 
-
-
 -- ─── Model + Msg ───────────────────────────────────────────────────
-
-
 type alias Model =
     { messages : List Message
     , name : String
     , draft : String
     }
-
 
 type Msg
     = -- PURE (client-local, zero round-trip)
@@ -73,10 +68,7 @@ type Msg
     | Send
 
 
-
 -- ─── Pure helpers (client-safe) ────────────────────────────────────
-
-
 -- Whether a message was written by THIS client — drives own-vs-other styling.
 isMine : Model -> Message -> Bool
 isMine model msg =
@@ -91,16 +83,11 @@ isMine model msg =
 clock : Int -> String
 clock ts =
     let
-        totalMinutes =
-            ts // 60000
-
-        hours =
-            modBy 24 (totalMinutes // 60)
-
-        minutes =
-            modBy 60 totalMinutes
+        totalMinutes = ts // 60000
+        hours = modBy 24 (totalMinutes // 60)
+        minutes = modBy 60 totalMinutes
     in
-    pad2 hours ++ ":" ++ pad2 minutes
+        pad2 hours ++ ":" ++ pad2 minutes
 
 
 pad2 : Int -> String
@@ -125,6 +112,7 @@ canSend model =
 onPush : String -> Msg
 onPush raw =
     case Codec.fromJson Domain.messageCodec raw of
+
         Ok msg ->
             Received msg
 
@@ -132,31 +120,23 @@ onPush raw =
             Ignore
 
 
-
 -- ─── init ──────────────────────────────────────────────────────────
 -- Pure — starts empty, then fires `Load` once. `Cmd.perform` over a PURE
 -- `Task.succeed` is client-safe (it dispatches a Msg; it is not an effect), so
 -- it survives verbatim into the wasm frontend; the `Load` branch it triggers is
 -- the effect, and that becomes a boot RPC (`POST /_rpc/Load`).
-
-
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { messages = []
-      , name = "guest"
-      , draft = ""
-      }
+    ( { messages = [], name = "guest", draft = "" }
     , Cmd.perform (Task.succeed ()) (\_ -> Load)
     )
 
 
-
 -- ─── update ────────────────────────────────────────────────────────
-
-
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         -- PURE — edit the composer draft in memory. Zero network.
         Compose s ->
             ( { model | draft = s }, Cmd.none )
@@ -173,7 +153,9 @@ update msg model =
                 ( model, Cmd.none )
 
             else
-                ( { model | messages = model.messages ++ [ incoming ] }, Cmd.none )
+                ( { model | messages = model.messages ++ [ incoming ] }
+                , Cmd.none
+                )
 
         -- PURE — a frame we could not decode. Do nothing.
         Ignore ->
@@ -190,18 +172,16 @@ update msg model =
         -- path, one dedup, no double-append).
         Send ->
             let
-                saved =
-                    Persist.appendMessage model.name model.draft
+                saved = Persist.appendMessage model.name model.draft
             in
-            ( { model | draft = "" }
-            , Cmd.publish "room:main" (Codec.toJson Domain.messageCodec saved)
-            )
-
+                ( { model | draft = "" }
+                , Cmd.publish
+                      "room:main"
+                      (Codec.toJson Domain.messageCodec saved)
+                )
 
 
 -- ─── Palette ───────────────────────────────────────────────────────
-
-
 pageBg : Ui.Color
 pageBg =
     Ui.rgb255 241 245 249
@@ -252,10 +232,7 @@ online =
     Ui.rgb255 52 211 153
 
 
-
 -- ─── view (rich Std.Ui, cross-platform Element) ────────────────────
-
-
 hid : String -> Ui.Attribute msg
 hid v =
     Ui.htmlAttribute "id" v
@@ -270,45 +247,47 @@ header model =
         , Ui.spacing 12
         , Background.color headerBg
         , Border.shadow
-            { offsetX = 0
-            , offsetY = 1
-            , blur = 3
-            , spread = 0
-            , color = Ui.rgba 0 0 0 0.25
-            }
+              { offsetX = 0
+              , offsetY = 1
+              , blur = 3
+              , spread = 0
+              , color = Ui.rgba 0 0 0 0.25
+              }
         ]
-        [ Ui.el [ Font.size 19, Font.bold, Font.color white ] (Ui.text "Sky Chat")
+        [ Ui.el
+              [ Font.size 19, Font.bold, Font.color white ]
+              (Ui.text "Sky Chat")
         , Ui.el
-            [ hid "room-label", Font.size 13, Font.color (Ui.rgb255 148 163 184) ]
-            (Ui.text "#main")
+              [ hid "room-label"
+              , Font.size 13
+              , Font.color (Ui.rgb255 148 163 184)
+              ]
+              (Ui.text "#main")
         , Ui.el [ Ui.width Ui.fill ] Ui.none
         , Ui.el [ Font.size 15, Font.color online ] (Ui.text "●")
         , Ui.el
-            [ Font.size 13, Font.color (Ui.rgb255 203 213 225) ]
-            (Ui.text (String.fromInt (List.length model.messages) ++ " messages"))
+              [ Font.size 13, Font.color (Ui.rgb255 203 213 225) ]
+              (Ui.text
+                  (String.fromInt (List.length model.messages) ++ " messages"))
         ]
 
 
 bubble : Model -> Message -> Element Msg
 bubble model msg =
     let
-        mine =
-            isMine model msg
-
+        mine = isMine model msg
         cardBg =
             if mine then
                 accentSoft
 
             else
                 bubbleOther
-
         edge =
             if mine then
                 accent
 
             else
                 borderCol
-
         align =
             if mine then
                 Ui.alignRight
@@ -316,29 +295,30 @@ bubble model msg =
             else
                 Ui.alignLeft
     in
-    Ui.column
-        [ hid ("msg-" ++ String.fromInt msg.id)
-        , align
-        , Ui.width (Ui.maximum 460 Ui.shrink)
-        , Ui.padding 12
-        , Ui.spacing 4
-        , Background.color cardBg
-        , Border.width 1
-        , Border.color edge
-        , Border.rounded 12
-        ]
-        [ Ui.row [ Ui.width Ui.fill, Ui.spacing 10 ]
-            [ Ui.el
-                [ Font.size 13, Font.semiBold, Font.color accent ]
-                (Ui.text msg.author)
-            , Ui.el
-                [ Ui.alignRight, Font.size 11, Font.color textMuted ]
-                (Ui.text (clock msg.ts))
+        Ui.column
+            [ hid ("msg-" ++ String.fromInt msg.id)
+            , align
+            , Ui.width (Ui.maximum 460 Ui.shrink)
+            , Ui.padding 12
+            , Ui.spacing 4
+            , Background.color cardBg
+            , Border.width 1
+            , Border.color edge
+            , Border.rounded 12
             ]
-        , Ui.paragraph
-            [ Font.size 15, Font.color textDark ]
-            [ Ui.text msg.body ]
-        ]
+            [ Ui.row
+                  [ Ui.width Ui.fill, Ui.spacing 10 ]
+                  [ Ui.el
+                        [ Font.size 13, Font.semiBold, Font.color accent ]
+                        (Ui.text msg.author)
+                  , Ui.el
+                        [ Ui.alignRight, Font.size 11, Font.color textMuted ]
+                        (Ui.text (clock msg.ts))
+                  ]
+            , Ui.paragraph
+                  [ Font.size 15, Font.color textDark ]
+                  [ Ui.text msg.body ]
+            ]
 
 
 emptyState : Element Msg
@@ -369,9 +349,8 @@ messagesPanel model =
         (if List.isEmpty model.messages then
             [ emptyState ]
 
-         else
-            List.map (bubble model) model.messages
-        )
+        else
+            List.map (bubble model) model.messages)
 
 
 composer : Model -> Element Msg
@@ -444,11 +423,11 @@ composer model =
 
 view : Model -> any
 view model =
-    Ui.layout []
+    Ui.layout
+        []
         (Ui.column
             [ hid "app-shell"
             , Ui.width Ui.fill
-
             -- `height fill` (not `vh 100 + clip`): fills the viewport so the
             -- message panel owns the scrolling when the history is long, but lets
             -- the shell grow and the page scroll on a short phone viewport rather
@@ -456,37 +435,36 @@ view model =
             -- the height and cut the composer off below the fold.
             , Ui.height Ui.fill
             , Background.color pageBg
-            , Font.family "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+            , Font.family
+                  "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
             , Font.color textDark
             ]
             [ header model
-
             -- RESPONSIVE: the panel + composer already stack top-to-bottom; the
             -- mobile breakpoint just tightens the header padding so the title bar
             -- reads compact on a phone. A real @media rule injected by the
             -- renderer — no reset workaround of any kind: the wasm renderer ships
             -- the base CSS reset and runs the style injections (commit 57fcd63f).
-            , Ui.breakpoint Ui.mobile
-                [ Ui.width Ui.fill, Ui.height Ui.fill, Ui.paddingXY 0 0 ]
-                (messagesPanel model)
+            , Ui.breakpoint
+                  Ui.mobile
+                  [ Ui.width Ui.fill, Ui.height Ui.fill, Ui.paddingXY 0 0 ]
+                  (messagesPanel model)
             , composer model
-            ]
-        )
-
+            ])
 
 
 -- ─── subscriptions ─────────────────────────────────────────────────
 -- The real-time INBOUND half: subscribe to the room topic. The generator turns
 -- this leaf into an `EventSource("/_sky/sub?topic=room:main")` in the wasm
 -- client, and each pushed frame runs `onPush` → `Received`.
-
-
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.subscribeTopic "room:main" onPush
 
 
 main : Task Error ()
+
+
 appDef =
     App.web
         { init = init

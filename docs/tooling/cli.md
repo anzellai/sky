@@ -1806,7 +1806,7 @@ Refreshed AGENTS.md (61204 → 67701 bytes)
   previous version saved as AGENTS.md.bak
 Refreshed CLAUDE.md (12918 → 13533 bytes)
   previous version saved as CLAUDE.md.bak
-(from sky v0.31.0 (70969ab3e))
+(from sky v0.32.0 (70969ab3e))
 ```
 
 ## Dev console
@@ -2100,6 +2100,12 @@ Opinionated, deterministic, no configuration (output is Elm-compatible):
 - An own-line comment stays where it was: above the branch, argument,
   pipeline step, binding or field it was written above.
 - Refuses to overwrite if the formatter would lose more than one-third of the source lines (guards against partial-parse deletions).
+- A top-level declaration that cannot be formatted without moving a comment
+  (a trailing comment on a `let` line, for example) is kept exactly as
+  written, and a warning on stderr names it (`file:line`). Every other
+  declaration in the file is still formatted. `--check` fails only when a
+  declaration it can format would change. Move the comment to its own line to
+  format that declaration too.
 
 ## Editor integration
 

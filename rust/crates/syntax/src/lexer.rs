@@ -212,6 +212,7 @@ fn classify_op(text: &str) -> SyntaxKind {
         ".." => SyntaxKind::DotDot,
         "|" => SyntaxKind::Pipe,
         "->" => SyntaxKind::Arrow,
+        "<-" => SyntaxKind::LArrow,
         "\\" => SyntaxKind::Backslash,
         _ => SyntaxKind::Op,
     }

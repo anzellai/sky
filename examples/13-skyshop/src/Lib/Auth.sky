@@ -66,15 +66,9 @@ getAuthClient _ =
 
                     Err _ ->
                         []
-        appResult = Firebase.newApp ctx (js "nil") opts
+        app_ <- Firebase.newApp ctx (js "nil") opts
     in
-        case appResult of
-
-            Ok app_ ->
-                Firebase.appAuth app_ ctx
-
-            Err e ->
-                Err e
+        Firebase.appAuth app_ ctx
 
 
 -- ══════════════════════════════════════════════════════
@@ -169,36 +163,29 @@ findOrCreateUser uid email name =
                 ]
         _ = Db.setDoc "users" uid upsertData
         -- Read back full document (includes address fields etc.)
-        result = Db.getDoc "users" uid
+        maybeUser <- Db.getDoc "users" uid
     in
-        case result of
+        case maybeUser of
 
-            Ok maybeUser ->
-                case maybeUser of
+            Just user ->
+                if Db.getBool "suspended" user then
+                    Err
+                        (Error.permissionDenied
+                            |> Error.withMessage
+                                   "Account suspended. Please contact support.")
 
-                    Just user ->
-                        if Db.getBool "suspended" user then
-                            Err
-                                (Error.permissionDenied
-                                    |> Error.withMessage
-                                           "Account suspended. Please contact support.")
+                else
+                    let
+                        _ =
+                            println
+                                ("[AUTH] Signed in: " ++ email ++ " (admin: "
+                                    ++ adminStr
+                                    ++ ")")
+                    in
+                        Ok user
 
-                        else
-                            let
-                                _ =
-                                    println
-                                        ("[AUTH] Signed in: " ++ email
-                                            ++ " (admin: "
-                                            ++ adminStr
-                                            ++ ")")
-                            in
-                                Ok user
-
-                    Nothing ->
-                        Err (Error.io "Failed to load user profile.")
-
-            Err e ->
-                Err e
+            Nothing ->
+                Err (Error.io "Failed to load user profile.")
 
 
 -- ══════════════════════════════════════════════════════

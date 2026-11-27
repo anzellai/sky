@@ -119,14 +119,22 @@ encoded col =
 -- | The expected `toProject` output for a single-column table `t`.
 expectEncoded : String -> String -> String -> Store.Project
 expectEncoded colName pk kindStr =
-    Store.project [ { name = "t", pk = pk, cols = [ ( colName, kindStr ) ], indexes = [], problems = [] } ]
+    Store.project
+        [ { name = "t"
+          , pk = pk
+          , cols = [ ( colName, kindStr ) ]
+          , indexes = []
+          , problems = []
+          }
+        ]
 
 
 -- | A realistic users table: serial pk, unique text, defaulted text, and a
 -- nullable text — so the suffix COMBINATIONS are exercised together.
 usersTable : Schema.Table
 usersTable =
-    Schema.table "users"
+    Schema.table
+        "users"
         [ Schema.serial "id"
         , Schema.text "email" |> Schema.notNull |> Schema.unique
         , Schema.text "role" |> Schema.notNull |> Schema.defaultText "customer"
@@ -137,9 +145,11 @@ usersTable =
 -- | Two indexes attached in a known order, one plain and one unique.
 indexedTable : Schema.Table
 indexedTable =
-    Schema.table "orders"
+    Schema.table
+        "orders"
         [ Schema.id "id"
-        , Schema.text "user_id" |> Schema.notNull |> Schema.references "users" "id"
+        , Schema.text "user_id" |> Schema.notNull
+              |> Schema.references "users" "id"
         ]
         |> Schema.withIndex "idx_orders_user" [ "user_id" ]
         |> Schema.withUniqueIndex "idx_orders_ref" [ "user_id", "id" ]

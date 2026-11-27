@@ -34,41 +34,31 @@ import Std.Ui.Border as Border
 import Std.Ui.Font as Font
 import Std.Html as Html
 
-
-
 -- ─── Model (100% in-memory — no codec, never leaves the browser) ────────────
-
-
 type alias Card =
     { id : Int
     , title : String
     }
 
-
 type alias Lane =
     { name : String
     , cards : List Card
-
-    -- The per-lane "new card" draft. Ephemeral client state: editing it is a
-    -- pure `update` branch, so typing never touches the network.
     , draft : String
     }
-
+    -- The per-lane "new card" draft. Ephemeral client state: editing it is a
+    -- pure `update` branch, so typing never touches the network.
 
 type alias Model =
     { lanes : List Lane
-
-    -- A plain monotonic Int is the id source — NO Uuid / Random / Time kernel,
-    -- because those are effects. Pure code owns its own ids.
     , nextId : Int
     }
-
+    -- A plain monotonic Int is the id source — NO Uuid / Random / Time kernel,
+    -- because those are effects. Pure code owns its own ids.
 
 -- Direction a card moves between adjacent lanes.
 type Dir
     = MoveLeft
     | MoveRight
-
 
 type Msg
     = -- All PURE, client-local. Every branch returns `Cmd.none`.
@@ -82,102 +72,107 @@ type Msg
       -- cardId
 
 
-
 -- ─── init ───────────────────────────────────────────────────────────────────
-
-
 init : a -> ( Model, Cmd Msg )
 init _ =
     ( { lanes =
-            [ { name = "Backlog"
-              , draft = ""
-              , cards =
-                    [ { id = 1, title = "Sketch the board layout" }
-                    , { id = 2, title = "Pick a colour palette" }
-                    , { id = 3, title = "Write the README" }
-                    , { id = 4, title = "Add keyboard shortcuts" }
-                    , { id = 5, title = "Ship a dark theme" }
-                    ]
-              }
-            , { name = "In Progress"
-              , draft = ""
-              , cards =
-                    [ { id = 6, title = "Build the Std.Ui shell" }
-                    , { id = 7, title = "Wire up move / delete" }
-                    ]
-              }
-            , { name = "Done"
-              , draft = ""
-              , cards =
-                    [ { id = 8, title = "Scaffold the Spa.app" }
-                    , { id = 9, title = "Prove zero network calls" }
-                    ]
-              }
-            ]
+          [ { name = "Backlog"
+            , draft = ""
+            , cards =
+                [ { id = 1, title = "Sketch the board layout" }
+                , { id = 2, title = "Pick a colour palette" }
+                , { id = 3, title = "Write the README" }
+                , { id = 4, title = "Add keyboard shortcuts" }
+                , { id = 5, title = "Ship a dark theme" }
+                ]
+            }
+          , { name = "In Progress"
+            , draft = ""
+            , cards =
+                [ { id = 6, title = "Build the Std.Ui shell" }
+                , { id = 7, title = "Wire up move / delete" }
+                ]
+            }
+          , { name = "Done"
+            , draft = ""
+            , cards =
+                [ { id = 8, title = "Scaffold the Spa.app" }
+                , { id = 9, title = "Prove zero network calls" }
+                ]
+            }
+          ]
       , nextId = 10
       }
     , Cmd.none
     )
 
 
-
 -- ─── update (every branch is pure — Cmd.none everywhere) ────────────────────
-
-
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         DraftChanged laneIdx text ->
             ( { model
-                | lanes =
-                    mapLaneAt laneIdx (\lane -> { lane | draft = text }) model.lanes
+                  | lanes =
+                      mapLaneAt
+                          laneIdx
+                          (\lane -> { lane | draft = text })
+                          model.lanes
               }
             , Cmd.none
             )
 
         AddCard laneIdx ->
             let
-                trimmed =
-                    String.trim (draftAt laneIdx model.lanes)
+                trimmed = String.trim (draftAt laneIdx model.lanes)
             in
-            if String.isEmpty trimmed then
-                -- Nothing to add — pure no-op, still zero network.
-                ( model, Cmd.none )
+                if String.isEmpty trimmed then
+                    -- Nothing to add — pure no-op, still zero network.
+                    ( model, Cmd.none )
 
-            else
-                ( { model
-                    | nextId = model.nextId + 1
-                    , lanes =
-                        mapLaneAt laneIdx
-                            (\lane ->
-                                { lane
-                                    | draft = ""
-                                    , cards = lane.cards ++ [ { id = model.nextId, title = trimmed } ]
-                                }
-                            )
-                            model.lanes
-                  }
-                , Cmd.none
-                )
+                else
+                    ( { model
+                          | nextId = model.nextId + 1
+                          , lanes =
+                              mapLaneAt
+                                  laneIdx
+                                  (\lane ->
+                                      { lane
+                                          | draft = ""
+                                          , cards =
+                                              lane.cards
+                                                  ++ [ { id = model.nextId
+                                                       , title = trimmed
+                                                       }
+                                                     ]
+                                      })
+                                  model.lanes
+                      }
+                    , Cmd.none
+                    )
 
         MoveCard cardId fromIdx dir ->
             ( moveCard cardId fromIdx dir model, Cmd.none )
 
         DeleteCard cardId ->
             ( { model
-                | lanes =
-                    List.map
-                        (\lane -> { lane | cards = List.filter (\c -> c.id /= cardId) lane.cards })
-                        model.lanes
+                  | lanes =
+                      List.map
+                          (\lane ->
+                              { lane
+                                  | cards =
+                                      List.filter
+                                          (\c -> c.id /= cardId)
+                                          lane.cards
+                              })
+                          model.lanes
               }
             , Cmd.none
             )
 
 
-
 -- ─── pure helpers ────────────────────────────────────────────────────────────
-
-
 mapLaneAt : Int -> (Lane -> Lane) -> List Lane -> List Lane
 mapLaneAt idx f lanes =
     List.indexedMap
@@ -186,14 +181,14 @@ mapLaneAt idx f lanes =
                 f lane
 
             else
-                lane
-        )
+                lane)
         lanes
 
 
 draftAt : Int -> List Lane -> String
 draftAt idx lanes =
     case laneAt idx lanes of
+
         Just lane ->
             lane.draft
 
@@ -209,9 +204,9 @@ laneAt idx lanes =
 findCard : Int -> List Lane -> Maybe Card
 findCard cardId lanes =
     List.head
-        (List.filter (\c -> c.id == cardId)
-            (List.concatMap (\lane -> lane.cards) lanes)
-        )
+        (List.filter
+            (\c -> c.id == cardId)
+            (List.concatMap (\lane -> lane.cards) lanes))
 
 
 clampIdx : Int -> Int -> Int
@@ -231,40 +226,46 @@ moveCard cardId fromIdx dir model =
     let
         delta =
             case dir of
+
                 MoveLeft ->
                     -1
 
                 MoveRight ->
                     1
-
-        toIdx =
-            clampIdx (List.length model.lanes - 1) (fromIdx + delta)
+        toIdx = clampIdx (List.length model.lanes - 1) (fromIdx + delta)
     in
-    if toIdx == fromIdx then
-        -- Already at the edge — pure no-op.
-        model
+        if toIdx == fromIdx then
+            -- Already at the edge — pure no-op.
+            model
 
-    else
-        case findCard cardId model.lanes of
-            Nothing ->
-                model
+        else
+            case findCard cardId model.lanes of
 
-            Just card ->
-                { model
-                    | lanes =
-                        List.indexedMap
-                            (\i lane ->
-                                if i == fromIdx then
-                                    { lane | cards = List.filter (\c -> c.id /= cardId) lane.cards }
+                Nothing ->
+                    model
 
-                                else if i == toIdx then
-                                    { lane | cards = lane.cards ++ [ card ] }
+                Just card ->
+                    { model
+                        | lanes =
+                            List.indexedMap
+                                (\i lane ->
+                                    if i == fromIdx then
+                                        { lane
+                                            | cards =
+                                                List.filter
+                                                    (\c -> c.id /= cardId)
+                                                    lane.cards
+                                        }
 
-                                else
-                                    lane
-                            )
-                            model.lanes
-                }
+                                    else if i == toIdx then
+                                        { lane
+                                            | cards = lane.cards ++ [ card ]
+                                        }
+
+                                    else
+                                        lane)
+                                model.lanes
+                    }
 
 
 totalCards : Model -> Int
@@ -272,10 +273,7 @@ totalCards model =
     List.length (List.concatMap (\lane -> lane.cards) model.lanes)
 
 
-
 -- ─── palette ─────────────────────────────────────────────────────────────────
-
-
 white : Ui.Color
 white =
     Ui.rgb 255 255 255
@@ -321,21 +319,18 @@ laneAccent : Int -> Ui.Color
 laneAccent idx =
     if idx == 0 then
         Ui.rgb 100 116 139
-        -- Backlog — slate
 
+    -- Backlog — slate
     else if idx == 1 then
         Ui.rgb 217 119 6
-        -- In Progress — amber
 
+    -- In Progress — amber
     else
         Ui.rgb 22 163 74
         -- Done — green
 
 
-
 -- ─── small view helpers ──────────────────────────────────────────────────────
-
-
 tid : String -> Ui.Attribute msg
 tid v =
     Ui.htmlAttribute "id" v
@@ -360,15 +355,11 @@ pill bg fg label =
         (Ui.text label)
 
 
-
 -- ─── header (fixed height — the board scrolls, this bar never does) ──────────
-
-
 header : Model -> Element Msg
 header model =
     Ui.row
         [ Ui.width Ui.fill
-
         -- Fixed pixel height: the header is a stable frame; only the board area
         -- below it flexes and scrolls.
         , Ui.height (Ui.px 64)
@@ -378,31 +369,31 @@ header model =
         , Ui.centerY
         ]
         [ Ui.el
-            [ tid "app-title", Font.size 22, Font.bold, Font.color white ]
-            (Ui.text "Sky Kanban")
-        , pill (Ui.rgba 255 255 255 0.18) white (String.fromInt (totalCards model) ++ " cards")
-
+              [ tid "app-title", Font.size 22, Font.bold, Font.color white ]
+              (Ui.text "Sky Kanban")
+        , pill
+              (Ui.rgba 255 255 255 0.18)
+              white
+              (String.fromInt (totalCards model) ++ " cards")
         -- A fill spacer pushes the tagline to the right edge of the bar.
         , Ui.el [ Ui.width Ui.fill ] Ui.none
-
         -- The tagline is dead weight on a phone. It carries id "tagline"; the
         -- injected media query (see `globalStyle`) collapses it under 768px.
         , Ui.el
-            [ tid "tagline", Font.size 13, Font.color (Ui.rgba 255 255 255 0.85) ]
-            (Ui.text "client-only · in-memory · zero network")
+              [ tid "tagline"
+              , Font.size 13
+              , Font.color (Ui.rgba 255 255 255 0.85)
+              ]
+              (Ui.text "client-only · in-memory · zero network")
         ]
 
 
-
 -- ─── board area (fills the viewport under the header) ────────────────────────
-
-
 board : Model -> Element Msg
 board model =
     Ui.el
         [ tid "board"
         , Ui.width Ui.fill
-
         -- `height fill` = take ALL remaining viewport height under the 64px
         -- header. Because the shell is `vh 100`, this is a bounded height, which
         -- is what lets each lane's inner list actually scroll instead of the
@@ -420,7 +411,6 @@ lanesRow model =
         , Ui.width Ui.fill
         , Ui.height Ui.fill
         , Ui.spacing 16
-
         -- Lanes lay out left-to-right. When they don't fit the viewport width
         -- the BOARD scrolls sideways (Trello-style) — the header stays put and
         -- the page never gets a horizontal scrollbar of its own.
@@ -429,41 +419,33 @@ lanesRow model =
         (List.indexedMap (laneView model) model.lanes)
 
 
-
 -- ─── a single lane ───────────────────────────────────────────────────────────
-
-
 laneView : Model -> Int -> Lane -> Element Msg
 laneView model idx lane =
     let
-        accent =
-            laneAccent idx
-
-        countStr =
-            String.fromInt (List.length lane.cards)
+        accent = laneAccent idx
+        countStr = String.fromInt (List.length lane.cards)
     in
-    Ui.column
-        [ tid ("lane-" ++ String.fromInt idx)
-
+        Ui.column
+            [ tid ("lane-" ++ String.fromInt idx)
+            , Ui.width (Ui.minimum 260 (Ui.px 300))
+            , Ui.height Ui.fill
+            , Background.color laneBg
+            , Border.width 1
+            , Border.color cardBorder
+            , Border.rounded 12
+            , Ui.padding 12
+            , Ui.spacing 12
+            ]
+            [ laneHeader accent lane.name countStr
+            , cardList idx lane.cards
+            , laneFooter idx lane.draft
+            ]
         -- Fixed lane width keeps columns readable; on a narrow viewport the row
         -- above scrolls sideways rather than crushing them. `minimum` guards
         -- against the flex layout shrinking a lane below usability.
-        , Ui.width (Ui.minimum 260 (Ui.px 300))
-
         -- `height fill` makes the lane as tall as the board so its card list has
         -- a bounded box to scroll within.
-        , Ui.height Ui.fill
-        , Background.color laneBg
-        , Border.width 1
-        , Border.color cardBorder
-        , Border.rounded 12
-        , Ui.padding 12
-        , Ui.spacing 12
-        ]
-        [ laneHeader accent lane.name countStr
-        , cardList idx lane.cards
-        , laneFooter idx lane.draft
-        ]
 
 
 laneHeader : Ui.Color -> String -> String -> Element Msg
@@ -501,7 +483,6 @@ cardList laneIdx cards =
         Ui.column
             [ tid ("cards-" ++ String.fromInt laneIdx)
             , Ui.width Ui.fill
-
             -- The scroll region. `height fill` bounds it to the space left after
             -- the lane header + footer; `scrollbarY` lets a long stack of cards
             -- scroll WITHIN the lane. The lane header, the footer input, and the
@@ -509,7 +490,6 @@ cardList laneIdx cards =
             , Ui.height Ui.fill
             , Ui.scrollbarY
             , Ui.spacing 10
-
             -- A little right padding so cards don't kiss the scrollbar.
             , Ui.paddingEach { top = 2, right = 6, bottom = 2, left = 2 }
             ]
@@ -525,7 +505,13 @@ cardView laneIdx card =
         , Border.width 1
         , Border.color cardBorder
         , Border.rounded 10
-        , Border.shadow { offsetX = 0, offsetY = 1, blur = 3, spread = 0, color = Ui.rgba 15 23 42 0.08 }
+        , Border.shadow
+              { offsetX = 0
+              , offsetY = 1
+              , blur = 3
+              , spread = 0
+              , color = Ui.rgba 15 23 42 8.0e-2
+              }
         , Ui.padding 12
         , Ui.spacing 10
         ]
@@ -539,24 +525,24 @@ cardControls laneIdx cardId =
     Ui.row
         [ Ui.width Ui.fill, Ui.spacing 8, Ui.centerY ]
         [ ctrlButton
-            ("move-left-" ++ String.fromInt cardId)
-            (Ui.rgb 241 245 249)
-            ink
-            "←"
-            (MoveCard cardId laneIdx MoveLeft)
+              ("move-left-" ++ String.fromInt cardId)
+              (Ui.rgb 241 245 249)
+              ink
+              "←"
+              (MoveCard cardId laneIdx MoveLeft)
         , ctrlButton
-            ("move-right-" ++ String.fromInt cardId)
-            (Ui.rgb 241 245 249)
-            ink
-            "→"
-            (MoveCard cardId laneIdx MoveRight)
+              ("move-right-" ++ String.fromInt cardId)
+              (Ui.rgb 241 245 249)
+              ink
+              "→"
+              (MoveCard cardId laneIdx MoveRight)
         , Ui.el [ Ui.width Ui.fill ] Ui.none
         , ctrlButton
-            ("delete-" ++ String.fromInt cardId)
-            (Ui.rgb 254 226 226)
-            (Ui.rgb 185 28 28)
-            "Delete"
-            (DeleteCard cardId)
+              ("delete-" ++ String.fromInt cardId)
+              (Ui.rgb 254 226 226)
+              (Ui.rgb 185 28 28)
+              "Delete"
+              (DeleteCard cardId)
         ]
 
 
@@ -581,33 +567,32 @@ laneFooter laneIdx draft =
     Ui.row
         [ Ui.width Ui.fill, Ui.spacing 8, Ui.centerY ]
         [ Ui.input
-            [ tid ("draft-" ++ String.fromInt laneIdx)
-            , Ui.width Ui.fill
-            , Ui.htmlAttribute "value" draft
-            , Ui.htmlAttribute "placeholder" "Add a card…"
-            , Ui.onInput (DraftChanged laneIdx)
-            , Background.color white
-            , Border.width 1
-            , Border.color cardBorder
-            , Border.rounded 8
-            , Ui.paddingXY 10 8
-            , Font.size 13
-            , Font.color ink
-            ]
+              [ tid ("draft-" ++ String.fromInt laneIdx)
+              , Ui.width Ui.fill
+              , Ui.htmlAttribute "value" draft
+              , Ui.htmlAttribute "placeholder" "Add a card…"
+              , Ui.onInput (DraftChanged laneIdx)
+              , Background.color white
+              , Border.width 1
+              , Border.color cardBorder
+              , Border.rounded 8
+              , Ui.paddingXY 10 8
+              , Font.size 13
+              , Font.color ink
+              ]
         , Ui.el
-            [ tid ("add-" ++ String.fromInt laneIdx)
-            , Ui.onClick (AddCard laneIdx)
-            , Ui.pointer
-            , Background.color headerBg
-            , Font.color white
-            , Font.size 18
-            , Font.bold
-            , Ui.paddingXY 12 6
-            , Border.rounded 8
-            ]
-            (Ui.text "+")
+              [ tid ("add-" ++ String.fromInt laneIdx)
+              , Ui.onClick (AddCard laneIdx)
+              , Ui.pointer
+              , Background.color headerBg
+              , Font.color white
+              , Font.size 18
+              , Font.bold
+              , Ui.paddingXY 12 6
+              , Border.rounded 8
+              ]
+              (Ui.text "+")
         ]
-
 
 
 -- ─── responsive layer (a raw-CSS @media, the Ui.html escape hatch) ──────────
@@ -626,12 +611,9 @@ laneFooter laneIdx draft =
 --
 -- CSS selectors are written without quotes (`[id^=lane-]`) so HTML-escaping of
 -- the <style> text can never corrupt them.
-
-
 globalCss : String
 globalCss =
-    "@media (max-width:767px){"
-        ++ "#tagline{display:none !important}"
+    "@media (max-width:767px){" ++ "#tagline{display:none !important}"
         ++ "#board{overflow-y:auto !important;overflow-x:hidden !important}"
         ++ "#lanes{flex-direction:column !important;height:auto !important;overflow-x:hidden !important}"
         ++ "[id^=lane-]{width:100% !important;min-width:0 !important;height:78vh !important}"
@@ -645,10 +627,7 @@ globalStyle =
     Ui.html (Html.node "style" [] [ Html.text globalCss ])
 
 
-
 -- ─── view / app ──────────────────────────────────────────────────────────────
-
-
 view : Model -> any
 view model =
     Ui.layout
@@ -660,21 +639,15 @@ view model =
         (Ui.column
             [ tid "shell"
             , Ui.width Ui.fill
-
             -- The whole app is exactly one viewport tall. `vh 100` pins the
             -- shell to the visible area so the header stays put and the board
             -- (not the page) owns the scrolling.
             , Ui.height (Ui.vh 100)
-
             -- Belt-and-braces: clip any accidental overflow at the shell edge so
             -- the page body never grows its own scrollbars.
             , Ui.clip
             ]
-            [ globalStyle
-            , header model
-            , board model
-            ]
-        )
+            [ globalStyle, header model, board model ])
 
 
 subscriptions : Model -> Sub Msg
@@ -683,6 +656,8 @@ subscriptions _ =
 
 
 main : Task Error ()
+
+
 appDef =
     App.web
         { init = init

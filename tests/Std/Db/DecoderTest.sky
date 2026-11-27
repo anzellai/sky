@@ -18,26 +18,21 @@ import Sky.Core.Prelude exposing (..)
 import Std.Db.Decode as Decode
 import Sky.Test as Test exposing (Test)
 
-
 -- ── Records the decoder pipeline targets ────────────────────────────
-
-
 type alias User =
-    { id    : Int
-    , name  : String
+    { id : Int
+    , name : String
     , email : String
-    , age   : Maybe Int
+    , age : Maybe Int
     }
 
 
 -- ── Pipeline-style decoder ──────────────────────────────────────────
-
-
 -- Three-field record built via `andMap`.  The compile-time payoff:
 -- `Decode.succeed` carries the curried record-builder lambda, every
 -- subsequent `andMap` peels off one decoder + applies it.  The whole
 -- chain types as `Decoder User`.
-userDecoder : Decoder User
+userDecoder : Decode.Decoder User
 userDecoder =
     Decode.succeed (\i n e a -> { id = i, name = n, email = e, age = a })
         |> Decode.andMap (Decode.int "id")
@@ -45,27 +40,29 @@ userDecoder =
         |> Decode.andMap (Decode.string "email")
         |> Decode.andMap (Decode.nullable (Decode.int "age"))
 
-
 -- A simpler 2-field decoder via `map2` (no curried lambda).
 type alias TitledRow =
-    { title : String, rank : Int }
+    { title : String
+    , rank : Int
+    }
 
 
-titledDecoder : Decoder TitledRow
+titledDecoder : Decode.Decoder TitledRow
 titledDecoder =
     Decode.map2
         (\title rank -> { title = title, rank = rank })
         (Decode.string "title")
         (Decode.int "rank")
 
-
 -- Exercise the `optional` pipeline-style combinator with an Int
 -- fallback for a possibly-absent column.
 type alias CountedRow =
-    { name : String, count : Int }
+    { name : String
+    , count : Int
+    }
 
 
-countedDecoder : Decoder CountedRow
+countedDecoder : Decode.Decoder CountedRow
 countedDecoder =
     Decode.succeed (\n c -> { name = n, count = c })
         |> Decode.andMap (Decode.string "name")
@@ -73,8 +70,6 @@ countedDecoder =
 
 
 -- ── Tests ────────────────────────────────────────────────────────────
-
-
 tests : List Test
 tests =
     [ Test.suite "Std.Db.Decode surface compiles"

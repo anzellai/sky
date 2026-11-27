@@ -242,25 +242,19 @@ assistant db =
 -- | Ask the assistant a question: start a run, drive it, read its answer.
 ask : String -> Task Error Answer
 ask question =
-    Tickets.open
-        |> Task.andThen
-               (\db ->
-                   Durable.setup db |> Task.andThen (\_ -> Uuid.v4)
-                       |> Task.andThen
-                              (\id ->
-                                  Durable.start
-                                      db
-                                      (assistant db)
-                                      id
-                                      { messages = [ Provider.user question ] }
-                                      |> Task.andThen
-                                             (\_ ->
-                                                 Durable.poll
-                                                     db
-                                                     [ Durable.erase
-                                                           (assistant db)
-                                                     ])
-                                      |> Task.andThen (\_ -> answerOf db id)))
+    let
+        db <- Tickets.open
+        _ <- Durable.setup db
+        id <- Uuid.v4
+        _ <-
+            Durable.start
+                db
+                (assistant db)
+                id
+                { messages = [ Provider.user question ] }
+        _ <- Durable.poll db [ Durable.erase (assistant db) ]
+    in
+        answerOf db id
 
 
 answerOf : Db -> String -> Task Error Answer

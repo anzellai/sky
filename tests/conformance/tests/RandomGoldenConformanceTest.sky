@@ -19,22 +19,13 @@ import Sky.Test as Test exposing (Test)
 chainFive : Random.Seed -> List Int
 chainFive s0 =
     let
-        ( a, s1 ) =
-            Random.seededInt s0 0 1000000
-
-        ( b, s2 ) =
-            Random.seededInt s1 0 1000000
-
-        ( c, s3 ) =
-            Random.seededInt s2 0 1000000
-
-        ( d, s4 ) =
-            Random.seededInt s3 0 1000000
-
-        ( e, _ ) =
-            Random.seededInt s4 0 1000000
+        ( a, s1 ) = Random.seededInt s0 0 1000000
+        ( b, s2 ) = Random.seededInt s1 0 1000000
+        ( c, s3 ) = Random.seededInt s2 0 1000000
+        ( d, s4 ) = Random.seededInt s3 0 1000000
+        ( e, _ ) = Random.seededInt s4 0 1000000
     in
-    [ a, b, c, d, e ]
+        [ a, b, c, d, e ]
 
 
 tests : List Test

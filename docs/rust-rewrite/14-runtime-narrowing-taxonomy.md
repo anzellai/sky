@@ -522,6 +522,21 @@ and rebuilt a typed Result as `rt.SkyResult[any, any]`. In the same change
 which is narrowed once as a whole. Measured: narrow 16974 -> 16561 over all
 86 coerce-floor rows (golden 16697), adapter 0, no row above its golden.
 
+**v0.32.0: `Maybe.andThen` and `Result.andThen`.** Both defs carry their
+annotations, so the lowering world types a chain's continuation at its
+instance (and a bind line's chosen `andThen`, which is the same `Res::Def`).
+The def itself still erases (R12), so the call goes to the typed twin
+`rt.Maybe_andThenT[A, B]` / `rt.Result_andThenT[E, A, B]` when the argument
+and the continuation lower to proven Go types (`SKY_LIST_HOF_TWINS`,
+`and_then_plan`): the continuation is typed in place, `x + y` is Go `+`, and
+the `MaybeCoerce[any]` round trip and the result narrowing are gone. An
+unproven call (a Result whose error type only the def's annotation names, a
+func payload, a partial application) keeps the erased call, byte for byte.
+Measured over the rows that reach these defs: narrow 00-standard-libs 106 ->
+103, 36-composite-server 166 -> 162, 73-ai-train 1234 -> 1231, 74-ai-cloud
+1325 -> 1322, 77-demo-expenses 249 -> 248, apps/relay 115 -> 113, adapter 0,
+no measured row above its golden.
+
 **v0.29.0: Std.Xml accessors, and the union codec's variants.** A Std.Xml
 `Node` is an opaque handle (the stdlib ADT `Node__Internal` holding the Go
 tree, not a Sky ADT whose payload each read would narrow, R6 §4.5). Its

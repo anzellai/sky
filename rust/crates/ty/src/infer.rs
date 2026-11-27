@@ -91,11 +91,11 @@ fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
 pub struct Infer<'a> {
     numeric: Option<numeric::RawNumeric>,
     recursive_type: Option<TyVarId>,
-    provisional_defs: std::rc::Rc<HashMap<DefId, TyVarId>>,
+    pub(crate) provisional_defs: std::rc::Rc<HashMap<DefId, TyVarId>>,
     pub(crate) world: &'a World,
     pub(crate) db: &'a dyn SkyDb,
     pub uf: UnionFind,
-    locals: HashMap<LocalId, TyVarId>,
+    pub(crate) locals: HashMap<LocalId, TyVarId>,
     pub errors: Vec<TypeError>,
     /// Per-expression type-var recording — enabled for the lowerer's typed
     /// table (M4). Off by default so the M3 accept-parity path is unchanged.
@@ -172,6 +172,52 @@ pub struct Infer<'a> {
     /// `Codec.auto`. Read by `World::infer_annotated_bounds`, which adds them
     /// to the scheme callers see.
     pub inferred_bounds: Vec<(Name, SuperType)>,
+    /// How many unresolved references (`Res::Error`, `Expr::Error`) inference
+    /// has met. The resolver reported each one (`[E1001]`, L7), so a bind line
+    /// whose `e` holds one gives no `[E2015]` / `[E2016]` of its own.
+    pub(crate) unresolved_seen: usize,
+    /// How many references to an unannotated def whose own inference
+    /// reported an error (`World::app_failed_defs`) inference has met, on
+    /// the check path. A bind line whose `e` holds one and whose head stays
+    /// unknown gives no `[E2015]`: the def's error is the first one.
+    pub(crate) failed_def_seen: usize,
+    /// How many bind lines were refused (their type does not fit the block,
+    /// or they have no `andThen`), or met a clash of the rest of their block
+    /// (the `in` expression of another type). A block with such an error has
+    /// a free type, as the hand-written chain with that clash has, so a
+    /// caller of the def reports no second clash on it.
+    pub(crate) bind_lines_refused: usize,
+    /// Bind lines whose `andThen` is not chosen yet (`crate::bind`).
+    pub(crate) pending_binds: Vec<crate::bind::PendingBind>,
+    /// The `andThen` chosen for each bind line, by its `Call` (`crate::bind`).
+    pub(crate) bind_choices: Vec<(ExprId, Res)>,
+    /// The type the next bind line of a block must have: the enclosing bind
+    /// line's result, keyed by the inner bind line's `Call`. A block that mixes
+    /// types is then refused once, at its first bind line that does not fit
+    /// (`crate::bind`).
+    pub(crate) bind_expects: HashMap<ExprId, TyVarId>,
+    /// Each name bound by a plain `name = e` line of a `let` (no parameters),
+    /// with its `e`: a clash on such a name whose type has an `andThen`
+    /// names the bind line `name <- e` (`Infer::bind_result_note`).
+    pub(crate) eq_bound: HashMap<LocalId, (Name, ExprId)>,
+    /// While an annotated def's body is inferred: the first bind line of
+    /// each block in tail position of the body (through `let`, `if` and
+    /// `case`), and the annotated result. A bind line of that block passes
+    /// it on to the next one. The first line unifies its result with it, so
+    /// a line of another head is blamed, and the notes try their fixes
+    /// against the type the block must have.
+    pub(crate) root_bind_block: HashMap<ExprId, TyVarId>,
+    /// The bind lines whose continuation is being inferred, innermost last:
+    /// each line's lambda, the type its `andThen` gives that lambda, the
+    /// lambda's parameter once it is made, and whether the line continues
+    /// the block of the line below it on the stack. The last line of a
+    /// block gives the earlier lines' names their types before it checks
+    /// the `in` body (`crate::bind::BindFrame`).
+    pub(crate) bind_stack: Vec<crate::bind::BindFrame>,
+    /// This run re-checks a def with a note's fix applied
+    /// (`Infer::fixed_def_checks`): its own notes try no fix of their own,
+    /// so a re-check never starts another.
+    pub(crate) fix_trial: bool,
     /// Per-def entries that take the place of the world's own in its two
     /// lowering-only record channels (see [`RecordOverlay`]).
     overlay: Option<&'a RecordOverlay>,
@@ -244,6 +290,16 @@ impl<'a> Infer<'a> {
             page_ties: Vec::new(),
             bound_seen: std::collections::HashSet::new(),
             inferred_bounds: Vec::new(),
+            unresolved_seen: 0,
+            failed_def_seen: 0,
+            bind_lines_refused: 0,
+            pending_binds: Vec::new(),
+            bind_choices: Vec::new(),
+            bind_expects: HashMap::new(),
+            eq_bound: HashMap::new(),
+            root_bind_block: HashMap::new(),
+            bind_stack: Vec::new(),
+            fix_trial: false,
             overlay: None,
             #[cfg(test)]
             no_fast_paths: FORCE_GENERAL_PATHS.with(|f| f.get()),
@@ -421,6 +477,11 @@ impl<'a> Infer<'a> {
             self.check_value_restriction(body, &exported, false);
         }
         Some(self.read_back(v))
+    }
+
+    /// The `andThen` chosen for each bind line of this run (`crate::bind`).
+    pub(crate) fn take_bind_choices(&mut self) -> Vec<(ExprId, Res)> {
+        std::mem::take(&mut self.bind_choices)
     }
 
     /// Infer a body while recording a per-expression + per-local type table —
@@ -795,7 +856,19 @@ impl<'a> Infer<'a> {
         // reject; that is exactly `record_missing_field` at its call site).
         let recursive_result = self.seed_shared_recursion(body, &param_vars);
         let errs_before = self.errors.len();
+        // A block of bind lines in tail position of the body has the
+        // annotated result: the block's type is the annotation's, so a line
+        // of another head is the one blamed, and every note tries its fix
+        // against it.
+        let saved_root = std::mem::replace(
+            &mut self.root_bind_block,
+            crate::bind::root_bind_calls(body, root)
+                .into_iter()
+                .map(|c| (c, expected_result))
+                .collect(),
+        );
         let v = self.infer_expr(body, root);
+        self.root_bind_block = saved_root;
         if let Some(result) = recursive_result {
             self.unify(v, result);
         }
@@ -944,16 +1017,19 @@ impl<'a> Infer<'a> {
         );
         let mut pending = Vec::new();
         let mut page_ties = Vec::new();
+        let mut pending_binds = Vec::new();
         let mut errors = HashMap::new();
         for &(def, body) in members {
             let mut infer = Infer::new(world, db).with_self_def(Some(def));
             std::mem::swap(&mut infer.uf, &mut solver);
             infer.provisional_defs = provisional.clone();
             infer.obligations = std::mem::take(&mut pending);
+            infer.pending_binds = std::mem::take(&mut pending_binds);
             infer.page_ties = std::mem::take(&mut page_ties);
             infer.cur_span = body.root.and_then(|r| body.expr_span(r));
             infer.infer_def_vars(body);
             pending = std::mem::take(&mut infer.obligations);
+            pending_binds = std::mem::take(&mut infer.pending_binds);
             page_ties = std::mem::take(&mut infer.page_ties);
             errors.insert(def, std::mem::take(&mut infer.errors));
             std::mem::swap(&mut infer.uf, &mut solver);
@@ -961,6 +1037,8 @@ impl<'a> Infer<'a> {
         let mut finish = Infer::new(world, db);
         std::mem::swap(&mut finish.uf, &mut solver);
         finish.obligations = pending;
+        finish.pending_binds = pending_binds;
+        finish.provisional_defs = provisional.clone();
         finish.page_ties = page_ties;
         finish.discharge_bounds(true);
         for error in finish.errors.drain(..) {
@@ -1398,7 +1476,7 @@ impl<'a> Infer<'a> {
 
     /// Append `note` to every error recorded since `from` that does not carry
     /// it yet.
-    fn append_note(&mut self, from: usize, note: Option<String>) {
+    pub(crate) fn append_note(&mut self, from: usize, note: Option<String>) {
         let Some(note) = note else { return };
         for err in &mut self.errors[from..] {
             if !err.message.contains("#any-in-annotations") {
@@ -1407,7 +1485,7 @@ impl<'a> Infer<'a> {
         }
     }
 
-    fn unify(&mut self, a: TyVarId, b: TyVarId) {
+    pub(crate) fn unify(&mut self, a: TyVarId, b: TyVarId) {
         let res = self.uf.unify(a, b);
         self.finish_unify(res);
     }
@@ -1703,11 +1781,206 @@ impl<'a> Infer<'a> {
                     .iter()
                     .map(|&p| self.infer_pat_fresh(body, p))
                     .collect();
+                // The continuation of a bind line: keep its parameter. When
+                // the line's `andThen` is chosen already, the parameter takes
+                // the type it gives now, before the body is inferred, so a
+                // misuse of the bound name is blamed at the use.
+                let mut seed = None;
+                if let Some(f) = self.bind_stack.last_mut() {
+                    if f.lam == e && f.param.is_none() {
+                        f.param = param_vars.first().copied();
+                        seed = f.seed.take().map(|sp| (sp, f.tlam));
+                    }
+                }
+                if let (Some((sp, tlam)), Some(&pv)) = (seed, param_vars.first()) {
+                    if let Some((pw, _)) = self.fun_parts(tlam) {
+                        let saved = self.cur_span;
+                        self.cur_span = sp.or(saved);
+                        self.unify(pv, pw);
+                        self.cur_span = saved;
+                    }
+                }
                 let rb = self.infer_expr(body, *lb);
                 param_vars
                     .into_iter()
                     .rev()
                     .fold(rb, |acc, pv| self.fun(pv, acc))
+            }
+            // A bind line `p <- e` (docs/design/let-bind-lines.md §4): the
+            // `andThen` is chosen from the type of `e`, at once when its head
+            // is known, else at the end of the def (`crate::bind`).
+            Expr::Call(callee, args)
+                if args.len() == 2
+                    && matches!(body.exprs[*callee], Expr::Var(Res::BindAndThen)) =>
+            {
+                let (lam, ex) = (args[0], args[1]);
+                let refused_in_block = self.bind_lines_refused;
+                let errors_in_e = self.errors.len();
+                let unresolved_in_e = self.unresolved_seen;
+                let failed_in_e = self.failed_def_seen;
+                let te = self.infer_expr(body, ex);
+                // A type error inside `e`, or a name in it the resolver could
+                // not bind (`[E1001]`, typed as a fresh variable), already
+                // reported this line: a head left unknown or wrong by it is
+                // no second report (like `Ty::Error`).
+                let e_errored =
+                    self.errors.len() > errors_in_e || self.unresolved_seen > unresolved_in_e;
+                let tlam = self.uf.fresh_flex();
+                let result = self.uf.fresh_flex();
+                let rest = self.fun(te, result);
+                let callee_ty = self.fun(tlam, rest);
+                if self.record_exprs {
+                    self.expr_vars.push((*callee, callee_ty));
+                }
+                let pat_text = match &body.exprs[lam] {
+                    Expr::Lambda { params, .. } if params.len() == 1 => {
+                        crate::bind::pat_text(self.db, self.self_def, body, params[0])
+                    }
+                    _ => "…".to_string(),
+                };
+                let span = body.expr_span(*callee).or(self.cur_span);
+                // A later line of a block: its result is the block's, which
+                // the enclosing bind line fixed. A line of another type is
+                // refused here, at its own `<-`, when its `andThen` is chosen.
+                // The annotated result, when this block is in tail position
+                // of an annotated body.
+                let expected = self.root_bind_block.remove(&e);
+                let continues = self.bind_expects.contains_key(&e);
+                if let Some(block) = self.bind_expects.remove(&e) {
+                    self.unify(result, block);
+                } else if let Some(x) = expected {
+                    // The first line: the block's type is the expected type,
+                    // so a line whose head differs is refused at its own
+                    // `<-` with the conversion of that line. `result` is
+                    // fresh here, so this never fails, and the `andThen` is
+                    // still chosen from the type of `e` alone.
+                    self.unify(result, x);
+                }
+                let errors_before = self.errors.len();
+                let chosen_before = self.bind_choices.len();
+                let pb = crate::bind::PendingBind {
+                    call: e,
+                    callee_ty,
+                    e_ty: te,
+                    e_errored,
+                    e_calls_failed: self.failed_def_seen > failed_in_e,
+                    e_expr: ex,
+                    e_span: body.expr_span(ex),
+                    span,
+                    module: self
+                        .self_def
+                        .and_then(|d| self.db.def_loc(d))
+                        .map(|l| l.module),
+                    pat_text,
+                };
+                // Kept for the note on a clash of the `in` expression, which
+                // names this line (`Infer::body_note`).
+                let line = pb.clone();
+                self.start_bind(pb);
+                let head = (self.bind_choices.len() > chosen_before)
+                    .then(|| self.read_back(te))
+                    .and_then(|t| match &t {
+                        Ty::App(n, _) => Some(n.as_str().to_string()),
+                        _ => None,
+                    });
+                // This line refused already (its type does not fit the
+                // block): one error per mixed block, at that line.
+                let refused = self.errors.len() > errors_before;
+                if refused {
+                    self.bind_lines_refused += 1;
+                }
+                if let Some(next) = crate::bind::next_bind_line(body, lam) {
+                    self.bind_expects.insert(next, result);
+                    if let Some(v) = expected {
+                        self.root_bind_block.insert(next, v);
+                    }
+                }
+                let errors_in_rest = self.errors.len();
+                self.bind_stack.push(crate::bind::BindFrame {
+                    lam,
+                    tlam,
+                    param: None,
+                    continues,
+                    seed: (head.is_some() && !refused).then_some(span),
+                });
+                let tl = self.infer_expr(body, lam);
+                // The last line of a block: the earlier lines' names take the
+                // types their `andThen`s give them now, so the `in` body is
+                // checked against the block with them (one line or many).
+                if crate::bind::final_body(body, lam).is_some() && !refused {
+                    self.type_block_names();
+                }
+                self.bind_stack.pop();
+                // The rest of a block with an expected type already reported
+                // a clash inside it: its type is poisoned, and a second
+                // report against the block's type is a cascade (as the def's
+                // own body-vs-annotation check is skipped then).
+                let rest_errored = expected.is_some() && self.errors.len() > errors_in_rest;
+                // The conversion note only when the rest of the block has
+                // another head; a clash inside one head is a plain mismatch.
+                let mixed = head.as_deref().is_some_and(|h| {
+                    crate::bind::other_head(crate::bind::final_result(&self.read_back(tl)), h)
+                });
+                let before = self.errors.len();
+                // The union-find before the clash, to decide the note's fix
+                // by unifying it on a copy (the last bind line of a block).
+                let snap =
+                    (head.is_some() && !refused && crate::bind::final_body(body, lam).is_some())
+                        .then(|| self.uf.clone());
+                // A clash here is the rest of the block against this line's
+                // type: report it at the `<-`.
+                let saved = self.cur_span;
+                self.cur_span = span;
+                self.unify(tl, tlam);
+                self.cur_span = saved;
+                // When this is the block's last bind line and the `in`
+                // expression has the wrong type, the clash is that
+                // expression's: report it there, with the fix for the
+                // block's type.
+                let body_fix = (self.errors.len() > before && !refused)
+                    .then_some(())
+                    .and(head.as_deref())
+                    .and_then(|h| {
+                        let fb = crate::bind::final_body(body, lam)?;
+                        let snap = snap.as_ref()?;
+                        let module = self
+                            .self_def
+                            .and_then(|d| self.db.def_loc(d))
+                            .map(|l| l.module);
+                        let text = self.span_text(module, body.expr_span(fb));
+                        let note =
+                            self.body_note(snap, &line, h, tl, tlam, expected, fb, text)??;
+                        Some((body.expr_span(fb), note))
+                    });
+                if refused || rest_errored {
+                    self.errors.truncate(before);
+                } else if let Some((at, note)) = body_fix {
+                    if let Some(at) = at {
+                        for err in &mut self.errors[before..] {
+                            err.span = Some(at);
+                        }
+                    }
+                    self.append_note(before, Some(note));
+                } else if let Some(head) = head.filter(|_| mixed) {
+                    let note = crate::bind::mixed_note(crate::nominal::strip(&head));
+                    self.append_note(before, Some(note));
+                }
+                // A clash of the rest of the block (the `in` expression, or a
+                // later line of another type) is the block's error, as a
+                // refused line is.
+                if !refused && self.errors.len() > before {
+                    self.bind_lines_refused += 1;
+                }
+                // The first line of a block that reported an error (a refused
+                // line, or a clash of its `in` expression): that error is the
+                // block's one error. The hand-written chain with the same
+                // clash leaves its result free, so the block's type is free
+                // too, and the `case` around it, a caller of an unannotated
+                // def or the rest of the body report no second clash on it.
+                if !continues && self.bind_lines_refused > refused_in_block {
+                    return self.uf.fresh_flex();
+                }
+                result
             }
             Expr::Call(callee, args) => {
                 let mut tf = self.infer_expr(body, *callee);
@@ -1755,7 +2028,8 @@ impl<'a> Infer<'a> {
                     if let Expr::Record(fields) = &body.exprs[arg] {
                         self.unify_record_arg_fields(body, *callee, tf, ta, fields);
                     }
-                    let want = if self.errors.len() > before {
+                    let field_clash = self.errors.len() > before;
+                    let want = if field_clash {
                         // Already reported at the field; bind the result
                         // without a second report of the same clash.
                         let param = self.uf.fresh_flex();
@@ -1763,13 +2037,31 @@ impl<'a> Infer<'a> {
                     } else {
                         self.fun(ta, res)
                     };
+                    // A name bound with `=` to a Task (or another type with
+                    // an `andThen`) passed where its result may be wanted:
+                    // keep the union-find before the clash, to try the bind
+                    // line's result in the slot. A parameter that is a free
+                    // variable or has the same head takes the value itself.
+                    let bound = (!field_clash)
+                        .then(|| self.eq_bound_value(body, arg, ta))
+                        .flatten()
+                        .filter(|c| self.param_may_refuse(tf, c));
+                    let snap = bound.as_ref().map(|_| self.uf.clone());
                     self.unify(tf, want);
                     // D-ANY migration note: a clash against a signature whose
                     // `any` was filled from its body (v0.27.0) says so.
                     if self.errors.len() > before {
                         let note = self
                             .any_fill_note(body, *callee)
-                            .or_else(|| self.any_fill_note(body, arg));
+                            .or_else(|| self.any_fill_note(body, arg))
+                            .or_else(|| {
+                                let (c, snap) = (bound.as_ref()?, snap.as_ref()?);
+                                self.bind_result_note(body, c, snap, |s, x| {
+                                    let r = s.uf.fresh_flex();
+                                    let w = s.fun(x, r);
+                                    s.uf.unify(tf, w).is_ok()
+                                })
+                            });
                         self.append_note(before, note);
                     }
                     tf = res;
@@ -1779,7 +2071,40 @@ impl<'a> Infer<'a> {
             Expr::Binop { op, lhs, rhs, .. } => {
                 let tl = self.infer_expr(body, *lhs);
                 let tr = self.infer_expr(body, *rhs);
-                self.infer_binop(op.as_str(), tl, tr)
+                let before = self.errors.len();
+                // An operand bound with `=` to a Task (or another type with
+                // an `andThen`): keep the union-find before the clash, to
+                // try the bind line's result as that operand.
+                let bound: Vec<(bool, crate::bind::EqBound)> =
+                    [(true, *lhs, tl), (false, *rhs, tr)]
+                        .into_iter()
+                        .filter_map(|(left, x, tx)| {
+                            let c = self.eq_bound_value(body, x, tx)?;
+                            // The other operand of the same head (`t1 == t2`)
+                            // takes the value itself.
+                            let other = if left { tr } else { tl };
+                            let same = self
+                                .uf
+                                .app_name(other)
+                                .is_some_and(|n| crate::nominal::same(n.as_str(), c.head()));
+                            (!same).then_some((left, c))
+                        })
+                        .collect();
+                let snap = (!bound.is_empty()).then(|| self.uf.clone());
+                let t = self.infer_binop(op.as_str(), tl, tr);
+                if self.errors.len() > before {
+                    let note = snap.as_ref().and_then(|snap| {
+                        bound.iter().find_map(|(left, c)| {
+                            self.bind_result_note(body, c, snap, |s, x| {
+                                let (l, r) = if *left { (x, tr) } else { (tl, x) };
+                                s.infer_binop(op.as_str(), l, r);
+                                true
+                            })
+                        })
+                    });
+                    self.append_note(before, note);
+                }
+                t
             }
             Expr::If { arms, els } => {
                 let result = self.uf.fresh_flex();
@@ -1795,6 +2120,13 @@ impl<'a> Infer<'a> {
                 result
             }
             Expr::Let { defs, body: lb } => {
+                for d in defs {
+                    if let ([(name, lid)], None, true) =
+                        (d.binders.as_slice(), &d.pat, d.params.is_empty())
+                    {
+                        self.eq_bound.insert(*lid, (name.clone(), d.body));
+                    }
+                }
                 // pre-bind binder names for forward reference / recursion.
                 for d in defs {
                     for (_, lid) in &d.binders {
@@ -1857,10 +2189,33 @@ impl<'a> Infer<'a> {
                 let rec = self
                     .uf
                     .fresh(Content::Structure(FlatTy::Record(map.clone(), Some(row))));
+                // A base bound with `=` to a Task (or another type with an
+                // `andThen`): keep the union-find before the clash, to try
+                // the field on the bind line's result.
+                let bound = self.eq_bound_value(body, *base, tb);
+                let snap = bound.as_ref().map(|_| self.uf.clone());
+                let before = self.errors.len();
                 self.unify_record_constraint(tb, rec, row, &map, true);
+                if self.errors.len() > before {
+                    let note = bound.as_ref().zip(snap.as_ref()).and_then(|(c, snap)| {
+                        self.bind_result_note(body, c, snap, |s, x| {
+                            let fv = s.uf.fresh_flex();
+                            let row = s.uf.fresh_flex();
+                            let mut map = std::collections::BTreeMap::new();
+                            map.insert(field.clone(), fv);
+                            let rec =
+                                s.uf.fresh(Content::Structure(FlatTy::Record(map, Some(row))));
+                            s.uf.unify(x, rec).is_ok()
+                        })
+                    });
+                    self.append_note(before, note);
+                }
                 fv
             }
-            Expr::Error => self.uf.fresh_flex(),
+            Expr::Error => {
+                self.unresolved_seen += 1;
+                self.uf.fresh_flex()
+            }
         }
     }
 
@@ -2443,13 +2798,15 @@ impl<'a> Infer<'a> {
         match res {
             Res::Kernel { module, func } => Some(format!("{}.{}", module.as_str(), func.as_str())),
             Res::Def(d) => self.db.def_loc(*d).map(|l| l.name.as_str().to_string()),
-            _ => None,
+            // A bind line is typed by its own `Call` arm and never named here.
+            Res::BindAndThen => None,
+            Res::Local(_) | Res::Ctor(_) | Res::Foreign { .. } | Res::Error => None,
         }
     }
 
     /// [`Self::infer_res_plain`], then (v0.30.0, CHECK-ONLY) the routed page
     /// ties of a use of a routing def (`crate::obligations::PageTie`).
-    fn infer_res(&mut self, res: Res) -> TyVarId {
+    pub(crate) fn infer_res(&mut self, res: Res) -> TyVarId {
         let def = match &res {
             Res::Def(d) if !self.use_inferred && self.self_def != Some(*d) => Some(*d),
             _ => None,
@@ -2499,6 +2856,12 @@ impl<'a> Infer<'a> {
             Res::Def(def) => {
                 if let Some(&shared) = self.provisional_defs.get(&def) {
                     return shared;
+                }
+                if !self.use_inferred
+                    && self.self_def != Some(def)
+                    && self.world.app_failed_defs.contains(&def)
+                {
+                    self.failed_def_seen += 1;
                 }
 
                 // v0.27.0 qualified bounds — CHECK-ONLY. A def whose scheme
@@ -2608,7 +2971,22 @@ impl<'a> Infer<'a> {
                 }
             }
             Res::Foreign { package, name } => self.foreign_ref(&package, &name),
-            Res::Error => self.uf.fresh_flex(),
+            // The placeholder of a bind line is typed by its `Call` (the bind
+            // arm of `infer_expr_inner`). Anywhere else it is a resolver bug.
+            Res::BindAndThen => {
+                self.errors.push(TypeError {
+                    message: "internal compiler error: a bind line placeholder outside its \
+                              bind line (docs/design/let-bind-lines.md §2)"
+                        .to_string(),
+                    span: self.cur_span,
+                    code: "E2001",
+                });
+                self.uf.fresh_flex()
+            }
+            Res::Error => {
+                self.unresolved_seen += 1;
+                self.uf.fresh_flex()
+            }
         }
     }
 
@@ -3113,7 +3491,7 @@ impl<'a> Infer<'a> {
     /// emitted Go stays byte-identical. Only `Number` has an unambiguous
     /// single concrete default; `Comparable`/`Appendable`/`CompAppend` keep the
     /// drop-to-quantifier behaviour even under `concretize_super`.
-    fn read_back_scheme(&mut self, v: TyVarId, concretize_super: bool) -> Ty {
+    pub(crate) fn read_back_scheme(&mut self, v: TyVarId, concretize_super: bool) -> Ty {
         let mut seen = std::collections::HashSet::new();
         self.read_back_seen(v, &mut seen, true, concretize_super)
     }

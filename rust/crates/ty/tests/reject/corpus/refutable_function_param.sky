@@ -1,0 +1,23 @@
+-- gate: reject
+-- defect: a refutable pattern as a top-level function parameter
+-- rust: reject [E3001] a binder pattern must match every value; use `case`
+--
+-- `Shape` has two variants, so `area (Circle r)` has no answer for a
+-- `Square`. A parameter pattern is accepted only when it matches every value.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type Shape
+    = Circle Int
+    | Square Int
+
+
+area : Shape -> Int
+area (Circle r) =
+    r * r
+
+
+main =
+    println (String.fromInt (area (Square 2)))

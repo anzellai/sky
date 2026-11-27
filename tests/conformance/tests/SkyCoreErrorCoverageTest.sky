@@ -29,6 +29,7 @@ import Sky.Test as Test exposing (Test)
 kindOf : Error -> ErrorKind
 kindOf err =
     case err of
+
         Error kind _ ->
             kind
 
@@ -36,6 +37,7 @@ kindOf err =
 messageOf : Error -> String
 messageOf err =
     case err of
+
         Error _ info ->
             info.message
 
@@ -45,13 +47,16 @@ messageOf err =
 detailsLabel : Error -> String
 detailsLabel err =
     case err of
+
         Error _ info ->
             case info.details of
+
                 Nothing ->
                     "<<NO-DETAILS>>"
 
                 Just d ->
                     case d of
+
                         HttpStatus n ->
                             "http:" ++ String.fromInt n
 
@@ -68,14 +73,17 @@ detailsLabel err =
                             "panic:" ++ pi.message
 
                         Domain f ->
-                            "domain:" ++ E.failureDomain f ++ "/" ++ E.failureCode f
+                            "domain:" ++ E.failureDomain f ++ "/"
+                                ++ E.failureCode f
 
 
 hasDetails : Error -> Bool
 hasDetails err =
     case err of
+
         Error _ info ->
             case info.details of
+
                 Nothing ->
                     False
 

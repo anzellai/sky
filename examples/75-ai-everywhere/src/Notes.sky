@@ -42,8 +42,11 @@ connect =
 -- | The database with the notes table created (idempotent).
 open : Task Error Db
 open =
-    connect
-        |> Task.andThen (\db -> Store.create db store |> Task.map (\_ -> db))
+    let
+        db <- connect
+        _ <- Store.create db store
+    in
+        Task.succeed db
 
 
 -- | Every note, newest first.

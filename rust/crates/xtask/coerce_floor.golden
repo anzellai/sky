@@ -639,7 +639,15 @@
 # 78-i18n-booking (new, v0.31.0): the Std.I18n booking example (Sky.Live,
 #   Std.Ui, Std.I18n, Std.I18n.Format, App.withDocument). New row: narrow=87,
 #   measured with `coerce-floor --only=78-i18n-booking`.
-00-standard-libs	adapter=0	dispatch=0	narrow=106
+#
+# v0.32.0 typed `Result.mapError` (#342): 9 rows FALL by 20 narrow (15459 ->
+#   15439), none rose, adapter and dispatch 0. A proven `Result.mapError f r`
+#   (the Prelude kernel `rt.Result_mapError` and the `Sky.Core.Result` def)
+#   now lowers to the typed twin `rt.Result_mapErrorT[E, F, A]` (doc 14 R5 /
+#   R12, lever §5.3, `lower.rs` `map_error_plan`), so the slot no longer
+#   narrows the erased result back. apps/ledger stays at 301 with `signUp`
+#   rewritten as bind lines with a `mapError` per step.
+00-standard-libs	adapter=0	dispatch=0	narrow=103
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=5
 03-tea-external	adapter=0	dispatch=0	narrow=3
@@ -647,11 +655,11 @@
 05-mux-server	adapter=0	dispatch=0	narrow=3
 06-json	adapter=0	dispatch=0	narrow=47
 07-todo-cli	adapter=0	dispatch=0	narrow=77
-08-notes-app	adapter=0	dispatch=0	narrow=214
+08-notes-app	adapter=0	dispatch=0	narrow=213
 09-live-counter	adapter=0	dispatch=0	narrow=93
 10-live-component	adapter=0	dispatch=0	narrow=96
-12-skyvote	adapter=0	dispatch=0	narrow=273
-13-skyshop	adapter=0	dispatch=0	narrow=1134
+12-skyvote	adapter=0	dispatch=0	narrow=272
+13-skyshop	adapter=0	dispatch=0	narrow=1132
 14-task-demo	adapter=0	dispatch=0	narrow=8
 15-http-server	adapter=0	dispatch=0	narrow=8
 16-skychess	adapter=0	dispatch=0	narrow=317
@@ -674,7 +682,7 @@
 33-websocket-echo	adapter=0	dispatch=0	narrow=4
 34-multi-tier-console	adapter=0	dispatch=0	narrow=53
 35-composite-generics	adapter=0	dispatch=0	narrow=103
-36-composite-server	adapter=0	dispatch=0	narrow=166
+36-composite-server	adapter=0	dispatch=0	narrow=162
 37-composite-live-shop	adapter=0	dispatch=0	narrow=237
 38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=197
 40-generic-adt-field	adapter=0	dispatch=0	narrow=2
@@ -697,31 +705,31 @@
 62-app-notes	adapter=0	dispatch=0	narrow=242
 63-app-chat	adapter=0	dispatch=0	narrow=250
 64-app-native	adapter=0	dispatch=0	narrow=176
-65-metadata-service	adapter=0	dispatch=0	narrow=16
+65-metadata-service	adapter=0	dispatch=0	narrow=15
 66-slack-agent	adapter=0	dispatch=0	narrow=122
 67-durable-counter	adapter=0	dispatch=0	narrow=63
 68-ai-dataset	adapter=0	dispatch=0	narrow=373
 69-ai-scrub	adapter=0	dispatch=0	narrow=48
 70-ai-synthetic	adapter=0	dispatch=0	narrow=369
-71-ai-registry	adapter=0	dispatch=0	narrow=800
+71-ai-registry	adapter=0	dispatch=0	narrow=796
 72-ai-support-desk	adapter=0	dispatch=0	narrow=596
-73-ai-train	adapter=0	dispatch=0	narrow=1234
-74-ai-cloud	adapter=0	dispatch=0	narrow=1325
+73-ai-train	adapter=0	dispatch=0	narrow=1231
+74-ai-cloud	adapter=0	dispatch=0	narrow=1322
 75-ai-everywhere	adapter=0	dispatch=0	narrow=797
-77-demo-expenses	adapter=0	dispatch=0	narrow=249
+77-demo-expenses	adapter=0	dispatch=0	narrow=247
 78-i18n-booking	adapter=0	dispatch=0	narrow=87
 apps/dispatch	adapter=0	dispatch=0	narrow=166
 apps/fieldbook	adapter=0	dispatch=0	narrow=386
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
 apps/ledger	adapter=0	dispatch=0	narrow=301
-apps/relay	adapter=0	dispatch=0	narrow=115
+apps/relay	adapter=0	dispatch=0	narrow=113
 examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=55
 examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=55
 examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=157
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=1
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=103
-sky-bundled/ai	adapter=0	dispatch=0	narrow=601
-sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=483
-sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1155
+sky-bundled/ai	adapter=0	dispatch=0	narrow=599
+sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=482
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1148
 sky-bundled/console	adapter=0	dispatch=0	narrow=145
 sky-bundled/doc	adapter=0	dispatch=0	narrow=42

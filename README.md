@@ -110,22 +110,19 @@ firewall act =
 
 replyBody : Ctx -> Ticket -> Task Error String
 replyBody ctx ticket =
-    Durable.step
-        ctx
-        chatCodec
-        "draft"
-        (Provider.chat
-            provider
-            [ Provider.system "Draft a short, kind reply."
-            , Provider.user ticket.text
-            ])
-        |> Task.andThen
-               (\draft ->
-                   Durable.step
-                       ctx
-                       Codec.string
-                       "send"
-                       (send ticket draft.content))
+    let
+        draft <-
+            Durable.step
+                ctx
+                chatCodec
+                "draft"
+                (Provider.chat
+                    provider
+                    [ Provider.system "Draft a short, kind reply."
+                    , Provider.user ticket.text
+                    ])
+    in
+        Durable.step ctx Codec.string "send" (send ticket draft.content)
 
 
 send : Ticket -> String -> Task Error String
@@ -137,7 +134,7 @@ send ticket reply =
         |> Task.map outcome
 ```
 
-The model only proposes an action. Your pure `firewall` decides, and an action above `Low` risk waits for a human. Each `Durable.step` is journalled, so a crash resumes the run and never pays for the same model call twice. The whole program is in [docs/showcase.md](docs/showcase.md), and a full Slack bot is [`examples/66-slack-agent`](examples/66-slack-agent).
+`draft <- …` is a bind line: the rest of the `let` block runs with the step's result, so an effect chain reads top to bottom with no nested lambdas ([syntax](docs/language/syntax.md#bind-lines)). The model only proposes an action. Your pure `firewall` decides, and an action above `Low` risk waits for a human. Each `Durable.step` is journalled, so a crash resumes the run and never pays for the same model call twice. The whole program is in [docs/showcase.md](docs/showcase.md), and a full Slack bot is [`examples/66-slack-agent`](examples/66-slack-agent).
 
 ### One source, many targets
 
@@ -184,7 +181,7 @@ There are 75 projects in [`examples/`](examples/). Start with these:
 
 ## Status
 
-> **Status: v0.31.x, pre-1.0.** A minor version can include breaking changes.
+> **Status: v0.32.x, pre-1.0.** A minor version can include breaking changes.
 > Each one is listed in the [CHANGELOG](CHANGELOG.md) with a migration guide
 > under [`docs/migration/`](docs/migration/), and `sky upgrade` shows it. See
 > [VERSIONING.md](VERSIONING.md) and the

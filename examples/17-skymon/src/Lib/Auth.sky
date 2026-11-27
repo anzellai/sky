@@ -48,34 +48,26 @@ exchangeCodeForToken code =
                 , "client_secret=" ++ getGitHubClientSecret
                 , "code=" ++ code
                 ]
-        result =
+        resp <-
             Task.run
                 (Http.post "https://github.com/login/oauth/access_token" body)
     in
-        case result of
-
-            Ok resp ->
-                Ok (extractParam "access_token" resp.body)
-
-            Err e ->
-                Err e
+        Ok (extractParam "access_token" resp.body)
 
 
 -- getGitHubUser returns a small typed record (from the GitHub JSON), consumed
 -- by the sign-in handler — not a DB row.
 getGitHubUser : String -> Result Error { username : String, avatarUrl : String }
 getGitHubUser token =
-    case Task.run
-             (Http.get ("https://api.github.com/user?access_token=" ++ token)) of
-
-        Ok resp ->
-            Ok
-                { username = extractJsonSimple "login" resp.body
-                , avatarUrl = extractJsonSimple "avatar_url" resp.body
-                }
-
-        Err e ->
-            Err e
+    let
+        resp <-
+            Task.run
+                (Http.get ("https://api.github.com/user?access_token=" ++ token))
+    in
+        Ok
+            { username = extractJsonSimple "login" resp.body
+            , avatarUrl = extractJsonSimple "avatar_url" resp.body
+            }
 
 
 createSession : String -> String -> String -> String

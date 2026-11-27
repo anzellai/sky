@@ -61,8 +61,9 @@ From `serverCapabilities` in the Rust LSP crate (`rust/crates/sky-lsp`):
 | `textDocument/rename` + `prepareRename` | yes | WorkspaceEdit with per-file TextEdits |
 | `textDocument/signatureHelp` | yes | Parameter info while typing a call (v0.15.48+: per-parameter `[startOffset, endOffset]` ranges so editors highlight the active argument in-place) |
 | `textDocument/codeAction` | yes | `quickfix` + `source.organizeImports` kinds |
-| `textDocument/semanticTokens/full` | yes | Syntactic highlighting |
+| `textDocument/semanticTokens/full` | yes | Syntactic highlighting; `<-` of a bind line is a keyword token |
 | `textDocument/completion` | yes | Triggered on `.` (qualified-name) |
+| `textDocument/inlayHint` | yes | ` : T` after an unannotated top-level value, a `let` binding with no annotation, and each name a bind line binds |
 | `workspace/symbol` | **yes** | Project-wide symbol search. This row said "no — use `documentSymbol` per-file"; the server advertises `workspace_symbol_provider: Some(OneOf::Left(true))` (`rust/crates/sky-lsp/src/server.rs:86`), handles it at `:243`, and has a dedicated test (`sky-lsp/tests/workspace_symbol.rs`) |
 
 ## What hover shows
@@ -75,6 +76,7 @@ From `serverCapabilities` in the Rust LSP crate (`rust/crates/sky-lsp`):
 | A builtin type (`Maybe`, `Result`, `List`, `Task`, `Int`, …) | Its definition and a one-line description |
 | A constructor (in an expression or a pattern) | `Ctor : args -> Type`, then the doc of its type |
 | A type variable | `a` — Type variable |
+| `<-` of a bind line (`p <- e`) | The `andThen` the checker chose (`Sky.Core.Task.andThen`), its type, and the type the pattern binds. Go-to-definition on `<-` opens that `andThen` |
 
 A field names its alias when the record type at the cursor is closed and has
 the same field set as exactly one alias, or when one alias alone has a
@@ -206,7 +208,7 @@ No official extension yet. The LSP is standards-compliant so any generic LSP cli
 - **Unqualified completion is not surfaced.** Typing a bare identifier does not propose suggestions; only `.`-triggered qualified completion fires.
 - **Single-project workspaces only.** Nested `sky.toml` projects under the workspace root are not recognised.
 - **Rename does not touch dependencies.** Renaming a symbol exported by a Sky source dep does not rewrite `.skydeps/` (those are cloned read-only).
-- **No code lens / inlay hints.** No per-line type annotations in the editor.
+- **No code lens.** Inlay hints show inferred types (see the capability table), but there is no code lens.
 
 ## Debugging
 
