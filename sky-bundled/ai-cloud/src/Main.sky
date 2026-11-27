@@ -291,49 +291,42 @@ renderVerb json opts =
 
 deployVerb : Bool -> List String -> Task Error ()
 deployVerb json opts =
-    need "--service" (text "--service" opts)
-        |> Task.andThen
-               (\_ ->
-                   if List.member "--dry-run" opts then
-                       emit
-                           json
-                           (JsonE.object
-                               [ ( "service"
-                                 , JsonE.string (text "--service" opts)
-                                 )
-                               , ( "spec"
-                                 , Result.withDefault
-                                       JsonE.null
-                                       (JsonE.raw
-                                           (Serve.serviceJson
-                                               (targetOf opts)
-                                               (tierOf opts)))
-                                 )
-                               ])
-                           (Serve.serviceJson (targetOf opts) (tierOf opts))
+    let
+        _ <- need "--service" (text "--service" opts)
+    in
+        if List.member "--dry-run" opts then
+            emit
+                json
+                (JsonE.object
+                    [ ( "service", JsonE.string (text "--service" opts) )
+                    , ( "spec"
+                      , Result.withDefault
+                            JsonE.null
+                            (JsonE.raw
+                                (Serve.serviceJson (targetOf opts) (tierOf opts)))
+                      )
+                    ])
+                (Serve.serviceJson (targetOf opts) (tierOf opts))
 
-                   else
-                       Serve.deploy (targetOf opts) (tierOf opts)
-                           |> Task.andThen
-                                  (\d ->
-                                      emit
-                                          json
-                                          (JsonE.object
-                                              [ ( "url", JsonE.string d.url )
-                                              , ( "revision"
-                                                , JsonE.string d.revision
-                                                )
-                                              , ( "region"
-                                                , JsonE.string d.region
-                                                )
-                                              , ( "service"
-                                                , JsonE.string d.service
-                                                )
-                                              ])
-                                          ("deployed " ++ d.service ++ " ("
-                                              ++ d.revision
-                                              ++ ") at "
-                                              ++ d.url)))
+        else
+            deployed json (targetOf opts) (tierOf opts)
+
+
+-- | Deploy the service and report where it runs.
+deployed : Bool -> Serve.Target -> Serve.Tier -> Task Error ()
+deployed json target tier =
+    let
+        d <- Serve.deploy target tier
+    in
+        emit
+            json
+            (JsonE.object
+                [ ( "url", JsonE.string d.url )
+                , ( "revision", JsonE.string d.revision )
+                , ( "region", JsonE.string d.region )
+                , ( "service", JsonE.string d.service )
+                ])
+            ("deployed " ++ d.service ++ " (" ++ d.revision ++ ") at " ++ d.url)
 
 
 -- ─── teardown and ls ────────────────────────────────────────────────────

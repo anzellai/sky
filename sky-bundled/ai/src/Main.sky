@@ -395,18 +395,16 @@ openRegistry opts =
 
                 Nothing ->
                     Db.connect ()
+        conn <- db
     in
-        db
-            |> Task.andThen
-                   (\conn ->
-                       case flag "--registry" opts of
+        case flag "--registry" opts of
 
-                           Just url ->
-                               Task.fromResult (Store.fromUrl url)
-                                   |> Task.andThen (Registry.open conn)
+            Just url ->
+                Task.fromResult (Store.fromUrl url)
+                    |> Task.andThen (Registry.open conn)
 
-                           Nothing ->
-                               Registry.openConfigured conn "")
+            Nothing ->
+                Registry.openConfigured conn ""
 
 
 versionNumber : String -> Task Error Int

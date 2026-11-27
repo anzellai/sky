@@ -346,14 +346,14 @@ with the HTTP server (see `main`).
 -}
 poller : Db -> Task Error ()
 poller db =
-    Durable.poll db [ Durable.erase botDef ]
-        |> Task.andThen
-               (\didWork ->
-                   if didWork then
-                       poller db
+    let
+        didWork <- Durable.poll db [ Durable.erase botDef ]
+    in
+        if didWork then
+            poller db
 
-                   else
-                       Time.sleep 1000 |> Task.andThen (\_ -> poller db))
+        else
+            Time.sleep 1000 |> Task.andThen (\_ -> poller db)
 
 
 -- ─── Boot ────────────────────────────────────────────────────────
