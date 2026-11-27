@@ -191,45 +191,52 @@ signUpWith form model =
             failWith "org" "Organisation and email are required." model
 
         else
-            case Repo.findUserByEmail email of
+            case createAccount email orgName form.password of
 
-                Ok (Just _) ->
-                    failWith "email" "That email is already registered." model
+                Ok orgId ->
+                    seedChartOfAccounts
+                        orgId
+                        (signInWith email form.password model)
 
-                Err e ->
-                    failWith
-                        "email"
-                        ("Sign-up unavailable: " ++ Error.toString e)
-                        model
+                Err ( field, message ) ->
+                    failWith field message model
 
-                Ok Nothing ->
-                    case Auth.hashPassword form.password of
 
-                        Err e ->
-                            failWith "password" (Error.toString e) model
+-- | Create the org and its first user, in order. Each failure carries the
+-- form field it belongs to and the message to show there.
+createAccount : String -> String -> String -> Result ( String, String ) Int
+createAccount email orgName password =
+    let
+        existing <-
+            Repo.findUserByEmail email
+                |> Result.mapError
+                       (\e ->
+                           ( "email"
+                           , "Sign-up unavailable: " ++ Error.toString e
+                           ))
+        _ <- unregistered existing
+        hash <-
+            Auth.hashPassword password
+                |> Result.mapError (\e -> ( "password", Error.toString e ))
+        orgId <-
+            Repo.insertOrg orgName
+                |> Result.mapError (\e -> ( "org", Error.toString e ))
+        _ <-
+            Repo.insertUser orgId email hash
+                |> Result.mapError (\e -> ( "email", Error.toString e ))
+    in
+        Ok orgId
 
-                        Ok hash ->
-                            case Repo.insertOrg orgName of
 
-                                Err e ->
-                                    failWith "org" (Error.toString e) model
+unregistered : Maybe Books.User -> Result ( String, String ) ()
+unregistered existing =
+    case existing of
 
-                                Ok orgId ->
-                                    case Repo.insertUser orgId email hash of
+        Just _ ->
+            Err ( "email", "That email is already registered." )
 
-                                        Err e ->
-                                            failWith
-                                                "email"
-                                                (Error.toString e)
-                                                model
-
-                                        Ok _ ->
-                                            seedChartOfAccounts
-                                                orgId
-                                                (signInWith
-                                                    email
-                                                    form.password
-                                                    model)
+        Nothing ->
+            Ok ()
 
 
 -- | A brand-new book gets the minimum viable chart of accounts so the very
