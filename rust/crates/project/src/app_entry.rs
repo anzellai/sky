@@ -755,22 +755,9 @@ impl<'a> Reader<'a> {
         // Names bound INSIDE the argument (lambda params, let names, case
         // patterns) are its own; any other name must be top-level.
         let node = e.syntax();
-        let mut inside: HashSet<String> = HashSet::new();
-        for d in node.descendants() {
-            match d.kind() {
-                SyntaxKind::PatVar => {
-                    inside.insert(node_text(&d));
-                }
-                SyntaxKind::LetBinding => {
-                    if let Some(b) = ast::LetBinding::cast(d.clone()) {
-                        if let Some(n) = b.name() {
-                            inside.insert(n.text().to_string());
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        // Read from the syntax: a bind line `p <- e`, a record field
+        // pattern `{ a }` and an alias `… as r` bind names too.
+        let inside = crate::cst_names::names_bound_inside(node);
         for d in node.descendants() {
             if d.kind() != SyntaxKind::RefExpr {
                 continue;
@@ -1505,6 +1492,78 @@ pub fn main_run_chain(src: &str) -> Result<RunChain, String> {
 }
 
 /// [`main_run_chain`]'s setup alone.
+/// The boot-setup `let` prefix of the app's `main`, read from the syntax:
+///
+/// ```text
+/// main =
+///     let
+///         _ = Task.run (System.loadEnv ())
+///         _ <- Data.ensureSchema
+///     in
+///     App.run app
+/// ```
+///
+/// The client (Sky.Spa) build drops `main` and generates the backend's own, so
+/// it carries these lines into the backend's setup Task. `block` is the lines
+/// verbatim, the first one at its own column (also when it shares a line with
+/// `let`), so the layout of every line stays as written. Bind lines (`p <-
+/// e`, docs/design/let-bind-lines.md §6) are carried with the rest: in a
+/// `Task` block they chain the setup in order. `names` are the names the
+/// lines bind (`_` excluded). `None` when `main`'s body is not a `let`.
+pub fn main_let_setup(src: &str) -> Option<MainLetSetup> {
+    let file = parse(src);
+    let main = file.decls().find_map(|d| match d {
+        ast::Decl::Value(v) if v.name().is_some_and(|n| n.text() == "main") => Some(v),
+        _ => None,
+    })?;
+    let Expr::Let(l) = strip_parens(main.body()?) else {
+        return None;
+    };
+    let lines: Vec<SyntaxNode> = l
+        .syntax()
+        .children()
+        .filter(|c| {
+            matches!(
+                c.kind(),
+                SyntaxKind::LetBinding | SyntaxKind::DestructureBinding | SyntaxKind::BindBinding
+            )
+        })
+        .collect();
+    let significant = |n: &SyntaxNode, last: bool| {
+        let mut toks = n
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|t| !t.kind().is_trivia());
+        if last {
+            toks.last()
+        } else {
+            toks.next()
+        }
+    };
+    let start = usize::from(significant(lines.first()?, false)?.text_range().start());
+    let end = usize::from(significant(lines.last()?, true)?.text_range().end());
+    let line_start = src[..start].rfind('\n').map_or(0, |i| i + 1);
+    let col = src[line_start..start].chars().count();
+    let block = format!("{}{}", " ".repeat(col), src.get(start..end)?);
+    let mut bound = HashSet::new();
+    for line in &lines {
+        crate::cst_names::let_line_names(line, false, &mut bound);
+    }
+    bound.remove("_");
+    let mut names: Vec<String> = bound.into_iter().collect();
+    names.sort();
+    Some(MainLetSetup { block, names })
+}
+
+/// See [`main_let_setup`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MainLetSetup {
+    /// The `let` lines of `main`, verbatim.
+    pub block: String,
+    /// The names the lines bind, sorted (`_` excluded).
+    pub names: Vec<String>,
+}
+
 pub fn main_run_chain_setup(src: &str) -> Result<Option<ArgText>, String> {
     Ok(main_run_chain(src)?.setup)
 }
@@ -1925,6 +1984,43 @@ mod tests {
 
     fn all(_: &str) -> bool {
         true
+    }
+
+    /// `main = let … in App.run app`: the lines come from the syntax, bind lines
+    /// included, with their layout and the names they bind
+    /// (docs/design/let-bind-lines.md §6). The text scan this replaces missed a
+    /// bind line's name (no `=`) and a block that starts on the `let` line.
+    #[test]
+    fn main_let_setup_reads_bind_lines_from_the_syntax() {
+        let src = format!(
+            "{HEAD}main =\n    let\n        _ <- Data.ensureSchema\n        -- seed it\n        ( n, m ) <- Data.counts\n        total =\n            n\n                + m\n    in\n    App.run appDef\n"
+        );
+        let s = main_let_setup(&src).unwrap();
+        assert_eq!(
+            s.block,
+            "        _ <- Data.ensureSchema\n        -- seed it\n        ( n, m ) <- Data.counts\n        total =\n            n\n                + m"
+        );
+        assert_eq!(s.names, ["m", "n", "total"]);
+
+        let one_line = format!("{HEAD}main =\n    let cfg <- Data.load in App.run appDef\n");
+        let s = main_let_setup(&one_line).unwrap();
+        assert_eq!(s.block, "        cfg <- Data.load");
+        assert_eq!(s.names, ["cfg"]);
+
+        assert!(main_let_setup(&format!("{HEAD}main =\n    App.run appDef\n")).is_none());
+    }
+
+    /// A name an argument binds itself is its own, wherever it binds it: a bind
+    /// line, a record field pattern, an alias.
+    #[test]
+    fn names_bound_inside_an_argument_include_bind_lines_and_record_fields() {
+        let src = "module M exposing (..)\n\nf =\n    \\({ a } as r) ->\n        let\n            b <- Just a\n            c = 1\n        in\n        Just (b + c)\n";
+        let file = parse(src);
+        let mut names: Vec<String> = crate::cst_names::names_bound_inside(file.syntax())
+            .into_iter()
+            .collect();
+        names.sort();
+        assert_eq!(names, ["a", "b", "c", "r"]);
     }
 
     /// `main = start`, `start = setup |> Task.andThen runIt`, `runIt _ =

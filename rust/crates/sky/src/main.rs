@@ -3002,11 +3002,6 @@ fn remove_top_level_binding(src: &str, name: &str) -> String {
     out
 }
 
-/// Number of leading space characters on `line`.
-fn indent_width(line: &str) -> usize {
-    line.chars().take_while(|c| *c == ' ').count()
-}
-
 /// True iff `word` occurs in `hay` as a WHOLE word (not a substring of a longer
 /// identifier). Used to classify whether a boot-setup `let` binding is
 /// referenced by the app config — a false positive would needlessly disable the
@@ -3059,107 +3054,6 @@ fn reindent_arg_text(t: &project::app_entry::ArgText, base: usize) -> String {
         ));
     }
     out.join("\n")
-}
-
-/// Capture the boot-setup `let`-prefix of the app's `main`. A real app runs
-/// boot-time server setup before it starts the app:
-///
-/// ```text
-/// main =
-///     let
-///         _ = Task.run (System.loadEnv ())
-///         _ = Data.ensureSchema
-///     in
-///     App.run app
-/// ```
-///
-/// The App→Spa synthesis drops `main` and generates a new one, so without
-/// capturing this prefix the boot setup (schema creation, migrations, seeding)
-/// is silently lost and the deployed backend serves empty data. This returns the
-/// VERBATIM binding lines between `main`'s `let` and its matching `in`
-/// (surrounding blank lines trimmed), or `None` when `main` is a plain
-/// `main = App.run app` / `main = App.web { … } |> …` with no `let`-prefix (the
-/// common no-op case — today's behaviour is correct there).
-///
-/// The matching `in` is the one at the SAME indentation as the `let`, so a
-/// nested `let … in` inside a binding's RHS does not end the block early.
-fn capture_main_boot_setup(src: &str) -> Option<String> {
-    let lines: Vec<&str> = src.lines().collect();
-    // Find the VALUE binding of `main` (a column-0 `main =` line — NOT the
-    // `main : …` annotation, and NOT an inline `main = <expr>` whose body is on
-    // the same line as the `=`, which cannot carry a fmt'd `let`-prefix).
-    let mi = lines.iter().position(|l| *l == "main =")?;
-    // The first non-blank body line must be exactly `let`.
-    let mut j = mi + 1;
-    while j < lines.len() && lines[j].trim().is_empty() {
-        j += 1;
-    }
-    if j >= lines.len() || lines[j].trim() != "let" {
-        return None;
-    }
-    let let_indent = indent_width(lines[j]);
-    // The matching `in` is at the SAME indentation as `let`. Stop at the next
-    // column-0 declaration as a hard safety bound.
-    let mut k = j + 1;
-    let mut in_idx = None;
-    while k < lines.len() {
-        let l = lines[k];
-        if !l.is_empty() && !l.starts_with(char::is_whitespace) {
-            break;
-        }
-        if l.trim() == "in" && indent_width(l) == let_indent {
-            in_idx = Some(k);
-            break;
-        }
-        k += 1;
-    }
-    let in_idx = in_idx?;
-    // Bindings: the lines strictly between `let` and `in`, verbatim.
-    let mut block: Vec<&str> = lines[j + 1..in_idx].to_vec();
-    while block.first().map(|l| l.trim().is_empty()).unwrap_or(false) {
-        block.remove(0);
-    }
-    while block.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
-        block.pop();
-    }
-    if block.is_empty() {
-        return None;
-    }
-    Some(block.join("\n"))
-}
-
-/// The NAMED bindings introduced by a boot-setup `let`-block — the first token of
-/// each binding-start line (a line at the block's minimum indentation), skipping
-/// `_` side-effect forcings. Used to decide whether the block is safe to route
-/// backend-only: a name the app config references must NOT be moved server-side.
-fn let_block_bound_names(block: &str) -> Vec<String> {
-    let bind_indent = block
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(indent_width)
-        .min()
-        .unwrap_or(0);
-    let mut names = Vec::new();
-    for l in block.lines() {
-        if l.trim().is_empty() || indent_width(l) != bind_indent {
-            continue; // continuation line of a multi-line binding
-        }
-        let t = l.trim_start();
-        // A binding start looks like `name … =`; take the leading token.
-        let tok: String = t
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-            .collect();
-        if tok.is_empty() || tok == "_" {
-            continue;
-        }
-        // Guard: only treat it as a binding when an `=` follows on the line or a
-        // continuation (a bare identifier line is not a binding start).
-        if t.contains('=') || tok != t.trim_end() {
-            names.push(tok);
-        }
-    }
-    names
 }
 
 /// Synthesise a `Spa.app` entry source from a Std.App source: keep the user's
@@ -3361,9 +3255,9 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
             None => format!("{}Task.succeed ()\n", " ".repeat(indent)),
         }
     };
-    let boot_setup_binding = match capture_main_boot_setup(src) {
-        Some(block) => {
-            let names = let_block_bound_names(&block);
+    // Read from the syntax (`app_entry::main_let_setup`), bind lines included.
+    let boot_setup_binding = match project::app_entry::main_let_setup(src) {
+        Some(project::app_entry::MainLetSetup { block, names }) => {
             let config_refs = [
                 fields.init.as_str(),
                 fields.update.as_str(),

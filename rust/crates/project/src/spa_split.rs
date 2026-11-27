@@ -59,6 +59,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use syntax::ast::{AstNode, SourceFile};
 use syntax::SyntaxKind;
+use ty::TyDb;
 
 // ---------------------------------------------------------------------------
 // Codec resolution — the non-primitive-field engine (§14 #2).
@@ -2630,21 +2631,7 @@ fn client_residual(
         .descendants()
         .filter(|n| n.kind() == SyntaxKind::LetExpr)
     {
-        let t = slice(src, &le).to_string();
-        let body_start = t.find("\n").unwrap_or(0);
-        for line in t[body_start..].lines() {
-            let l = line.trim();
-            if l.starts_with("in") {
-                break;
-            }
-            if let Some((lhs, _)) = l.split_once('=') {
-                for w in lhs.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
-                    if !w.is_empty() && w.chars().next().is_some_and(|c| c.is_lowercase()) {
-                        locals.insert(w.to_string());
-                    }
-                }
-            }
-        }
+        crate::cst_names::let_binder_names(&le, true, &mut locals);
     }
     for t in &picked {
         for n in locals.iter().chain(tainted.iter()) {
@@ -4420,6 +4407,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 let target = match &occ.res {
                     hir::Res::Ctor(c) => Some(c.type_),
                     hir::Res::Def(d) if tainted_pure_defs.contains_key(d) => Some(*d),
+                    // A reference occurrence is a name as written: a bind line
+                    // placeholder is never one.
+                    hir::Res::BindAndThen => ty::unchosen_bind("the split's type-only imports"),
                     _ => None,
                 };
                 if let Some(loc) = target.and_then(|d| db.def_loc(d)) {
@@ -5290,6 +5280,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             let target = match &occ.res {
                 hir::Res::Def(d) => *d,
                 hir::Res::Ctor(c) => c.def,
+                // A reference occurrence is a name as written: a bind line
+                // placeholder is never one.
+                hir::Res::BindAndThen => ty::unchosen_bind("the split's codec references"),
                 _ => continue,
             };
             let Some(loc) = db.def_loc(target) else {
@@ -7967,9 +7960,10 @@ fn build_codec_registry(db: &SkyDatabase, mods: &[ModuleId], entry: ModuleId) ->
         let file = parse.tree();
         let src = parse.syntax().text().to_string();
         for td in &resolved.top_defs {
-            let Some(body) = resolved.bodies.get(&td.def) else {
+            let Some(body) = db.elaborated_body_of(mid, td.def) else {
                 continue;
             };
+            let body: &hir::Body = &body;
             // Only a zero-arg value binding IS a `Codec <T>` value (a function
             // `mkCodec : X -> Codec Y` is not directly referenceable as a codec).
             if !body.params.is_empty() {
@@ -15263,5 +15257,32 @@ mod returned_scroll_tests {
             "generated apply layout: {:?}",
             parsed.errors()
         );
+    }
+}
+
+#[cfg(test)]
+mod let_binder_tests {
+    use super::*;
+
+    /// The names an arm's `let` binds come from the syntax, not from a text
+    /// split at `=` (docs/design/let-bind-lines.md §6): a bind line
+    /// `p <- e` binds `p` (it has no `=`), a continuation line `a == b` binds
+    /// nothing, an annotation's type variables are not values, and a
+    /// destructure binds every name in its pattern.
+    #[test]
+    fn let_binders_are_read_from_the_syntax() {
+        let src = "module Main exposing (main)\n\nmain =\n    let\n        step : a -> a\n        step x =\n            x\n        ( first, { second } ) = pair\n        row <- Db.connect ()\n        same =\n            limit\n                == other\n    in\n    row\n";
+        let parse = syntax::parse(src, base::FileId(0));
+        assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+        let le = parse
+            .syntax()
+            .descendants()
+            .find(|n| n.kind() == SyntaxKind::LetExpr)
+            .unwrap();
+        let mut names = HashSet::new();
+        crate::cst_names::let_binder_names(&le, true, &mut names);
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort();
+        assert_eq!(names, ["first", "row", "same", "second", "step", "x"]);
     }
 }

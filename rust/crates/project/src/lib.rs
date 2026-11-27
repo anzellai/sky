@@ -28,6 +28,7 @@ pub mod config_migrate;
 /// its migration entry.
 pub mod config_migration;
 pub mod coverage;
+mod cst_names;
 /// `sky doc --diagram components` — a read-only architecture/component diagram
 /// of a Sky app (module nodes + capability buckets + edges, with the Sky.Spa
 /// client/server split). Reads the resolved HIR; never lowers, emits, or writes.
