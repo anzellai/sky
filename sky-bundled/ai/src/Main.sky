@@ -462,22 +462,17 @@ promote json name number opts =
                     "sky ai promote: name the alias with --to <alias>")
 
         Just aliasName ->
-            Task.map3
-                (\reg n t -> ( reg, n, t ))
-                (openRegistry opts)
-                (versionNumber number)
-                (thresholdsFrom opts)
-                |> Task.andThen
-                       (\( reg, n, t ) ->
-                           Registry.version reg name n
-                               |> Task.andThen
-                                      (\v -> promoteHow reg aliasName v t opts))
-                |> Task.andThen
-                       (\ev ->
-                           emit
-                               json
-                               (Registry.eventValue ev)
-                               (eventText name ev))
+            let
+                ( reg, n, t ) <-
+                    Task.map3
+                        (\reg n t -> ( reg, n, t ))
+                        (openRegistry opts)
+                        (versionNumber number)
+                        (thresholdsFrom opts)
+                v <- Registry.version reg name n
+                ev <- promoteHow reg aliasName v t opts
+            in
+                emit json (Registry.eventValue ev) (eventText name ev)
 
 
 promoteHow : Registry.Registry -> String -> Registry.Version -> Eval.Thresholds -> List String -> Task Error Registry.AliasEvent

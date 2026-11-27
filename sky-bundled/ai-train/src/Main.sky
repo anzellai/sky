@@ -173,63 +173,56 @@ backendOf name =
 
 provisionTrain : Bool -> String -> List String -> Task Error ()
 provisionTrain json name opts =
-    Task.fromResult (backendOf name)
-        |> Task.andThen
-               (\backend ->
-                   Train.provision backend
-                       |> Task.andThen
-                              (\tc ->
-                                  (case flag "--base" opts of
+    let
+        backend <- Task.fromResult (backendOf name)
+        tc <- Train.provision backend
+        weights <-
+            case flag "--base" opts of
 
-                                      Nothing ->
-                                          Task.succeed ""
+                Nothing ->
+                    Task.succeed ""
 
-                                      Just _ ->
-                                          -- Provisioning reads only the
-                                          -- weights: the serving model is not
-                                          -- used, so the development model
-                                          -- stands in for it.
-                                          cliBase True Local.devModel opts
-                                              |> Task.andThen
-                                                     (Train.provisionBase backend))
-                                      |> Task.map (\weights -> ( tc, weights ))))
-        |> Task.andThen
-               (\( tc, weights ) ->
-                   emit
-                       json
-                       (JsonE.object
-                           [ ( "toolchain", JsonE.string tc.name )
-                           , ( "id", JsonE.string tc.id )
-                           , ( "python", JsonE.string tc.python )
-                           , ( "trainer", JsonE.string tc.trainer )
-                           , ( "dir", JsonE.string tc.dir )
-                           , ( "packages", JsonE.int tc.packages )
-                           , ( "versions"
-                             , JsonE.object
-                                   (List.map
-                                       (\v -> ( v.name, JsonE.string v.version ))
-                                       tc.versions)
-                             )
-                           , ( "base", JsonE.string weights )
-                           ])
-                       (String.join
-                           "\n"
-                           ((if String.isEmpty tc.trainer then
-                               [ "toolchain " ++ tc.name ++ " " ++ tc.id ++ " ("
-                                     ++ String.fromInt tc.packages
-                                     ++ " locked packages)"
-                               , "python    " ++ tc.python
-                               ]
+                Just _ ->
+                    -- Provisioning reads only the weights: the serving model
+                    -- is not used, so the development model stands in for it.
+                    cliBase True Local.devModel opts
+                        |> Task.andThen (Train.provisionBase backend)
+    in
+        emit
+            json
+            (JsonE.object
+                [ ( "toolchain", JsonE.string tc.name )
+                , ( "id", JsonE.string tc.id )
+                , ( "python", JsonE.string tc.python )
+                , ( "trainer", JsonE.string tc.trainer )
+                , ( "dir", JsonE.string tc.dir )
+                , ( "packages", JsonE.int tc.packages )
+                , ( "versions"
+                  , JsonE.object
+                        (List.map
+                            (\v -> ( v.name, JsonE.string v.version ))
+                            tc.versions)
+                  )
+                , ( "base", JsonE.string weights )
+                ])
+            (String.join
+                "\n"
+                ((if String.isEmpty tc.trainer then
+                    [ "toolchain " ++ tc.name ++ " " ++ tc.id ++ " ("
+                          ++ String.fromInt tc.packages
+                          ++ " locked packages)"
+                    , "python    " ++ tc.python
+                    ]
 
-                           else
-                               [ "trainer   " ++ tc.name ++ " " ++ tc.id
-                               , "binary    " ++ tc.trainer
-                               ])
-                               ++ (if String.isEmpty weights then
-                                      []
+                else
+                    [ "trainer   " ++ tc.name ++ " " ++ tc.id
+                    , "binary    " ++ tc.trainer
+                    ])
+                    ++ (if String.isEmpty weights then
+                           []
 
-                                  else
-                                      [ "base      " ++ weights ]))))
+                       else
+                           [ "base      " ++ weights ])))
 
 
 -- `--base dev` is the development base. `--base hf:<org>/<repo>@<commit>` or
@@ -686,35 +679,27 @@ trainDb opts =
 
 trainRun : Bool -> List String -> Task Error ()
 trainRun json opts =
-    trainJob opts
-        |> Task.andThen
-               (\job ->
-                   (if List.member "--register" opts then
-                       openRegistry opts
-                           |> Task.map (\reg -> Train.withRegistry reg job)
+    let
+        planned <- trainJob opts
+        job <-
+            if List.member "--register" opts then
+                openRegistry opts
+                    |> Task.map (\reg -> Train.withRegistry reg planned)
 
-                   else
-                       Task.succeed job)
-                       |> Task.andThen
-                              (\j -> rememberArgs j opts |> Task.map (\_ -> j)))
-        |> Task.andThen
-               (\job ->
-                   trainDb opts
-                       |> Task.andThen
-                              (\db ->
-                                  if List.member "--detach" opts then
-                                      detach json db job
+            else
+                Task.succeed planned
+        _ <- rememberArgs job opts
+        db <- trainDb opts
+    in
+        if List.member "--detach" opts then
+            detach json db job
 
-                                  else
-                                      notice json job
-                                          |> Task.andThen
-                                                 (\_ -> Train.drive db job)
-                                          |> Task.andThen
-                                                 (\a ->
-                                                     emit
-                                                         json
-                                                         (adapterValue a)
-                                                         (adapterText a))))
+        else
+            let
+                _ <- notice json job
+                a <- Train.drive db job
+            in
+                emit json (adapterValue a) (adapterText a)
 
 
 -- The arguments that made the run, so `sky ai train resume <run>` can

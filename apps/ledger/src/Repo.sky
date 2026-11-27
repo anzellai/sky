@@ -184,24 +184,19 @@ postEntry orgId entryDate memo debitAccountId creditAccountId amountMinor =
         (Store.transaction
             Books.conn
             (\tx ->
-                insertEntryHeader tx orgId entryDate memo
-                    |> Task.andThen
-                           (\entryId ->
-                               insertLine
-                                   tx
-                                   orgId
-                                   entryId
-                                   debitAccountId
-                                   amountMinor
-                                   |> Task.andThen
-                                          (\_ ->
-                                              insertLine
-                                                  tx
-                                                  orgId
-                                                  entryId
-                                                  creditAccountId
-                                                  (0 - amountMinor))
-                                   |> Task.andThen (\_ -> Task.succeed entryId))))
+                let
+                    entryId <- insertEntryHeader tx orgId entryDate memo
+                    _ <-
+                        insertLine tx orgId entryId debitAccountId amountMinor
+                    _ <-
+                        insertLine
+                            tx
+                            orgId
+                            entryId
+                            creditAccountId
+                            (0 - amountMinor)
+                in
+                    Task.succeed entryId))
 
 
 -- `Db.queryDecode` (not `Db.insertFieldsReturning`) because the latter is

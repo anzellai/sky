@@ -150,15 +150,13 @@ healthFromCache cache bootMs hit =
                 |> Task.andThen (\_ -> ok cached)
 
         Nothing ->
-            Trace.event "relay.health.cache-miss"
-                |> Task.andThen (\_ -> Time.unixMillis ())
-                |> Task.andThen
-                       (\nowMs ->
-                           let
-                               body = healthBody (nowMs - bootMs)
-                           in
-                               Cache.put cache "health" body
-                                   |> Task.andThen (\_ -> ok body))
+            let
+                _ <- Trace.event "relay.health.cache-miss"
+                nowMs <- Time.unixMillis ()
+                body = healthBody (nowMs - bootMs)
+                _ <- Cache.put cache "health" body
+            in
+                ok body
 
 
 healthBody : Int -> String
@@ -332,21 +330,18 @@ adminWhoami cfg req =
 
 adminStats : Cache.Cache String String -> Request -> Task Error Response
 adminStats cache _ =
-    Cache.size cache
-        |> Task.andThen
-               (\size ->
-                   Cache.stats cache
-                       |> Task.andThen
-                              (\st ->
-                                  ok
-                                      ("{\"entries\":" ++ String.fromInt size
-                                          ++ ",\"hits\":"
-                                          ++ String.fromInt st.hits
-                                          ++ ",\"misses\":"
-                                          ++ String.fromInt st.misses
-                                          ++ ",\"evictions\":"
-                                          ++ String.fromInt st.evictions
-                                          ++ "}")))
+    let
+        size <- Cache.size cache
+        st <- Cache.stats cache
+    in
+        ok
+            ("{\"entries\":" ++ String.fromInt size ++ ",\"hits\":"
+                ++ String.fromInt st.hits
+                ++ ",\"misses\":"
+                ++ String.fromInt st.misses
+                ++ ",\"evictions\":"
+                ++ String.fromInt st.evictions
+                ++ "}")
 
 
 -- ─── Rate limiting ────────────────────────────────────────────────

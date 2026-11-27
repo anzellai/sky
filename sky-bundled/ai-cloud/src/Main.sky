@@ -262,50 +262,31 @@ targetOf opts =
 
 renderVerb : Bool -> List String -> Task Error ()
 renderVerb json opts =
-    need "--out" (text "--out" opts)
-        |> Task.andThen
-               (\out ->
-                   let
-                       r = Serve.render (targetOf opts) (tierOf opts)
-                   in
-                       File.mkdirAll out
-                           |> Task.andThen
-                                  (\_ ->
-                                      -- The image runs this program, the
-                                      -- `sky ai` CLI: its tier is the `serve`
-                                      -- verb. Without it the container printed
-                                      -- the usage and exited, and Cloud Run's
-                                      -- startup probe failed (live, 2026-10-14).
-                                      File.writeFile
-                                          (out ++ "/Dockerfile")
-                                          (Serve.dockerfileWith [ "serve" ]))
-                           |> Task.andThen
-                                  (\_ ->
-                                      File.writeFile
-                                          (out ++ "/service.json")
-                                          r.serviceJson)
-                           |> Task.andThen
-                                  (\_ ->
-                                      File.writeFile
-                                          (out ++ "/service.yaml")
-                                          r.knativeYaml)
-                           |> Task.andThen
-                                  (\_ ->
-                                      emit
-                                          json
-                                          (JsonE.object
-                                              [ ( "out", JsonE.string out )
-                                              , ( "files"
-                                                , JsonE.list
-                                                      JsonE.string
-                                                      [ "Dockerfile"
-                                                      , "service.json"
-                                                      , "service.yaml"
-                                                      ]
-                                                )
-                                              ])
-                                          ("wrote " ++ out
-                                              ++ "/Dockerfile, service.json and service.yaml")))
+    let
+        out <- need "--out" (text "--out" opts)
+        r = Serve.render (targetOf opts) (tierOf opts)
+        _ <- File.mkdirAll out
+        -- The image runs this program, the `sky ai` CLI: its tier is the
+        -- `serve` verb. Without it the container printed the usage and
+        -- exited, and Cloud Run's startup probe failed (live, 2026-10-14).
+        _ <-
+            File.writeFile
+                (out ++ "/Dockerfile")
+                (Serve.dockerfileWith [ "serve" ])
+        _ <- File.writeFile (out ++ "/service.json") r.serviceJson
+        _ <- File.writeFile (out ++ "/service.yaml") r.knativeYaml
+    in
+        emit
+            json
+            (JsonE.object
+                [ ( "out", JsonE.string out )
+                , ( "files"
+                  , JsonE.list
+                        JsonE.string
+                        [ "Dockerfile", "service.json", "service.yaml" ]
+                  )
+                ])
+            ("wrote " ++ out ++ "/Dockerfile, service.json and service.yaml")
 
 
 deployVerb : Bool -> List String -> Task Error ()
@@ -428,145 +409,91 @@ teardownVerb json opts =
                                ("deleted the service " ++ service))
 
         ( Nothing, Just key, _ ) ->
-            projectRegion opts
-                |> Task.andThen
-                       (\( project, region ) ->
-                           clearJobs
-                               project
-                               region
-                               ("labels.sky-run=\"" ++ key ++ "\"")
-                               |> Task.andThen
-                                      (\( deleted, cancelled ) ->
-                                          (case flag "--staging" opts of
+            let
+                ( project, region ) <- projectRegion opts
+                ( deleted, cancelled ) <-
+                    clearJobs
+                        project
+                        region
+                        ("labels.sky-run=\"" ++ key ++ "\"")
+                objects <-
+                    case flag "--staging" opts of
 
-                                              Just url ->
-                                                  Task.fromResult
-                                                      (Store.fromUrl url)
-                                                      |> Task.andThen
-                                                             (\st ->
-                                                                 Store.deletePrefix
-                                                                     st
-                                                                     ("runs/"
-                                                                         ++ key
-                                                                         ++ "/"))
+                        Just url ->
+                            Task.fromResult (Store.fromUrl url)
+                                |> Task.andThen
+                                       (\st ->
+                                           Store.deletePrefix
+                                               st
+                                               ("runs/" ++ key ++ "/"))
 
-                                              Nothing ->
-                                                  Task.succeed 0)
-                                              |> Task.andThen
-                                                     (\objects ->
-                                                         emit
-                                                             json
-                                                             (JsonE.object
-                                                                 [ ( "run"
-                                                                   , JsonE.string
-                                                                         key
-                                                                   )
-                                                                 , ( "jobsDeleted"
-                                                                   , JsonE.int
-                                                                         deleted
-                                                                   )
-                                                                 , ( "jobsCancelled"
-                                                                   , JsonE.int
-                                                                         cancelled
-                                                                   )
-                                                                 , ( "objectsDeleted"
-                                                                   , JsonE.int
-                                                                         objects
-                                                                   )
-                                                                 ])
-                                                             ("run " ++ key
-                                                                 ++ ": "
-                                                                 ++ String.fromInt
-                                                                        deleted
-                                                                 ++ " jobs deleted, "
-                                                                 ++ String.fromInt
-                                                                        cancelled
-                                                                 ++ " cancelled (delete them again once they end), "
-                                                                 ++ String.fromInt
-                                                                        objects
-                                                                 ++ " staging objects deleted"))))
+                        Nothing ->
+                            Task.succeed 0
+            in
+                emit
+                    json
+                    (JsonE.object
+                        [ ( "run", JsonE.string key )
+                        , ( "jobsDeleted", JsonE.int deleted )
+                        , ( "jobsCancelled", JsonE.int cancelled )
+                        , ( "objectsDeleted", JsonE.int objects )
+                        ])
+                    ("run " ++ key ++ ": " ++ String.fromInt deleted
+                        ++ " jobs deleted, "
+                        ++ String.fromInt cancelled
+                        ++ " cancelled (delete them again once they end), "
+                        ++ String.fromInt objects
+                        ++ " staging objects deleted")
 
         ( Nothing, Nothing, True ) ->
-            (if List.length (labelFilter opts) /= List.length (flags "--label" opts) then
-                Task.fail
-                    (Error.invalidInput
-                        "sky ai teardown: write each --label as key=value")
+            let
+                ( project, region ) <-
+                    if List.length (labelFilter opts)
+                        /= List.length (flags "--label" opts) then
+                        Task.fail
+                            (Error.invalidInput
+                                "sky ai teardown: write each --label as key=value")
 
-            else
-                -- A label that does not parse would widen the deletion.
-                projectRegion opts)
-                |> Task.andThen
-                       (\( project, region ) ->
-                           clearJobs
-                               project
-                               region
-                               ("labels.sky-managed=\"true\""
-                                   ++ String.join
-                                          ""
-                                          (List.map
-                                              (\( k, v ) ->
-                                                  " AND labels." ++ k ++ "=\""
-                                                      ++ v
-                                                      ++ "\"")
-                                              (labelFilter opts)))
-                               |> Task.andThen
-                                      (\( deleted, cancelled ) ->
-                                          Google.listServices project region
-                                              |> Task.andThen
-                                                     (\svcs ->
-                                                         let
-                                                             mine =
-                                                                 List.filter
-                                                                     (\s ->
-                                                                         List.all
-                                                                             (\l ->
-                                                                                 List.member
-                                                                                     l
-                                                                                     s.labels)
-                                                                             (( "sky-managed"
-                                                                             , "true"
-                                                                             )
-                                                                                 :: labelFilter
-                                                                                        opts))
-                                                                     svcs
-                                                         in
-                                                             Task.sequence
-                                                                 (List.map
-                                                                     (\s ->
-                                                                         Google.deleteService
-                                                                             s.name)
-                                                                     mine)
-                                                                 |> Task.map
-                                                                        (\_ ->
-                                                                            List.length
-                                                                                mine))
-                                              |> Task.andThen
-                                                     (\services ->
-                                                         emit
-                                                             json
-                                                             (JsonE.object
-                                                                 [ ( "jobsDeleted"
-                                                                   , JsonE.int
-                                                                         deleted
-                                                                   )
-                                                                 , ( "jobsCancelled"
-                                                                   , JsonE.int
-                                                                         cancelled
-                                                                   )
-                                                                 , ( "servicesDeleted"
-                                                                   , JsonE.int
-                                                                         services
-                                                                   )
-                                                                 ])
-                                                             (String.fromInt
-                                                                 deleted
-                                                                 ++ " jobs deleted, "
-                                                                 ++ String.fromInt
-                                                                        cancelled
-                                                                 ++ " cancelled, "
-                                                                 ++ String.fromInt
-                                                                        services
-                                                                 ++ " services deleted"))))
+                    else
+                        -- A label that does not parse would widen the deletion.
+                        projectRegion opts
+                ( deleted, cancelled ) <-
+                    clearJobs
+                        project
+                        region
+                        ("labels.sky-managed=\"true\""
+                            ++ String.join
+                                   ""
+                                   (List.map
+                                       (\( k, v ) ->
+                                           " AND labels." ++ k ++ "=\"" ++ v
+                                               ++ "\"")
+                                       (labelFilter opts)))
+                svcs <- Google.listServices project region
+                mine =
+                    List.filter
+                        (\s ->
+                            List.all
+                                (\l -> List.member l s.labels)
+                                (( "sky-managed", "true" ) :: labelFilter opts))
+                        svcs
+                _ <-
+                    Task.sequence
+                        (List.map (\s -> Google.deleteService s.name) mine)
+                services = List.length mine
+            in
+                emit
+                    json
+                    (JsonE.object
+                        [ ( "jobsDeleted", JsonE.int deleted )
+                        , ( "jobsCancelled", JsonE.int cancelled )
+                        , ( "servicesDeleted", JsonE.int services )
+                        ])
+                    (String.fromInt deleted ++ " jobs deleted, "
+                        ++ String.fromInt cancelled
+                        ++ " cancelled, "
+                        ++ String.fromInt services
+                        ++ " services deleted")
 
         _ ->
             Task.fail
@@ -708,77 +635,35 @@ imageVerb json opts =
 
             else
                 ( "sky-ai-tier", "Dockerfile" )
+        ( project, region ) <- projectRegion opts
+        ( repo, staging, context ) <-
+            Task.map3
+                (\repo staging context -> ( repo, staging, context ))
+                (need "--repo" (text "--repo" opts))
+                (need "--staging" (text "--staging" opts))
+                (need "--context" (text "--context" opts))
+        st <- Task.fromResult (Store.fromUrl staging)
+        tmp <- File.tempDir "sky-image"
+        _ <- Google.packDirectory context (tmp ++ "/source.tar.gz")
+        blob <- Store.put st (tmp ++ "/source.tar.gz")
+        _ <- Google.ensureRepository project region repo
+        ref <-
+            Google.buildImage
+                { project = project
+                , region = region
+                , bucket = bucketOf staging
+                , object = blobObject staging blob.sha256
+                , dockerfile = dockerfile
+                , image =
+                    region ++ "-docker.pkg.dev/" ++ project ++ "/" ++ repo
+                        ++ "/"
+                        ++ imageId
+                        ++ ":"
+                        ++ String.left 12 blob.sha256
+                , timeoutSeconds = 3600
+                }
     in
-        projectRegion opts
-            |> Task.andThen
-                   (\( project, region ) ->
-                       Task.map3
-                           (\repo staging context -> ( repo, staging, context ))
-                           (need "--repo" (text "--repo" opts))
-                           (need "--staging" (text "--staging" opts))
-                           (need "--context" (text "--context" opts))
-                           |> Task.andThen
-                                  (\( repo, staging, context ) ->
-                                      Task.fromResult (Store.fromUrl staging)
-                                          |> Task.andThen
-                                                 (\st ->
-                                                     File.tempDir "sky-image"
-                                                         |> Task.andThen
-                                                                (\tmp ->
-                                                                    Google.packDirectory
-                                                                        context
-                                                                        (tmp
-                                                                            ++ "/source.tar.gz")
-                                                                        |> Task.andThen
-                                                                               (\_ ->
-                                                                                   Store.put
-                                                                                       st
-                                                                                       (tmp
-                                                                                           ++ "/source.tar.gz")))
-                                                         |> Task.andThen
-                                                                (\blob ->
-                                                                    Google.ensureRepository
-                                                                        project
-                                                                        region
-                                                                        repo
-                                                                        |> Task.andThen
-                                                                               (\_ ->
-                                                                                   Google.buildImage
-                                                                                       { project =
-                                                                                           project
-                                                                                       , region =
-                                                                                           region
-                                                                                       , bucket =
-                                                                                           bucketOf
-                                                                                               staging
-                                                                                       , object =
-                                                                                           blobObject
-                                                                                               staging
-                                                                                               blob.sha256
-                                                                                       , dockerfile =
-                                                                                           dockerfile
-                                                                                       , image =
-                                                                                           region
-                                                                                               ++ "-docker.pkg.dev/"
-                                                                                               ++ project
-                                                                                               ++ "/"
-                                                                                               ++ repo
-                                                                                               ++ "/"
-                                                                                               ++ imageId
-                                                                                               ++ ":"
-                                                                                               ++ String.left
-                                                                                                      12
-                                                                                                      blob.sha256
-                                                                                       , timeoutSeconds =
-                                                                                           3600
-                                                                                       }))))
-                           |> Task.andThen
-                                  (\ref ->
-                                      emit
-                                          json
-                                          (JsonE.object
-                                              [ ( "image", JsonE.string ref ) ])
-                                          ref))
+        emit json (JsonE.object [ ( "image", JsonE.string ref ) ]) ref
 
 
 bucketOf : String -> String
