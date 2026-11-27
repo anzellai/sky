@@ -306,38 +306,29 @@ tokenField source field resp =
 -- the metadata server. A missing credential is `NotConfigured`.
 accessToken : List String -> Task Error Secret
 accessToken scopes =
-    keyFile ()
-        |> Task.andThen
-               (\found ->
-                   case found of
+    let
+        found <- keyFile ()
+    in
+        case found of
 
-                       Just k ->
-                           tokenUri k
-                               |> Task.andThen
-                                      (\uri ->
-                                          assertion
-                                              k
-                                              uri
-                                              "scope"
-                                              (String.join " " scopes)
-                                              |> Task.andThen
-                                                     (\jwt ->
-                                                         exchange
-                                                             uri
-                                                             jwt
-                                                             "access_token"))
+            Just k ->
+                let
+                    uri <- tokenUri k
+                    jwt <- assertion k uri "scope" (String.join " " scopes)
+                in
+                    exchange uri jwt "access_token"
 
-                       Nothing ->
-                           federated ()
-                               |> Task.andThen
-                                      (\fed ->
-                                          case fed of
+            Nothing ->
+                let
+                    fed <- federated ()
+                in
+                    case fed of
 
-                                              Just f ->
-                                                  federatedAccessToken f scopes
+                        Just f ->
+                            federatedAccessToken f scopes
 
-                                              Nothing ->
-                                                  metadataAccessToken scopes))
+                        Nothing ->
+                            metadataAccessToken scopes
 
 
 metadataAccessToken : List String -> Task Error Secret
@@ -363,38 +354,29 @@ metadataAccessToken scopes =
 -- reaches the service (`X-Serverless-Authorization`).
 idToken : String -> Task Error Secret
 idToken audience =
-    keyFile ()
-        |> Task.andThen
-               (\found ->
-                   case found of
+    let
+        found <- keyFile ()
+    in
+        case found of
 
-                       Just k ->
-                           tokenUri k
-                               |> Task.andThen
-                                      (\uri ->
-                                          assertion
-                                              k
-                                              uri
-                                              "target_audience"
-                                              audience
-                                              |> Task.andThen
-                                                     (\jwt ->
-                                                         exchange
-                                                             uri
-                                                             jwt
-                                                             "id_token"))
+            Just k ->
+                let
+                    uri <- tokenUri k
+                    jwt <- assertion k uri "target_audience" audience
+                in
+                    exchange uri jwt "id_token"
 
-                       Nothing ->
-                           federated ()
-                               |> Task.andThen
-                                      (\fed ->
-                                          case fed of
+            Nothing ->
+                let
+                    fed <- federated ()
+                in
+                    case fed of
 
-                                              Just f ->
-                                                  federatedIdToken f audience
+                        Just f ->
+                            federatedIdToken f audience
 
-                                              Nothing ->
-                                                  metadataIdToken audience))
+                        Nothing ->
+                            metadataIdToken audience
 
 
 metadataIdToken : String -> Task Error Secret
@@ -1551,33 +1533,24 @@ grantInvoker name members =
 
 grantAttempt : String -> List String -> Int -> Task Error ()
 grantAttempt name members n =
-    runUrl name
-        |> Task.andThen
-               (\url ->
-                   call "GET" (url ++ ":getIamPolicy") ""
-                       |> Task.andThen (ok "IAM policy" (regionOf name))
-                       |> Task.andThen
-                              (\body ->
-                                  call
-                                      "POST"
-                                      (url ++ ":setIamPolicy")
-                                      (JsonE.encode
-                                          0
-                                          (JsonE.object
-                                              [ ( "policy"
-                                                , withInvokers body members
-                                                )
-                                              ]))))
-        |> Task.andThen
-               (\resp ->
-                   if (resp.status == 409 || resp.status == 412) && n < 4 then
-                       Time.sleep 300
-                           |> Task.andThen
-                                  (\_ -> grantAttempt name members (n + 1))
+    let
+        url <- runUrl name
+        policy <- call "GET" (url ++ ":getIamPolicy") ""
+        body <- ok "IAM policy" (regionOf name) policy
+        resp <-
+            call
+                "POST"
+                (url ++ ":setIamPolicy")
+                (JsonE.encode
+                    0
+                    (JsonE.object [ ( "policy", withInvokers body members ) ]))
+    in
+        if (resp.status == 409 || resp.status == 412) && n < 4 then
+            Time.sleep 300
+                |> Task.andThen (\_ -> grantAttempt name members (n + 1))
 
-                   else
-                       ok "IAM policy" (regionOf name) resp
-                           |> Task.map (\_ -> ()))
+        else
+            ok "IAM policy" (regionOf name) resp |> Task.map (\_ -> ())
 
 type alias Binding =
     { role : String
@@ -1679,50 +1652,44 @@ artifactExists ref =
                     case String.split "@" image of
 
                         [ path, digest ] ->
-                            endpointRaw ()
-                                |> Task.andThen
-                                       (\ep ->
-                                           call
-                                               "GET"
-                                               (serviceBaseFor
-                                                   ep
-                                                   "artifactregistry"
-                                                   location
-                                                   ++ "/v1/projects/"
-                                                   ++ project
-                                                   ++ "/locations/"
-                                                   ++ location
-                                                   ++ "/repositories/"
-                                                   ++ repo
-                                                   ++ "/dockerImages/"
-                                                   ++ Encoding.urlEncode
-                                                          (path ++ "@" ++ digest))
-                                               ""
-                                               |> Task.andThen
-                                                      (\resp ->
-                                                          if resp.status == 404 then
-                                                              -- A remote repository (a
-                                                              -- Docker Hub cache) holds an
-                                                              -- image only after its first
-                                                              -- pull: ask the registry for
-                                                              -- the manifest, which the
-                                                              -- remote fetches from upstream.
-                                                              remoteHas
-                                                                  ep
-                                                                  project
-                                                                  location
-                                                                  repo
-                                                                  path
-                                                                  digest
+                            let
+                                ep <- endpointRaw ()
+                                resp <-
+                                    call
+                                        "GET"
+                                        (serviceBaseFor
+                                            ep
+                                            "artifactregistry"
+                                            location
+                                            ++ "/v1/projects/"
+                                            ++ project
+                                            ++ "/locations/"
+                                            ++ location
+                                            ++ "/repositories/"
+                                            ++ repo
+                                            ++ "/dockerImages/"
+                                            ++ Encoding.urlEncode
+                                                   (path ++ "@" ++ digest))
+                                        ""
+                            in
+                                if resp.status == 404 then
+                                    -- A remote repository (a
+                                    -- Docker Hub cache) holds an
+                                    -- image only after its first
+                                    -- pull: ask the registry for
+                                    -- the manifest, which the
+                                    -- remote fetches from upstream.
+                                    remoteHas
+                                        ep
+                                        project
+                                        location
+                                        repo
+                                        path
+                                        digest
 
-                                                          else
-                                                              ok
-                                                                  "image"
-                                                                  location
-                                                                  resp
-                                                                  |> Task.map
-                                                                         (\_ ->
-                                                                             True)))
+                                else
+                                    ok "image" location resp
+                                        |> Task.map (\_ -> True)
 
                         _ ->
                             Task.succeed False
@@ -1962,96 +1929,82 @@ packDirectory dir out =
 -- and stores it by digest in the staging bucket).
 buildImage : ImageBuild -> Task Error String
 buildImage b =
-    serviceBase "cloudbuild" b.region
-        |> Task.andThen
-               (\base ->
-                   call
-                       "POST"
-                       (base ++ "/v1/projects/" ++ b.project ++ "/locations/"
-                           ++ b.region
-                           ++ "/builds")
-                       (JsonE.encode
-                           0
-                           (JsonE.object
-                               [ ( "source"
-                                 , JsonE.object
-                                       [ ( "storageSource"
-                                         , JsonE.object
-                                               [ ( "bucket"
-                                                 , JsonE.string b.bucket
-                                                 )
-                                               , ( "object"
-                                                 , JsonE.string b.object
-                                                 )
-                                               ]
-                                         )
-                                       ]
-                                 )
-                               , ( "steps"
-                                 , JsonE.list
-                                       identity
-                                       [ JsonE.object
-                                             [ ( "name"
-                                               , JsonE.string
-                                                     "gcr.io/cloud-builders/docker"
-                                               )
-                                             , ( "env"
-                                               , JsonE.list
-                                                     JsonE.string
-                                                     [ "DOCKER_BUILDKIT=1" ]
-                                               )
-                                             , ( "args"
-                                               , JsonE.list
-                                                     JsonE.string
-                                                     [ "build"
-                                                     , "-t"
-                                                     , b.image
-                                                     , "-f"
-                                                     , b.dockerfile
-                                                     , "."
-                                                     ]
-                                               )
-                                             ]
-                                       ]
-                                 )
-                               , ( "images"
-                                 , JsonE.list JsonE.string [ b.image ]
-                                 )
-                               , ( "timeout"
-                                 , JsonE.string
-                                       (String.fromInt b.timeoutSeconds ++ "s")
-                                 )
-                               , ( "tags"
-                                 , JsonE.list JsonE.string [ "sky-managed" ]
-                                 )
-                               , ( "options"
-                                 , JsonE.object
-                                       [ ( "diskSizeGb", JsonE.int 100 )
-                                       , ( "logging"
-                                         , JsonE.string "CLOUD_LOGGING_ONLY"
-                                         )
-                                       ]
-                                 )
-                               ]))
-                       |> Task.andThen (ok "Cloud Build" b.region)
-                       |> Task.andThen
-                              (\body ->
-                                  Task.fromResult
-                                      (JsonD.decodeString
-                                          (JsonD.at
-                                              [ "metadata", "build", "id" ]
-                                              JsonD.string)
-                                          body))
-                       |> Task.andThen
-                              (\id ->
-                                  waitBuild
-                                      (base ++ "/v1/projects/" ++ b.project
-                                          ++ "/locations/"
-                                          ++ b.region
-                                          ++ "/builds/"
-                                          ++ id)
-                                      b
-                                      0))
+    let
+        base <- serviceBase "cloudbuild" b.region
+        created <-
+            call
+                "POST"
+                (base ++ "/v1/projects/" ++ b.project ++ "/locations/"
+                    ++ b.region
+                    ++ "/builds")
+                (JsonE.encode
+                    0
+                    (JsonE.object
+                        [ ( "source"
+                          , JsonE.object
+                                [ ( "storageSource"
+                                  , JsonE.object
+                                        [ ( "bucket", JsonE.string b.bucket )
+                                        , ( "object", JsonE.string b.object )
+                                        ]
+                                  )
+                                ]
+                          )
+                        , ( "steps"
+                          , JsonE.list
+                                identity
+                                [ JsonE.object
+                                      [ ( "name"
+                                        , JsonE.string
+                                              "gcr.io/cloud-builders/docker"
+                                        )
+                                      , ( "env"
+                                        , JsonE.list
+                                              JsonE.string
+                                              [ "DOCKER_BUILDKIT=1" ]
+                                        )
+                                      , ( "args"
+                                        , JsonE.list
+                                              JsonE.string
+                                              [ "build"
+                                              , "-t"
+                                              , b.image
+                                              , "-f"
+                                              , b.dockerfile
+                                              , "."
+                                              ]
+                                        )
+                                      ]
+                                ]
+                          )
+                        , ( "images", JsonE.list JsonE.string [ b.image ] )
+                        , ( "timeout"
+                          , JsonE.string
+                                (String.fromInt b.timeoutSeconds ++ "s")
+                          )
+                        , ( "tags", JsonE.list JsonE.string [ "sky-managed" ] )
+                        , ( "options"
+                          , JsonE.object
+                                [ ( "diskSizeGb", JsonE.int 100 )
+                                , ( "logging"
+                                  , JsonE.string "CLOUD_LOGGING_ONLY"
+                                  )
+                                ]
+                          )
+                        ]))
+        body <- ok "Cloud Build" b.region created
+        id <-
+            Task.fromResult
+                (JsonD.decodeString
+                    (JsonD.at [ "metadata", "build", "id" ] JsonD.string)
+                    body)
+    in
+        waitBuild
+            (base ++ "/v1/projects/" ++ b.project ++ "/locations/" ++ b.region
+                ++ "/builds/"
+                ++ id)
+            b
+            0
 
 
 -- Poll the build until it ends: SUCCESS gives the image's digest, any other
@@ -2159,67 +2112,53 @@ type alias Sku =
 -- list prices in USD.
 skus : String -> String -> List String -> Task Error (List Sku)
 skus serviceName region match =
-    serviceBase "cloudbilling" region
-        |> Task.andThen
-               (\base ->
-                   call "GET" (base ++ "/v1/services?pageSize=5000") ""
-                       |> Task.andThen (ok "Cloud Billing catalogue" region)
-                       |> Task.andThen
-                              (\body ->
-                                  case JsonD.decodeString
-                                           (JsonD.field
-                                               "services"
-                                               (JsonD.list
-                                                   (JsonD.map2
-                                                       (\i d -> ( i, d ))
-                                                       (JsonD.field
-                                                           "serviceId"
-                                                           JsonD.string)
-                                                       (JsonD.field
-                                                           "displayName"
-                                                           JsonD.string))))
-                                           body of
+    let
+        base <- serviceBase "cloudbilling" region
+        catalogue <- call "GET" (base ++ "/v1/services?pageSize=5000") ""
+        body <- ok "Cloud Billing catalogue" region catalogue
+    in
+        (case JsonD.decodeString
+                 (JsonD.field
+                     "services"
+                     (JsonD.list
+                         (JsonD.map2
+                             (\i d -> ( i, d ))
+                             (JsonD.field "serviceId" JsonD.string)
+                             (JsonD.field "displayName" JsonD.string))))
+                 body of
 
-                                      Ok services ->
-                                          case List.filter
-                                                   (\( _, d ) -> d == serviceName)
-                                                   services
-                                                   |> List.head of
+            Ok services ->
+                case List.filter (\( _, d ) -> d == serviceName) services
+                         |> List.head of
 
-                                              Just ( id, _ ) ->
-                                                  skuPages
-                                                      base
-                                                      id
-                                                      serviceName
-                                                      ""
-                                                      []
+                    Just ( id, _ ) ->
+                        skuPages base id serviceName "" []
 
-                                              Nothing ->
-                                                  Task.fail
-                                                      (Failure.toError
-                                                          (InvalidSetting
-                                                              { setting =
-                                                                  "service"
-                                                              , reason =
-                                                                  serviceName
-                                                                      ++ " is not a Cloud Billing service name"
-                                                              }))
+                    Nothing ->
+                        Task.fail
+                            (Failure.toError
+                                (InvalidSetting
+                                    { setting = "service"
+                                    , reason =
+                                        serviceName
+                                            ++ " is not a Cloud Billing service name"
+                                    }))
 
-                                      Err e ->
-                                          Task.fail e))
-        |> Task.map
-               (\all ->
-                   List.filter
-                       (\sku ->
-                           (List.member region sku.regions
-                               || List.member "global" sku.regions)
-                               && List.all
-                                      (\w ->
-                                          String.contains
-                                              (String.toLower w)
-                                              (String.toLower sku.description))
-                                      match)
-                       all)
+            Err e ->
+                Task.fail e)
+            |> Task.map
+                   (\all ->
+                       List.filter
+                           (\sku ->
+                               (List.member region sku.regions
+                                   || List.member "global" sku.regions)
+                                   && List.all
+                                          (\w ->
+                                              String.contains
+                                                  (String.toLower w)
+                                                  (String.toLower sku.description))
+                                          match)
+                           all)
 
 
 skuPages : String -> String -> String -> String -> List Sku -> Task Error (List Sku)
