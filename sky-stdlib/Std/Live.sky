@@ -135,8 +135,11 @@ app =
 -- port; [`address`] names it.
 --
 --     main =
---         Live.serve (Live.config { ... } |> Live.withPort 0)
---             |> Task.andThen (\running -> work (Live.address running) |> Task.andThen (\_ -> Live.stop running))
+--         let
+--             running <- Live.serve (Live.config { ... } |> Live.withPort 0)
+--             _ <- work (Live.address running)
+--         in
+--             Live.stop running
 serve : AppConfig model msg -> Task Error Running
 serve =
     Ffi.kernel "Live_serve"

@@ -322,15 +322,10 @@ timeout =
 --
 --     enrich : Task Error ()
 --     enrich =
---         Task.remaining
---             |> Task.andThen
---                 (\left ->
---                     if Maybe.withDefault 1000000 left > 500 then
---                         fetchExtras
---
---                     else
---                         Task.succeed ()
---                 )
+--         let
+--             left <- Task.remaining
+--         in
+--             Task.unless (Maybe.withDefault 1000000 left <= 500) fetchExtras
 remaining : Task e (Maybe Int)
 remaining =
     Ffi.kernel "Task_remaining"
