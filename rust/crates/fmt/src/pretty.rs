@@ -274,14 +274,43 @@ impl Printer {
         out
     }
 
-    /// End-of-decl mop-up: drain remaining own-line comments below the body but
-    /// before `next_line`, each at its own source column. Filters column 0 so
-    /// top-level headers still route to the next decl's start-of-decl drain.
-    fn drain_inner_until(&mut self, next_line: usize) -> String {
+    /// Drain every own-line comment above `node_line`, whatever its column,
+    /// each at its own source column. Used at the top level, where a comment
+    /// in the gap before a declaration (or before the imports, or above the
+    /// module header) belongs to that gap. An indented one keeps its column,
+    /// so a commented-out code block keeps its shape. Leaving it queued would
+    /// let a permissive drain inside the next declaration's body take it.
+    fn drain_leading(&mut self, node_line: usize) -> String {
         let mut out = String::new();
         let mut kept = Vec::with_capacity(self.comments.len());
         for c in std::mem::take(&mut self.comments) {
-            if c.line < next_line && c.col > 0 {
+            if c.line < node_line {
+                out.push_str(&render_comment(c.col, &c));
+            } else {
+                kept.push(c);
+            }
+        }
+        self.comments = kept;
+        out
+    }
+
+    /// End-of-decl mop-up: drain remaining own-line comments below the body but
+    /// before `next_line`, each at its own source column. Only the indented
+    /// comments ABOVE the gap's first column-0 comment are body trailers: that
+    /// column-0 comment and everything after it (indented or not) route to the
+    /// next decl's start-of-decl drain, so the gap keeps its source order.
+    fn drain_inner_until(&mut self, next_line: usize) -> String {
+        let cutoff = self
+            .comments
+            .iter()
+            .filter(|c| c.line < next_line && c.col == 0)
+            .map(|c| c.line)
+            .min()
+            .unwrap_or(next_line);
+        let mut out = String::new();
+        let mut kept = Vec::with_capacity(self.comments.len());
+        for c in std::mem::take(&mut self.comments) {
+            if c.line < cutoff && c.col > 0 {
                 out.push_str(&render_comment(c.col, &c));
             } else {
                 kept.push(c);
@@ -310,7 +339,7 @@ impl Printer {
             // it before emitting the header; otherwise it falls through to the
             // first import/decl drain and lands below the module line.
             let mod_line = self.line_of_node(h.syntax());
-            let lead = trim_trailing_newlines(&self.drain_before(0, mod_line));
+            let lead = trim_trailing_newlines(&self.drain_leading(mod_line));
             if !lead.is_empty() {
                 sections.push(lead);
             }
@@ -329,7 +358,7 @@ impl Printer {
             // the import block. Drain them here; otherwise they fall through to the
             // first decl's start-of-decl drain and get emitted below the imports.
             let first_line = self.line_of_node(import_nodes[0].syntax());
-            let lead = trim_trailing_newlines(&self.drain_before(0, first_line));
+            let lead = trim_trailing_newlines(&self.drain_leading(first_line));
             if !lead.is_empty() {
                 sections.push(format!("\n{lead}"));
             }
@@ -347,11 +376,11 @@ impl Printer {
         let next_lines = decl_next_lines(self, &decls);
         let mut i = 0;
         while i < decls.len() {
-            // Drain this decl's own-line header comments (col 0) BEFORE walking
-            // its body, so a lambda body's permissive drain cannot slurp a
-            // section header that belongs above this decl.
+            // Drain every own-line comment above this decl, whatever its
+            // column, BEFORE walking its body, so a drain inside the body
+            // cannot slurp a comment that sits in the gap above this decl.
             let node_line = self.line_of_node(decls[i].syntax());
-            let drained = self.drain_before(0, node_line);
+            let drained = self.drain_leading(node_line);
             self.units.push((i, node_line));
             let (unit, is_value, consumed) = if self.verbatim.contains(&i) {
                 let (is_value, consumed) = unit_shape(&decls, i);
