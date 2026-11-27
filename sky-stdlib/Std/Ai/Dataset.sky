@@ -568,8 +568,7 @@ transformTask step start f finish (Dataset d) =
 
 finishThenFail : (state -> Task Error ()) -> state -> Error -> Task Error a
 finishThenFail finish st e =
-    finish st |> Task.onError (\_ -> Task.succeed ())
-        |> Task.andThen (\_ -> Task.fail e)
+    Task.bestEffort (finish st) |> Task.andThen (\_ -> Task.fail e)
 
 
 taskChunks : state -> (state -> List a -> Task Error ( List b, Stats, state )) -> (state -> Task Error ()) -> Chunks a -> Task Error (Chunks b)
@@ -840,7 +839,7 @@ writeJsonl path codec ds =
             |> Task.andThen (\n -> File.rename tmp path |> Task.map (\_ -> n))
             |> Task.onError
                    (\e ->
-                       File.remove tmp |> Task.onError (\_ -> Task.succeed ())
+                       Task.bestEffort (File.remove tmp)
                            |> Task.andThen (\_ -> Task.fail e))
 
 -- ── Splits ──────────────────────────────────────────────────────────
@@ -1739,47 +1738,40 @@ freezeEncoded : Folder -> (row -> Result Error String) -> String -> Splits row -
 freezeEncoded (Folder t) encode schema (Splits s) =
     let
         dir = t.dir ++ "/" ++ t.name
+        _ <- File.mkdirAll dir
+        token <- Crypto.randomToken 8
+        tmp = dir ++ "/.freeze-" ++ token ++ ".tmp"
+        write =
+            let
+                _ <- File.writeFile tmp ""
+                tally <-
+                    fold
+                        (writeChunk tmp encode s.spec s.key)
+                        { rows = 0
+                        , train = 0
+                        , eval = 0
+                        , test = 0
+                        , stats = noStats
+                        }
+                        s.data
+                d <- sha256File tmp
+            in
+                settle
+                    t
+                    dir
+                    tmp
+                    d
+                    tally
+                    schema
+                    s.spec
+                    (sources s.data)
+                    (steps s.data)
     in
-        File.mkdirAll dir |> Task.andThen (\_ -> Crypto.randomToken 8)
-            |> Task.andThen
-                   (\token ->
-                       let
-                           tmp = dir ++ "/.freeze-" ++ token ++ ".tmp"
-                       in
-                           File.writeFile tmp ""
-                               |> Task.andThen
-                                      (\_ ->
-                                          fold
-                                              (writeChunk tmp encode s.spec s.key)
-                                              { rows = 0
-                                              , train = 0
-                                              , eval = 0
-                                              , test = 0
-                                              , stats = noStats
-                                              }
-                                              s.data)
-                               |> Task.andThen
-                                      (\tally ->
-                                          sha256File tmp
-                                              |> Task.andThen
-                                                     (\d ->
-                                                         settle
-                                                             t
-                                                             dir
-                                                             tmp
-                                                             d
-                                                             tally
-                                                             schema
-                                                             s.spec
-                                                             (sources s.data)
-                                                             (steps s.data)))
-                               |> Task.onError
-                                      (\e ->
-                                          File.remove tmp
-                                              |> Task.onError
-                                                     (\_ -> Task.succeed ())
-                                              |> Task.andThen
-                                                     (\_ -> Task.fail e)))
+        write
+            |> Task.onError
+                   (\e ->
+                       Task.bestEffort (File.remove tmp)
+                           |> Task.andThen (\_ -> Task.fail e))
 
 
 writeChunk : String -> (row -> Result Error String) -> SplitSpec -> (row -> String) -> Tally -> List row -> Stats -> Task Error Tally
@@ -1849,64 +1841,42 @@ settle t dir tmp d tally schema spec srcs stps =
     let
         blob = dir ++ "/" ++ d ++ ".jsonl"
         manifestPath = dir ++ "/" ++ d ++ ".json"
+        exists <- File.exists manifestPath
     in
-        File.exists manifestPath
-            |> Task.andThen
-                   (\exists ->
-                       if exists then
-                           File.remove tmp
-                               |> Task.andThen (\_ -> readManifest manifestPath)
-                               |> Task.map (\m -> ( m, t.dir ))
+        if exists then
+            File.remove tmp |> Task.andThen (\_ -> readManifest manifestPath)
+                |> Task.map (\m -> ( m, t.dir ))
 
-                       else
-                           Time.unixMillis ()
-                               |> Task.andThen
-                                      (\now ->
-                                          let
-                                              m =
-                                                  { format = manifestFormat
-                                                  , name = t.name
-                                                  , digest = d
-                                                  , file = d ++ ".jsonl"
-                                                  , rows = tally.rows
-                                                  , train = tally.train
-                                                  , eval = tally.eval
-                                                  , test = tally.test
-                                                  , splitWeights =
-                                                      [ spec.train
-                                                      , spec.eval
-                                                      , spec.test
-                                                      ]
-                                                  , splitSeed = spec.seed
-                                                  , sources = srcs
-                                                  , steps = stps
-                                                  , scrub = tally.stats.scrub
-                                                  , duplicatesRemoved =
-                                                      tally.stats.duplicates
-                                                  , filtered =
-                                                      tally.stats.filtered
-                                                  , schema = schema
-                                                  , createdMs = now
-                                                  , consentBasis =
-                                                      t.consentBasis
-                                                  , retention = t.retention
-                                                  }
-                                          in
-                                              File.rename tmp blob
-                                                  |> Task.andThen
-                                                         (\_ ->
-                                                             File.writeFile
-                                                                 (manifestPath
-                                                                     ++ ".tmp")
-                                                                 (manifestJson m))
-                                                  |> Task.andThen
-                                                         (\_ ->
-                                                             File.rename
-                                                                 (manifestPath
-                                                                     ++ ".tmp")
-                                                                 manifestPath)
-                                                  |> Task.map
-                                                         (\_ -> ( m, t.dir ))))
+        else
+            let
+                now <- Time.unixMillis ()
+                m =
+                    { format = manifestFormat
+                    , name = t.name
+                    , digest = d
+                    , file = d ++ ".jsonl"
+                    , rows = tally.rows
+                    , train = tally.train
+                    , eval = tally.eval
+                    , test = tally.test
+                    , splitWeights = [ spec.train, spec.eval, spec.test ]
+                    , splitSeed = spec.seed
+                    , sources = srcs
+                    , steps = stps
+                    , scrub = tally.stats.scrub
+                    , duplicatesRemoved = tally.stats.duplicates
+                    , filtered = tally.stats.filtered
+                    , schema = schema
+                    , createdMs = now
+                    , consentBasis = t.consentBasis
+                    , retention = t.retention
+                    }
+                _ <- File.rename tmp blob
+                _ <-
+                    File.writeFile (manifestPath ++ ".tmp") (manifestJson m)
+            in
+                File.rename (manifestPath ++ ".tmp") manifestPath
+                    |> Task.map (\_ -> ( m, t.dir ))
 
 
 readManifest : String -> Task Error Manifest
@@ -2075,28 +2045,17 @@ loadWith (Folder t) wanted decode =
             else
                 wanted
         dir = t.dir ++ "/" ++ t.name
+        m <- readManifest (dir ++ "/" ++ d ++ ".json")
+        actual <- sha256File (dir ++ "/" ++ m.file)
     in
-        readManifest (dir ++ "/" ++ d ++ ".json")
-            |> Task.andThen
-                   (\m ->
-                       sha256File (dir ++ "/" ++ m.file)
-                           |> Task.andThen
-                                  (\actual ->
-                                      if actual == d && m.digest == d then
-                                          Task.succeed
-                                              (Version
-                                                  { manifest = m
-                                                  , dir = t.dir
-                                                  , decode = decode
-                                                  })
+        if actual == d && m.digest == d then
+            Task.succeed
+                (Version { manifest = m, dir = t.dir, decode = decode })
 
-                                      else
-                                          Task.fail
-                                              (Failure.toError
-                                                  (ChecksumMismatch
-                                                      { expected = d
-                                                      , actual = actual
-                                                      }))))
+        else
+            Task.fail
+                (Failure.toError
+                    (ChecksumMismatch { expected = d, actual = actual }))
 
 
 -- | The manifests of every version of a dataset, newest first.
@@ -2104,33 +2063,23 @@ versions : Folder -> Task Error (List Manifest)
 versions (Folder t) =
     let
         dir = t.dir ++ "/" ++ t.name
+        exists <- File.exists dir
     in
-        File.exists dir
-            |> Task.andThen
-                   (\exists ->
-                       if not exists then
-                           Task.succeed []
+        if not exists then
+            Task.succeed []
 
-                       else
-                           File.readDir dir
-                               |> Task.andThen
-                                      (\names ->
-                                          names
-                                              |> List.filter
-                                                     (\n ->
-                                                         String.endsWith
-                                                             ".json"
-                                                             n
-                                                             && not
-                                                                    (String.startsWith
-                                                                        "."
-                                                                        n))
-                                              |> List.map
-                                                     (\n ->
-                                                         readManifest
-                                                             (dir ++ "/" ++ n))
-                                              |> Task.sequence)
-                               |> Task.map (List.sortBy (\m -> 0 - m.createdMs)))
+        else
+            let
+                names <- File.readDir dir
+            in
+                names
+                    |> List.filter
+                           (\n ->
+                               String.endsWith ".json" n
+                                   && not (String.startsWith "." n))
+                    |> List.map (\n -> readManifest (dir ++ "/" ++ n))
+                    |> Task.sequence
+                    |> Task.map (List.sortBy (\m -> 0 - m.createdMs))
 
 
 -- | A version's manifest.
@@ -2174,19 +2123,15 @@ versionData keep step (Version v) =
                 (JsonD.field "split" JsonD.string)
                 (JsonD.field "row" JsonD.value)
         decodeLine text =
-            case JsonD.decodeString rowDecoder text of
+            let
+                ( s, value ) <- JsonD.decodeString rowDecoder text
+            in
+                if keep s then
+                    canonical (JsonE.encode 0 value) |> Result.andThen v.decode
+                        |> Result.map Just
 
-                Ok ( s, value ) ->
-                    if keep s then
-                        canonical (JsonE.encode 0 value)
-                            |> Result.andThen v.decode
-                            |> Result.map Just
-
-                    else
-                        Ok Nothing
-
-                Err e ->
-                    Err e
+                else
+                    Ok Nothing
         (Dataset d) =
             transform
                 step

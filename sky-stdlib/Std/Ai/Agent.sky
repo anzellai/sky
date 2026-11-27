@@ -179,20 +179,23 @@ chatStep opts ctx key provider messages =
 -- call) and fails the step.
 measuredChat : Ctx -> String -> Provider.PriceBook -> Provider -> List Message -> Task Error (Journalled Provider.ChatResponse)
 measuredChat ctx key book provider messages =
-    Provider.measure Provider.defaultOptions provider messages
-        |> Task.andThen
-               (\m ->
-                   case m.result of
+    let
+        m <- Provider.measure Provider.defaultOptions provider messages
+    in
+        case m.result of
 
-                       Ok r ->
-                           Task.succeed { response = r, facts = m.facts }
+            Ok r ->
+                Task.succeed { response = r, facts = m.facts }
 
-                       Err e ->
-                           Trace.recordCall
-                               (Durable.conn ctx)
-                               (failedEntry ctx book)
-                               m
-                               |> Task.andThen (\_ -> Task.fail e))
+            Err e ->
+                let
+                    _ <-
+                        Trace.recordCall
+                            (Durable.conn ctx)
+                            (failedEntry ctx book)
+                            m
+                in
+                    Task.fail e
 
 
 failedEntry : Ctx -> Provider.PriceBook -> Trace.Ledger
@@ -238,20 +241,23 @@ toolsStep opts ctx key provider turns req =
 
 measuredTools : Ctx -> Provider.PriceBook -> Provider -> List Provider.Turn -> Provider.ToolRequest -> Task Error (Journalled Provider.ToolResponse)
 measuredTools ctx book provider turns req =
-    Provider.measureToolRequest provider turns req
-        |> Task.andThen
-               (\m ->
-                   case m.result of
+    let
+        m <- Provider.measureToolRequest provider turns req
+    in
+        case m.result of
 
-                       Ok r ->
-                           Task.succeed { response = r, facts = m.facts }
+            Ok r ->
+                Task.succeed { response = r, facts = m.facts }
 
-                       Err e ->
-                           Trace.recordToolCall
-                               (Durable.conn ctx)
-                               (failedEntry ctx book)
-                               m
-                               |> Task.andThen (\_ -> Task.fail e))
+            Err e ->
+                let
+                    _ <-
+                        Trace.recordToolCall
+                            (Durable.conn ctx)
+                            (failedEntry ctx book)
+                            m
+                in
+                    Task.fail e
 
 
 writeToolsTrace : Ctx -> String -> Provider.PriceBook -> Journalled Provider.ToolResponse -> Task Error Provider.ToolResponse
@@ -349,41 +355,45 @@ loop opts provider tools maxTurns ctx turn messages =
             { answer = "(reached the turn limit without a final answer)" }
 
     else
-        chatStep opts ctx ("turn:" ++ String.fromInt turn) provider messages
-            |> Task.andThen
-                   (\resp ->
-                       case parseAction resp.content of
+        let
+            resp <-
+                chatStep
+                    opts
+                    ctx
+                    ("turn:" ++ String.fromInt turn)
+                    provider
+                    messages
+        in
+            case parseAction resp.content of
 
-                           Answer a ->
-                               Task.succeed { answer = a }
+                Answer a ->
+                    Task.succeed { answer = a }
 
-                           Plain a ->
-                               Task.succeed { answer = a }
+                Plain a ->
+                    Task.succeed { answer = a }
 
-                           UseTool toolName args ->
-                               Durable.step
-                                   ctx
-                                   Codec.string
-                                   ("tool:" ++ String.fromInt turn)
-                                   (runChecked tools toolName args)
-                                   |> Task.andThen
-                                          (\result ->
-                                              loop
-                                                  opts
-                                                  provider
-                                                  tools
-                                                  maxTurns
-                                                  ctx
-                                                  (turn + 1)
-                                                  (messages
-                                                      ++ [ Provider.assistant
-                                                               resp.content
-                                                         , Provider.user
-                                                               ("Tool "
-                                                                   ++ toolName
-                                                                   ++ " returned: "
-                                                                   ++ result)
-                                                         ])))
+                UseTool toolName args ->
+                    let
+                        result <-
+                            Durable.step
+                                ctx
+                                Codec.string
+                                ("tool:" ++ String.fromInt turn)
+                                (runChecked tools toolName args)
+                    in
+                        loop
+                            opts
+                            provider
+                            tools
+                            maxTurns
+                            ctx
+                            (turn + 1)
+                            (messages
+                                ++ [ Provider.assistant resp.content
+                                   , Provider.user
+                                         ("Tool " ++ toolName ++ " returned: "
+                                             ++ result)
+                                   ])
 
 type Action
     = Answer String
@@ -510,33 +520,31 @@ nativeLoop opts provider tools maxTurns ctx turn turns =
             { answer = "(reached the turn limit without a final answer)" }
 
     else
-        toolsStep
-            opts
-            ctx
-            ("turn:" ++ String.fromInt turn)
-            provider
-            turns
-            { tools = toolSchemasOf tools, responseFormat = Nothing }
-            |> Task.andThen
-                   (\resp ->
-                       if List.isEmpty resp.toolCalls then
-                           Task.succeed { answer = resp.content }
+        let
+            resp <-
+                toolsStep
+                    opts
+                    ctx
+                    ("turn:" ++ String.fromInt turn)
+                    provider
+                    turns
+                    { tools = toolSchemasOf tools, responseFormat = Nothing }
+        in
+            if List.isEmpty resp.toolCalls then
+                Task.succeed { answer = resp.content }
 
-                       else
-                           runCalls tools ctx turn 0 resp.toolCalls
-                               |> Task.andThen
-                                      (\returned ->
-                                          nativeLoop
-                                              opts
-                                              provider
-                                              tools
-                                              maxTurns
-                                              ctx
-                                              (turn + 1)
-                                              (turns
-                                                  ++ (Provider.Called
-                                                         resp.toolCalls
-                                                         :: returned))))
+            else
+                let
+                    returned <- runCalls tools ctx turn 0 resp.toolCalls
+                in
+                    nativeLoop
+                        opts
+                        provider
+                        tools
+                        maxTurns
+                        ctx
+                        (turn + 1)
+                        (turns ++ (Provider.Called resp.toolCalls :: returned))
 
 
 -- Run each requested tool call as its own journalled step, in order, and collect
@@ -641,56 +649,53 @@ structuredLoop opts shape provider tools maxTurns ctx turn turns =
                     ++ " turns"))
 
     else
-        toolsStep
-            opts
-            ctx
-            ("turn:" ++ String.fromInt turn)
-            provider
-            turns
-            { tools = toolSchemasOf tools
-            , responseFormat = Just (Provider.responseFormat shape)
-            }
-            |> Task.andThen
-                   (\resp ->
-                       if List.isEmpty resp.toolCalls then
-                           case Provider.decodeStructured shape resp.content of
+        let
+            resp <-
+                toolsStep
+                    opts
+                    ctx
+                    ("turn:" ++ String.fromInt turn)
+                    provider
+                    turns
+                    { tools = toolSchemasOf tools
+                    , responseFormat = Just (Provider.responseFormat shape)
+                    }
+        in
+            if List.isEmpty resp.toolCalls then
+                case Provider.decodeStructured shape resp.content of
 
-                               Ok value ->
-                                   Task.succeed value
+                    Ok value ->
+                        Task.succeed value
 
-                               Err e ->
-                                   structuredLoop
-                                       opts
-                                       shape
-                                       provider
-                                       tools
-                                       maxTurns
-                                       ctx
-                                       (turn + 1)
-                                       (turns
-                                           ++ [ Provider.Say
-                                                    (Provider.assistant
-                                                        resp.content)
-                                              , Provider.Say
-                                                    (Provider.user
-                                                        ("Your answer does not match the required JSON schema ("
-                                                            ++ Error.toString e
-                                                            ++ "). Answer again with JSON that matches it."))
-                                              ])
+                    Err e ->
+                        structuredLoop
+                            opts
+                            shape
+                            provider
+                            tools
+                            maxTurns
+                            ctx
+                            (turn + 1)
+                            (turns
+                                ++ [ Provider.Say
+                                         (Provider.assistant resp.content)
+                                   , Provider.Say
+                                         (Provider.user
+                                             ("Your answer does not match the required JSON schema ("
+                                                 ++ Error.toString e
+                                                 ++ "). Answer again with JSON that matches it."))
+                                   ])
 
-                       else
-                           runCalls tools ctx turn 0 resp.toolCalls
-                               |> Task.andThen
-                                      (\returned ->
-                                          structuredLoop
-                                              opts
-                                              shape
-                                              provider
-                                              tools
-                                              maxTurns
-                                              ctx
-                                              (turn + 1)
-                                              (turns
-                                                  ++ (Provider.Called
-                                                         resp.toolCalls
-                                                         :: returned))))
+            else
+                let
+                    returned <- runCalls tools ctx turn 0 resp.toolCalls
+                in
+                    structuredLoop
+                        opts
+                        shape
+                        provider
+                        tools
+                        maxTurns
+                        ctx
+                        (turn + 1)
+                        (turns ++ (Provider.Called resp.toolCalls :: returned))

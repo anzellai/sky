@@ -891,11 +891,11 @@ timed t =
 
 timedWith : Timing a -> String -> Task Error (Measured a)
 timedWith t token =
-    Time.now ()
-        |> Task.andThen
-               (\start ->
-                   attempt (t.call token)
-                       |> Task.andThen (finishTimed t token start))
+    let
+        start <- Time.now ()
+        outcome <- attempt (t.call token)
+    in
+        finishTimed t token start outcome
 
 
 finishTimed : Timing a -> String -> Int -> Result Error ( a, Maybe Int ) -> Task Error (Measured a)
@@ -1128,13 +1128,11 @@ clockRead onPiece clock step =
     case step of
 
         Piece text next ->
-            firstPieceAt clock.first
-                |> Task.andThen
-                       (\first ->
-                           onPiece text
-                               |> Task.map
-                                      (\_ ->
-                                          Loop { stream = next, first = first }))
+            let
+                first <- firstPieceAt clock.first
+            in
+                onPiece text
+                    |> Task.map (\_ -> Loop { stream = next, first = first })
 
         Finished r ->
             Task.succeed (Done ( r, clock.first ))
@@ -1773,19 +1771,11 @@ tokens). Returns an error if a rate does not parse.
 -}
 priceBook : Money.Currency -> String -> String -> Result Error PriceBook
 priceBook currency inputRate outputRate =
-    case Money.fromString currency inputRate of
-
-        Err e ->
-            Err e
-
-        Ok inp ->
-            case Money.fromString currency outputRate of
-
-                Err e ->
-                    Err e
-
-                Ok out ->
-                    Ok { inputPer1k = inp, outputPer1k = out }
+    let
+        inp <- Money.fromString currency inputRate
+        out <- Money.fromString currency outputRate
+    in
+        Ok { inputPer1k = inp, outputPer1k = out }
 
 
 {-| A zero-cost book, for a local model or a test. -}
