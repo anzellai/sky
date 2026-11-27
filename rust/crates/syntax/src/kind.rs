@@ -76,6 +76,7 @@ syntax_kinds! {
     DotDot,
     Pipe,
     Arrow,
+    LArrow,
     Backslash,
     Op,
     LParen,
@@ -170,6 +171,7 @@ syntax_kinds! {
     LetExpr,
     LetBinding,
     DestructureBinding,
+    BindBinding,
     CaseExpr,
     MatchArm,
 

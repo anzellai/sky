@@ -117,6 +117,11 @@ ast_node!(IfExpr, IfExpr);
 ast_node!(LetExpr, LetExpr);
 ast_node!(LetBinding, LetBinding);
 ast_node!(DestructureBinding, DestructureBinding);
+ast_node!(
+    /// A bind line `pat <- expr` of a `let` block (docs/design/let-bind-lines.md).
+    BindBinding,
+    BindBinding
+);
 ast_node!(CaseExpr, CaseExpr);
 ast_node!(MatchArm, MatchArm);
 
@@ -538,6 +543,21 @@ impl LetBinding {
     }
     pub fn body(&self) -> Option<Expr> {
         support::child(&self.0)
+    }
+}
+
+impl BindBinding {
+    /// The pattern before `<-`.
+    pub fn pattern(&self) -> Option<Pattern> {
+        support::child(&self.0)
+    }
+    /// The expression after `<-` (the value `andThen` takes apart).
+    pub fn expr(&self) -> Option<Expr> {
+        support::child(&self.0)
+    }
+    /// The `<-` token.
+    pub fn larrow(&self) -> Option<SyntaxToken> {
+        support::token(&self.0, SyntaxKind::LArrow)
     }
 }
 

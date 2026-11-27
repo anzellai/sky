@@ -285,7 +285,7 @@ fn value_or_anno(p: &mut Parser) {
             pattern_app(p);
         }
         pl.complete(p, ParamList);
-        p.expect(Eq);
+        expect_eq(p);
         let body_col = p.col();
         p.with_indent(body_col, |p| {
             expr(p);
@@ -670,6 +670,18 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> CompletedMarker {
     }
     let mut lhs = app_expr(p);
     loop {
+        if p.at(LArrow) && p.at_continuation() {
+            // `a <- b` in an expression: a bind line written outside the
+            // head of a `let` line (design §1). Diagnose it, and keep the
+            // rest of the expression in the same ERROR node so one misuse
+            // gives one diagnostic.
+            let m = lhs.precede(p);
+            p.error(BIND_OUTSIDE_LET);
+            p.bump(); // <-
+            expr_bp(p, 0);
+            lhs = m.complete(p, Error);
+            continue;
+        }
         if !operator_continues(p) {
             break;
         }
@@ -1067,11 +1079,12 @@ fn let_expr(p: &mut Parser) -> CompletedMarker {
     if p.at(InKw) || p.at_end() {
         p.error("expected a let binding");
     }
+    let mut after_anno = false;
     loop {
         if p.at(InKw) || p.at_end() {
             break;
         }
-        let_binding(p, anchor);
+        after_anno = let_binding(p, anchor, after_anno) == LetLine::Annotation;
         if p.at(InKw) {
             break;
         }
@@ -1086,7 +1099,44 @@ fn let_expr(p: &mut Parser) -> CompletedMarker {
     m.complete(p, LetExpr)
 }
 
-fn let_binding(p: &mut Parser, anchor: u32) {
+/// The diagnostic for a `<-` outside a `let` line's head (design §1).
+pub(crate) const BIND_OUTSIDE_LET: &str =
+    "`<-` is a bind line; write it as a line of a `let` block";
+
+/// The diagnostic for `x : T` directly before a bind line (design §2).
+const ANNOTATION_ON_BIND_LINE: &str = "An annotation cannot go on a bind line. \
+     Remove the annotation line before it, and annotate the expression after `<-` \
+     instead: give the function it calls a type, e.g. `fetch : String -> Task Error User`.";
+
+/// What kind of line `let_binding` parsed.
+#[derive(PartialEq, Eq)]
+enum LetLine {
+    Annotation,
+    Equals,
+    Bind,
+}
+
+/// `=` where a binding wants one. A `<-` there is the bind-line misuse
+/// (`f a <- t`, `x <- t` at the top level): it is consumed with the
+/// bind-line diagnostic so the expression after it still parses.
+fn expect_eq(p: &mut Parser) {
+    if p.at(LArrow) {
+        p.err_and_bump(BIND_OUTSIDE_LET);
+    } else {
+        p.expect(Eq);
+    }
+}
+
+/// `pat <- expr`: the pattern is already parsed under `m`.
+fn bind_line_rest(p: &mut Parser, m: crate::parser::Marker, anchor: u32) {
+    p.bump(); // <-
+    p.with_indent(anchor, |p| {
+        expr(p);
+    });
+    m.complete(p, BindBinding);
+}
+
+fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
     if p.at(LowerIdent) && p.nth(1) == Colon {
         // `name : Type` annotation binding
         let m = p.start();
@@ -1096,6 +1146,16 @@ fn let_binding(p: &mut Parser, anchor: u32) {
             ty(p);
         });
         m.complete(p, LetBinding);
+        LetLine::Annotation
+    } else if p.at(LowerIdent) && p.nth(1) == LArrow {
+        // `name <- expr` bind line
+        if after_anno {
+            p.error(ANNOTATION_ON_BIND_LINE);
+        }
+        let m = p.start();
+        pattern(p);
+        bind_line_rest(p, m, anchor);
+        LetLine::Bind
     } else if p.at(LowerIdent) {
         // `name pat* = expr`
         let m = p.start();
@@ -1107,20 +1167,30 @@ fn let_binding(p: &mut Parser, anchor: u32) {
             pattern_app(p);
         }
         pl.complete(p, ParamList);
-        p.expect(Eq);
+        expect_eq(p);
         p.with_indent(anchor, |p| {
             expr(p);
         });
         m.complete(p, LetBinding);
+        LetLine::Equals
     } else {
-        // destructure: `(a, b) = e`, `{ x } = r`, `Just x = m`, `_ = e`
+        // destructure: `(a, b) = e`, `{ x } = r`, `Just x = m`, `_ = e`,
+        // or a bind line with a pattern: `(a, b) <- e`, `_ <- e`.
         let m = p.start();
         pattern(p);
+        if p.at(LArrow) {
+            if after_anno {
+                p.error(ANNOTATION_ON_BIND_LINE);
+            }
+            bind_line_rest(p, m, anchor);
+            return LetLine::Bind;
+        }
         p.expect(Eq);
         p.with_indent(anchor, |p| {
             expr(p);
         });
         m.complete(p, DestructureBinding);
+        LetLine::Equals
     }
 }
 

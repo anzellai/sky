@@ -1225,14 +1225,22 @@ impl Printer {
                 None => format!("{name} : "),
             };
         }
-        // Destructure binding: `pat = expr`.
-        if b.kind() == SyntaxKind::DestructureBinding {
+        // Destructure binding `pat = expr`, or bind line `pat <- expr`.
+        if matches!(
+            b.kind(),
+            SyntaxKind::DestructureBinding | SyntaxKind::BindBinding
+        ) {
             let pat = pattern_children(b)
                 .first()
                 .map(|p| self.fmt_pattern(p))
                 .unwrap_or_default();
             let (lead, body) = self.binding_rhs(col, b);
-            return self.binding_body(col, &pat, &lead, body);
+            let op = if b.kind() == SyntaxKind::BindBinding {
+                "<-"
+            } else {
+                "="
+            };
+            return self.binding_body_op(col, &pat, op, &lead, body);
         }
         // Value binding: `name pat* = expr`.
         let name = first_lower(b);
@@ -1264,12 +1272,25 @@ impl Printer {
     }
 
     fn binding_body(&self, col: usize, lhs: &str, lead: &str, body: Option<String>) -> String {
+        self.binding_body_op(col, lhs, "=", lead, body)
+    }
+
+    /// `lhs op body` on one line when it fits, else `lhs op` with the body on
+    /// the next line one step in. `op` is `=` or a bind line's `<-`.
+    fn binding_body_op(
+        &self,
+        col: usize,
+        lhs: &str,
+        op: &str,
+        lead: &str,
+        body: Option<String>,
+    ) -> String {
         let body = body.unwrap_or_default();
-        let one_line = format!("{lhs} = {body}");
+        let one_line = format!("{lhs} {op} {body}");
         if lead.is_empty() && !body.contains('\n') && col + width(&one_line) <= 76 {
             one_line
         } else {
-            format!("{lhs} =\n{lead}{}{body}", indent(col + STEP))
+            format!("{lhs} {op}\n{lead}{}{body}", indent(col + STEP))
         }
     }
 
@@ -1628,7 +1649,7 @@ fn let_bindings(node: &SyntaxNode) -> Vec<SyntaxNode> {
         .filter(|n| {
             matches!(
                 n.kind(),
-                SyntaxKind::LetBinding | SyntaxKind::DestructureBinding
+                SyntaxKind::LetBinding | SyntaxKind::DestructureBinding | SyntaxKind::BindBinding
             )
         })
         .collect()
