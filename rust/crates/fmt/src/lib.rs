@@ -14,7 +14,9 @@
 //! * **Semantics-preserving + no data loss** — the opinionated output is
 //!   accepted only when it (a) re-parses with zero error nodes, (b) preserves
 //!   every comment verbatim (own-line *and* trailing — closing the oracle's
-//!   `Format.hs:18` data-loss hole), and (c) preserves the multiset of
+//!   `Format.hs:18` data-loss hole) and in place (each comment keeps the
+//!   significant token just before it and just after it, named by text and
+//!   occurrence, so a moved comment fails the net), and (c) preserves the multiset of
 //!   significant tokens (no dropped name / literal / operator). On a failure
 //!   the fallback is per top-level declaration: every declaration that
 //!   formats safely is formatted, and a declaration the printer cannot lay
@@ -192,9 +194,11 @@ fn is_safe(want: &Multisets, out: &str, verbatim: &BTreeSet<usize>) -> bool {
     if out_parse.error_node_count() > 0 {
         return false;
     }
-    // (b) comments preserved verbatim (own-line AND trailing), and (c)
-    //     significant tokens preserved (parens excluded — the printer may add
-    //     grouping parens around complex call arguments, never drop a name).
+    // (b) comments preserved verbatim (own-line AND trailing), each between
+    //     the same two significant tokens as in the source (its anchor), and
+    //     (c) significant tokens preserved (parens excluded — the printer may
+    //     add grouping parens around complex call arguments, never drop a
+    //     name).
     if Multisets::of(&out_parse) != *want {
         return false;
     }
@@ -203,11 +207,13 @@ fn is_safe(want: &Multisets, out: &str, verbatim: &BTreeSet<usize>) -> bool {
     opinionated(out, &out_parse, verbatim).0 == out
 }
 
-/// The comment multiset and the significant-token multiset of one parse.
+/// The comment multiset, the significant-token multiset and the comment
+/// anchors of one parse.
 #[derive(PartialEq, Eq)]
 struct Multisets {
     comments: BTreeMap<String, usize>,
     tokens: BTreeMap<String, usize>,
+    anchors: Vec<Anchor>,
 }
 
 impl Multisets {
@@ -215,8 +221,72 @@ impl Multisets {
         Multisets {
             comments: comment_multiset_of(parsed),
             tokens: sig_token_multiset_of(parsed),
+            anchors: anchors_of(parsed),
         }
     }
+}
+
+/// A significant token named so that the name survives re-layout: its
+/// comparison key (see [`sig_key`]) and how many tokens with that key come
+/// before it in the file.
+type TokenId = (String, usize);
+
+/// Where one comment sits: the significant token just before it and just
+/// after it (`None` at the start or end of the file), its position among the
+/// comments in that same gap, and its text. A formatted output must give
+/// every comment the same anchor, so a comment that the printer moves to
+/// another place fails the safety net even though the comment multiset is
+/// the same.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct Anchor {
+    before: Option<TokenId>,
+    after: Option<TokenId>,
+    in_gap: usize,
+    text: String,
+}
+
+/// The anchor of every comment in `parsed`, sorted. One walk over the tokens.
+/// Parentheses are not anchors: the printer adds and drops grouping parens.
+fn anchors_of(parsed: &Parse) -> Vec<Anchor> {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut before: Option<TokenId> = None;
+    // Comments since the last significant token, waiting for their `after`.
+    let mut pending: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for e in parsed.syntax().descendants_with_tokens() {
+        let Some(t) = e.into_token() else { continue };
+        let k = t.kind();
+        if matches!(k, SyntaxKind::LineComment | SyntaxKind::BlockComment) {
+            pending.push(t.text().to_string());
+            continue;
+        }
+        if k.is_trivia() || matches!(k, SyntaxKind::LParen | SyntaxKind::RParen) {
+            continue;
+        }
+        let key = sig_key(&t);
+        let n = seen.entry(key.clone()).or_insert(0);
+        let id = (key, *n);
+        *n += 1;
+        for (in_gap, text) in pending.drain(..).enumerate() {
+            out.push(Anchor {
+                before: before.clone(),
+                after: Some(id.clone()),
+                in_gap,
+                text,
+            });
+        }
+        before = Some(id);
+    }
+    for (in_gap, text) in pending.drain(..).enumerate() {
+        out.push(Anchor {
+            before: before.clone(),
+            after: None,
+            in_gap,
+            text,
+        });
+    }
+    out.sort();
+    out
 }
 
 fn comment_multiset_of(parsed: &Parse) -> BTreeMap<String, usize> {
@@ -239,21 +309,25 @@ fn sig_token_multiset_of(parsed: &Parse) -> BTreeMap<String, usize> {
             if k.is_trivia() || matches!(k, SyntaxKind::LParen | SyntaxKind::RParen) {
                 continue;
             }
-            // Float literals are re-rendered in Haskell `show` notation
-            // (`0.05` -> `5.0e-2`); compare by numeric value so the (value-
-            // preserving) reformat is accepted while a dropped literal is not.
-            let key = if k == SyntaxKind::Float {
-                match t.text().parse::<f64>() {
-                    Ok(v) => format!("f64:{}", v.to_bits()),
-                    Err(_) => t.text().to_string(),
-                }
-            } else {
-                t.text().to_string()
-            };
-            *m.entry(key).or_insert(0) += 1;
+            *m.entry(sig_key(&t)).or_insert(0) += 1;
         }
     }
     m
+}
+
+/// The comparison key of a significant token. Float literals are re-rendered
+/// in Haskell `show` notation (`0.05` -> `5.0e-2`); compare by numeric value
+/// so the (value-preserving) reformat is accepted while a dropped literal is
+/// not.
+fn sig_key(t: &syntax::SyntaxToken) -> String {
+    if t.kind() == SyntaxKind::Float {
+        match t.text().parse::<f64>() {
+            Ok(v) => format!("f64:{}", v.to_bits()),
+            Err(_) => t.text().to_string(),
+        }
+    } else {
+        t.text().to_string()
+    }
 }
 
 #[cfg(test)]

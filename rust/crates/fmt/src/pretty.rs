@@ -294,6 +294,24 @@ impl Printer {
         out
     }
 
+    /// Drain every own-line comment in the line window `[low, high)`, each at
+    /// its own source column. Used in a top-level gap that sits inside one
+    /// unit (between an annotation and its definition) or between two
+    /// imports, so the comment stays in that gap.
+    fn drain_between_at_own_col(&mut self, low: usize, high: usize) -> String {
+        let mut out = String::new();
+        let mut kept = Vec::with_capacity(self.comments.len());
+        for c in std::mem::take(&mut self.comments) {
+            if c.line >= low && c.line < high {
+                out.push_str(&render_comment(c.col, &c));
+            } else {
+                kept.push(c);
+            }
+        }
+        self.comments = kept;
+        out
+    }
+
     /// End-of-decl mop-up: drain remaining own-line comments below the body but
     /// before `next_line`, each at its own source column. Only the indented
     /// comments ABOVE the gap's first column-0 comment are body trailers: that
@@ -362,11 +380,19 @@ impl Printer {
             if !lead.is_empty() {
                 sections.push(format!("\n{lead}"));
             }
-            let rendered = import_nodes
-                .iter()
-                .map(|i| self.fmt_import(i))
-                .collect::<Vec<_>>()
-                .join("\n");
+            // A comment between two imports stays above the import below it.
+            let mut lines = Vec::with_capacity(import_nodes.len());
+            let mut prev_end: Option<usize> = None;
+            for imp in &import_nodes {
+                let line = self.line_of_node(imp.syntax());
+                let gap = match prev_end {
+                    Some(end) => self.drain_between_at_own_col(end + 1, line),
+                    None => String::new(),
+                };
+                lines.push(format!("{gap}{}", self.fmt_import(imp)));
+                prev_end = Some(self.end_line_of_node(imp.syntax()));
+            }
+            let rendered = lines.join("\n");
             sections.push(format!("\n{rendered}"));
         }
 
@@ -429,8 +455,14 @@ impl Printer {
                     let vn = v.name().map(|t| t.text().to_string());
                     if anno_name.is_some() && anno_name == vn {
                         let sig = self.fmt_anno(anno);
+                        // A comment between the annotation and the
+                        // definition stays there, at its own column.
+                        let gap = self.drain_between_at_own_col(
+                            self.end_line_of_node(anno.syntax()) + 1,
+                            self.line_of_node(v.syntax()),
+                        );
                         let val = self.fmt_value(v);
-                        return (format!("{sig}\n{val}"), true, 2);
+                        return (format!("{sig}\n{gap}{val}"), true, 2);
                     }
                 }
                 (self.fmt_anno(anno), true, 1)
@@ -587,7 +619,7 @@ impl Printer {
         format!("type alias {name}{vars_str} =\n{}{body}", indent(STEP))
     }
 
-    fn fmt_union(&self, u: &syntax::ast::UnionDecl) -> String {
+    fn fmt_union(&mut self, u: &syntax::ast::UnionDecl) -> String {
         let name = u.name().map(|t| t.text().to_string()).unwrap_or_default();
         let vars = type_var_list(u.syntax());
         let vars_str = if vars.is_empty() {
@@ -595,18 +627,21 @@ impl Printer {
         } else {
             format!(" {}", vars.join(" "))
         };
-        let ctors: Vec<String> = u.variants().iter().map(|v| self.fmt_ctor(v)).collect();
-        let body = match ctors.as_slice() {
-            [] => String::new(),
-            [c] => format!("\n{}= {c}", indent(STEP)),
-            [c, rest @ ..] => {
-                let mut s = format!("\n{}= {c}", indent(STEP));
-                for r in rest {
-                    s.push_str(&format!("\n{}| {r}", indent(STEP)));
-                }
-                s
-            }
-        };
+        // A comment between the header and a variant, or between two
+        // variants, stays above the variant below it, at the variant indent.
+        let mut prev_end = self.line_of_node(u.syntax());
+        let mut body = String::new();
+        for (k, v) in u.variants().iter().enumerate() {
+            let line = self.line_of_node(v.syntax());
+            let gap = self.drain_gap(STEP, prev_end, line);
+            let lead = if k == 0 { "= " } else { "| " };
+            body.push_str(&format!(
+                "\n{gap}{}{lead}{}",
+                indent(STEP),
+                self.fmt_ctor(v)
+            ));
+            prev_end = self.end_line_of_node(v.syntax());
+        }
         format!("type {name}{vars_str}{body}")
     }
 
