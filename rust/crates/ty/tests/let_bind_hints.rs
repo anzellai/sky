@@ -799,7 +799,9 @@ fn an_int_bound_in_a_float_maybe_block_gives_no_body_note() {
         &[],
     );
     inner_error_only_at(&got, "b <- Just 2");
-    assert!(got[0].message.contains("`Int` vs `Float`"), "{got:#?}");
+    // `a` (and so `b`, through `a * b`) has the type of its line, `Float`,
+    // before the last line is checked: the line's `Int` is the other side.
+    assert!(got[0].message.contains("`Float` vs `Int`"), "{got:#?}");
 }
 
 #[test]
@@ -816,4 +818,67 @@ fn an_in_body_whose_own_type_clashes_still_gets_the_body_note() {
             "this block needs `Task Error Int`",
         ],
     );
+}
+
+// ---- the `in` body's type, once the bind lines name their results ------
+
+/// Judge probes pE11 and m3: the `in` body is well typed, but once the bind
+/// lines give their names a type, its type is not the block's. The error is
+/// the body's, with the note, whatever the number of bind lines (b11b, two
+/// lines, gave it already). Before, one line blamed its `<-` with no note.
+#[test]
+fn an_in_body_of_the_wrong_type_is_blamed_with_one_two_or_three_lines() {
+    let cases: [(&str, &str, &str, &str, &str); 3] = [
+        (
+            "f : String -> Task Error ()\nf s =",
+            "c <- File.readFile s",
+            "_ <- File.readFile s",
+            "Task.succeed c",
+            "this block needs `Task Error ()`",
+        ),
+        (
+            "f : String -> Result Error String\nf s =",
+            "c <- Ok 3",
+            "_ <- Ok 1",
+            "Ok c",
+            "this block needs `Result Error String`",
+        ),
+        (
+            "f : String -> Maybe String\nf s =",
+            "c <- Just 3",
+            "_ <- Just 1",
+            "Just c",
+            "this block needs `Maybe String`",
+        ),
+    ];
+    for (head, first, more, body, needs) in cases {
+        for n in 0..3 {
+            let mut lines = format!("        {first}\n");
+            for _ in 0..n {
+                lines.push_str(&format!("        {more}\n"));
+            }
+            let src = format!("{head}\n    let\n{lines}    in\n    {body}");
+            let got = check_with(&src, &[], "import Sky.Core.File as File\n");
+            one_e2001_at(&got, body, &["the `in` expression has type", needs]);
+            assert!(
+                got.iter().all(|g| !g.message.contains("To fix it")),
+                "{src}\n{got:#?}"
+            );
+        }
+    }
+}
+
+/// Judge probe d4: an unannotated `step x = let v <- x in …` is `[E2015]`,
+/// and a caller's bind line on `step …` is no second `[E2015]`: its type is
+/// unknown because `step` already failed.
+#[test]
+fn a_bind_on_a_call_of_a_def_that_failed_is_no_second_e2015() {
+    let got = check(
+        "step x =\n    let\n        v <- x\n    in\n    Task.succeed (v + 1)\n\n\
+         go =\n    let\n        d <- step (Task.succeed 41)\n        _ <- println \"y\"\n    in\n    Task.succeed d",
+        &[],
+    );
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2015").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    assert_eq!(e[0].line.trim(), "v <- x", "{got:#?}");
 }

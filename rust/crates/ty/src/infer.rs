@@ -176,6 +176,11 @@ pub struct Infer<'a> {
     /// has met. The resolver reported each one (`[E1001]`, L7), so a bind line
     /// whose `e` holds one gives no `[E2015]` / `[E2016]` of its own.
     pub(crate) unresolved_seen: usize,
+    /// How many references to an unannotated def whose own inference
+    /// reported an error (`World::app_failed_defs`) inference has met, on
+    /// the check path. A bind line whose `e` holds one and whose head stays
+    /// unknown gives no `[E2015]`: the def's error is the first one.
+    pub(crate) failed_def_seen: usize,
     /// Bind lines whose `andThen` is not chosen yet (`crate::bind`).
     pub(crate) pending_binds: Vec<crate::bind::PendingBind>,
     /// The `andThen` chosen for each bind line, by its `Call` (`crate::bind`).
@@ -196,6 +201,13 @@ pub struct Infer<'a> {
     /// a line of another head is blamed, and the notes try their fixes
     /// against the type the block must have.
     pub(crate) root_bind_block: HashMap<ExprId, TyVarId>,
+    /// The bind lines whose continuation is being inferred, innermost last:
+    /// each line's lambda, the type its `andThen` gives that lambda, the
+    /// lambda's parameter once it is made, and whether the line continues
+    /// the block of the line below it on the stack. The last line of a
+    /// block gives the earlier lines' names their types before it checks
+    /// the `in` body (`crate::bind::BindFrame`).
+    pub(crate) bind_stack: Vec<crate::bind::BindFrame>,
     /// This run re-checks a def with a note's fix applied
     /// (`Infer::fixed_def_checks`): its own notes try no fix of their own,
     /// so a re-check never starts another.
@@ -273,11 +285,13 @@ impl<'a> Infer<'a> {
             bound_seen: std::collections::HashSet::new(),
             inferred_bounds: Vec::new(),
             unresolved_seen: 0,
+            failed_def_seen: 0,
             pending_binds: Vec::new(),
             bind_choices: Vec::new(),
             bind_expects: HashMap::new(),
             eq_bound: HashMap::new(),
             root_bind_block: HashMap::new(),
+            bind_stack: Vec::new(),
             fix_trial: false,
             overlay: None,
             #[cfg(test)]
@@ -1760,6 +1774,12 @@ impl<'a> Infer<'a> {
                     .iter()
                     .map(|&p| self.infer_pat_fresh(body, p))
                     .collect();
+                // The continuation of a bind line: keep its parameter.
+                if let Some(f) = self.bind_stack.last_mut() {
+                    if f.lam == e && f.param.is_none() {
+                        f.param = param_vars.first().copied();
+                    }
+                }
                 let rb = self.infer_expr(body, *lb);
                 param_vars
                     .into_iter()
@@ -1776,6 +1796,7 @@ impl<'a> Infer<'a> {
                 let (lam, ex) = (args[0], args[1]);
                 let errors_in_e = self.errors.len();
                 let unresolved_in_e = self.unresolved_seen;
+                let failed_in_e = self.failed_def_seen;
                 let te = self.infer_expr(body, ex);
                 // A type error inside `e`, or a name in it the resolver could
                 // not bind (`[E1001]`, typed as a fresh variable), already
@@ -1803,6 +1824,7 @@ impl<'a> Infer<'a> {
                 // The annotated result, when this block is in tail position
                 // of an annotated body.
                 let expected = self.root_bind_block.remove(&e);
+                let continues = self.bind_expects.contains_key(&e);
                 if let Some(block) = self.bind_expects.remove(&e) {
                     self.unify(result, block);
                 } else if let Some(x) = expected {
@@ -1820,6 +1842,7 @@ impl<'a> Infer<'a> {
                     callee_ty,
                     e_ty: te,
                     e_errored,
+                    e_calls_failed: self.failed_def_seen > failed_in_e,
                     e_expr: ex,
                     e_span: body.expr_span(ex),
                     span,
@@ -1845,7 +1868,20 @@ impl<'a> Infer<'a> {
                     }
                 }
                 let errors_in_rest = self.errors.len();
+                self.bind_stack.push(crate::bind::BindFrame {
+                    lam,
+                    tlam,
+                    param: None,
+                    continues,
+                });
                 let tl = self.infer_expr(body, lam);
+                // The last line of a block: the earlier lines' names take the
+                // types their `andThen`s give them now, so the `in` body is
+                // checked against the block with them (one line or many).
+                if crate::bind::final_body(body, lam).is_some() && !refused {
+                    self.type_block_names();
+                }
+                self.bind_stack.pop();
                 // The rest of a block with an expected type already reported
                 // a clash inside it: its type is poisoned, and a second
                 // report against the block's type is a cascade (as the def's
@@ -2775,6 +2811,12 @@ impl<'a> Infer<'a> {
             Res::Def(def) => {
                 if let Some(&shared) = self.provisional_defs.get(&def) {
                     return shared;
+                }
+                if !self.use_inferred
+                    && self.self_def != Some(def)
+                    && self.world.app_failed_defs.contains(&def)
+                {
+                    self.failed_def_seen += 1;
                 }
 
                 // v0.27.0 qualified bounds — CHECK-ONLY. A def whose scheme

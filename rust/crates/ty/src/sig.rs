@@ -41,6 +41,10 @@ pub struct World {
     /// The ordinary lowering type world does not consume this channel.
     pub app_check_sigs: HashMap<DefId, Scheme>,
     pub(crate) app_group_errors: HashMap<DefId, Vec<crate::infer::TypeError>>,
+    /// CHECK-only: the unannotated app defs whose inference for
+    /// `app_check_sigs` reported an error. A bind line on a call of one
+    /// whose head stays unknown gives no second `[E2015]` (`crate::bind`).
+    pub(crate) app_failed_defs: std::collections::HashSet<DefId>,
     /// CHECK-ONLY override of an ANNOTATED def's scheme, as callers see it
     /// (v0.27.0). Two writers:
     /// * pass 6 (D-ANY): the signature with every `any` filled from the body
@@ -1104,8 +1108,13 @@ impl World {
                 if group.len() == 1 {
                     let def = defs[group[0]];
                     let mut infer = Infer::new(self, db).with_self_def(Some(def));
-                    if let Some(scheme) = infer.infer_def_scheme(&resolved.bodies[&def], true) {
+                    let scheme = infer.infer_def_scheme(&resolved.bodies[&def], true);
+                    let failed = !infer.errors.is_empty();
+                    if let Some(scheme) = scheme {
                         self.app_check_sigs.insert(def, scheme);
+                    }
+                    if failed {
+                        self.app_failed_defs.insert(def);
                     }
                 } else {
                     let members: Vec<_> = group
@@ -1116,6 +1125,7 @@ impl World {
                     for (def, scheme, errors) in inferred {
                         self.app_check_sigs.insert(def, scheme);
                         if !errors.is_empty() {
+                            self.app_failed_defs.insert(def);
                             self.app_group_errors.insert(def, errors);
                         }
                     }

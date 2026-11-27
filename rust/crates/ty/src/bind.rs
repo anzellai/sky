@@ -38,6 +38,15 @@ impl BindElaboration {
     }
 }
 
+/// A bind line whose continuation is being inferred (`Infer::bind_stack`).
+pub(crate) struct BindFrame {
+    pub(crate) lam: ExprId,
+    pub(crate) tlam: TyVarId,
+    pub(crate) param: Option<TyVarId>,
+    /// The line continues the block of the frame below it.
+    pub(crate) continues: bool,
+}
+
 /// A bind line whose `andThen` is not chosen yet: the type of `e` had no
 /// known head when it was inferred.
 #[derive(Clone, Debug)]
@@ -51,6 +60,10 @@ pub(crate) struct PendingBind {
     /// Inferring `e` reported a type error: an unknown head is its result,
     /// so it gives no `[E2015]` (the head is treated as `Ty::Error`).
     pub e_errored: bool,
+    /// `e` calls an unannotated def whose own inference reported an error
+    /// (an `[E2015]` or any other): a head left unknown by it is no second
+    /// `[E2015]` here.
+    pub e_calls_failed: bool,
     /// The span of the `<-` token.
     pub span: Option<Span>,
     /// The module of the def the bind line is in.
@@ -793,6 +806,7 @@ impl<'a> Infer<'a> {
         let bound_seen = self.bound_seen.clone();
         let inferred_bounds = self.inferred_bounds.len();
         let unresolved = self.unresolved_seen;
+        let failed = self.failed_def_seen;
         let span = self.cur_span;
         let out = f(self);
         self.uf = real;
@@ -802,6 +816,7 @@ impl<'a> Infer<'a> {
         self.bound_seen = bound_seen;
         self.inferred_bounds.truncate(inferred_bounds);
         self.unresolved_seen = unresolved;
+        self.failed_def_seen = failed;
         self.cur_span = span;
         out
     }
@@ -879,6 +894,37 @@ impl<'a> Infer<'a> {
     /// type is not known, `Some(None)` when the body's own type fits the
     /// block's type: the clash is then inside the body, and the error is
     /// given with no note, as for a hand-written `andThen`.
+    /// At the last bind line of a block, before its continuation is
+    /// unified with its `andThen`: each earlier line's name takes the type
+    /// its `andThen` gives it (the unification the earlier line makes later
+    /// in any case). A name whose uses refuse that type is left alone, so
+    /// its earlier line still reports the clash. With the names typed, an
+    /// `in` body of the wrong type is the clash of the last line, whatever
+    /// the number of lines.
+    pub(crate) fn type_block_names(&mut self) {
+        let mut pairs = Vec::new();
+        let mut i = self.bind_stack.len();
+        while i > 1 && self.bind_stack[i - 1].continues {
+            i -= 1;
+            let f = &self.bind_stack[i - 1];
+            if let Some(p) = f.param {
+                pairs.push((p, f.tlam));
+            }
+        }
+        for (p, tlam) in pairs {
+            let Some((pw, _)) = self.fun_parts(tlam) else {
+                continue;
+            };
+            let cur = self.uf.clone();
+            if self.fits_on(&cur, |s| {
+                s.unify(p, pw);
+                true
+            }) {
+                self.unify(p, pw);
+            }
+        }
+    }
+
     pub(crate) fn body_note(
         &mut self,
         snap: &UnionFind,
@@ -905,15 +951,16 @@ impl<'a> Infer<'a> {
                         true
                     })
                 };
-                // A body of a known type that fits before the last bind
-                // line's name takes the type of its line (`Just (a * b)`
-                // with `b <- Just 2` in a `Maybe Float` block): the clash
-                // is that line's, so the error needs no note.
-                let known = |s: &mut Self| !matches!(s.read_back(bv), Ty::Var(_) | Ty::Error);
-                if known(s) && fits(s) {
+                // The last line's name refuses the type of its line (`a + 1`
+                // with `a <- Task.succeed "x"`, `a * b` with `a : Float`
+                // and `b <- Just 2`): the clash is that line's, so the
+                // error needs no note. The earlier lines' names have their
+                // types already (`Infer::type_block_names`).
+                let before = s.errors.len();
+                s.unify(pl, pw);
+                if s.errors.len() > before {
                     return Some(None);
                 }
-                let _ = s.uf.unify(pl, pw);
                 let body_ty = s.read_back(bv);
                 if matches!(body_ty, Ty::Var(_) | Ty::Error) {
                     return None;
@@ -1248,7 +1295,7 @@ impl<'a> Infer<'a> {
         }
         if fin {
             for pb in std::mem::take(&mut self.pending_binds) {
-                if pb.e_errored {
+                if pb.e_errored || pb.e_calls_failed {
                     continue;
                 }
                 let t = self.read_back(pb.e_ty).render_pretty();

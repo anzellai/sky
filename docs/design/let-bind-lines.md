@@ -104,7 +104,8 @@ pattern is `[E3001]` with "use `case`". Find the union through
   `Ty::Error` suppresses the error. So does an error inside `e`: a type error, or a
   name the resolver could not bind (`[E1001]`, typed as a fresh variable). The
   first error is the one reported, never an `[E2015]` / `[E2016]` for the same
-  line. A function after `<-` whose result has a named head is `[E2016]`
+  line. So does a call in `e` of an unannotated def whose own inference
+  reported an error (`World::app_failed_defs`): its `[E2015]` is the one. A function after `<-` whose result has a named head is `[E2016]`
   naming the missing arguments (`Task.succeed` needs 1 more).
 - Results go in a `BindElaboration: HashMap<ExprId, Res>` built on the CHECK
   path (`numeric_elaboration_of` pattern, ty/src/db.rs:67). The lowering path
@@ -145,7 +146,10 @@ pattern is `[E3001]` with "use `case`". Find the union through
   the expected type. The `andThen` is still chosen from the type of `e`
   alone, so a well-typed program chooses the same functions with and without
   the annotation (`ty/tests/let_bind.rs`). With no expected type, the first
-  line's head sets the block's type.
+  line's head sets the block's type. Before the last line of a block checks
+  the `in` body, the earlier lines' names take the types their `andThen`s
+  give them (when their uses accept those types), so an `in` body of the
+  wrong type is blamed at the body, with its note, for one line or many.
 - A note names a fix ONLY when the whole fixed definition type-checks. One
   test decides every such note (`Infer::fixed_def_checks`, ty/src/bind.rs):
   the fix is applied to a copy of the def's resolved body (HIR), and the
