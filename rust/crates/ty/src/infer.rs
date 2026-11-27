@@ -1781,7 +1781,7 @@ impl<'a> Infer<'a> {
                 let head = (self.bind_choices.len() > chosen_before)
                     .then(|| self.read_back(te))
                     .and_then(|t| match &t {
-                        Ty::App(n, _) => Some(crate::nominal::strip(n.as_str()).to_string()),
+                        Ty::App(n, _) => Some(n.as_str().to_string()),
                         _ => None,
                     });
                 // This line refused already (its type does not fit the
@@ -1791,6 +1791,11 @@ impl<'a> Infer<'a> {
                     self.bind_expects.insert(next, result);
                 }
                 let tl = self.infer_expr(body, lam);
+                // The conversion note only when the rest of the block has
+                // another head; a clash inside one head is a plain mismatch.
+                let mixed = head.as_deref().is_some_and(|h| {
+                    crate::bind::other_head(crate::bind::final_result(&self.read_back(tl)), h)
+                });
                 let before = self.errors.len();
                 // A clash here is the rest of the block against this line.s
                 // type: report it at the `<-`.
@@ -1800,8 +1805,8 @@ impl<'a> Infer<'a> {
                 self.cur_span = saved;
                 if refused {
                     self.errors.truncate(before);
-                } else if let Some(head) = head {
-                    let note = crate::bind::mixed_note(&head);
+                } else if let Some(head) = head.filter(|_| mixed) {
+                    let note = crate::bind::mixed_note(crate::nominal::strip(&head));
                     self.append_note(before, Some(note));
                 }
                 result

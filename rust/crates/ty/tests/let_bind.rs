@@ -453,3 +453,29 @@ fn a_type_error_in_e_gives_no_extra_e2015() {
     assert!(got.iter().any(|(c, _)| c == "E2001"), "{got:#?}");
     assert!(got.iter().all(|(c, _)| c != "E2015"), "{got:#?}");
 }
+
+/// The conversion note is for two different type constructors only. Two
+/// `Maybe` lines whose contents clash (Float against Int) get the plain
+/// mismatch, the same message as the hand-written `Maybe.andThen` chain.
+#[test]
+fn a_clash_inside_one_head_gets_no_conversion_note() {
+    let bind = errors("go : Maybe Float\ngo =\n    let\n        a <- Just 1.5\n        b <- Just 2\n    in\n    Just (a * b)");
+    assert!(bind.iter().any(|(c, _)| c == "E2001"), "{bind:#?}");
+    assert!(
+        bind.iter()
+            .all(|(_, m)| !m.contains("One block cannot mix types")),
+        "{bind:#?}"
+    );
+    let unannotated = errors(
+        "go =\n    let\n        a <- Just 1.5\n        b <- Just 2\n    in\n    Just (a * b)",
+    );
+    assert!(
+        unannotated
+            .iter()
+            .all(|(_, m)| !m.contains("One block cannot mix types")),
+        "{unannotated:#?}"
+    );
+    let chain = errors("go : Maybe Float\ngo =\n    Just 1.5 |> Maybe.andThen (\\a -> Just 2 |> Maybe.andThen (\\b -> Just (a * b)))");
+    let msgs = |v: &[(String, String)]| v.iter().map(|(c, _)| c.clone()).collect::<Vec<_>>();
+    assert_eq!(msgs(&bind), msgs(&chain), "{bind:#?}\n{chain:#?}");
+}

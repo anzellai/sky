@@ -366,10 +366,26 @@ impl<'a> Infer<'a> {
             );
             return Attempt::Done;
         }
+        // The conversion note is for a block that mixes type constructors:
+        // the continuation or the block's expected result has another head.
+        // A clash inside one head (`Maybe Int` against `Maybe Float`) gets
+        // the plain mismatch, as the hand-written `andThen` chain does.
+        let callee = self.read_back(pb.callee_ty);
+        let mixed = match &callee {
+            Ty::Fun(lam, rest) => {
+                let result = match rest.as_ref() {
+                    Ty::Fun(_, r) => r.as_ref(),
+                    other => other,
+                };
+                other_head(final_result(lam), &name) || other_head(result, &name)
+            }
+            _ => false,
+        };
         let before = self.errors.len();
         self.unify(inst, pb.callee_ty);
-        let note = mixed_note(&shown);
-        self.append_note(before, Some(note));
+        if mixed {
+            self.append_note(before, Some(mixed_note(&shown)));
+        }
         self.cur_span = saved;
         self.bind_choices.push((pb.call, res));
         Attempt::Done
@@ -432,6 +448,21 @@ impl<'a> Infer<'a> {
             }
         }
     }
+}
+
+/// The result of a function type after all its arguments (`t` itself when it
+/// is not a function).
+pub(crate) fn final_result(t: &Ty) -> &Ty {
+    match t {
+        Ty::Fun(_, r) => final_result(r),
+        _ => t,
+    }
+}
+
+/// Is `t` an application of a type constructor other than `head`? A type
+/// variable or the same head is not.
+pub(crate) fn other_head(t: &Ty, head: &str) -> bool {
+    matches!(t, Ty::App(n, _) if !nominal::same(n.as_str(), head))
 }
 
 /// The note on a type clash in a block of bind lines: every line and the
