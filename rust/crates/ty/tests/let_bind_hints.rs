@@ -678,8 +678,14 @@ fn a_type_name_takes_a_or_an() {
         &[],
     );
     let e = only_e2001(&got);
-    assert!(e.message.contains("an `Int`"), "{got:#?}");
-    assert!(!e.message.contains("a `Int`"), "{got:#?}");
+    // `Int` has no `andThen`: the `Maybe` line cannot run in `f`, and the
+    // idiom that takes the `Maybe` apart follows.
+    assert!(
+        e.message
+            .contains("`f` returns `Int`, so the `Maybe` after `<-` cannot run here"),
+        "{got:#?}"
+    );
+    assert!(e.message.contains("gives a `Maybe Int`"), "{got:#?}");
     assert!(
         e.message
             .contains("handle `Nothing` with `case` or `Maybe.withDefault`"),
@@ -1141,5 +1147,110 @@ fn a_bind_line_on_cmd_or_sub_names_what_combines_it() {
     assert!(
         !m.contains("not known") && !m.contains("`case`"),
         "{got:#?}"
+    );
+}
+
+// ---- 6. a block whose type has no `andThen` -------------------------------
+
+const FETCH_INT: &str = "fetch : Task Error Int\nfetch =\n    Task.succeed 1\n\n\n";
+
+#[test]
+fn a_task_line_in_a_def_that_returns_a_plain_type_says_the_task_cannot_run_there() {
+    for (anno, body, ret, needed) in [
+        (
+            "Int -> String",
+            "String.fromInt x",
+            "String",
+            "Task Error String",
+        ),
+        ("Int -> Int", "x", "Int", "Task Error Int"),
+        (
+            "Int -> List Int",
+            "[ x ]",
+            "List Int",
+            "Task Error (List Int)",
+        ),
+        (
+            "Int -> { a : Int }",
+            "{ a = x }",
+            "{ a : Int }",
+            "Task Error { a : Int }",
+        ),
+    ] {
+        let got = check(
+            &format!(
+                "{FETCH_INT}f : {anno}\nf n =\n    let\n        x <- fetch\n    in\n    {body}"
+            ),
+            &[],
+        );
+        one_e2001_at(
+            &got,
+            "<-",
+            &[&format!(
+                "`f` returns `{ret}`, so the `Task` after `<-` cannot run here: a bind line \
+                 on a `Task` needs a block that is a `Task` too. Make `f` return `{needed}` \
+                 (and its callers run it), or do this work in a function that returns a Task."
+            )],
+        );
+        let m = &got[0].message;
+        assert!(!m.contains("chains one type"), "{m}");
+        assert!(!m.contains("To fix it"), "{m}");
+    }
+}
+
+#[test]
+fn a_maybe_line_in_a_def_that_returns_a_plain_type_names_maybe() {
+    let got = check(
+        "f : String -> Int\nf s =\n    let\n        n <- String.toInt s\n    in\n    n",
+        &[],
+    );
+    one_e2001_at(
+        &got,
+        "<-",
+        &[
+            "`f` returns `Int`, so the `Maybe` after `<-` cannot run here",
+            "Make `f` return `Maybe Int` (and its callers handle it)",
+        ],
+    );
+}
+
+#[test]
+fn two_decoders_of_one_name_are_shown_as_the_module_writes_them() {
+    for (more, line, want) in [
+        (
+            "import Std.Db.Decode as DbDecode\n",
+            "b <- DbDecode.int \"b\"",
+            "chains with the `andThen` of `DbDecode.Decoder`, and the block is a `Decode.Decoder` block",
+        ),
+        (
+            "import Std.Config as Config\n",
+            "b <- Config.field \"b\" Config.int",
+            "chains with the `andThen` of `Config.Decoder`, and the block is a `Decode.Decoder` block",
+        ),
+        (
+            "import Std.Xml.Decode as XmlDecode\n",
+            "b <- XmlDecode.attribute \"b\"",
+            "chains with the `andThen` of `XmlDecode.Decoder`, and the block is a `Decode.Decoder` block",
+        ),
+    ] {
+        let ty = if line.contains("attribute") { "String" } else { "Int" };
+        let in_body = if ty == "String" { "a ++ b" } else { "a + b" };
+        let field = if ty == "String" { "Decode.string" } else { "Decode.int" };
+        let got = check_with(
+            &format!("d : Decode.Decoder {ty}\nd =\n    let\n        a <- Decode.field \"a\" {field}\n        {line}\n    in\n    Decode.succeed ({in_body})"),
+            &[],
+            more,
+        );
+        one_e2001_at(&got, "<-", &[want]);
+    }
+    // Two heads with different names stay bare.
+    let got = check(
+        "go : Task Error Int\ngo =\n    let\n        a <- Task.succeed 1\n        b <- String.toInt \"2\"\n    in\n    Task.succeed (a + b)",
+        &[],
+    );
+    one_e2001_at(
+        &got,
+        "<-",
+        &["the `andThen` of `Maybe`, and the block is a `Task` block"],
     );
 }

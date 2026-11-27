@@ -29,7 +29,11 @@ Task.succeed ctx
 - `<-` anywhere else is a parse error `[E0001]` with the hint "`<-` is a bind
   line; write it as a line of a `let` block". (Before: `[E1014]` unknown
   operator. Never valid, so not breaking.) A case-arm pattern (`v <- x -> 1`)
-  gets "a case arm uses `->`".
+  gets "a case arm uses `->`". Two shapes of a `let` line name the line to
+  write instead, one `[E0001]` each: `x = <- e` gives "write `x <- e`: a bind
+  line uses `<-` in place of `=`", and a second `<-` on one line (`x <- y <-
+  e`) gives "one bind line binds one pattern: put `y <- e` on its own line
+  above". A nested `let` on the line keeps its own `<-`.
 - A `let` line with a `<-` (before its own `=`) whose left side is not a
   pattern is ONE rule, whatever the left side is: one `[E0001]` on the `<-`,
   "a bind line is `pattern <- expression`. The pattern is a name, `_`, `()`,
@@ -137,7 +141,17 @@ pattern is `[E3001]` with "use `case`". Find the union through
   `andThen` adds "(its `andThen : …` has another shape)" and never suggests
   calling it by name. Also covers an unexposed andThen ("expose it") and the
   self-reference case.
-- Mixed types in one block: ordinary `[E2001]`, with a note.
+- Mixed types in one block: ordinary `[E2001]`, with a note. Two type names
+  that read the same without their modules (`Decoder` of `Sky.Core.Json.Decode`
+  and of `Std.Db.Decode`) are shown as the module writes them, by import
+  alias (`Decode.Decoder`, `DbDecode.Decoder`), else by the full module name.
+- A block whose type has no `andThen` (`String`, `Int`, a `List`, a record),
+  for example the result of `f : Int -> String`: the note says "`f` returns
+  `String`, so the `Task` after `<-` cannot run here: a bind line on a `Task`
+  needs a block that is a `Task` too. Make `f` return `Task Error String`
+  (and its callers run it), or do this work in a function that returns a
+  Task." It is advice: a changed signature is not a code fix this note
+  checks. A `Maybe` or `Result` line adds the idiom that takes it apart.
 - The block's type is the expected type when it is known: a block in tail
   position of an annotated def's body (through `let`, `if` and `case`) has
   the annotated result. Its first line unifies its result with it, so each

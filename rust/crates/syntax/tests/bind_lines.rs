@@ -531,6 +531,63 @@ fn every_let_line_left_side_gets_one_error_with_a_fix_that_parses() {
     for head in ["g x", "go a b", "g (Just x)"] {
         assert!(is_clean(&let_line(head, "=")), "{head}");
     }
+    // `=` and `<-` together, and two `<-` on one line: one [E0001] each,
+    // naming the line as it should be written, and that fix parses.
+    for (lhs, op, msg, fix) in [
+        (
+            "x",
+            "= <-",
+            "write `x <- e`: a bind line uses `<-` in place of `=`",
+            vec!["x <- e"],
+        ),
+        (
+            "( a, b )",
+            "= <-",
+            "write `( a, b ) <- e`: a bind line uses `<-` in place of `=`",
+            vec!["( a, b ) <- e"],
+        ),
+        (
+            "_",
+            "= <-",
+            "write `_ <- e`: a bind line uses `<-` in place of `=`",
+            vec!["_ <- e"],
+        ),
+        (
+            "x <- y",
+            "<-",
+            "one bind line binds one pattern: put `y <- e` on its own line above",
+            vec!["y <- e", "x <- y"],
+        ),
+        (
+            "_ <- ( a, b )",
+            "<-",
+            "one bind line binds one pattern: put `( a, b ) <- e` on its own line above",
+            vec!["( a, b ) <- e", "_ <- ( a, b )"],
+        ),
+    ] {
+        let src = let_line(lhs, op);
+        let parsed = p(&src);
+        assert_eq!(parsed.reprint(), src, "round-trip for {src:?}");
+        let msgs: Vec<_> = parsed
+            .errors()
+            .iter()
+            .map(|d| (d.code.0.clone(), d.message.clone()))
+            .collect();
+        assert!(
+            msgs.len() == 1 && msgs[0].0 == "E0001" && msgs[0].1 == msg,
+            "{src:?}: expected one [E0001] {msg:?}, got {msgs:?}"
+        );
+        let lines: Vec<String> = fix.iter().map(|l| format!("        {l}\n")).collect();
+        let fixed = format!(
+            "x =\n    let\n{}        y = 1\n    in\n    y\n",
+            lines.concat()
+        );
+        assert!(is_clean(&fixed), "the named fix must parse: {fixed:?}");
+    }
+    // A nested `let` on the line owns its own `<-`: no second-arrow error.
+    assert!(is_clean(
+        "x =\n    let\n        a <- let b <- e in Just b\n    in\n    a\n"
+    ));
 }
 
 /// The error sits on the `<-`, the line before and after still parse, and a
@@ -565,7 +622,13 @@ fn larrow_in_a_case_arm_pattern_says_case_arms_use_arrow() {
 /// The bind-line hint, or one of the hints for a position that is already a
 /// `let` line or a case arm.
 fn is_bind_hint(m: &str) -> bool {
-    m == BIND_HINT || m == BIND_LINE_FORM || m == NEEDS_PATTERN || m.starts_with(CASE_ARM_HINT)
+    m == BIND_HINT
+        || m == BIND_LINE_FORM
+        || m == NEEDS_PATTERN
+        || m.starts_with(CASE_ARM_HINT)
+        // `x = <- e` and `x <- y <- e`: the hint names the line to write.
+        || (m.starts_with("write `") && m.ends_with("a bind line uses `<-` in place of `=`"))
+        || m.starts_with("one bind line binds one pattern: put `")
 }
 
 /// The one diagnostic for a `let` line with neither `=` nor `<-`.

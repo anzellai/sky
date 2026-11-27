@@ -1197,10 +1197,56 @@ fn misplaced_bind_with(p: &mut Parser, hint: &str) {
 /// `pat <- expr`: the pattern is already parsed under `m`.
 fn bind_line_rest(p: &mut Parser, m: crate::parser::Marker, anchor: u32) {
     p.bump(); // <-
+              // `x <- y <- e`: a second `<-` on the line. One `[E0001]`, and the
+              // `y <-` goes into an ERROR node so `e` still parses as the line's
+              // expression.
+              // A nested `let` on the line owns its own `<-`.
+    while let Some(off) = p
+        .let_line_arrow(anchor)
+        .filter(|&o| o > 0 && (0..o).all(|i| p.nth(i) != LetKw))
+    {
+        let start = p.pos();
+        let last = p.let_line_last(anchor);
+        let pat = p
+            .short_text(start, start + off - 1)
+            .unwrap_or("p")
+            .to_string();
+        let e = p
+            .short_text(start + off + 1, last)
+            .unwrap_or("e")
+            .to_string();
+        let err = p.start();
+        p.error(format!(
+            "one bind line binds one pattern: put `{pat} <- {e}` on its own line above"
+        ));
+        for _ in 0..=off {
+            p.bump();
+        }
+        err.complete(p, Error);
+    }
     p.with_indent(anchor, |p| {
         expr(p);
     });
     m.complete(p, BindBinding);
+}
+
+/// `x = <- e`: an `=` line whose expression starts with `<-` (the `=` is
+/// just consumed; the line's pattern starts at token `start`). One
+/// `[E0001]` naming the bind line, the `<-` in an ERROR node, and `e` still
+/// parses as the line's expression.
+fn eq_then_arrow(p: &mut Parser, anchor: u32, start: usize) {
+    if !p.at(LArrow) {
+        return;
+    }
+    let pat = p
+        .short_text(start, p.pos().saturating_sub(2))
+        .unwrap_or("p")
+        .to_string();
+    let last = p.let_line_last(anchor);
+    let e = p.short_text(p.pos() + 1, last).unwrap_or("e").to_string();
+    p.err_and_bump(format!(
+        "write `{pat} <- {e}`: a bind line uses `<-` in place of `=`"
+    ));
 }
 
 /// A `let` line with a `<-` at `off` tokens from the cursor, before any
@@ -1304,6 +1350,7 @@ fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
     } else if p.at(LowerIdent) && !matches!(p.nth(1), Colon2 | Comma) {
         // `name pat* = expr`
         let m = p.start();
+        let start = p.pos();
         p.bump(); // name
         let pl = p.start();
         while p.at_any(PAT_ATOM_START) && !p.at(Eq) {
@@ -1312,7 +1359,11 @@ fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
             pattern_app(p);
         }
         pl.complete(p, ParamList);
+        let eq = p.at(Eq);
         expect_eq(p);
+        if eq {
+            eq_then_arrow(p, anchor, start);
+        }
         p.with_indent(anchor, |p| {
             expr(p);
         });
@@ -1321,6 +1372,7 @@ fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
     } else {
         // destructure: `(a, b) = e`, `{ x } = r`, `Just x = m`, `_ = e`.
         let m = p.start();
+        let start = p.pos();
         pattern(p);
         if p.at(Comma) {
             // `a, b = e`: a tuple pattern without its parentheses. One
@@ -1339,7 +1391,11 @@ fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
             m.complete(p, DestructureBinding);
             return LetLine::Equals;
         }
-        p.expect(Eq);
+        if p.eat(Eq) {
+            eq_then_arrow(p, anchor, start);
+        } else {
+            p.expect(Eq);
+        }
         p.with_indent(anchor, |p| {
             expr(p);
         });

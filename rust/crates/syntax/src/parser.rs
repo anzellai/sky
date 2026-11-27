@@ -504,6 +504,44 @@ impl<'a> Parser<'a> {
         self.pos <= i
     }
 
+    /// The index of the cursor's token.
+    pub(crate) fn pos(&self) -> usize {
+        self.pos
+    }
+
+    /// The source text of the tokens `from` to `to` (both included), when
+    /// it is on one line and short (for a message).
+    pub(crate) fn short_text(&self, from: usize, to: usize) -> Option<&str> {
+        if from > to || to >= self.toks.len() {
+            return None;
+        }
+        let t = &self.src[self.toks[from].start as usize..self.toks[to].end as usize];
+        (!t.contains('\n') && t.chars().count() <= 40).then_some(t)
+    }
+
+    /// The index of the last token of the `let` line the cursor is on: the
+    /// token before the next one on a later line at or left of `anchor`, or
+    /// before an `in` outside brackets.
+    pub(crate) fn let_line_last(&self, anchor: u32) -> usize {
+        let end = self.limit.min(self.toks.len());
+        let mut depth = 0i32;
+        let mut last = self.pos;
+        for i in self.pos..end {
+            let t = &self.toks[i];
+            if i > self.pos && t.newline_before && t.col <= anchor {
+                break;
+            }
+            match t.kind {
+                SyntaxKind::InKw if depth <= 0 => break,
+                SyntaxKind::LParen | SyntaxKind::LBrack | SyntaxKind::LBrace => depth += 1,
+                SyntaxKind::RParen | SyntaxKind::RBrack | SyntaxKind::RBrace => depth -= 1,
+                _ => {}
+            }
+            last = i;
+        }
+        last
+    }
+
     /// The source text from the cursor's token to token `to`.
     pub(crate) fn text_to(&self, to: usize) -> &str {
         let a = self.toks[self.pos].start as usize;

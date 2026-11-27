@@ -599,8 +599,9 @@ impl<'a> Infer<'a> {
         // A clash inside one head (`Maybe Int` against `Maybe Float`) gets
         // the plain mismatch, as the hand-written `andThen` chain does.
         let callee = self.read_back(pb.callee_ty);
-        // The other head the block needs: its result's, else the one the
-        // continuation ends in.
+        // The other type the block needs: its result's, else the one the
+        // continuation ends in. A type of another head, a record, a tuple or
+        // `()` (none of which chains this line's `andThen`).
         let block = match &callee {
             Ty::Fun(lam, rest) => {
                 let result = match rest.as_ref() {
@@ -609,11 +610,11 @@ impl<'a> Infer<'a> {
                 };
                 [result, final_result(lam)]
                     .into_iter()
-                    .find(|t| other_head(t, &name))
-                    .and_then(|t| match t {
-                        Ty::App(n, _) => Some(n.as_str().to_string()),
-                        _ => None,
+                    .find(|t| {
+                        other_head(t, &name)
+                            || matches!(t, Ty::Record(..) | Ty::Tuple(_) | Ty::Unit)
                     })
+                    .cloned()
             }
             _ => None,
         };
@@ -771,6 +772,12 @@ impl<'a> Infer<'a> {
             .bodies
             .contains_key(&def)
             .then_some((resolved, def))
+    }
+
+    /// `f` on the resolved body of the def under inference.
+    fn on_own_body<R>(&self, f: impl FnOnce(&Body) -> R) -> Option<R> {
+        let (resolved, def) = self.own_body()?;
+        resolved.bodies.get(&def).map(f)
     }
 
     /// THE test for a note that names a code fix: apply the fix with `edit`
@@ -1288,14 +1295,22 @@ impl<'a> Infer<'a> {
         pb: &PendingBind,
         snap: &UnionFind,
         name: &str,
-        block: &str,
+        block_ty: &Ty,
     ) -> String {
+        let block = match block_ty {
+            Ty::App(n, _) if self.home_exposes(n.as_str(), "andThen").is_some() => {
+                n.as_str().to_string()
+            }
+            // The block's type has no `andThen`: the line cannot run in it.
+            _ => return self.cannot_run_note(pb, snap, name, block_ty),
+        };
         let shown = nominal::strip(name).to_string();
-        let b = nominal::strip(block).to_string();
+        let b = nominal::strip(&block).to_string();
+        let (line_name, block_name) = self.two_type_names(name, &block);
         let plain = format!(
-            "\n\nNote: this bind line chains with the `andThen` of `{shown}`, and the block \
-             is {} `{b}` block. One block of bind lines chains one type.",
-            article(&b)
+            "\n\nNote: this bind line chains with the `andThen` of `{line_name}`, and the block \
+             is {} `{block_name}` block. One block of bind lines chains one type.",
+            article(&block_name)
         );
         let e_text = self
             .span_text(pb.module, pb.e_span)
@@ -1311,9 +1326,7 @@ impl<'a> Infer<'a> {
             let e_ty = self.on_snapshot(snap, |s| s.read_back(pb.e_ty));
             match shown.as_str() {
                 "Maybe" | "Result" => {
-                    let who = self
-                        .own_body()
-                        .and_then(|(r, d)| r.bodies.get(&d).map(|b| self.giver_text(b, pb.e_expr)));
+                    let who = self.on_own_body(|b| self.giver_text(b, pb.e_expr));
                     format!(
                         "{plain} {}",
                         self.result_idiom(&who.unwrap_or_else(|| "It".to_string()), &shown, &e_ty)
@@ -1343,6 +1356,121 @@ impl<'a> Infer<'a> {
         } else {
             idiom
         }
+    }
+
+    /// The names of two type heads in one note. Two heads that read the
+    /// same once their modules are dropped (`Decoder` of `Sky.Core.Json.Decode`
+    /// and of `Std.Db.Decode`) are shown as the module writes them: its
+    /// import alias (`Decode.Decoder`, `DbDecode.Decoder`), else the module's
+    /// full name.
+    pub(crate) fn two_type_names(&self, a: &str, b: &str) -> (String, String) {
+        let (sa, sb) = (nominal::strip(a), nominal::strip(b));
+        if sa != sb || nominal::same(a, b) {
+            return (sa.to_string(), sb.to_string());
+        }
+        (self.qualified_head(a), self.qualified_head(b))
+    }
+
+    /// The head `name` as the module of the def being checked writes it,
+    /// qualified: `Alias.Type`, else `Full.Module.Type`.
+    fn qualified_head(&self, name: &str) -> String {
+        let bare = nominal::strip(name);
+        match self.head_home(name) {
+            Some(home) => {
+                let q = self
+                    .db
+                    .module_by_name(&home)
+                    .map(|mid| self.qualifier_of(mid, &home))
+                    .unwrap_or(home);
+                format!("{q}.{bare}")
+            }
+            None => name.to_string(),
+        }
+    }
+
+    /// The note on a bind line whose block has a type with no `andThen`
+    /// (`String`, `Int`, a `List`, a record): the line's `M` cannot run there.
+    /// It names the def and the type it would need to return, as advice: the
+    /// change of a signature is not a code fix this note claims to check.
+    fn cannot_run_note(
+        &mut self,
+        pb: &PendingBind,
+        snap: &UnionFind,
+        name: &str,
+        block_ty: &Ty,
+    ) -> String {
+        let head = nominal::strip(name).to_string();
+        let shown_head = if nominal::is_qualified(name) {
+            self.qualified_head(name)
+        } else {
+            head.clone()
+        };
+        let block_text = block_ty.render_pretty();
+        // The type the block would need: the line's type with the block's
+        // type as its result (`Task Error Int` with `String`: `Task Error
+        // String`).
+        let e_ty = self.on_snapshot(snap, |s| s.read_back(pb.e_ty));
+        let needed = match &e_ty {
+            Ty::App(_, args) if !args.is_empty() => {
+                let mut args = args.clone();
+                if let Some(last) = args.last_mut() {
+                    *last = block_ty.clone();
+                }
+                Ty::App(Name::from(shown_head.as_str()), args)
+            }
+            _ => Ty::App(Name::from(shown_head.as_str()), vec![block_ty.clone()]),
+        }
+        .render_pretty();
+        let callers = if head == "Task" {
+            "run it"
+        } else {
+            "handle it"
+        };
+        // A `Maybe` or a `Result` is often taken apart where it is: the
+        // idiom, in words.
+        let idiom = match head.as_str() {
+            "Maybe" | "Result" => {
+                let who = self
+                    .on_own_body(|b| self.giver_text(b, pb.e_expr))
+                    .unwrap_or_else(|| "It".to_string());
+                format!(" {}", self.result_idiom(&who, &head, &e_ty))
+            }
+            _ => String::new(),
+        };
+        let a = article(&head);
+        let why = format!(
+            "so the `{head}` after `<-` cannot run here: a bind line on {a} `{head}` needs a \
+             block that is {a} `{head}` too."
+        );
+        match self.def_returning(block_ty) {
+            Some(def) => format!(
+                "\n\nNote: `{def}` returns `{block_text}`, {why} Make `{def}` return \
+                 `{needed}` (and its callers {callers}), or do this work in a function that \
+                 returns {a} {head}.{idiom}"
+            ),
+            None => format!(
+                "\n\nNote: this block has type `{block_text}`, {why} Make the block {} \
+                 `{needed}`, or do this work in a function that returns {a} {head}.{idiom}",
+                article(&needed)
+            ),
+        }
+    }
+
+    /// The name of the def being checked, when its annotated result (after
+    /// its parameters) is `ty`: a block of that type is what it returns.
+    fn def_returning(&self, ty: &Ty) -> Option<String> {
+        let def = self.self_def?;
+        let loc = self.db.def_loc(def)?;
+        let scheme = self.world.value_sigs.get(&def)?;
+        let params = self.on_own_body(|b| b.params.len())?;
+        let mut t = &scheme.ty;
+        for _ in 0..params {
+            match t {
+                Ty::Fun(_, r) => t = r,
+                _ => return None,
+            }
+        }
+        (t.render_pretty() == ty.render_pretty()).then(|| loc.name.as_str().to_string())
     }
 
     /// The source text at `span` in `module`, when it is short and on one
