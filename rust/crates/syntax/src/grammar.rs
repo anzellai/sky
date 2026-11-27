@@ -1133,6 +1133,40 @@ const ANNOTATION_ON_BIND_LINE: &str = "An annotation cannot go on a bind line. \
      Remove the annotation line before it, and annotate the expression after `<-` \
      instead: give the function it calls a type, e.g. `fetch : String -> Task Error User`.";
 
+/// A `<-` in a case-arm pattern (`v <- x -> 1`).
+const BIND_IN_CASE_ARM: &str = "a case arm uses `->`; a bind line `p <- e` goes in a `let` block";
+
+/// A `<-` after a function head on a `let` line (`g x <- m`).
+fn bind_after_function_head(name: &str) -> std::string::String {
+    format!(
+        "a bind line binds a pattern, not a function: write `x <- m`, or define `{name}` with `=`"
+    )
+}
+
+/// An unparenthesised tuple pattern on a `let` line (`a, b <- e`).
+fn bare_tuple_pattern(bind: bool) -> std::string::String {
+    let op = if bind { "<-" } else { "=" };
+    format!("put the pattern in parentheses: `( a, b ) {op} e`")
+}
+
+/// An unparenthesised `::` pattern on a bind line (`x :: xs <- e`).
+const BARE_CONS_ON_BIND_LINE: &str = "put the pattern in parentheses: `(x :: xs) <- e`. \
+     A `::` pattern does not match an empty list, so a bind line refuses it anyway: \
+     use `case` to handle both shapes.";
+
+/// After the first pattern of a `let` line: does a `<-` come before any `=`?
+/// A bounded look-ahead, used only to word the hint.
+fn bind_arrow_ahead(p: &Parser) -> bool {
+    for n in 0..256 {
+        match p.nth(n) {
+            LArrow => return true,
+            Eq | Eof => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
 /// What kind of line `let_binding` parsed.
 #[derive(PartialEq, Eq)]
 enum LetLine {
@@ -1158,9 +1192,14 @@ fn expect_eq(p: &mut Parser) {
 /// into one ERROR node with the bind-line diagnostic, so the misuse gives one
 /// diagnostic and the rest of the construct still parses.
 fn misplaced_bind(p: &mut Parser) {
+    misplaced_bind_with(p, BIND_OUTSIDE_LET);
+}
+
+/// `misplaced_bind` with a hint for the position.
+fn misplaced_bind_with(p: &mut Parser, hint: &str) {
     if p.at(LArrow) {
         let m = p.start();
-        p.error(BIND_OUTSIDE_LET);
+        p.error(hint);
         p.bump(); // <-
         expr(p);
         m.complete(p, Error);
@@ -1196,18 +1235,25 @@ fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
         pattern(p);
         bind_line_rest(p, m, anchor);
         LetLine::Bind
-    } else if p.at(LowerIdent) {
+    } else if p.at(LowerIdent) && !matches!(p.nth(1), Colon2 | Comma) {
         // `name pat* = expr`
         let m = p.start();
+        let name = p.cur_text();
         p.bump(); // name
+        let mut params = 0;
         let pl = p.start();
         while p.at_any(PAT_ATOM_START) && !p.at(Eq) {
             // `pattern_app` so a constructor param consumes its args,
             // matching the oracle's greedy `pattern_` in let bindings.
             pattern_app(p);
+            params += 1;
         }
         pl.complete(p, ParamList);
-        expect_eq(p);
+        if params > 0 && p.at(LArrow) {
+            p.err_and_bump(bind_after_function_head(name));
+        } else {
+            expect_eq(p);
+        }
         p.with_indent(anchor, |p| {
             expr(p);
         });
@@ -1217,10 +1263,35 @@ fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
         // destructure: `(a, b) = e`, `{ x } = r`, `Just x = m`, `_ = e`,
         // or a bind line with a pattern: `(a, b) <- e`, `_ <- e`.
         let m = p.start();
-        pattern(p);
+        let pat = pattern(p);
+        if p.at(Comma) {
+            // `a, b <- e`: a tuple pattern without its parentheses. One
+            // diagnostic, and the rest of the line goes into one ERROR node.
+            let e = p.start();
+            p.error(bare_tuple_pattern(bind_arrow_ahead(p)));
+            while p.eat(Comma) {
+                pattern(p);
+            }
+            let bind = p.at(LArrow);
+            if bind || p.at(Eq) {
+                p.bump();
+                p.with_indent(anchor, |p| {
+                    expr(p);
+                });
+            }
+            e.complete(p, Error);
+            if bind {
+                m.complete(p, BindBinding);
+                return LetLine::Bind;
+            }
+            m.complete(p, DestructureBinding);
+            return LetLine::Equals;
+        }
         if p.at(LArrow) {
             if after_anno {
                 p.error(ANNOTATION_ON_BIND_LINE);
+            } else if pat.kind(p) == PatCons {
+                p.error(BARE_CONS_ON_BIND_LINE);
             }
             bind_line_rest(p, m, anchor);
             return LetLine::Bind;
@@ -1264,7 +1335,7 @@ fn case_expr(p: &mut Parser) -> CompletedMarker {
 fn match_arm(p: &mut Parser, pat_col: u32) {
     let m = p.start();
     pattern(p);
-    misplaced_bind(p);
+    misplaced_bind_with(p, BIND_IN_CASE_ARM);
     p.expect(Arrow);
     // arm body binds `withIndent (max patCol bodyCol)` so the next sibling arm
     // is not slurped into this body (doc 03 §5.5).

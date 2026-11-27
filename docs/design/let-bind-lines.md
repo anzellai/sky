@@ -28,7 +28,12 @@ Task.succeed ctx
   `[E3001]`.
 - `<-` anywhere else is a parse error `[E0001]` with the hint "`<-` is a bind
   line; write it as a line of a `let` block". (Before: `[E1014]` unknown
-  operator. Never valid, so not breaking.)
+  operator. Never valid, so not breaking.) Three positions get a hint of
+  their own, still one `[E0001]`: a function head on a `let` line (`g x <- m`:
+  "a bind line binds a pattern, not a function"), an unparenthesised tuple or
+  `::` pattern on a `let` line (`a, b <- e`, `x :: xs <- e`: "put the pattern
+  in parentheses", and for `::` "use `case`"), and a case-arm pattern
+  (`v <- x -> 1`: "a case arm uses `->`").
 - No custom operators. Nothing else in the syntax changes.
 
 ## 2. Scoping

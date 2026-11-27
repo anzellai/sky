@@ -212,6 +212,14 @@ impl Drop for Marker {
 }
 
 impl CompletedMarker {
+    /// The kind this node was completed with.
+    pub(crate) fn kind(&self, p: &Parser) -> SyntaxKind {
+        match &p.events[self.pos] {
+            Event::Start { kind, .. } => *kind,
+            _ => SyntaxKind::Error,
+        }
+    }
+
     pub(crate) fn precede(self, p: &mut Parser) -> Marker {
         let m = p.start();
         if let Event::Start { forward_parent, .. } = &mut p.events[self.pos] {

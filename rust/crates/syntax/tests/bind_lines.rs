@@ -169,7 +169,10 @@ fn larrow_in_an_expression_is_a_parse_error() {
 
 #[test]
 fn larrow_after_a_function_binding_head_is_a_parse_error() {
-    assert_one_error("x =\n    let\n        f a <- t\n    in\n    f\n", BIND_HINT);
+    assert_one_error(
+        "x =\n    let\n        f a <- t\n    in\n    f\n",
+        FUNCTION_HEAD_HINT,
+    );
 }
 
 #[test]
@@ -196,10 +199,13 @@ fn larrow_in_a_record_field_is_a_parse_error() {
 
 #[test]
 fn larrow_in_a_case_arm_pattern_is_a_parse_error() {
-    assert_one_error("x =\n    case m of\n        Just x <- m -> x\n", BIND_HINT);
+    assert_one_error(
+        "x =\n    case m of\n        Just x <- m -> x\n",
+        CASE_ARM_HINT,
+    );
     assert_one_error(
         "x =\n    case m of\n        Just x <- m -> x\n        Nothing -> 0\n",
-        BIND_HINT,
+        CASE_ARM_HINT,
     );
 }
 
@@ -303,7 +309,7 @@ fn larrow_inserted_anywhere_carries_the_bind_line_hint() {
             let parsed = p(&mutated);
             assert_eq!(parsed.reprint(), mutated, "round-trip for {mutated:?}");
             let msgs: Vec<_> = parsed.errors().iter().map(|d| &d.message).collect();
-            let hinted = msgs.iter().filter(|m| m.as_str() == BIND_HINT).count();
+            let hinted = msgs.iter().filter(|m| is_bind_hint(m)).count();
             assert!(!msgs.is_empty(), "no diagnostic for {mutated:?}");
             assert!(hinted <= 1, "a cascade of hints in {mutated:?}: {msgs:?}");
             for d in parsed.errors() {
@@ -312,8 +318,8 @@ fn larrow_inserted_anywhere_carries_the_bind_line_hint() {
                     .iter()
                     .any(|l| l.span.range == (arrow_at, arrow_at + 2));
                 if d.code.0 == "E0001" && on_arrow {
-                    assert_eq!(
-                        d.message, BIND_HINT,
+                    assert!(
+                        is_bind_hint(&d.message),
                         "an [E0001] on the `<-` without the hint in {mutated:?}"
                     );
                     hits += 1;
@@ -331,4 +337,69 @@ fn larrow_inserted_anywhere_carries_the_bind_line_hint() {
         hits * 2 > checked,
         "only {hits} of {checked} errors sit on the `<-`"
     );
+}
+
+/// A `<-` that is already a line of a `let` block, written with a shape a
+/// bind line cannot take, gets a hint that names the shape (not the
+/// "write it as a line of a `let` block" hint, which it already is).
+const FUNCTION_HEAD_HINT: &str = "a bind line binds a pattern, not a function";
+const PARENS_HINT: &str = "put the pattern in parentheses";
+const CASE_ARM_HINT: &str = "a case arm uses `->`";
+
+#[test]
+fn larrow_after_a_function_head_in_a_let_names_the_function() {
+    let src = "x =\n    let\n        g x <- m\n    in\n    g\n";
+    assert_one_error(src, FUNCTION_HEAD_HINT);
+    let msg = p(src).errors()[0].message.clone();
+    assert!(
+        msg.contains("`x <- m`") && msg.contains("define `g` with `=`"),
+        "{msg}"
+    );
+    assert_one_error(
+        "x =\n    let\n        go a b <- step a\n        y = 1\n    in\n    y\n",
+        FUNCTION_HEAD_HINT,
+    );
+}
+
+#[test]
+fn unparenthesised_cons_or_comma_pattern_on_a_bind_line_asks_for_parentheses() {
+    for src in [
+        "x =\n    let\n        a, b <- e\n    in\n    a\n",
+        "x =\n    let\n        a, b, c <- e\n        y = 1\n    in\n    a\n",
+        "x =\n    let\n        _, b <- e\n    in\n    b\n",
+        "x =\n    let\n        ( a, b ), c <- e\n    in\n    a\n",
+    ] {
+        assert_one_error(src, PARENS_HINT);
+        let msg = p(src).errors()[0].message.clone();
+        assert!(msg.contains("`( a, b ) <- e`"), "{msg}");
+    }
+    for src in [
+        "x =\n    let\n        x :: xs <- e\n    in\n    x\n",
+        "x =\n    let\n        Just h :: t <- e\n        y = 1\n    in\n    h\n",
+    ] {
+        assert_one_error(src, PARENS_HINT);
+        let msg = p(src).errors()[0].message.clone();
+        assert!(msg.contains("use `case`"), "{msg}");
+    }
+    // The parenthesised forms still parse as bind lines.
+    assert_clean("x =\n    let\n        ( a, b ) <- e\n    in\n    a\n");
+    assert_clean("x =\n    let\n        (h :: t) <- e\n    in\n    h\n");
+}
+
+#[test]
+fn larrow_in_a_case_arm_pattern_says_case_arms_use_arrow() {
+    assert_one_error("x =\n    case m of\n        v <- x -> 1\n", CASE_ARM_HINT);
+    let msg = p("x =\n    case m of\n        v <- x -> 1\n").errors()[0]
+        .message
+        .clone();
+    assert!(msg.contains("goes in a `let` block"), "{msg}");
+}
+
+/// The bind-line hint, or one of the hints for a position that is already a
+/// `let` line or a case arm.
+fn is_bind_hint(m: &str) -> bool {
+    m == BIND_HINT
+        || m.starts_with(FUNCTION_HEAD_HINT)
+        || m.starts_with(PARENS_HINT)
+        || m.starts_with(CASE_ARM_HINT)
 }
