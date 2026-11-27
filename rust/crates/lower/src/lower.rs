@@ -7176,6 +7176,28 @@ impl<'a> Ctx<'a> {
                 return self.coerce_if_needed(call, actual);
             }
         }
+        // `Result.mapError f r` (the Prelude kernel path) over a proven
+        // `rt.SkyResult[E, A]` and a callback proven at `func(E) F`: the typed
+        // generic `rt.Result_mapErrorT[E, F, A]`. Same plan and proof as the
+        // `Sky.Core.Result` def path (`map_error_plan`). Unproven: the erased
+        // call, as before.
+        if args.len() == 2 && go == "rt.Result_mapError" {
+            if let Some((targs, slots, ret)) = self.map_error_plan(args) {
+                let fe = self.lower_expr(args[0], &slots[0]);
+                let r = self.lower_expr(args[1], &slots[1]);
+                if fe.ty == slots[0] && r.ty == slots[1] {
+                    self.register_used(&targs);
+                    let call = GoExpr::new(
+                        GoExprKind::GenericCall("rt.Result_mapErrorT".into(), targs, vec![fe, r]),
+                        ret,
+                    );
+                    return self.coerce_if_needed(call, actual);
+                }
+                let wf = self.widen(fe);
+                let wr = self.widen(r);
+                return self.kernel_call_lowered(go, vec![wf, wr], actual);
+            }
+        }
         // `List.take k` / `List.drop k` over a proven Int and slice: the typed
         // twins `rt.List_takeT[T]` / `List_dropT[T]` are a re-slice, O(1),
         // where the erased kernels reflect-widen the whole list and the slot
@@ -7643,6 +7665,11 @@ impl<'a> Ctx<'a> {
                     b,
                 ))
             }
+            // mapError fn r — see `map_error_plan`.
+            "rt.Result_mapErrorT" => {
+                let (targs, slots, ret) = self.map_error_plan(args)?;
+                Some((sym, targs, slots, ret))
+            }
             // andThen fn m — see `and_then_plan`.
             "rt.Maybe_andThenT" | "rt.Result_andThenT" => {
                 let (targs, slots, ret) = self.and_then_plan(args, sym == "rt.Result_andThenT")?;
@@ -7778,6 +7805,50 @@ impl<'a> Ctx<'a> {
         targs.push(b);
         let cb = GoTy::Func(vec![a], Box::new(r.clone()));
         Some((targs, vec![cb, m], r))
+    }
+
+    /// `Result.mapError fn r` whose argument and callback lower to proven Go
+    /// types: the typed generic `rt.Result_mapErrorT[E, F, A]` (`rt.go`),
+    /// with `fn` lowered at `func(E) F` and `r` at `rt.SkyResult[E, A]`. A
+    /// bind line per step with its own `mapError` (`x <- step |>
+    /// Result.mapError tag`) then keeps the chain on `rt.Result_andThenT`.
+    ///
+    /// Doc 14: origin R5 on the Prelude kernel path (`rt.Result_mapError`
+    /// returns `any`, which the slot narrows back with `rt.ResultCoerceOk`
+    /// and a per-field `rt.As*`) and R12 on the `Sky.Core.Result` def path
+    /// (the def erases to `any`, so its callback gains an eta wrapper with an
+    /// `rt.Coerce` per parameter). Lever §5.3, a typed entry point. Floor
+    /// check (§1): `E`, `A` are read off the Go type the argument lowers to
+    /// and `F` off the callback's, and `provable` refuses `any`, a type
+    /// parameter and an anonymous struct, so every shape is known at emit
+    /// time. A func payload keeps the erased call. Unproven: the erased call,
+    /// byte-identical. Gate: `coerce-floor` and
+    /// `project/tests/and_then_no_new_narrowing.rs`.
+    fn map_error_plan(&mut self, args: &[ExprId]) -> Option<(Vec<GoTy>, Vec<GoTy>, GoTy)> {
+        if args.len() != 2 {
+            return None;
+        }
+        let r = self.probe_goty(args[1]);
+        let GoTy::Named(n, ta) = &r else {
+            return None;
+        };
+        if n != "rt.SkyResult" || ta.len() != 2 || !provable(&r) {
+            return None;
+        }
+        let (e, a) = (ta[0].clone(), ta[1].clone());
+        if matches!(a, GoTy::Func(..)) || matches!(e, GoTy::Func(..)) {
+            return None;
+        }
+        let (ps, f) = closure::split_function_type(&self.probe_goty(args[0]), 1)?;
+        if ps != vec![e.clone()] || !provable(&f) || matches!(f, GoTy::Func(..)) {
+            return None;
+        }
+        if !self.callback_reaches_slot(args[0], &[e.clone()], &f) {
+            return None;
+        }
+        let out = GoTy::Named("rt.SkyResult".into(), vec![f.clone(), a.clone()]);
+        let cb = GoTy::Func(vec![e.clone()], Box::new(f.clone()));
+        Some((vec![e, f, a], vec![cb, r], out))
     }
 
     /// Keep the declarations of the named types in `targs` past the
@@ -11384,6 +11455,7 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
     ),
     ("Sky.Core.Maybe", "andThen", "rt.Maybe_andThenT", 2),
     ("Sky.Core.Result", "andThen", "rt.Result_andThenT", 2),
+    ("Sky.Core.Result", "mapError", "rt.Result_mapErrorT", 2),
 ];
 
 /// The UNARY list kernels whose typed twin returns a Go PRIMITIVE, keyed by the
