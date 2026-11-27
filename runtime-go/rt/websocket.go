@@ -80,7 +80,10 @@ import (
 // ═════════════════════════════════════════════════════════════════════
 
 // Tunables. Variables, not constants, so a test can shrink them; nothing in
-// the runtime writes them.
+// the runtime writes them. A socket copies the two timeouts when it opens
+// (doWebSocketConnect), so its reader and heartbeat goroutines never read
+// these variables: a test that restores them in its cleanup cannot race a
+// socket that is still shutting down.
 var (
 	// wsReadChanCap — bounded channel capacity per socket. 64 matches
 	// typical bursty WebSocket traffic (collab editor ops, multiplayer
@@ -91,10 +94,15 @@ var (
 	// event onto the channel within this window, and no Task owns the
 	// socket, it logs + abandons the socket. Bounds the runaway-goroutine
 	// class for a Sub that stopped draining.
-	wsConsumerStallTimeout = 30 * time.Second
+	wsConsumerStallTimeout = defaultWsConsumerStallTimeout
 
 	// wsPingTimeout — how long a heartbeat ping waits for its pong.
-	wsPingTimeout = 10 * time.Second
+	wsPingTimeout = defaultWsPingTimeout
+)
+
+const (
+	defaultWsConsumerStallTimeout = 30 * time.Second
+	defaultWsPingTimeout          = 10 * time.Second
 )
 
 const (
@@ -165,7 +173,28 @@ type wsHandle struct {
 	// keeps such a socket: the peer is demonstrably there.
 	pingOK atomic.Bool
 
+	// stallTimeout / pingTimeout — wsConsumerStallTimeout and wsPingTimeout
+	// as they were when the socket opened. Zero means the default.
+	stallTimeout time.Duration
+	pingTimeout  time.Duration
+
 	closeOnce sync.Once
+}
+
+// consumerStallTimeout is the socket's consumer-stall bound.
+func (sh *wsHandle) consumerStallTimeout() time.Duration {
+	if sh.stallTimeout > 0 {
+		return sh.stallTimeout
+	}
+	return defaultWsConsumerStallTimeout
+}
+
+// pongTimeout is how long the socket's heartbeat waits for a pong.
+func (sh *wsHandle) pongTimeout() time.Duration {
+	if sh.pingTimeout > 0 {
+		return sh.pingTimeout
+	}
+	return defaultWsPingTimeout
 }
 
 // claim makes `want` the socket's reader if it has none yet. It reports
@@ -224,7 +253,17 @@ func (sh *wsHandle) deliver(ev wsEvent) bool {
 	}
 	sh.parkEpoch.Add(1)
 	sh.parked.Store(true)
-	defer sh.parked.Store(false)
+	// Leaving the park refreshes the activity time BEFORE it clears the
+	// flag. The reaper keeps a parked Task socket, and otherwise judges it
+	// by its activity time; a reader that waited longer than the idle bound
+	// and then cleared the flag first left a window, until its next frame,
+	// in which the reaper saw an unparked socket "silent" for the whole
+	// wait and closed it under the Task that was draining its backlog.
+	defer func() {
+		sh.touch()
+		sh.parked.Store(false)
+	}()
+	stall := sh.consumerStallTimeout()
 	for {
 		if sh.owner.Load() == wsOwnerTask {
 			select {
@@ -234,7 +273,7 @@ func (sh *wsHandle) deliver(ev wsEvent) bool {
 				return true
 			}
 		}
-		t := time.NewTimer(wsConsumerStallTimeout)
+		t := time.NewTimer(stall)
 		select {
 		case sh.ch <- ev:
 			t.Stop()
@@ -248,7 +287,7 @@ func (sh *wsHandle) deliver(ev wsEvent) bool {
 				continue
 			}
 			fmt.Printf("[sky.websocket] consumer stall on socket %d (event kind=%d dropped after %s)\n",
-				sh.id, ev.kind, wsConsumerStallTimeout)
+				sh.id, ev.kind, stall)
 			return false
 		}
 	}
@@ -474,6 +513,9 @@ func doWebSocketConnect(url string, headers http.Header, tlsCfg *tls.Config, dia
 		ctx:    connCtx,
 		cancel: connCancel,
 		done:   make(chan struct{}),
+
+		stallTimeout: wsConsumerStallTimeout,
+		pingTimeout:  wsPingTimeout,
 	}
 	sess := currentLiveSession()
 	registerWs(sess, sh)
@@ -573,7 +615,7 @@ func wsHeartbeat(sh *wsHandle, interval time.Duration) {
 				return nil
 			}
 			epoch := sh.parkEpoch.Load()
-			pingCtx, cancel := context.WithTimeout(sh.ctx, wsPingTimeout)
+			pingCtx, cancel := context.WithTimeout(sh.ctx, sh.pongTimeout())
 			err := sh.conn.Ping(pingCtx)
 			cancel()
 			if err != nil {

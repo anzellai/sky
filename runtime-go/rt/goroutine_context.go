@@ -169,20 +169,6 @@ func RunWithRequestID(id string, fn func()) {
 	fn()
 }
 
-// goroutineCtxSize counts currently-stamped goroutines. O(N) Range
-// walk — diagnostic / test use only, never on a hot path. The leak
-// regression test (TestWithSpan_UnstampedGoroutineLeavesNoEntry)
-// asserts this returns EXACTLY to baseline after a burst of
-// unstamped goroutines runs WithSpan and exits.
-func goroutineCtxSize() int {
-	n := 0
-	goroutineCtx.Range(func(_, _ any) bool {
-		n++
-		return true
-	})
-	return n
-}
-
 // ─── goroutine-ID parse ────────────────────────────────────────────
 
 // currentGoroutineID parses the calling goroutine's ID from the

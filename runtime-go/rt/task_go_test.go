@@ -186,7 +186,6 @@ func TestGoSky_CarriesGoroutineLocalContext(t *testing.T) {
 // every branch leaks one entry forever.
 func TestGoSky_ClearsStampsWhenDone(t *testing.T) {
 	sess := &liveSession{}
-	before := goroutineCtxSize()
 	runWithLiveSession(sess, func() {
 		RunWithTraceContext(WithRequestID(context.Background(), "req-gosky-2"), func() {
 			for i := 0; i < 50; i++ {
@@ -211,11 +210,11 @@ func TestGoSky_ClearsStampsWhenDone(t *testing.T) {
 		return n
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && (goroutineCtxSize() > before || sessionStamps() != 0) {
+	for time.Now().Before(deadline) && (stampsWithRequestID("req-gosky-2") != 0 || sessionStamps() != 0) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if n := goroutineCtxSize(); n > before {
-		t.Fatalf("trace stamps leaked: %d before, %d after", before, n)
+	if n := stampsWithRequestID("req-gosky-2"); n != 0 {
+		t.Fatalf("%d trace stamps leaked", n)
 	}
 	if n := sessionStamps(); n != 0 {
 		t.Fatalf("%d session stamps leaked", n)

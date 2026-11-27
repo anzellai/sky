@@ -409,20 +409,38 @@ func TestSweepSessionless_SparesSocketWhosePingsSucceed(t *testing.T) {
 // close it however long the Task takes. Control: the same parked state on a
 // socket no Task owns is reaped at the idle bound.
 func TestSweepSessionless_SparesTaskSocketWhoseReaderIsParked(t *testing.T) {
-	flood := func(ctx context.Context, conn *websocket.Conn) {
-		for i := 0; i < wsReadChanCap+16; i++ {
+	// The peer sends one frame, then floods only once the Task has received
+	// it. Had it flooded at once, the reader could already be parked when
+	// the Task received frame 0: that receive ends the park, and the loop
+	// below could read the old `parked == true` and sweep in the moment
+	// before the reader parks again (one run in ten under -race). With the
+	// flood held back, the queue never fills before the receive, so the
+	// first park the loop sees is one nothing ends.
+	n := wsReadChanCap + 16
+	flood := make(chan struct{})
+	script := func(ctx context.Context, conn *websocket.Conn) {
+		if err := conn.Write(ctx, websocket.MessageText, []byte("0")); err != nil {
+			return
+		}
+		select {
+		case <-flood:
+		case <-ctx.Done():
+			return
+		}
+		for i := 1; i < n; i++ {
 			if err := conn.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf("%d", i))); err != nil {
 				return
 			}
 		}
 		_, _, _ = conn.Read(ctx) // stay open
 	}
-	id := wsTaskConnect(t, wsScriptServer(t, flood), 0)
+	id := wsTaskConnect(t, wsScriptServer(t, script), 0)
 	sh := lookupWs(nil, id)
 	// One Task receive claims the socket for a Task.
 	if got := wsReceived(runWsTask(WebSocket_receive(id))); got != "Text:0" {
 		t.Fatalf("first receive = %q", got)
 	}
+	close(flood)
 	deadline := time.Now().Add(5 * time.Second)
 	for !sh.parked.Load() && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)

@@ -30,6 +30,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   end. WebSocket readers already did. The release now runs the runtime's
   timing-dependent tests many times on Linux and macOS (`gate-stress`).
 
+- **A Task-owned WebSocket stays open while the Task drains its backlog.**
+  When the Task received a frame after its socket's reader had waited on a
+  full queue for more than 10 minutes, the reaper of sessionless sockets
+  could close the socket before the next frame arrived, and the Task lost
+  the frames still queued. Leaving the wait now counts as activity. A socket
+  also keeps the ping and consumer-stall timeouts it opened with.
+
 - **A nested bind line stays typed.** In a `Result` or `Maybe` bind block, the
   second and later lines lowered to the untyped `Sky.Core.Result.andThen` /
   `Maybe.andThen` (with a runtime narrowing of the result) when the
