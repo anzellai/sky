@@ -746,13 +746,18 @@ impl<'a> Infer<'a> {
     /// How the module of the def being checked writes a qualified name of
     /// module `mid`: its import alias (`Decode`), else `fallback`.
     fn qualifier_of(&self, mid: ModuleId, fallback: &str) -> String {
+        self.import_qualifier(mid)
+            .unwrap_or_else(|| fallback.to_string())
+    }
+
+    /// The shortest import alias under which the module of the def being
+    /// checked imports `mid`, if it imports it at all.
+    fn import_qualifier(&self, mid: ModuleId) -> Option<String> {
         let own = self
             .self_def
             .and_then(|d| self.db.def_loc(d))
             .map(|l| l.module);
-        let Some(own) = own else {
-            return fallback.to_string();
-        };
+        let own = own?;
         let mut names: Vec<String> = self
             .db
             .resolve(own)
@@ -762,10 +767,7 @@ impl<'a> Infer<'a> {
             .map(|(q, _)| q.to_string())
             .collect();
         names.sort_by_key(|q| (q.len(), q.clone()));
-        names
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| fallback.to_string())
+        names.into_iter().next()
     }
 
     /// The resolved body of the def under inference, the one the checker
@@ -861,12 +863,22 @@ impl<'a> Infer<'a> {
                 format!(", where `err` is the `{t}` to report")
             }
             _ => {
-                let q = self
+                // The example resolves only under an import of
+                // `Sky.Core.Error`: name it when the module has none.
+                let (q, import) = match self
                     .db
                     .module_by_name("Sky.Core.Error")
-                    .map(|mid| self.qualifier_of(mid, "Error"))
-                    .unwrap_or_else(|| "Error".to_string());
-                format!(", where `err` is the `Error` to report (e.g. `{q}.invalidInput \"…\"`)")
+                    .and_then(|mid| self.import_qualifier(mid))
+                {
+                    Some(q) => (q, String::new()),
+                    None => (
+                        "Error".to_string(),
+                        ", with `import Sky.Core.Error as Error`".to_string(),
+                    ),
+                };
+                format!(
+                    ", where `err` is the `Error` to report (e.g. `{q}.invalidInput \"…\"`{import})"
+                )
             }
         }
     }
@@ -1420,6 +1432,11 @@ impl<'a> Infer<'a> {
                 return note;
             }
         }
+        // A block of a type its use fixes (`( model, Cmd msg )`, a view, a
+        // `Sub`): never advise another return type.
+        if fixed_by_use(block_ty) {
+            return self.fixed_type_note(pb, snap, &head, block_ty, &block_text);
+        }
         // The type the block would need: the line's type with the block's
         // type as its result (`Task Error Int` with `String`: `Task Error
         // String`).
@@ -1468,6 +1485,88 @@ impl<'a> Infer<'a> {
                 article(&needed)
             ),
         }
+    }
+
+    /// The note on a bind line in a block whose type its use fixes (see
+    /// [`fixed_by_use`]): the line's type cannot be chained there, and a
+    /// `Maybe` or `Result` is taken apart with the line's own names.
+    fn fixed_type_note(
+        &mut self,
+        pb: &PendingBind,
+        snap: &UnionFind,
+        head: &str,
+        block_ty: &Ty,
+        block_text: &str,
+    ) -> String {
+        let who = match self.def_returning(block_ty) {
+            Some(def) => format!("`{def}` returns"),
+            None => "this block has type".to_string(),
+        };
+        let e_ty = self.on_snapshot(snap, |s| s.read_back(pb.e_ty));
+        let e = self
+            .span_text_within(pb.module, pb.e_span, 100)
+            .filter(|t| !t.contains('\n'));
+        let pat = if pb.pat_text.is_empty() {
+            "…".to_string()
+        } else {
+            pb.pat_text.clone()
+        };
+        let q = |m: &str, f: &str| -> String {
+            self.db
+                .module_by_name(m)
+                .map(|mid| self.qualifier_of(mid, f))
+                .unwrap_or_else(|| f.to_string())
+        };
+        let a = article(head);
+        let (arms, home, inner) = match (head, &e_ty) {
+            ("Maybe", Ty::App(_, args)) if args.len() == 1 => (
+                format!("Just {pat} -> … ; Nothing -> …"),
+                q("Sky.Core.Maybe", "Maybe"),
+                &args[0],
+            ),
+            ("Result", Ty::App(_, args)) if args.len() == 2 => (
+                format!("Ok {pat} -> … ; Err e -> …"),
+                q("Sky.Core.Result", "Result"),
+                &args[1],
+            ),
+            ("Task", _) => {
+                let cmd = q("Std.Cmd", "Cmd");
+                return format!(
+                    "\n\nNote: {who} `{block_text}`, so a Task cannot run in it. Run the Task \
+                     from `update` with `{cmd}.perform`, and keep its result in the model."
+                );
+            }
+            _ => {
+                return format!(
+                    "\n\nNote: {who} `{block_text}`, so {a} `{head}` cannot be chained here."
+                );
+            }
+        };
+        let default = match inner {
+            Ty::App(n, args) => match (nominal::strip(n.as_str()), args.len()) {
+                ("Int", 0) => "0",
+                ("Float", 0) => "0.0",
+                ("String", 0) => "\"\"",
+                ("Bool", 0) => "False",
+                ("List", 1) => "[]",
+                _ => "…",
+            },
+            _ => "…",
+        };
+        let how = match e {
+            Some(e) => {
+                let arg = if e.contains(' ') {
+                    format!("({e})")
+                } else {
+                    e.clone()
+                };
+                format!(
+                    " Handle it with `case {e} of {arms}`, or `{home}.withDefault {default} {arg}`."
+                )
+            }
+            None => format!(" Handle it with `case` or `{home}.withDefault`."),
+        };
+        format!("\n\nNote: {who} `{block_text}`, so {a} `{head}` cannot be chained here.{how}")
     }
 
     /// The name of the def being checked, when its annotated result (after
@@ -2069,5 +2168,22 @@ pub(crate) fn next_bind_line(body: &Body, lam: ExprId) -> Option<ExprId> {
             Some(cur)
         }
         _ => None,
+    }
+}
+
+/// A block type that its use fixes, so a note never advises another return
+/// type for it: the TEA update shape `( model, Cmd msg )`, a view
+/// (`Element msg`, `Html msg`) and `Sub msg`, which the app builders
+/// (`App.app`, `App.web`, `Live.app`, `Spa.app`) take as they are.
+pub(crate) fn fixed_by_use(t: &Ty) -> bool {
+    match t {
+        Ty::Tuple(parts) => matches!(
+            parts.as_slice(),
+            [_, Ty::App(cmd, args)] if nominal::strip(cmd.as_str()) == "Cmd" && args.len() == 1
+        ),
+        Ty::App(n, args) => {
+            args.len() == 1 && matches!(nominal::strip(n.as_str()), "Element" | "Html" | "Sub")
+        }
+        _ => false,
     }
 }

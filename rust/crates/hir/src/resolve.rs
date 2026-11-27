@@ -3767,7 +3767,8 @@ impl<'a> Resolver<'a> {
             // error an unknown value qualifier gets.
             None => {
                 let hint = self.did_you_mean(qual);
-                self.track_class_a(
+                let import = self.missing_import_hint(qual, |e| e.type_(name).is_some());
+                self.track_class_a_full(
                     Some(qual.to_string()),
                     name,
                     RefKind::Type,
@@ -3777,6 +3778,8 @@ impl<'a> Resolver<'a> {
                             .unwrap_or_default()
                     ),
                     span,
+                    None,
+                    import,
                 );
                 self.body.ty(Type::Error)
             }
@@ -3958,7 +3961,10 @@ impl<'a> Resolver<'a> {
             }
             None => {
                 let hint = self.did_you_mean(qual);
-                self.track_class_a(
+                let import = self.missing_import_hint(qual, |e| {
+                    e.value(name).is_some() || e.ctor(name).is_some()
+                });
+                self.track_class_a_full(
                     Some(qual.to_string()),
                     name,
                     RefKind::Value,
@@ -3968,6 +3974,8 @@ impl<'a> Resolver<'a> {
                             .unwrap_or_default()
                     ),
                     span,
+                    None,
+                    import,
                 );
                 Res::Error
             }
@@ -4053,6 +4061,22 @@ impl<'a> Resolver<'a> {
         span: Option<Span>,
         detail: Option<String>,
     ) {
+        self.track_class_a_full(qualifier, name, kind, reason, span, detail, None);
+    }
+
+    /// [`Self::track_class_a_detail`] with an optional `import` (a module
+    /// path) the message tells the user to add under the qualifier.
+    #[allow(clippy::too_many_arguments)]
+    fn track_class_a_full(
+        &mut self,
+        qualifier: Option<String>,
+        name: &str,
+        kind: RefKind,
+        reason: &str,
+        span: Option<Span>,
+        detail: Option<String>,
+        import: Option<String>,
+    ) {
         if self.quiet > 0 {
             return;
         }
@@ -4068,6 +4092,11 @@ impl<'a> Resolver<'a> {
             Some(d) => format!("Undefined name: {full}. The {d}."),
             None => format!("Undefined name: {full}"),
         };
+        // `Q.x` with no import named `Q`: the one stdlib module written `Q`
+        // that exports `x`.
+        if let (Some(q), Some(module)) = (&qualifier, &import) {
+            msg.push_str(&format!(". Add `import {module} as {q}`."));
+        }
         // The name is defined in this `let` block, after a bind line.
         if qualifier.is_none() {
             if let Some((frame, label)) = self
@@ -4123,6 +4152,42 @@ impl<'a> Resolver<'a> {
             name: name.to_string(),
             kind,
         });
+    }
+
+    /// The stdlib module to import as `qual` for a qualified name the
+    /// module has no import for: the ONE stdlib module (`Sky.*` / `Std.*`)
+    /// written `qual` (its last segment, or its last two run together, as
+    /// `DbDecode` for `Std.Db.Decode`) whose exports satisfy `has`. `None`
+    /// when none or several do.
+    fn missing_import_hint(
+        &self,
+        qual: &str,
+        has: impl Fn(&crate::exports::ModuleExports) -> bool,
+    ) -> Option<String> {
+        let mut found: Option<String> = None;
+        for mid in self.db.module_ids() {
+            if mid == self.module {
+                continue;
+            }
+            let path = self.db.module_name(mid);
+            if !(path.starts_with("Sky.") || path.starts_with("Std.")) {
+                continue;
+            }
+            let segs: Vec<&str> = path.split('.').collect();
+            let last = segs[segs.len() - 1];
+            let two = (segs.len() >= 3).then(|| format!("{}{}", segs[segs.len() - 2], last));
+            if last != qual && two.as_deref() != Some(qual) {
+                continue;
+            }
+            if !has(&self.db.module_exports(mid)) {
+                continue;
+            }
+            if found.is_some() {
+                return None;
+            }
+            found = Some(path.to_string());
+        }
+        found
     }
 
     fn did_you_mean(&self, qual: &str) -> Option<String> {

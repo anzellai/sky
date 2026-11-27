@@ -45,6 +45,11 @@ fn check(body: &str, extra: &[(&str, &str)]) -> Vec<Got> {
 
 /// As [`check`], with `more` added to the module's imports.
 fn check_with(body: &str, extra: &[(&str, &str)], more: &str) -> Vec<Got> {
+    check_full(HEADER, body, extra, more)
+}
+
+/// As [`check_with`], with `header` in place of [`HEADER`].
+fn check_full(header: &str, body: &str, extra: &[(&str, &str)], more: &str) -> Vec<Got> {
     let mut db = SourceDb::new();
     for (n, p) in stdlib() {
         db.add_module(n, p.clone());
@@ -56,7 +61,7 @@ fn check_with(body: &str, extra: &[(&str, &str)], more: &str) -> Vec<Got> {
     let mut imports: String = extra.iter().map(|(n, _)| format!("import {n}\n")).collect();
     imports.push_str(more);
     let src = format!(
-        "module Main exposing (main)\n\n{HEADER}{imports}\n\n{body}\n\n\nmain =\n    println \"x\"\n"
+        "module Main exposing (main)\n\n{header}{imports}\n\n{body}\n\n\nmain =\n    println \"x\"\n"
     );
     ids.push(db.add_module("Main", syntax::parse(&src, FileId(0))));
     let _ = db.module_by_name("Main");
@@ -1398,4 +1403,125 @@ fn the_e2015_type_variable_is_not_a_name_in_scope() {
         let v = &rest[..rest.find('`').unwrap()];
         assert!(!names.contains(&v), "{v} is in scope: {m}");
     }
+}
+
+// ---- 9. a Maybe or Result line in a def whose type its use fixes ----------
+
+const TEA_IMPORTS: &str = "import Std.Cmd as Cmd exposing (Cmd)\nimport Std.Sub as Sub exposing (Sub)\nimport Std.Ui as Ui exposing (Element)\n";
+
+/// The note on a `Maybe` / `Result` line in a TEA def: the def's type is
+/// fixed, so it gives the idiom with the line's own names, and never says to
+/// change the def's return type.
+fn fixed_note(src: &str, needles: &[&str]) {
+    let got = check_with(src, &[], TEA_IMPORTS);
+    one_e2001_at(&got, "<-", needles);
+    let m = &got[0].message;
+    assert!(!m.contains("Make `"), "{m}");
+    assert!(!m.contains("return `Maybe"), "{m}");
+    assert!(!m.contains("return `Result"), "{m}");
+}
+
+/// Judge probe tea3: a `Maybe` line in a TEA `update` arm.
+#[test]
+fn a_maybe_line_in_a_tea_update_gives_the_idiom_not_a_new_return_type() {
+    fixed_note(
+        &format!(
+            "{TEA}update : Msg -> Model -> ( Model, Cmd Msg )\nupdate msg model =\n    case msg of\n        Bump ->\n            let\n                n <- String.toInt \"4\"\n            in\n            ( {{ model | count = model.count + n }}, Cmd.none )\n\n        Saved _ ->\n            ( model, Cmd.none )"
+        ),
+        &[
+            "`update` returns `( Model, Cmd Msg )`, so a `Maybe` cannot be chained here.",
+            "Handle it with `case String.toInt \"4\" of Just n -> … ; Nothing -> …`, or \
+             `Maybe.withDefault 0 (String.toInt \"4\")`.",
+        ],
+    );
+}
+
+/// Judge probe tea4: the `Result` version.
+#[test]
+fn a_result_line_in_a_tea_update_gives_the_idiom_not_a_new_return_type() {
+    fixed_note(
+        &format!(
+            "{TEA}update : Msg -> Model -> ( Model, Cmd Msg )\nupdate msg model =\n    case msg of\n        Bump ->\n            let\n                n <- Result.fromMaybe \"bad\" (String.toInt \"4\")\n            in\n            ( {{ model | count = model.count + n }}, Cmd.none )\n\n        Saved _ ->\n            ( model, Cmd.none )"
+        ),
+        &[
+            "`update` returns `( Model, Cmd Msg )`, so a `Result` cannot be chained here.",
+            "Handle it with `case Result.fromMaybe \"bad\" (String.toInt \"4\") of Ok n -> … ; \
+             Err e -> …`, or `Result.withDefault 0 (Result.fromMaybe \"bad\" (String.toInt \"4\"))`.",
+        ],
+    );
+}
+
+#[test]
+fn a_maybe_or_result_line_in_a_view_gives_the_idiom() {
+    fixed_note(
+        &format!(
+            "{TEA}view : Model -> Element Msg\nview model =\n    let\n        n <- String.toInt model.note\n    in\n    Ui.text (String.fromInt n)"
+        ),
+        &[
+            "`view` returns `Element Msg`, so a `Maybe` cannot be chained here.",
+            "`case String.toInt model.note of Just n -> … ; Nothing -> …`",
+            "`Maybe.withDefault 0 (String.toInt model.note)`",
+        ],
+    );
+    fixed_note(
+        &format!(
+            "{TEA}view : Model -> Element Msg\nview model =\n    let\n        s <- Ok model.note\n    in\n    Ui.text s"
+        ),
+        &[
+            "`view` returns `Element Msg`, so a `Result` cannot be chained here.",
+            "`case Ok model.note of Ok s -> … ; Err e -> …`",
+            "`Result.withDefault \"\" (Ok model.note)`",
+        ],
+    );
+}
+
+#[test]
+fn a_maybe_or_result_line_in_subscriptions_gives_the_idiom() {
+    fixed_note(
+        &format!(
+            "{TEA}subscriptions : Model -> Sub Msg\nsubscriptions model =\n    let\n        n <- String.toInt model.note\n    in\n    if n > 0 then\n        Sub.none\n\n    else\n        Sub.none"
+        ),
+        &[
+            "`subscriptions` returns `Sub Msg`, so a `Maybe` cannot be chained here.",
+            "`Maybe.withDefault 0 (String.toInt model.note)`",
+        ],
+    );
+    fixed_note(
+        &format!(
+            "{TEA}subscriptions : Model -> Sub Msg\nsubscriptions model =\n    let\n        n <- Result.fromMaybe \"bad\" (String.toInt model.note)\n    in\n    if n > 0 then\n        Sub.none\n\n    else\n        Sub.none"
+        ),
+        &[
+            "`subscriptions` returns `Sub Msg`, so a `Result` cannot be chained here.",
+            "`case Result.fromMaybe \"bad\" (String.toInt model.note) of Ok n -> … ; Err e -> …`",
+        ],
+    );
+}
+
+// ---- 10. the `err` example names its import --------------------------------
+
+const NO_ERROR_HEADER: &str = "import Sky.Core.Prelude exposing (..)\n\
+                               import Sky.Core.Task as Task\n\
+                               import Std.Log exposing (println)\n";
+
+/// Judge probe e1b: with `Sky.Core.Error` not imported, the example
+/// `Error.invalidInput "…"` says which import makes it resolve.
+#[test]
+fn the_err_example_names_the_error_import_when_it_is_missing() {
+    let got = check_full(
+        NO_ERROR_HEADER,
+        "parse : String -> Maybe Int\nparse s =\n    String.toInt s\n\n\ngo : String -> Task Error Int\ngo s =\n    let\n        a <- Task.succeed 1\n        b <- parse s\n    in\n    Task.succeed (a + b)",
+        &[],
+        "",
+    );
+    one_e2001_at(
+        &got,
+        "<-",
+        &["(e.g. `Error.invalidInput \"…\"`, with `import Sky.Core.Error as Error`)"],
+    );
+    // Imported: no import is named.
+    let got = check(
+        "parse : String -> Maybe Int\nparse s =\n    String.toInt s\n\n\ngo : String -> Task Error Int\ngo s =\n    let\n        a <- Task.succeed 1\n        b <- parse s\n    in\n    Task.succeed (a + b)",
+        &[],
+    );
+    one_e2001_at(&got, "<-", &["(e.g. `Error.invalidInput \"…\"`)"]);
 }

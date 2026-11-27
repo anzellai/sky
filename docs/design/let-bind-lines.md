@@ -157,7 +157,14 @@ pattern is `[E3001]` with "use `case`". Find the union through
   in it directly. Put the Task block in its own function and run it with
   `Cmd.perform`: `( model, Cmd.perform (save model) Saved )`; its result
   comes back as a `Msg`." It names the def's model parameter and the `Msg`
-  constructor that takes a `Result`. Every note that prints a type shows a
+  constructor that takes a `Result`. A block of a type its use fixes (the TEA shape
+  `( model, Cmd msg )`, a view type `Element msg` / `Html msg`, `Sub msg`)
+  never gets "Make `update` return …": a `Maybe` or `Result` line there
+  says "`update` returns `( Model, Cmd Msg )`, so a `Maybe` cannot be
+  chained here. Handle it with `case String.toInt "4" of Just n -> … ;
+  Nothing -> …`, or `Maybe.withDefault 0 (String.toInt "4")`." with the
+  line's own names (`Ok` / `Err` and `Result.withDefault` for a `Result`).
+  Every note that prints a type shows a
   record by the alias name the def's annotation wrote (`Model`).
 - `[E2015]` names a type variable that is not a name written in the def
   (`a <- t` shows `b`, never `a`).
@@ -201,7 +208,12 @@ pattern is `[E3001]` with "use `case`". Find the union through
   candidate note, and a run started for a note tries no fix of its own. A
   value the fix leaves to the user (`err` in `Result.fromMaybe err`) is a
   typed hole in the re-check, and the note says what it is: "where `err` is
-  the `Error` to report (e.g. `Error.invalidInput "…"`)". The fixes so
+  the `Error` to report (e.g. `Error.invalidInput "…"`)", and adds ", with
+  `import Sky.Core.Error as Error`" inside the parentheses when the module
+  has no import of `Sky.Core.Error`. (Generally, an `[E1001]` for `Q.x`
+  where no import is named `Q` and exactly one stdlib module is written `Q`,
+  by its last segment or its last two run together, and exports `x`, adds
+  "Add `import <Module> as Q`.") The fixes so
   decided: the conversion of a line or of the `in` body (`Task.fromResult
   (Result.fromMaybe err e)`, `Task.fromResult`, `Result.fromMaybe err`,
   `Result.toMaybe`), the wrap of the `in` body (`Task.succeed` / `Ok` /
