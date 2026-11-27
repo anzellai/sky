@@ -95,7 +95,10 @@ pattern is `[E3001]` with "use `case`". Find the union through
 - Dependency order: the SCC graph (ty/src/sig.rs ~1067) adds a conservative
   edge from each def with a bind line to every candidate `andThen` (the kernel
   three, and every exposed `andThen` in imported modules and the def's own
-  module). Annotate `Maybe.andThen` and `Result.andThen` in the stdlib.
+  module). `Maybe.andThen` and `Result.andThen` stay unannotated: an annotation
+  types each continuation at its instance while the def still erases to `any`
+  (doc 14 R12), so every hand-written chain gained an eta wrapper with an
+  `rt.AsInt` per parameter (`project/tests/and_then_no_new_narrowing.rs`).
 - A bind line inside a module's own `andThen` that would select that same def is
   refused (`[E2016]`, "a bind line in `andThen` itself").
 - Shadowing: `BindAndThen` is not a name lookup, so a local `andThen` is never
