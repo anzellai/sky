@@ -156,9 +156,18 @@ pattern is `[E3001]` with "use `case`". Find the union through
   u.name`, `String.length a`, in a later line or the body) is blamed at the
   use, as in a plain `let`. A line whose head is not known yet keeps the
   end-of-def resolution above.
-- `e : List (M … x)` gives `[E2016]` with a note naming `Task.sequence`
-  (`Result.combine`, `Maybe.combine`), only when the def with the line so
-  converted type-checks (`fixed_def_checks`).
+- `e : List x` gives `[E2016]` with a note naming `M.sequence` or
+  `M.combine` (`Task.sequence`, `Result.combine`, `Maybe.combine`), where `M`
+  is the head of the block's type, else of the element's, only when the def
+  with the line so converted type-checks (`fixed_def_checks`). The element's
+  type may still hold variables (`Task a Int` from `Task.succeed`). With the
+  note the message does not say "use `case`".
+- A block in which a line was refused has a free type, as the hand-written
+  chain with the same clash has, so a caller of an unannotated def reports no
+  second clash on it.
+- `e` of a rigid annotation variable `m` is `[E2015]` that names `m` and a
+  type with an `andThen` of the block's head (`Result Error m`), not "Annotate
+  it".
 - A note names a fix ONLY when the whole fixed definition type-checks. One
   test decides every such note (`Infer::fixed_def_checks`, ty/src/bind.rs):
   the fix is applied to a copy of the def's resolved body (HIR), and the

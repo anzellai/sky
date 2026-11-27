@@ -181,6 +181,11 @@ pub struct Infer<'a> {
     /// the check path. A bind line whose `e` holds one and whose head stays
     /// unknown gives no `[E2015]`: the def's error is the first one.
     pub(crate) failed_def_seen: usize,
+    /// How many bind lines were refused (their type does not fit the block,
+    /// or they have no `andThen`). A block with a refused line has a free
+    /// type, as the hand-written chain with that clash has, so a caller of
+    /// the def reports no second clash on it.
+    pub(crate) bind_lines_refused: usize,
     /// Bind lines whose `andThen` is not chosen yet (`crate::bind`).
     pub(crate) pending_binds: Vec<crate::bind::PendingBind>,
     /// The `andThen` chosen for each bind line, by its `Call` (`crate::bind`).
@@ -286,6 +291,7 @@ impl<'a> Infer<'a> {
             inferred_bounds: Vec::new(),
             unresolved_seen: 0,
             failed_def_seen: 0,
+            bind_lines_refused: 0,
             pending_binds: Vec::new(),
             bind_choices: Vec::new(),
             bind_expects: HashMap::new(),
@@ -1807,6 +1813,7 @@ impl<'a> Infer<'a> {
                     && matches!(body.exprs[*callee], Expr::Var(Res::BindAndThen)) =>
             {
                 let (lam, ex) = (args[0], args[1]);
+                let refused_in_block = self.bind_lines_refused;
                 let errors_in_e = self.errors.len();
                 let unresolved_in_e = self.unresolved_seen;
                 let failed_in_e = self.failed_def_seen;
@@ -1874,6 +1881,9 @@ impl<'a> Infer<'a> {
                 // This line refused already (its type does not fit the
                 // block): one error per mixed block, at that line.
                 let refused = self.errors.len() > errors_before;
+                if refused {
+                    self.bind_lines_refused += 1;
+                }
                 if let Some(next) = crate::bind::next_bind_line(body, lam) {
                     self.bind_expects.insert(next, result);
                     if let Some(v) = expected {
@@ -1948,6 +1958,14 @@ impl<'a> Infer<'a> {
                 } else if let Some(head) = head.filter(|_| mixed) {
                     let note = crate::bind::mixed_note(crate::nominal::strip(&head));
                     self.append_note(before, Some(note));
+                }
+                // The first line of a block in which a line was refused: that
+                // refusal is the block's one error. The hand-written chain
+                // with the same clash leaves its result free, so the block's
+                // type is free too, and a caller of an unannotated def (or the
+                // rest of the body) reports no second clash on it.
+                if !continues && self.bind_lines_refused > refused_in_block {
+                    return self.uf.fresh_flex();
                 }
                 result
             }

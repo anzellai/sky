@@ -58,3 +58,19 @@ step t =
 
 Or annotate the function that `e` calls (`fetch : String -> Task Error User`),
 or a `let` line that names `e`.
+
+## A type variable of the annotation
+
+When the type of `e` is a type variable of the annotation, an annotation of
+`e` does not help: the variable can be any type, and any type has no
+`andThen`. The message names the variable and a type that would do:
+
+```text
+[work] The bind line `a <- …` chooses `andThen` from the type of the
+expression after `<-`. `f x` has the type variable `m` from the annotation,
+which can be any type; a bind line needs a type with an `andThen` such as
+`Result Error m`.
+```
+
+Change the annotation so that `e` has such a type
+(`work : (Int -> Result Error m) -> Int -> Result Error m`).

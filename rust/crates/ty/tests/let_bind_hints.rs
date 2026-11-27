@@ -1004,3 +1004,84 @@ fn a_list_of_results_names_combine_and_a_plain_list_names_nothing() {
     assert_eq!(e.len(), 1, "{got:#?}");
     assert!(!e[0].message.contains("Note:"), "{got:#?}");
 }
+
+/// Judge round 14: a `List` of effects built by `List.map` over a lambda
+/// names the conversion too. The lambda's effect has a free error type (or
+/// value type) until the block fixes it, and the note must still be found.
+#[test]
+fn a_list_of_effects_from_a_lambda_names_sequence_or_combine() {
+    let cases = [
+        (
+            "f : List String -> Task Error Int\nf ids =\n    let\n        xs <- List.map (\\s -> Task.succeed (String.length s)) ids\n    in\n    Task.succeed (List.length xs)",
+            "`xs <- Task.sequence (List.map (\\s -> Task.succeed (String.length s)) ids)`",
+        ),
+        (
+            "f : List Int -> Task Error Int\nf ids =\n    let\n        xs <- List.map (\\i -> Task.succeed (i * 2)) ids\n    in\n    Task.succeed (List.length xs)",
+            "`xs <- Task.sequence (List.map (\\i -> Task.succeed (i * 2)) ids)`",
+        ),
+        (
+            "f : List String -> Task Error Int\nf ids =\n    let\n        xs <- List.map (\\s -> Task.fail (Error.invalidInput s)) ids\n    in\n    Task.succeed (List.length xs)",
+            "`xs <- Task.sequence (List.map (\\s -> Task.fail (Error.invalidInput s)) ids)`",
+        ),
+        (
+            "f : List String -> Result Error Int\nf ids =\n    let\n        xs <- List.map (\\s -> Result.fromMaybe (Error.invalidInput \"x\") (String.toInt s)) ids\n    in\n    Ok (List.length xs)",
+            "`xs <- Result.combine (List.map (\\s -> Result.fromMaybe (Error.invalidInput \"x\") (String.toInt s)) ids)`",
+        ),
+    ];
+    for (src, want) in cases {
+        let got = check_with(
+            src,
+            &[],
+            "import Sky.Core.List as List\nimport Sky.Core.String as String\n",
+        );
+        let e: Vec<_> = got.iter().filter(|g| g.code == "E2016").collect();
+        assert_eq!(e.len(), 1, "{src}\n{got:#?}");
+        assert!(e[0].message.contains(want), "{src}\n{got:#?}");
+        assert!(!e[0].message.contains("use `case`"), "{src}\n{got:#?}");
+    }
+    // A `List` of plain values keeps the plain `[E2016]`.
+    let src = "f : List String -> Task Error Int\nf ids =\n    let\n        xs <- List.map (\\s -> String.length s) ids\n    in\n    Task.succeed (List.length xs)";
+    let got = check_with(
+        src,
+        &[],
+        "import Sky.Core.List as List\nimport Sky.Core.String as String\n",
+    );
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2016").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    assert!(!e[0].message.contains("Note:"), "{got:#?}");
+}
+
+/// Judge round 14: an unannotated block that mixes `Maybe` and `Task` is
+/// one `[E2001]` at the `<-`, and its caller gets no second clash, as with
+/// the hand-written chain.
+#[test]
+fn a_mixed_unannotated_block_is_one_error_not_one_more_at_the_caller() {
+    let more = "import Sky.Core.String as String\n";
+    let bind = "work s =\n    let\n        n <- String.toInt s\n        m <- Task.succeed 2\n    in\n    Task.succeed (n + m)\n\n\nrun =\n    Task.run (work \"3\")";
+    let got = check_with(bind, &[], more);
+    assert_eq!(got.len(), 1, "{got:#?}");
+    assert_eq!(got[0].code, "E2001", "{got:#?}");
+    assert_eq!(got[0].at, "<-", "{got:#?}");
+    let chain = "work s =\n    String.toInt s |> Maybe.andThen (\\n -> Task.succeed 2 |> Task.andThen (\\m -> Task.succeed (n + m)))\n\n\nrun =\n    Task.run (work \"3\")";
+    let got = check_with(chain, &[], more);
+    assert_eq!(got.len(), 1, "{got:#?}");
+}
+
+/// Judge round 14: `e` of a rigid type variable from the annotation is
+/// `[E2015]` that names the variable, not "Annotate it".
+#[test]
+fn a_bind_on_a_rigid_variable_names_it() {
+    let got = check(
+        "work : (Int -> m) -> Int -> Result Error Int\nwork f x =\n    let\n        a <- f x\n    in\n    Ok a",
+        &[],
+    );
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2015").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    assert!(
+        e[0].message.contains(
+            "`f x` has the type variable `m` from the annotation, which can be any type; a bind line needs a type with an `andThen` such as `Result Error m`"
+        ),
+        "{got:#?}"
+    );
+    assert!(!e[0].message.contains("Annotate"), "{got:#?}");
+}

@@ -247,6 +247,8 @@ enum NoAndThen {
         module: String,
         arity: usize,
         unexposed: bool,
+        /// A note names the conversion of a list of effects.
+        converts: bool,
     },
     /// The exposed `andThen` has another shape.
     Shape {
@@ -283,18 +285,22 @@ fn no_fitting_and_then(
     arity: usize,
     pat: &str,
     found: Option<&Ty>,
+    converts: bool,
 ) -> String {
-    let fix = if module.starts_with("Sky.") || module.starts_with("Std.") {
-        "use `case`".to_string()
+    // A list of effects the note converts: its fix is the conversion, never `case`.
+    let fix = if converts {
+        String::new()
+    } else if module.starts_with("Sky.") || module.starts_with("Std.") {
+        "; use `case`".to_string()
     } else {
-        format!("use `case`, or add one to {module}")
+        format!("; use `case`, or add one to {module}")
     };
     let other = match found {
         Some(f) => format!(" (its `andThen : {}` has another shape)", f.render_pretty()),
         None => String::new(),
     };
     format!(
-        "`{ty}` (module {module}) has no `{}`{other}; {fix}. The bind line `{pat} <- …` \
+        "`{ty}` (module {module}) has no `{}`{other}{fix}. The bind line `{pat} <- …` \
          needs one to chain with. See docs/errors/E2016-no-andthen.md",
         template_text(ty, arity)
     )
@@ -325,6 +331,7 @@ impl NoAndThen {
                 module,
                 arity,
                 unexposed: true,
+                ..
             } => format!(
                 "`{ty}` (module {module}) declares `andThen` but does not expose it, so the \
                  bind line `{pat} <- …` has no `{}` to chain with. Use `case`, or expose it \
@@ -332,8 +339,12 @@ impl NoAndThen {
                 template_text(ty, *arity)
             ),
             NoAndThen::Missing {
-                ty, module, arity, ..
-            } => no_fitting_and_then(ty, module, *arity, pat, None),
+                ty,
+                module,
+                arity,
+                converts,
+                ..
+            } => no_fitting_and_then(ty, module, *arity, pat, None, *converts),
             // The exposed `andThen` does not fit: calling it by name would
             // not fit either, so the fix is `case` or a fitting one.
             NoAndThen::Shape {
@@ -341,7 +352,7 @@ impl NoAndThen {
                 module,
                 arity,
                 found,
-            } => no_fitting_and_then(ty, module, *arity, pat, Some(found)),
+            } => no_fitting_and_then(ty, module, *arity, pat, Some(found), false),
             NoAndThen::SelfReference { ty, module } => format!(
                 "The bind line `{pat} <- …` would chain with `{module}.andThen` for `{ty}`, \
                  and it is a bind line in `andThen` itself (or in a definition that \
@@ -536,6 +547,7 @@ impl<'a> Infer<'a> {
                     module: home,
                     arity,
                     unexposed,
+                    converts: note.is_some(),
                 },
             );
             self.append_note(before, note);
@@ -606,10 +618,14 @@ impl<'a> Infer<'a> {
         Attempt::Done
     }
 
-    /// `e : List (M … x)` after `<-`: a `List` has no `andThen`, but the
-    /// home module of `M` may run the list as one `M` (`Task.sequence`,
-    /// `Result.combine`, `Maybe.combine`). The note names it only when the
-    /// def with the line so converted type-checks (`fixed_def_checks`).
+    /// `e : List x` after `<-`: a `List` has no `andThen`, but the home
+    /// module of the block's type `M` may run the list as one `M`
+    /// (`Task.sequence`, `Result.combine`, `Maybe.combine`). `M` is the head
+    /// of the block's type, else the head of the list's element. The note
+    /// names the conversion only when the def with the line so converted
+    /// type-checks (`fixed_def_checks`): that one test decides it, whatever
+    /// variables the element's type still holds (`Task a Int` from
+    /// `Task.succeed`, whose error type the block fixes).
     fn list_sequence_note(&mut self, pb: &PendingBind, raw: &Ty) -> Option<String> {
         if pb.e_errored {
             return None;
@@ -620,31 +636,46 @@ impl<'a> Infer<'a> {
         if nominal::strip(list.as_str()) != "List" || args.len() != 1 {
             return None;
         }
-        let Ty::App(inner, _) = &args[0] else {
-            return None;
+        let head = |t: &Ty| match t {
+            Ty::App(n, a) if !a.is_empty() && nominal::strip(n.as_str()) != "List" => {
+                Some(n.as_str().to_string())
+            }
+            _ => None,
         };
-        let (module, fun): (&'static str, &'static str) = match nominal::strip(inner.as_str()) {
-            "Task" => ("Sky.Core.Task", "sequence"),
-            "Result" => ("Sky.Core.Result", "combine"),
-            "Maybe" => ("Sky.Core.Maybe", "combine"),
-            _ => return None,
+        let callee = self.read_back(pb.callee_ty);
+        let block = match &callee {
+            Ty::Fun(_, rest) => match rest.as_ref() {
+                Ty::Fun(_, r) => head(r),
+                _ => None,
+            },
+            _ => None,
         };
-        if !self.fixed_def_checks(|f| self.apply_chain_at(f, pb.e_expr, &[(module, fun, 0)])) {
-            return None;
-        }
-        let mid = self.db.module_by_name(module)?;
-        let q = self.qualifier_of(mid, nominal::strip(inner.as_str()));
-        let e_text = self.span_text(pb.module, pb.e_span)?;
-        let arg = if e_text.contains(' ') && !(e_text.starts_with('(') && e_text.ends_with(')')) {
-            format!("({e_text})")
-        } else {
-            e_text
+        let m = block.or_else(|| head(&args[0]))?;
+        let home = self.head_home(&m)?;
+        let mid = self.db.module_by_name(&home)?;
+        let fun = ["sequence", "combine"].into_iter().find(|f| {
+            self.db.module_exports(mid).value(f).is_some()
+                && self.fixed_def_checks(|fx| self.apply_chain_at(fx, pb.e_expr, &[(&home, f, 0)]))
+        })?;
+        let shown = nominal::strip(&m).to_string();
+        let q = self.qualifier_of(mid, &shown);
+        let write = match self.span_text_within(pb.module, pb.e_span, 100) {
+            Some(t) => {
+                let arg = if t.contains(' ') && !(t.starts_with('(') && t.ends_with(')')) {
+                    format!("({t})")
+                } else {
+                    t
+                };
+                format!("write `{} <- {q}.{fun} {arg}`", pb.pat_text)
+            }
+            None => format!(
+                "put the expression after `<-` in `{q}.{fun}`: `{} <- {q}.{fun} (…)`",
+                pb.pat_text
+            ),
         };
-        let m = nominal::strip(inner.as_str());
         Some(format!(
-            "\n\nNote: the expression after `<-` is a list of `{m}` values. To run them \
-             as one `{m}`, write `{} <- {q}.{fun} {arg}`.",
-            pb.pat_text
+            "\n\nNote: the expression after `<-` is a list of `{shown}` values. To run them \
+             as one `{shown}`, {write}."
         ))
     }
 
@@ -1288,12 +1319,22 @@ impl<'a> Infer<'a> {
     /// The source text at `span` in `module`, when it is short and on one
     /// line (for a message).
     pub(crate) fn span_text(&self, module: Option<ModuleId>, span: Option<Span>) -> Option<String> {
+        self.span_text_within(module, span, 40)
+    }
+
+    /// As [`Infer::span_text`], up to `max` bytes.
+    pub(crate) fn span_text_within(
+        &self,
+        module: Option<ModuleId>,
+        span: Option<Span>,
+        max: usize,
+    ) -> Option<String> {
         let (module, span) = (module?, span?);
         let src = self.db.module_parse(module).syntax().text().to_string();
         let t = src
             .get(span.range.0 as usize..span.range.1 as usize)?
             .trim();
-        (!t.is_empty() && t.len() <= 40 && !t.contains('\n')).then(|| t.to_string())
+        (!t.is_empty() && t.len() <= max && !t.contains('\n')).then(|| t.to_string())
     }
 
     fn bind_error(&mut self, pb: &PendingBind, why: NoAndThen) {
@@ -1349,15 +1390,59 @@ impl<'a> Infer<'a> {
                 if pb.e_errored || pb.e_calls_failed {
                     continue;
                 }
-                let t = self.read_back(pb.e_ty).render_pretty();
-                self.errors.push(crate::infer::TypeError {
-                    message: format!(
+                let root = self.uf.find(pb.e_ty);
+                let message = if let Content::Rigid(n) = self.uf.content(root) {
+                    // A type variable of the annotation: any type, so no
+                    // annotation of `e` helps. Name the variable and a type
+                    // that would do, of the block's head.
+                    let e = self
+                        .span_text(pb.module, pb.e_span)
+                        .map(|t| format!("`{t}`"))
+                        .unwrap_or_else(|| "The expression after `<-`".to_string());
+                    let var = Ty::Var(n.clone());
+                    let callee = self.read_back(pb.callee_ty);
+                    let example = match &callee {
+                        Ty::Fun(_, rest) => match rest.as_ref() {
+                            Ty::Fun(_, r) => match r.as_ref() {
+                                Ty::App(h, a) if !a.is_empty() => {
+                                    let mut a = a.clone();
+                                    a.pop();
+                                    a.push(var);
+                                    Some(Ty::App(h.clone(), a))
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                    .unwrap_or_else(|| {
+                        Ty::App(
+                            Name::new("Task"),
+                            vec![Ty::App(Name::new("Error"), Vec::new()), Ty::Var(n.clone())],
+                        )
+                    });
+                    format!(
+                        "The bind line `{} <- …` chooses `andThen` from the type of the \
+                         expression after `<-`. {e} has the type variable `{}` from the \
+                         annotation, which can be any type; a bind line needs a type with an \
+                         `andThen` such as `{}`. See docs/errors/E2015-bind-needs-a-type.md",
+                        pb.pat_text,
+                        n.as_str(),
+                        example.render_pretty()
+                    )
+                } else {
+                    let t = self.read_back(pb.e_ty).render_pretty();
+                    format!(
                         "The bind line `{} <- …` chooses `andThen` from the type of the \
                          expression after `<-`, and that type is still `{t}`. Annotate it, \
                          for example `fetch : String -> Task Error User`. \
                          See docs/errors/E2015-bind-needs-a-type.md",
                         pb.pat_text
-                    ),
+                    )
+                };
+                self.errors.push(crate::infer::TypeError {
+                    message,
                     span: pb.span,
                     code: "E2015",
                 });
