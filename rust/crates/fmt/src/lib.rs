@@ -56,39 +56,109 @@ pub fn format_report(src: &str) -> Formatted {
             kept: Vec::new(),
         };
     }
+    // The source's comments and significant tokens, read once: every safety
+    // check below compares an output against them.
+    let want = Multisets::of(&parsed);
     let none = BTreeSet::new();
     let (out, units) = opinionated(src, &parsed, &none);
-    if is_safe(src, &out, &none) {
+    if is_safe(&want, &out, &none) {
         return Formatted {
             text: out,
             kept: Vec::new(),
         };
     }
-    // Per declaration: format one unit at a time, every other unit as
-    // written. A unit whose own layout is not safe is kept as written.
+    // Per declaration. A unit can only fail the net by losing or moving a
+    // comment, so first try each unit that HOLDS a comment on its own, every
+    // other unit formatted. The mix is then checked as a whole; only if that
+    // fails is every unit tried one at a time (the exact, slower search).
     let all: BTreeSet<usize> = units.iter().map(|u| u.0).collect();
-    let mut keep = BTreeSet::new();
-    for &(unit, _) in &units {
-        let mut others = all.clone();
-        others.remove(&unit);
-        let (one, _) = opinionated(src, &parsed, &others);
-        if !is_safe(src, &one, &others) {
-            keep.insert(unit);
+    let comment_lines = comment_lines(&parsed);
+    let with_comments: Vec<usize> = units
+        .iter()
+        .enumerate()
+        .filter(|(i, u)| {
+            let end = units.get(i + 1).map_or(usize::MAX, |n| n.1);
+            comment_lines.iter().any(|&l| l >= u.1 && l < end)
+        })
+        .map(|(_, u)| u.0)
+        .collect();
+    let keep_of = |candidates: &mut dyn Iterator<Item = usize>| {
+        let mut keep = BTreeSet::new();
+        for unit in candidates {
+            let mut others = all.clone();
+            others.remove(&unit);
+            let (one, _) = opinionated(src, &parsed, &others);
+            if !is_safe(&want, &one, &others) {
+                keep.insert(unit);
+            }
         }
-    }
-    let (mixed, _) = opinionated(src, &parsed, &keep);
-    if !keep.is_empty() && is_safe(src, &mixed, &keep) {
-        let kept = units
-            .iter()
-            .filter(|u| keep.contains(&u.0))
-            .map(|u| u.1 + 1)
-            .collect();
-        return Formatted { text: mixed, kept };
+        keep
+    };
+    // Each unit that holds a comment is checked ON ITS OWN: its source lines
+    // are formatted as a file by themselves and put through the same net. A
+    // top-level declaration is self-contained, so this decides it in time
+    // that grows with the file's size, not with size × units (a 10,000-line
+    // commented file took tens of seconds with one whole-file pass per unit).
+    // The mix is still checked as a whole below.
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+    let unsafe_alone = || -> BTreeSet<usize> {
+        let mut found = BTreeSet::new();
+        for (i, u) in units.iter().enumerate() {
+            if !with_comments.contains(&u.0) {
+                continue;
+            }
+            let end = units
+                .get(i + 1)
+                .map_or(lines.len(), |n| n.1)
+                .min(lines.len());
+            let slice: String = lines[u.1.min(end)..end].concat();
+            let p = parse(&slice, FileId(0));
+            let alone_safe = p.error_node_count() == 0 && {
+                let want_alone = Multisets::of(&p);
+                let (out, _) = opinionated(&slice, &p, &BTreeSet::new());
+                is_safe(&want_alone, &out, &BTreeSet::new())
+            };
+            if !alone_safe {
+                found.insert(u.0);
+            }
+        }
+        found
+    };
+    // The slow exact search (one whole-file pass per unit) runs only when the
+    // fast choice does not give a safe file. Each candidate is built lazily.
+    let candidates: [&dyn Fn() -> BTreeSet<usize>; 2] =
+        [&unsafe_alone, &|| keep_of(&mut all.iter().copied())];
+    for candidate in candidates {
+        let keep = candidate();
+        let (mixed, _) = opinionated(src, &parsed, &keep);
+        if !keep.is_empty() && is_safe(&want, &mixed, &keep) {
+            let kept = units
+                .iter()
+                .filter(|u| keep.contains(&u.0))
+                .map(|u| u.1 + 1)
+                .collect();
+            return Formatted { text: mixed, kept };
+        }
     }
     Formatted {
         text: parsed.reprint(),
         kept: Vec::new(),
     }
+}
+
+/// The 0-based line of every comment token in `parsed`.
+fn comment_lines(parsed: &Parse) -> Vec<usize> {
+    let mut lines = Vec::new();
+    let text = parsed.syntax().to_string();
+    for e in parsed.syntax().descendants_with_tokens() {
+        if let Some(t) = e.into_token() {
+            if matches!(t.kind(), SyntaxKind::LineComment | SyntaxKind::BlockComment) {
+                let at: usize = t.text_range().start().into();
+                lines.push(text[..at].matches('\n').count());
+            }
+        }
+    }
+    lines
 }
 
 /// `sky fmt --check`: is `src` already formatted? True when a format pass is a
@@ -116,19 +186,16 @@ fn opinionated(
 
 /// The safety net: accept the opinionated output only when it is provably a
 /// semantics-preserving, idempotent reformat.
-fn is_safe(src: &str, out: &str, verbatim: &BTreeSet<usize>) -> bool {
+fn is_safe(want: &Multisets, out: &str, verbatim: &BTreeSet<usize>) -> bool {
     let out_parse = parse(out, FileId(0));
     // (a) re-parses cleanly.
     if out_parse.error_node_count() > 0 {
         return false;
     }
-    // (b) comments preserved verbatim (own-line AND trailing).
-    if comment_multiset(src) != comment_multiset(out) {
-        return false;
-    }
-    // (c) significant tokens preserved (parens excluded — the printer may add
+    // (b) comments preserved verbatim (own-line AND trailing), and (c)
+    //     significant tokens preserved (parens excluded — the printer may add
     //     grouping parens around complex call arguments, never drop a name).
-    if sig_token_multiset(src) != sig_token_multiset(out) {
+    if Multisets::of(&out_parse) != *want {
         return false;
     }
     // (d) idempotent: a second opinionated pass (keeping the same units as
@@ -136,8 +203,23 @@ fn is_safe(src: &str, out: &str, verbatim: &BTreeSet<usize>) -> bool {
     opinionated(out, &out_parse, verbatim).0 == out
 }
 
-fn comment_multiset(src: &str) -> BTreeMap<String, usize> {
-    let parsed = parse(src, FileId(0));
+/// The comment multiset and the significant-token multiset of one parse.
+#[derive(PartialEq, Eq)]
+struct Multisets {
+    comments: BTreeMap<String, usize>,
+    tokens: BTreeMap<String, usize>,
+}
+
+impl Multisets {
+    fn of(parsed: &Parse) -> Self {
+        Multisets {
+            comments: comment_multiset_of(parsed),
+            tokens: sig_token_multiset_of(parsed),
+        }
+    }
+}
+
+fn comment_multiset_of(parsed: &Parse) -> BTreeMap<String, usize> {
     let mut m = BTreeMap::new();
     for e in parsed.syntax().descendants_with_tokens() {
         if let Some(t) = e.into_token() {
@@ -149,8 +231,7 @@ fn comment_multiset(src: &str) -> BTreeMap<String, usize> {
     m
 }
 
-fn sig_token_multiset(src: &str) -> BTreeMap<String, usize> {
-    let parsed = parse(src, FileId(0));
+fn sig_token_multiset_of(parsed: &Parse) -> BTreeMap<String, usize> {
     let mut m = BTreeMap::new();
     for e in parsed.syntax().descendants_with_tokens() {
         if let Some(t) = e.into_token() {
