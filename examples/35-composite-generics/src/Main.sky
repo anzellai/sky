@@ -34,20 +34,14 @@ main =
 
 runPipeline : () -> Task Error ()
 runPipeline _ =
-    Pure.systemArgs ()
-        |> Task.andThen
-               (\argv ->
-                   let
-                       args = List.drop 1 argv
-                       useJson = List.member "--json" args
-                   in
-                       Pure.timeUnixMillis ()
-                           |> Task.andThen
-                                  (\nowMs ->
-                                      let
-                                          nowStr = String.fromInt nowMs
-                                      in
-                                          runReport useJson nowStr))
+    let
+        argv <- Pure.systemArgs ()
+        args = List.drop 1 argv
+        useJson = List.member "--json" args
+        nowMs <- Pure.timeUnixMillis ()
+        nowStr = String.fromInt nowMs
+    in
+        runReport useJson nowStr
 
 
 runReport : Bool -> String -> Task Error ()

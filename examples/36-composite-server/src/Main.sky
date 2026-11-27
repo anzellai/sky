@@ -71,25 +71,16 @@ readConfig =
 
 runMigrate : Config -> Task Error ()
 runMigrate cfg =
-    Db.open "sqlite" cfg.dbPath
-        |> Task.andThen
-               (\db ->
-                   Db.migrate db Migrations.all
-                       |> Task.andThen
-                              (\applied ->
-                                  let
-                                      _ =
-                                          println
-                                              ("Applied "
-                                                  ++ String.fromInt
-                                                         (List.length applied)
-                                                  ++ " migration(s)")
-                                      _ =
-                                          List.map
-                                              (\n -> println ("  - " ++ n))
-                                              applied
-                                  in
-                                      Db.close db))
+    let
+        db <- Db.open "sqlite" cfg.dbPath
+        applied <- Db.migrate db Migrations.all
+        _ =
+            println
+                ("Applied " ++ String.fromInt (List.length applied)
+                    ++ " migration(s)")
+        _ = List.map (\n -> println ("  - " ++ n)) applied
+    in
+        Db.close db
 
 
 runServer : Config -> Task Error ()
@@ -107,15 +98,12 @@ runServer cfg =
 
 bootServer : Config -> Task Error ()
 bootServer cfg =
-    Db.open "sqlite" cfg.dbPath
-        |> Task.andThen
-               (\db ->
-                   Db.migrate db Migrations.all
-                       |> Task.andThen
-                              (\_ ->
-                                  Time.unixMillis ()
-                                      |> Task.andThen
-                                             (\bootMs -> startApp cfg db bootMs)))
+    let
+        db <- Db.open "sqlite" cfg.dbPath
+        _ <- Db.migrate db Migrations.all
+        bootMs <- Time.unixMillis ()
+    in
+        startApp cfg db bootMs
 
 
 startApp : Config -> Db -> Int -> Task Error ()

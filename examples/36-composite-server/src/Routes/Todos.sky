@@ -106,24 +106,19 @@ handleCreate cfg db req =
 
 insertTodo : Db -> AuthClaims -> TodoCreate -> Task Error Response
 insertTodo db claims payload =
-    Crypto.randomToken 12
-        |> Task.andThen
-               (\todoId ->
-                   Time.unixMillis ()
-                       |> Task.andThen
-                              (\nowMs ->
-                                  let
-                                      todo =
-                                          { id = todoId
-                                          , userId = claims.userId
-                                          , text = payload.text
-                                          , done = False
-                                          , createdAt = nowMs
-                                          }
-                                  in
-                                      Store.insert db todosStore todo
-                                          |> Task.andThen
-                                                 (\_ -> publishTodoCreated todo)))
+    let
+        todoId <- Crypto.randomToken 12
+        nowMs <- Time.unixMillis ()
+        todo =
+            { id = todoId
+            , userId = claims.userId
+            , text = payload.text
+            , done = False
+            , createdAt = nowMs
+            }
+        _ <- Store.insert db todosStore todo
+    in
+        publishTodoCreated todo
 
 
 -- Task-shaped publish.  Returns the subscriber count, but the route

@@ -199,48 +199,42 @@ buildLineItem item =
                 price
         qty = Db.getInt "quantity" item
         currency = String.toLower (Db.getField "price_currency" item)
-        productDataR =
+        productData <-
             Stripe.newCheckoutSessionLineItemPriceDataProductDataParams ()
                 |> Result.andThen
                        (\p ->
                            Stripe.checkoutSessionLineItemPriceDataProductDataParamsSetName
                                (Just title)
                                p)
-        priceDataR =
-            productDataR
+        priceData <-
+            Stripe.newCheckoutSessionLineItemPriceDataParams ()
                 |> Result.andThen
-                       (\productData ->
-                           Stripe.newCheckoutSessionLineItemPriceDataParams ()
-                               |> Result.andThen
-                                      (\p ->
-                                          Stripe.checkoutSessionLineItemPriceDataParamsSetProductData
-                                              productData
-                                              p)
-                               |> Result.andThen
-                                      (\p ->
-                                          Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount
-                                              (Just effectivePrice)
-                                              p)
-                               |> Result.andThen
-                                      (\p ->
-                                          Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency
-                                              (Just currency)
-                                              p))
+                       (\p ->
+                           Stripe.checkoutSessionLineItemPriceDataParamsSetProductData
+                               productData
+                               p)
+                |> Result.andThen
+                       (\p ->
+                           Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount
+                               (Just effectivePrice)
+                               p)
+                |> Result.andThen
+                       (\p ->
+                           Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency
+                               (Just currency)
+                               p)
     in
-        priceDataR
+        Stripe.newCheckoutSessionLineItemParams ()
             |> Result.andThen
-                   (\priceData ->
-                       Stripe.newCheckoutSessionLineItemParams ()
-                           |> Result.andThen
-                                  (\p ->
-                                      Stripe.checkoutSessionLineItemParamsSetPriceData
-                                          priceData
-                                          p)
-                           |> Result.andThen
-                                  (\p ->
-                                      Stripe.checkoutSessionLineItemParamsSetQuantity
-                                          (Just qty)
-                                          p))
+                   (\p ->
+                       Stripe.checkoutSessionLineItemParamsSetPriceData
+                           priceData
+                           p)
+            |> Result.andThen
+                   (\p ->
+                       Stripe.checkoutSessionLineItemParamsSetQuantity
+                           (Just qty)
+                           p)
 
 
 createCheckoutSession : String -> List (Dict String String) -> String -> String -> String -> String -> Result Error CheckoutInfo

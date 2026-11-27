@@ -50,20 +50,12 @@ handleHealth cache bootMs _req =
 
 rebuildHealth : Cache.Cache String String -> Int -> Task Error Response
 rebuildHealth cache bootMs =
-    Time.unixMillis ()
-        |> Task.andThen
-               (\nowMs ->
-                   let
-                       body = uptimeBody bootMs nowMs
-                   in
-                       Cache.put cache "health" body
-                           |> Task.andThen
-                                  (\_ ->
-                                      Task.succeed
-                                          (Server.json body
-                                              |> Server.withHeader
-                                                     "X-Cache"
-                                                     "miss")))
+    let
+        nowMs <- Time.unixMillis ()
+        body = uptimeBody bootMs nowMs
+        _ <- Cache.put cache "health" body
+    in
+        Task.succeed (Server.json body |> Server.withHeader "X-Cache" "miss")
 
 
 -- Pure helper — easy to unit-test from CompositeServerTest.sky.  The
