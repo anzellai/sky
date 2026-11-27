@@ -15,50 +15,108 @@
 //!   accepted only when it (a) re-parses with zero error nodes, (b) preserves
 //!   every comment verbatim (own-line *and* trailing — closing the oracle's
 //!   `Format.hs:18` data-loss hole), and (c) preserves the multiset of
-//!   significant tokens (no dropped name / literal / operator). Any failure
-//!   falls the whole file back to the lossless reprint.
+//!   significant tokens (no dropped name / literal / operator). On a failure
+//!   the fallback is per top-level declaration: every declaration that
+//!   formats safely is formatted, and a declaration the printer cannot lay
+//!   out without losing a comment is kept exactly as written
+//!   ([`format_report`] names it). Only when that mix is not safe either does
+//!   the whole file fall back to the lossless reprint.
 //!
 //! Broken input (error nodes) always takes the lossless path (L8).
 
 mod pretty;
 
 use base::FileId;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use syntax::{parse, Parse, SyntaxKind};
 
-/// Format Sky source into canonical, opinionated layout — falling back to a
-/// lossless, trivia-preserving reprint whenever the opinionated pass cannot be
-/// proven safe + idempotent for this file (see the module docs).
+/// Format Sky source into canonical, opinionated layout — keeping a
+/// declaration exactly as written when the opinionated pass cannot be proven
+/// safe + idempotent for it (see the module docs).
 pub fn format_source(src: &str) -> String {
+    format_report(src).text
+}
+
+/// The result of [`format_report`].
+pub struct Formatted {
+    /// The formatted source.
+    pub text: String,
+    /// The 1-based first line of each top-level declaration kept exactly as
+    /// written, because formatting it would lose or move a comment.
+    pub kept: Vec<usize>,
+}
+
+/// Format Sky source, and say which declarations were kept as written.
+pub fn format_report(src: &str) -> Formatted {
     let parsed = parse(src, FileId(0));
     // Broken input: never re-lay-out; reprint verbatim (L8).
     if parsed.error_node_count() > 0 {
-        return parsed.reprint();
+        return Formatted {
+            text: parsed.reprint(),
+            kept: Vec::new(),
+        };
     }
-    match opinionated(src, &parsed) {
-        Some(out) if is_safe(src, &out) => out,
-        _ => parsed.reprint(),
+    let none = BTreeSet::new();
+    let (out, units) = opinionated(src, &parsed, &none);
+    if is_safe(src, &out, &none) {
+        return Formatted {
+            text: out,
+            kept: Vec::new(),
+        };
+    }
+    // Per declaration: format one unit at a time, every other unit as
+    // written. A unit whose own layout is not safe is kept as written.
+    let all: BTreeSet<usize> = units.iter().map(|u| u.0).collect();
+    let mut keep = BTreeSet::new();
+    for &(unit, _) in &units {
+        let mut others = all.clone();
+        others.remove(&unit);
+        let (one, _) = opinionated(src, &parsed, &others);
+        if !is_safe(src, &one, &others) {
+            keep.insert(unit);
+        }
+    }
+    let (mixed, _) = opinionated(src, &parsed, &keep);
+    if !keep.is_empty() && is_safe(src, &mixed, &keep) {
+        let kept = units
+            .iter()
+            .filter(|u| keep.contains(&u.0))
+            .map(|u| u.1 + 1)
+            .collect();
+        return Formatted { text: mixed, kept };
+    }
+    Formatted {
+        text: parsed.reprint(),
+        kept: Vec::new(),
     }
 }
 
 /// `sky fmt --check`: is `src` already formatted? True when a format pass is a
-/// no-op (byte-identical). The CLI turns `false` into a non-zero exit.
+/// no-op (byte-identical). A declaration kept as written does not count, so
+/// only a declaration that formats and would change makes it false. The CLI
+/// turns `false` into a non-zero exit.
 pub fn is_formatted(src: &str) -> bool {
     format_source(src) == src
 }
 
-/// Run the opinionated printer once. Returns `None` if the file has no module
-/// content to lay out (defensive — the reprint path handles it).
-fn opinionated(src: &str, parsed: &Parse) -> Option<String> {
+/// Run the opinionated printer once, with the units in `verbatim` (by the
+/// index of their first decl) kept as written. Returns the text and every
+/// unit printed (its first decl index and 0-based first line).
+fn opinionated(
+    src: &str,
+    parsed: &Parse,
+    verbatim: &BTreeSet<usize>,
+) -> (String, Vec<(usize, usize)>) {
     let root = parsed.syntax();
     let file = parsed.tree();
-    let mut printer = pretty::Printer::new(src, &root);
-    Some(printer.format(&file))
+    let mut printer = pretty::Printer::new(src, &root).with_verbatim(verbatim.clone());
+    let out = printer.format(&file);
+    (out, printer.units)
 }
 
 /// The safety net: accept the opinionated output only when it is provably a
 /// semantics-preserving, idempotent reformat.
-fn is_safe(src: &str, out: &str) -> bool {
+fn is_safe(src: &str, out: &str, verbatim: &BTreeSet<usize>) -> bool {
     let out_parse = parse(out, FileId(0));
     // (a) re-parses cleanly.
     if out_parse.error_node_count() > 0 {
@@ -73,11 +131,9 @@ fn is_safe(src: &str, out: &str) -> bool {
     if sig_token_multiset(src) != sig_token_multiset(out) {
         return false;
     }
-    // (d) idempotent: a second opinionated pass reproduces `out` exactly.
-    match opinionated(out, &out_parse) {
-        Some(twice) => twice == out,
-        None => false,
-    }
+    // (d) idempotent: a second opinionated pass (keeping the same units as
+    //     written) reproduces `out` exactly.
+    opinionated(out, &out_parse, verbatim).0 == out
 }
 
 fn comment_multiset(src: &str) -> BTreeMap<String, usize> {
@@ -348,7 +404,7 @@ mod tests {
         // The opinionated printer itself, not the lossless fallback, must keep
         // the layout: a fallback would hide a moved comment.
         let parsed = parse(src, FileId(0));
-        let printed = opinionated(src, &parsed).unwrap_or_default();
+        let printed = opinionated(src, &parsed, &BTreeSet::new()).0;
         assert_eq!(printed, src, "the printer moved code or a comment");
         assert_eq!(
             format_source(src),

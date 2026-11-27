@@ -37,7 +37,7 @@ mod pg_managed_conf;
 mod pg_wire;
 use std::time::{Duration, Instant};
 
-use fmt::{format_source, is_formatted};
+use fmt::{format_report, format_source};
 use project::{
     assets_root_for, build_example, build_project, is_compiler_repo_root, project_dir_for,
     repo_root_for, run_app, BuildOptions,
@@ -12518,6 +12518,17 @@ fn status_opening_when_listening(
 
 // ---- fmt -----------------------------------------------------------------
 
+/// One stderr line per declaration `sky fmt` kept exactly as written,
+/// because formatting it would lose or move a comment.
+fn warn_kept_as_written(file: &str, kept: &[usize]) {
+    for line in kept {
+        eprintln!(
+            "sky fmt: warning: {file}:{line}: this declaration is kept as written, because \
+             formatting it would move a comment. Move the comment to its own line to format it."
+        );
+    }
+}
+
 /// `sky fmt [--check] [--stdin|-] <file...>` — opinionated, idempotent
 /// re-layout (doc 10 §"sky fmt"), falling back to a lossless CST reprint for
 /// any file where the opinionated pass would drop a comment or not be provably
@@ -12557,7 +12568,9 @@ fn cmd_fmt(args: &[String]) -> ExitCode {
             }
             return ExitCode::FAILURE;
         }
-        let out = format_source(&src);
+        let report = format_report(&src);
+        warn_kept_as_written("<stdin>", &report.kept);
+        let out = report.text;
         if check {
             return if out == src {
                 ExitCode::SUCCESS
@@ -12621,15 +12634,17 @@ fn cmd_fmt(args: &[String]) -> ExitCode {
             changed_or_error = true;
             continue;
         }
+        let report = format_report(&src);
+        warn_kept_as_written(f, &report.kept);
+        let out = report.text;
         if check {
-            if !is_formatted(&src) {
+            if out != src {
                 println!("would reformat: {f}");
                 fmt_diag(format!("not formatted: run `sky fmt {f}`"));
                 changed_or_error = true;
             }
             continue;
         }
-        let out = format_source(&src);
         if out != src {
             if let Err(e) = std::fs::write(path, &out) {
                 eprintln!("sky fmt: could not write {f}: {e}");

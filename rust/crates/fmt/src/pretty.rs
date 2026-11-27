@@ -41,6 +41,13 @@ pub struct Printer {
     comments: Vec<Comment>,
     line_starts: Vec<usize>,
     src: String,
+    /// Top-level units (by the index of their first decl) to print exactly as
+    /// written: units the opinionated printer cannot lay out without losing
+    /// a comment (see `crate::format_report`).
+    verbatim: std::collections::BTreeSet<usize>,
+    /// Every top-level unit printed: the index of its first decl and its
+    /// 0-based first source line.
+    pub units: Vec<(usize, usize)>,
 }
 
 /// When a record type may stay on one line.
@@ -55,6 +62,26 @@ enum RecordRule {
     /// one line when it fits, like a record expression. The source layout is
     /// not a signal here: the old printer broke every such record.
     Nested,
+}
+
+/// The shape of the unit at decl `i`: whether it is a value kind, and how
+/// many decls it takes (an annotation and its value are one unit), as
+/// `Printer::decl_unit` groups them.
+fn unit_shape(decls: &[Decl], i: usize) -> (bool, usize) {
+    match &decls[i] {
+        Decl::TypeAnno(anno) => {
+            let anno_name = anno.name().map(|t| t.text().to_string());
+            if let Some(Decl::Value(v)) = decls.get(i + 1) {
+                let vn = v.name().map(|t| t.text().to_string());
+                if anno_name.is_some() && anno_name == vn {
+                    return (true, 2);
+                }
+            }
+            (true, 1)
+        }
+        Decl::Value(_) => (true, 1),
+        Decl::Alias(_) | Decl::Union(_) => (false, 1),
+    }
 }
 
 fn width(s: &str) -> usize {
@@ -110,7 +137,36 @@ impl Printer {
             comments,
             line_starts,
             src: src.to_string(),
+            verbatim: Default::default(),
+            units: Vec::new(),
         }
+    }
+
+    /// Print the units whose first decl index is in `verbatim` exactly as
+    /// written.
+    pub fn with_verbatim(mut self, verbatim: std::collections::BTreeSet<usize>) -> Printer {
+        self.verbatim = verbatim;
+        self
+    }
+
+    /// The source text of decls `i .. i + n`, from the first significant
+    /// token to the end of the last one's line (a trailing comment on it is
+    /// kept), and the own-line comments inside it taken off the stream.
+    fn verbatim_unit(&mut self, decls: &[Decl], i: usize, n: usize) -> String {
+        let first = decls[i].syntax();
+        let last = decls[i + n - 1].syntax();
+        let start_line = self.line_of_node(first);
+        let end_line = self.end_line_of_node(last);
+        let start = self.line_starts[start_line];
+        let end = self
+            .line_starts
+            .get(end_line + 1)
+            .copied()
+            .unwrap_or(self.src.len());
+        let text = self.src[start..end].trim_end().to_string();
+        self.comments
+            .retain(|c| c.line < start_line || c.line > end_line);
+        text
     }
 
     /// The source slice spanning a node's significant tokens only (leading and
@@ -296,7 +352,13 @@ impl Printer {
             // section header that belongs above this decl.
             let node_line = self.line_of_node(decls[i].syntax());
             let drained = self.drain_before(0, node_line);
-            let (unit, is_value, consumed) = self.decl_unit(&decls, i);
+            self.units.push((i, node_line));
+            let (unit, is_value, consumed) = if self.verbatim.contains(&i) {
+                let (is_value, consumed) = unit_shape(&decls, i);
+                (self.verbatim_unit(&decls, i, consumed), is_value, consumed)
+            } else {
+                self.decl_unit(&decls, i)
+            };
             // Body-trailer comments below this unit, before the next decl.
             let nl = next_lines[i + consumed - 1];
             let post = trim_trailing_newlines(&self.drain_inner_until_opt(nl));
