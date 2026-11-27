@@ -321,11 +321,24 @@ impl NoAndThen {
                  after `<-` is `{t}`, which has none. Use `case` or a plain `let` line. \
                  See docs/errors/E2016-no-andthen.md"
             ),
-            NoAndThen::NoHome(t) => format!(
-                "The bind line `{pat} <- …` chooses `andThen` from the module that declares \
-                 `{t}`, and that module is not known. Use `case`. \
-                 See docs/errors/E2016-no-andthen.md"
-            ),
+            NoAndThen::NoHome(t) => {
+                // A type with no module of its own to give an `andThen`
+                // (`Cmd`, `Sub` and other runtime types). `case` cannot open
+                // these, so the advice names what does combine them.
+                let tip = match t.rsplit('.').next().unwrap_or(t) {
+                    "Cmd" => {
+                        " To run effects in order, chain their Tasks in one bind-line \
+                         block and send the result with `Cmd.perform task ToMsg`. To send \
+                         several commands, use `Cmd.batch`."
+                    }
+                    "Sub" => " To listen to several subscriptions, use `Sub.batch`.",
+                    _ => "",
+                };
+                format!(
+                    "`{t}` has no `andThen`, so the bind line `{pat} <- …` cannot chain \
+                     it.{tip} See docs/errors/E2016-no-andthen.md"
+                )
+            }
             NoAndThen::Missing {
                 ty,
                 module,

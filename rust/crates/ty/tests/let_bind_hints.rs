@@ -1110,3 +1110,36 @@ fn a_bind_on_a_rigid_variable_names_it() {
     );
     assert!(!e[0].message.contains("Annotate"), "{got:#?}");
 }
+
+/// Judge round 15: a bind line on a `Cmd` or a `Sub` says the type has no
+/// `andThen` and names what does combine it. It never says the module is
+/// unknown, and never says to use `case` (a `Cmd` cannot be opened).
+#[test]
+fn a_bind_line_on_cmd_or_sub_names_what_combines_it() {
+    let src = "type Msg = Done (Result Error ())\n\nc : Cmd Msg\nc =\n    let\n        _ <- Cmd.perform (println \"a\") Done\n    in\n    Cmd.none";
+    let got = check_with(src, &[], "import Std.Cmd as Cmd exposing (Cmd)\n");
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2016").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    let m = &e[0].message;
+    assert!(m.contains("has no `andThen`"), "{got:#?}");
+    assert!(
+        m.contains("`Cmd.perform task ToMsg`") && m.contains("`Cmd.batch`"),
+        "{got:#?}"
+    );
+    assert!(
+        !m.contains("not known") && !m.contains("`case`"),
+        "{got:#?}"
+    );
+
+    let src =
+        "type Msg = Tick\n\ns : Sub Msg\ns =\n    let\n        _ <- Sub.none\n    in\n    Sub.none";
+    let got = check_with(src, &[], "import Std.Sub as Sub exposing (Sub)\n");
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2016").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    let m = &e[0].message;
+    assert!(m.contains("`Sub.batch`"), "{got:#?}");
+    assert!(
+        !m.contains("not known") && !m.contains("`case`"),
+        "{got:#?}"
+    );
+}

@@ -38,6 +38,7 @@ where `T` is the type with its other arguments (`Task e`, `Result e`,
 | The module declares `andThen` but does not expose it | `module Lib.Box exposing (Box)` |
 | The exposed `andThen` has another shape | `andThen : Box a -> (a -> Box b) -> Box b` |
 | The bind line is inside that `andThen` itself | a bind line on `Box` in `Box`'s own `andThen` |
+| The type has no module that could give an `andThen` | `Cmd`, `Sub` |
 
 A function after `<-` is usually a missing argument (`a <- Task.succeed`).
 The message then names the function, its type and how many arguments it
@@ -50,6 +51,10 @@ A bind line is not a name lookup: a local definition named `andThen` is never
 used.
 
 ## How to fix it
+
+A `Cmd` or a `Sub` cannot be chained: chain the Tasks in one bind-line block
+and send the result with `Cmd.perform task ToMsg`, send several commands with
+`Cmd.batch`, and listen to several subscriptions with `Sub.batch`.
 
 Use `case` for a value with no `andThen`, or a plain `let` line (`n = e`) when
 `e` is not a computation to chain. For your own type, add (or expose) an
