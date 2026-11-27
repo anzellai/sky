@@ -150,6 +150,15 @@ pattern is `[E3001]` with "use `case`". Find the union through
   the `in` body, the earlier lines' names take the types their `andThen`s
   give them (when their uses accept those types), so an `in` body of the
   wrong type is blamed at the body, with its note, for one line or many.
+- When the head of `e` is known as the line is inferred (the common case),
+  its `andThen` is chosen then, and the pattern takes the type it gives
+  BEFORE the continuation is inferred. A misuse of the bound name (`u.age +
+  u.name`, `String.length a`, in a later line or the body) is blamed at the
+  use, as in a plain `let`. A line whose head is not known yet keeps the
+  end-of-def resolution above.
+- `e : List (M … x)` gives `[E2016]` with a note naming `Task.sequence`
+  (`Result.combine`, `Maybe.combine`), only when the def with the line so
+  converted type-checks (`fixed_def_checks`).
 - A note names a fix ONLY when the whole fixed definition type-checks. One
   test decides every such note (`Infer::fixed_def_checks`, ty/src/bind.rs):
   the fix is applied to a copy of the def's resolved body (HIR), and the

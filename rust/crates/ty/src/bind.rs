@@ -45,6 +45,12 @@ pub(crate) struct BindFrame {
     pub(crate) param: Option<TyVarId>,
     /// The line continues the block of the frame below it.
     pub(crate) continues: bool,
+    /// The line's `andThen` is chosen already (the head of `e` was known)
+    /// and its type fits: the continuation's parameter takes the type that
+    /// `andThen` gives it BEFORE the continuation is inferred, so a misuse
+    /// of the bound name is blamed at the use, as in a plain `let`. The
+    /// span is the `<-`, where a pattern that refuses the type is blamed.
+    pub(crate) seed: Option<Option<Span>>,
 }
 
 /// A bind line whose `andThen` is not chosen yet: the type of `e` had no
@@ -521,6 +527,8 @@ impl<'a> Infer<'a> {
                 .top_defs
                 .iter()
                 .any(|td| td.name.as_str() == "andThen");
+            let note = self.list_sequence_note(pb, &raw);
+            let before = self.errors.len();
             self.bind_error(
                 pb,
                 NoAndThen::Missing {
@@ -530,6 +538,7 @@ impl<'a> Infer<'a> {
                     unexposed,
                 },
             );
+            self.append_note(before, note);
             return Attempt::Done;
         };
         if self.self_def == Some(def) || self.provisional_defs.contains_key(&def) {
@@ -595,6 +604,48 @@ impl<'a> Infer<'a> {
         self.cur_span = saved;
         self.bind_choices.push((pb.call, res));
         Attempt::Done
+    }
+
+    /// `e : List (M … x)` after `<-`: a `List` has no `andThen`, but the
+    /// home module of `M` may run the list as one `M` (`Task.sequence`,
+    /// `Result.combine`, `Maybe.combine`). The note names it only when the
+    /// def with the line so converted type-checks (`fixed_def_checks`).
+    fn list_sequence_note(&mut self, pb: &PendingBind, raw: &Ty) -> Option<String> {
+        if pb.e_errored {
+            return None;
+        }
+        let Ty::App(list, args) = raw else {
+            return None;
+        };
+        if nominal::strip(list.as_str()) != "List" || args.len() != 1 {
+            return None;
+        }
+        let Ty::App(inner, _) = &args[0] else {
+            return None;
+        };
+        let (module, fun): (&'static str, &'static str) = match nominal::strip(inner.as_str()) {
+            "Task" => ("Sky.Core.Task", "sequence"),
+            "Result" => ("Sky.Core.Result", "combine"),
+            "Maybe" => ("Sky.Core.Maybe", "combine"),
+            _ => return None,
+        };
+        if !self.fixed_def_checks(|f| self.apply_chain_at(f, pb.e_expr, &[(module, fun, 0)])) {
+            return None;
+        }
+        let mid = self.db.module_by_name(module)?;
+        let q = self.qualifier_of(mid, nominal::strip(inner.as_str()));
+        let e_text = self.span_text(pb.module, pb.e_span)?;
+        let arg = if e_text.contains(' ') && !(e_text.starts_with('(') && e_text.ends_with(')')) {
+            format!("({e_text})")
+        } else {
+            e_text
+        };
+        let m = nominal::strip(inner.as_str());
+        Some(format!(
+            "\n\nNote: the expression after `<-` is a list of `{m}` values. To run them \
+             as one `{m}`, write `{} <- {q}.{fun} {arg}`.",
+            pb.pat_text
+        ))
     }
 
     /// The home module of a type head (§4): the fixed table for the kernel

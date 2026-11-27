@@ -756,8 +756,9 @@ fn every_note_fixture_names_only_fixes_that_check() {
 // ---- 3. an error inside an `in` body of the block's type ---------------
 
 /// No diagnostic carries the body note; exactly one `[E2001]`, on the
-/// source line `line` (the bind line, as a hand-written `andThen` blames
-/// the task it chains on).
+/// source line `line` (the use of the bound name, as a plain `let` and a
+/// hand-written `andThen` blame it: the name has its line's type before
+/// the body is checked).
 fn inner_error_only_at(got: &[Got], line: &str) {
     let e: Vec<_> = got.iter().filter(|g| g.code == "E2001").collect();
     assert_eq!(e.len(), 1, "{got:#?}");
@@ -778,7 +779,7 @@ fn a_field_typo_in_an_in_body_of_the_block_type_gives_no_body_note() {
          go : Task Error Int\ngo =\n    let\n        user <- getUser\n    in\n    Task.succeed user.agee",
         &[],
     );
-    inner_error_only_at(&got, "user <- getUser");
+    inner_error_only_at(&got, "Task.succeed user.agee");
     assert!(got[0].message.contains("agee"), "{got:#?}");
 }
 
@@ -789,7 +790,7 @@ fn a_wrong_type_value_in_an_in_body_of_the_block_type_gives_no_body_note() {
         "go : Task Error Int\ngo =\n    let\n        a <- Task.succeed \"x\"\n    in\n    Task.succeed (a + 1)",
         &[],
     );
-    inner_error_only_at(&got, "a <- Task.succeed \"x\"");
+    inner_error_only_at(&got, "Task.succeed (a + 1)");
 }
 
 #[test]
@@ -798,10 +799,10 @@ fn an_int_bound_in_a_float_maybe_block_gives_no_body_note() {
         "floaty : Maybe Float\nfloaty =\n    let\n        a <- Just 1.5\n        b <- Just 2\n    in\n    Just (a * b)",
         &[],
     );
-    inner_error_only_at(&got, "b <- Just 2");
-    // `a` (and so `b`, through `a * b`) has the type of its line, `Float`,
-    // before the last line is checked: the line's `Int` is the other side.
-    assert!(got[0].message.contains("`Float` vs `Int`"), "{got:#?}");
+    inner_error_only_at(&got, "Just (a * b)");
+    // `a` and `b` have the types of their lines, `Float` and `Int`, before
+    // the body is checked: the use `a * b` is the clash.
+    assert!(got[0].message.contains("`Int` vs `Float`"), "{got:#?}");
 }
 
 #[test]
@@ -881,4 +882,125 @@ fn a_bind_on_a_call_of_a_def_that_failed_is_no_second_e2015() {
     let e: Vec<_> = got.iter().filter(|g| g.code == "E2015").collect();
     assert_eq!(e.len(), 1, "{got:#?}");
     assert_eq!(e[0].line.trim(), "v <- x", "{got:#?}");
+}
+
+// ---- 4. a bound name misused is blamed at the use ----------------------
+
+/// Exactly one `[E2001]`, on the source line `line`.
+fn one_e2001_on_line(src: &str, got: &[Got], line: &str) {
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2001").collect();
+    assert_eq!(e.len(), 1, "{src}\n{got:#?}");
+    assert_eq!(e[0].line.trim(), line, "{src}\n{got:#?}");
+}
+
+/// Judge probes e49, e54, e55, e56, e57, e58: the name a bind line binds has
+/// the type its `andThen` gives it while the rest of the block is checked,
+/// so a misuse of it is blamed at the use, as in a plain `let` or a
+/// hand-written `andThen` (e59). Before, the clash was blamed at the `<-`.
+#[test]
+fn a_misused_bound_name_is_blamed_at_the_use() {
+    let user = "type alias User = { name : String, age : Int }\n\n\
+                load : Task Error User\nload =\n    Task.succeed { name = \"a\", age = 1 }\n\n";
+    let cases: [(&str, &str); 10] = [
+        // e49
+        (
+            "f : Task Error Int\nf =\n    let\n        a <- Task.succeed 1\n    in\n    Task.succeed (String.length a)",
+            "Task.succeed (String.length a)",
+        ),
+        // e54
+        (
+            "f : Task Error Int\nf =\n    let\n        a <- Task.succeed 1\n        b <- Task.succeed 2\n    in\n    Task.succeed (String.length a)",
+            "Task.succeed (String.length a)",
+        ),
+        // e55
+        (
+            "f : Task Error Int\nf =\n    let\n        a <- Task.succeed 1\n        _ <- println \"x\"\n    in\n    Task.succeed (String.length a + 1)",
+            "Task.succeed (String.length a + 1)",
+        ),
+        // e56
+        (
+            "f : Maybe Int -> Maybe Int\nf m =\n    let\n        a <- m\n    in\n    Just (String.length a)",
+            "Just (String.length a)",
+        ),
+        // e57
+        (
+            "f : Task Error Int\nf =\n    let\n        u <- load\n    in\n    Task.succeed (u.age + u.name)",
+            "Task.succeed (u.age + u.name)",
+        ),
+        // e58
+        (
+            "f : Task Error Int\nf =\n    let\n        a <- Task.succeed 1\n        n = String.length a\n    in\n    Task.succeed n",
+            "n = String.length a",
+        ),
+        // A later bind line uses the name.
+        (
+            "f : Task Error Int\nf =\n    let\n        a <- Task.succeed 1\n        b <- Task.succeed (String.length a)\n    in\n    Task.succeed b",
+            "b <- Task.succeed (String.length a)",
+        ),
+        // Result
+        (
+            "f : Result Error Int\nf =\n    let\n        a <- Ok 1\n        _ <- Ok 2\n    in\n    Ok (String.length a)",
+            "Ok (String.length a)",
+        ),
+        // Maybe, unannotated
+        (
+            "f m =\n    let\n        a <- Just 1\n    in\n    Just (String.length a)",
+            "Just (String.length a)",
+        ),
+        // Decoder
+        (
+            "f : Decoder Int\nf =\n    let\n        a <- Decode.int\n    in\n    Decode.succeed (String.length a)",
+            "Decode.succeed (String.length a)",
+        ),
+    ];
+    for (body, line) in cases {
+        let src = format!("{user}{body}");
+        let got = check_with(&src, &[], "import Sky.Core.String as String\n");
+        one_e2001_on_line(&src, &got, line);
+    }
+    // e59: the plain `let` and the hand-written `andThen` blame the use too.
+    let src = format!(
+        "{user}f : Task Error Int\nf =\n    load |> Task.andThen (\\u -> Task.succeed (u.age + u.name))"
+    );
+    let got = check(&src, &[]);
+    one_e2001_on_line(
+        &src,
+        &got,
+        "load |> Task.andThen (\\u -> Task.succeed (u.age + u.name))",
+    );
+}
+
+/// Judge probe e38: a `List` of Tasks after `<-` in a Task block names
+/// `Task.sequence`, because the fixed def type-checks.
+#[test]
+fn a_list_of_tasks_in_a_task_block_names_task_sequence() {
+    let src = "f : List String -> Task Error ()\nf names =\n    let\n        _ <- List.map println names\n    in\n    Task.succeed ()";
+    let got = check_with(src, &[], "import Sky.Core.List as List\n");
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2016").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    assert!(
+        e[0].message
+            .contains("`_ <- Task.sequence (List.map println names)`"),
+        "{got:#?}"
+    );
+}
+
+/// A `List` of Results in a Result block names `Result.combine`; a `List`
+/// of plain values names nothing.
+#[test]
+fn a_list_of_results_names_combine_and_a_plain_list_names_nothing() {
+    let src = "f : List Int -> Result Error Int\nf ns =\n    let\n        xs <- List.map Ok ns\n    in\n    Ok (List.length xs)";
+    let got = check_with(src, &[], "import Sky.Core.List as List\n");
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2016").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    assert!(
+        e[0].message
+            .contains("`xs <- Result.combine (List.map Ok ns)`"),
+        "{got:#?}"
+    );
+    let src = "f : List Int -> Task Error Int\nf ns =\n    let\n        xs <- ns\n    in\n    Task.succeed 1";
+    let got = check(src, &[]);
+    let e: Vec<_> = got.iter().filter(|g| g.code == "E2016").collect();
+    assert_eq!(e.len(), 1, "{got:#?}");
+    assert!(!e[0].message.contains("Note:"), "{got:#?}");
 }

@@ -1774,10 +1774,23 @@ impl<'a> Infer<'a> {
                     .iter()
                     .map(|&p| self.infer_pat_fresh(body, p))
                     .collect();
-                // The continuation of a bind line: keep its parameter.
+                // The continuation of a bind line: keep its parameter. When
+                // the line's `andThen` is chosen already, the parameter takes
+                // the type it gives now, before the body is inferred, so a
+                // misuse of the bound name is blamed at the use.
+                let mut seed = None;
                 if let Some(f) = self.bind_stack.last_mut() {
                     if f.lam == e && f.param.is_none() {
                         f.param = param_vars.first().copied();
+                        seed = f.seed.take().map(|sp| (sp, f.tlam));
+                    }
+                }
+                if let (Some((sp, tlam)), Some(&pv)) = (seed, param_vars.first()) {
+                    if let Some((pw, _)) = self.fun_parts(tlam) {
+                        let saved = self.cur_span;
+                        self.cur_span = sp.or(saved);
+                        self.unify(pv, pw);
+                        self.cur_span = saved;
                     }
                 }
                 let rb = self.infer_expr(body, *lb);
@@ -1873,6 +1886,7 @@ impl<'a> Infer<'a> {
                     tlam,
                     param: None,
                     continues,
+                    seed: (head.is_some() && !refused).then_some(span),
                 });
                 let tl = self.infer_expr(body, lam);
                 // The last line of a block: the earlier lines' names take the
