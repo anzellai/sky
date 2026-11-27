@@ -23463,8 +23463,8 @@
       "id": "examples/08-notes-app",
       "modules_imported": 17,
       "path": "examples/08-notes-app",
-      "refs_generous": 175,
-      "refs_qualified": 141,
+      "refs_generous": 176,
+      "refs_qualified": 142,
       "role": "Example",
       "sky_files": 5,
       "sky_toml_sections": [
