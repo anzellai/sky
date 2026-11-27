@@ -159,12 +159,19 @@ mod view_memo;
 struct DefBody {
     owner: std::sync::Arc<hir::ResolveResult>,
     def: DefId,
+    /// The body with each bind line's placeholder replaced by the `andThen`
+    /// the type checker chose (`ty::elaborate_body`), for a def with a bind
+    /// line. ExprIds are those of the shared body.
+    elaborated: Option<std::sync::Arc<Body>>,
 }
 
 impl std::ops::Deref for DefBody {
     type Target = Body;
     fn deref(&self) -> &Body {
-        &self.owner.bodies[&self.def]
+        match &self.elaborated {
+            Some(b) => b,
+            None => &self.owner.bodies[&self.def],
+        }
     }
 }
 
@@ -173,6 +180,9 @@ impl std::ops::Deref for DefBody {
 #[cfg(test)]
 impl std::ops::DerefMut for DefBody {
     fn deref_mut(&mut self) -> &mut Body {
+        if let Some(b) = &mut self.elaborated {
+            return std::sync::Arc::make_mut(b);
+        }
         std::sync::Arc::make_mut(&mut self.owner)
             .bodies
             .get_mut(&self.def)
@@ -388,6 +398,12 @@ fn lower_program_impl(
     let mut roots: Vec<DefId> = Vec::new();
     let mut candidates: BTreeMap<DefId, (ModuleId, Vec<DefId>)> = BTreeMap::new();
     let mut resolved_by_module = HashMap::new();
+    // Defs with a bind line (`p <- e`), each body with the type checker's
+    // chosen `andThen` in place of the placeholder (docs/design/
+    // let-bind-lines.md §4, §5). The reference closure below follows the
+    // chosen def, and every pass reads this body.
+    let mut elaborated: HashMap<DefId, std::sync::Arc<Body>> = HashMap::new();
+
     // Every top-level definition with a body, for a coverage build: the ones
     // the program never lowers are reported as functions that never ran.
     let mut cov_all_tops: Vec<(DefId, String, String)> = Vec::new();
@@ -427,6 +443,15 @@ fn lower_program_impl(
                 if is_root {
                     roots.push(td.def);
                 }
+                let body = if ty::body_has_bind(body) {
+                    let elab = db.bind_elaboration_of(m, td.def);
+                    match ty::elaborate_body(body, &elab) {
+                        Some(b) => &**elaborated.entry(td.def).or_insert(std::sync::Arc::new(b)),
+                        None => body,
+                    }
+                } else {
+                    body
+                };
                 candidates.insert(td.def, (m, body_def_refs(body)));
             }
         }
@@ -450,8 +475,9 @@ fn lower_program_impl(
             continue;
         }
         let resolved = &resolved_by_module[m];
+        let elab_body = elaborated.get(d).cloned();
         let (Some(body), Some(td)) = (
-            resolved.bodies.get(d),
+            elab_body.as_deref().or_else(|| resolved.bodies.get(d)),
             resolved.top_defs.iter().find(|td| td.def == *d),
         ) else {
             continue;
@@ -469,6 +495,7 @@ fn lower_program_impl(
                 body: DefBody {
                     owner: std::sync::Arc::clone(resolved),
                     def: *d,
+                    elaborated: elab_body.clone(),
                 },
                 types,
                 task_discards,
@@ -4880,9 +4907,14 @@ impl<'a> Ctx<'a> {
             }
             // The resolver reports every `Res::Error` it produces, and the build
             // halts on those diagnostics before lowering runs.
-            // The type checker refuses a bind line until it chooses its
-            // `andThen` (docs/design/let-bind-lines.md §4, §5).
-            Res::BindAndThen => self.ice("a bind line (`p <- e`) reached lowering untyped".into()),
+            // Lowering reads the body with every bind line elaborated to the
+            // `andThen` the type checker chose (`DefEntry::body`). A placeholder
+            // left means the checker made no choice, and it reported that bind
+            // line, so the build halted before lowering
+            // (docs/design/let-bind-lines.md §4, §5).
+            Res::BindAndThen => {
+                self.ice("a bind line (`p <- e`) reached lowering with no chosen `andThen`".into())
+            }
             Res::Error => self.ice("an unresolved name reached lowering".into()),
         }
     }
@@ -12290,6 +12322,7 @@ mod shared_body_owner_tests {
                 DefBody {
                     owner: std::sync::Arc::clone(&resolved),
                     def: *def,
+                    elaborated: None,
                 }
             })
             .collect();
@@ -12331,6 +12364,7 @@ mod shared_body_owner_tests {
         let mut edited = DefBody {
             owner: std::sync::Arc::clone(&first.owner),
             def: first.def,
+            elaborated: None,
         };
         let replacement = edited.exprs.alloc(Expr::Int(99));
         edited.root = Some(replacement);

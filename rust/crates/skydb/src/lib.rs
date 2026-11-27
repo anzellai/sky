@@ -411,6 +411,25 @@ pub fn numeric_elaboration_query(
     ))
 }
 
+/// The `andThen` chosen for each bind line (`p <- e`) of a def, on the CHECK
+/// path (docs/design/let-bind-lines.md §4). Demanded only for a def with a
+/// bind line, so every other def's `infer_query` keeps its `type_world`-only
+/// dependency.
+#[salsa::tracked(no_eq)]
+pub fn bind_elaboration_query(
+    db: &dyn ResolveDb,
+    def: DefId,
+    module: ModuleId,
+    _file: SourceFile,
+) -> std::sync::Arc<ty::BindElaboration> {
+    std::sync::Arc::new(ty::compute_bind_elaboration(
+        &check_world_query(db),
+        db.sky_db(),
+        module,
+        def,
+    ))
+}
+
 /// `infer(DefId)` as a `#[salsa::tracked]` query (doc 01 `infer(DefId) -> types,
 /// per-region type map`) — memoised at **per-def granularity**, the ideal
 /// incremental unit. Builds the def's per-expression/per-local type table against
@@ -450,6 +469,13 @@ pub fn infer_query(
     // `type_world` (backdated) + this module's `resolve`, and its `infer`
     // validates from memo after an unrelated body edit.
     let resolved = sky.resolve(module);
+    // A bind line's `andThen` was chosen on the check path: type the body
+    // with those choices, never choose again.
+    let elab = resolved
+        .bodies
+        .get(&def)
+        .filter(|b| ty::body_has_bind(b))
+        .map(|_| bind_elaboration_query(db, def, module, _file).clone());
     if let Some(body) = resolved.bodies.get(&def) {
         let bases = ty::update_base_defs(body);
         // #166: a def that record-updates one of its own params closes the row
@@ -480,16 +506,24 @@ pub fn infer_query(
                     w.callsite_param_records.insert(def, recs.clone());
                 }
             }
-            return std::sync::Arc::new(ty::compute_body_types_with(
+            return std::sync::Arc::new(ty::compute_body_types_elaborated(
                 world,
                 Some(&w),
+                elab.as_deref(),
                 sky,
                 module,
                 def,
             ));
         }
     }
-    std::sync::Arc::new(ty::compute_body_types(world, sky, module, def))
+    std::sync::Arc::new(ty::compute_body_types_elaborated(
+        world,
+        None,
+        elab.as_deref(),
+        sky,
+        module,
+        def,
+    ))
 }
 
 // ---- Stage E: lower + codegen as a tracked query (doc 01 bottom-of-DAG) ----
@@ -872,6 +906,13 @@ impl ty::TyDb for SkyDatabase {
         def: DefId,
     ) -> std::sync::Arc<ty::numeric::NumericElaboration> {
         numeric_elaboration_query(self, def, module, self.source_file(module)).clone()
+    }
+    fn bind_elaboration_of(
+        &self,
+        module: ModuleId,
+        def: DefId,
+    ) -> std::sync::Arc<ty::BindElaboration> {
+        bind_elaboration_query(self, def, module, self.source_file(module)).clone()
     }
     fn as_sky_db(&self) -> &dyn SkyDb {
         self

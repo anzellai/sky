@@ -79,6 +79,7 @@ mod tests {
                                 body: DefBody {
                                     owner: std::sync::Arc::clone(&r),
                                     def: d.def,
+                                    elaborated: None,
                                 },
                                 types: std::sync::Arc::new(BodyTypes::default()),
                                 task_discards: BTreeSet::new(),
