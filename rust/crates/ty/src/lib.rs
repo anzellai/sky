@@ -41,7 +41,7 @@ pub mod variance;
 
 pub use bind::{
     bind_calls, body_has_bind, candidate_and_thens, compute_bind_elaboration, elaborate_body,
-    BindElaboration,
+    elaborate_with, elaborated_bodies, unchosen_bind, BindElaboration, ElaboratedBody,
 };
 pub use check::{
     check_modules, check_modules_with_world, check_modules_with_world_without_report_types,

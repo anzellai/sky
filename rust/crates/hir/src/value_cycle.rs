@@ -199,6 +199,12 @@ fn walk(
     f: &mut dyn FnMut(&Res, Option<usize>),
 ) {
     match &body.exprs[e] {
+        // A bind line (`p <- e`) runs before its `andThen` is chosen (this
+        // pass is before type inference). The placeholder names no value, so
+        // it reads nothing. Its continuation is a lambda argument, deferred
+        // like the lambda of a hand-written `M.andThen (\p -> rest) e`, and
+        // `e` is walked below as an argument (docs/design/let-bind-lines.md §5).
+        Expr::Var(Res::BindAndThen) => {}
         Expr::Var(r) => f(r, called_with),
         Expr::Lambda { .. } => {}
         Expr::Call(callee, args) => {
@@ -216,6 +222,9 @@ fn walk(
             let (func, arg) = match res {
                 Res::Kernel { func, .. } if func.as_str() == "apR" => (Some(*rhs), *lhs),
                 Res::Kernel { func, .. } if func.as_str() == "apL" => (Some(*lhs), *rhs),
+                // An operator resolves to a kernel or a def, never to a bind
+                // line placeholder (that is only ever a `Call` head).
+                Res::BindAndThen => unreachable!("a bind line placeholder as an operator"),
                 _ => (None, *lhs),
             };
             match func {

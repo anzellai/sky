@@ -1317,11 +1317,18 @@ impl World {
     /// (passes 1-6, e.g. `World::build`) so the value matches the bulk pass
     /// exactly. Fetches the def's own body via `def_loc` + `resolve` (revision-safe
     /// inside a salsa query — every live `DefId` names an interned `DefKey`).
-    pub fn record_result_scheme_for(&self, db: &dyn SkyDb, def: DefId) -> Option<Scheme> {
+    /// `body_in` gives the def's body in its module as the passes after
+    /// inference read it ([`crate::ElaboratedBody`]): this runs on the check
+    /// world, so a bind line reads the check path's choice.
+    pub fn record_result_scheme_for(
+        &self,
+        db: &dyn SkyDb,
+        def: DefId,
+        body_in: impl FnOnce(ModuleId) -> Option<crate::ElaboratedBody>,
+    ) -> Option<Scheme> {
         let loc = db.def_loc(def)?;
-        let resolved = db.resolve(loc.module);
-        let body = resolved.bodies.get(&def)?;
-        self.admit_record_result(db, def, body)
+        let body = body_in(loc.module)?;
+        self.admit_record_result(db, def, &body)
     }
 
     /// Pass 4 (see `build`). Register precise stdlib combinator schemes into the

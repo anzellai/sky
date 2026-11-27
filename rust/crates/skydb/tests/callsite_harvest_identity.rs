@@ -268,8 +268,20 @@ fn query_world_omits_only_aggregate_harvest_and_preserves_d2() {
             );
         }
         assert_eq!(
-            ty::numeric::compute_numeric_elaboration(&query, &db, m, d),
-            ty::numeric::compute_numeric_elaboration(&eager, &db, m, d)
+            ty::numeric::compute_numeric_elaboration(
+                &query,
+                &db,
+                m,
+                d,
+                &ty::TyDb::elaborated_body_of(&db, m, d).unwrap()
+            ),
+            ty::numeric::compute_numeric_elaboration(
+                &eager,
+                &db,
+                m,
+                d,
+                &ty::TyDb::elaborated_body_of(&db, m, d).unwrap()
+            )
         );
         let actual = db.body_types_of(m, d);
         let expected = ty::compute_body_types(&eager, &db, m, d);
@@ -440,10 +452,22 @@ fn caf_update_harvest_matches_fresh_and_eager_across_body_revisions() {
                 body_table(&expected),
                 "full body table differs for {name}"
             );
-            let numeric = ty::numeric::compute_numeric_elaboration(&query, db, m, d);
+            let numeric = ty::numeric::compute_numeric_elaboration(
+                &query,
+                db,
+                m,
+                d,
+                &ty::TyDb::elaborated_body_of(db, m, d).unwrap(),
+            );
             assert_eq!(
                 numeric,
-                ty::numeric::compute_numeric_elaboration(&eager, db, m, d),
+                ty::numeric::compute_numeric_elaboration(
+                    &eager,
+                    db,
+                    m,
+                    d,
+                    &ty::TyDb::elaborated_body_of(db, m, d).unwrap()
+                ),
                 "numeric result differs for {name}"
             );
             observations.push((name, harvested, body_table(&actual), numeric));

@@ -69,11 +69,15 @@ pub trait TyDb: SkyDb {
         module: ModuleId,
         def: DefId,
     ) -> Arc<crate::numeric::NumericElaboration> {
+        let Some(body) = self.elaborated_body_of(module, def) else {
+            return Arc::default();
+        };
         Arc::new(crate::numeric::compute_numeric_elaboration(
             &self.check_world(),
             self.as_sky_db(),
             module,
             def,
+            &body,
         ))
     }
 
@@ -88,6 +92,20 @@ pub trait TyDb: SkyDb {
             module,
             def,
         ))
+    }
+
+    /// THE body of a def for every pass after type inference
+    /// (docs/design/let-bind-lines.md §5): the shared body when the def has
+    /// no bind line, else a copy with each placeholder replaced by the
+    /// `andThen` [`TyDb::bind_elaboration_of`] chose. `None` for a def with no
+    /// body. The salsa backend memoises the copy per def, so `sky watch`
+    /// never reads one from an older revision.
+    fn elaborated_body_of(&self, module: ModuleId, def: DefId) -> Option<crate::ElaboratedBody> {
+        let owner = self.resolve(module);
+        let elaborated = crate::bind::elaborate_with(owner.bodies.get(&def)?, || {
+            self.bind_elaboration_of(module, def)
+        });
+        crate::ElaboratedBody::new(owner, def, elaborated)
     }
 
     /// This database viewed as the resolution interface, so a `TyDb` value can be

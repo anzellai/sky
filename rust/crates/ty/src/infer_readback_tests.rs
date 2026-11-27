@@ -933,7 +933,7 @@ main = ( goodForward, goodBackward, goodHigher )
                     }
                 }
             }
-            let fast = crate::numeric::compute_numeric_elaboration(&world, &db, ids[0], *def);
+            let fast = crate::numeric::compute_numeric_elaboration(&world, &db, ids[0], *def, body);
             struct Reset(bool);
             impl Drop for Reset {
                 fn drop(&mut self) {
@@ -941,7 +941,8 @@ main = ( goodForward, goodBackward, goodHigher )
                 }
             }
             let reset = Reset(FORCE_GENERAL_PATHS.with(|f| f.replace(true)));
-            let reference = crate::numeric::compute_numeric_elaboration(&world, &db, ids[0], *def);
+            let reference =
+                crate::numeric::compute_numeric_elaboration(&world, &db, ids[0], *def, body);
             drop(reset);
             assert_eq!(fast, reference, "numeric {}", name.as_str());
         }

@@ -230,6 +230,14 @@ impl<'a> Typer<'a> {
     /// body-only-inferred `number`. Kept SEPARATE from `body_types` so the
     /// lowerer's typed table — and therefore codegen — is byte-for-byte
     /// unchanged (the LSP is additive).
+    /// The body of top-level `def` as every pass after inference reads it
+    /// ([`crate::TyDb::elaborated_body_of`]): a bind line carries the `andThen`
+    /// the check path chose, so typing it here never chooses again.
+    pub fn elaborated_body(&self, def: DefId) -> Option<crate::ElaboratedBody> {
+        let module = self.db.def_loc(def)?.module;
+        self.db.elaborated_body_of(module, def)
+    }
+
     pub fn body_types_annotated(&self, def: DefId, body: &Body) -> BodyTypes {
         let mut infer = Infer::new(&self.world, self.db.as_sky_db())
             .with_self_def(Some(def))
@@ -473,6 +481,9 @@ fn regex_literals(body: &Body, sky: &dyn hir::SkyDb) -> Vec<(ExprId, String)> {
                 {
                     lit(*rhs)
                 }
+                // An operator resolves to a kernel or a def, never to a bind line
+                // placeholder (that is only ever a `Call` head).
+                Res::BindAndThen => unreachable!("a bind line placeholder as an operator"),
                 _ => None,
             },
             _ => None,
@@ -1397,6 +1408,16 @@ fn check_modules_with_world_reporting(
             // list is computed once. The scans below look types up by `ExprId`
             // (last recording wins) and rebuild only what they read.
             let (recorded, table) = infer.recorded_expr_table();
+            // The scans after inference read the body with this run's bind-line
+            // choices in place (the check path's choice, the one every later
+            // pass reads through `TyDb::elaborated_body_of`;
+            // docs/design/let-bind-lines.md §5). The type errors above and the
+            // exhaustiveness pass below read the bind lines themselves.
+            let choices = crate::BindElaboration {
+                choices: infer.take_bind_choices().into_iter().collect(),
+            };
+            let elaborated = crate::elaborate_with(body, || Arc::new(choices));
+            let post: &Body = elaborated.as_deref().unwrap_or(body);
             // The solved snapshot owns its data. No scan below needs the UF,
             // inference environments or local/generalisation scratch.
             drop(infer);
@@ -1420,18 +1441,18 @@ fn check_modules_with_world_reporting(
             // (concrete / rigid-quantifier elements are silent — see
             // `codec_elem.rs`).
             let expr_ty = crate::tytable::ExprTypes::new(&recorded, &table);
-            codec_elem::scan_body(body, &expr_ty, sky, &dname, &mut codec_elems);
+            codec_elem::scan_body(post, &expr_ty, sky, &dname, &mut codec_elems);
 
             // ---- [E2010] form-submit handler ---------------------------
-            crate::form_submit::scan_body(body, &expr_ty, sky, &dname, &mut form_submits);
+            crate::form_submit::scan_body(post, &expr_ty, sky, &dname, &mut form_submits);
 
             // ---- [E2013] a Sky value where a Go interface is required ---
-            crate::ffi_iface::scan_body(body, &expr_ty, sky, &dname, &mut ffi_ifaces);
+            crate::ffi_iface::scan_body(post, &expr_ty, sky, &dname, &mut ffi_ifaces);
 
             // ---- [E2011] literal pub/sub topic (collected; compared below,
             // across every module under check) --------------------------
             crate::pubsub_topic::scan_body(
-                body,
+                post,
                 &expr_ty,
                 sky,
                 &mname,

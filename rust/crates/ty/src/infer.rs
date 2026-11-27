@@ -176,6 +176,11 @@ pub struct Infer<'a> {
     pub(crate) pending_binds: Vec<crate::bind::PendingBind>,
     /// The `andThen` chosen for each bind line, by its `Call` (`crate::bind`).
     pub(crate) bind_choices: Vec<(ExprId, Res)>,
+    /// The type the next bind line of a block must have: the enclosing bind
+    /// line's result, keyed by the inner bind line's `Call`. A block that mixes
+    /// types is then refused once, at its first bind line that does not fit
+    /// (`crate::bind`).
+    pub(crate) bind_expects: HashMap<ExprId, TyVarId>,
     /// Per-def entries that take the place of the world's own in its two
     /// lowering-only record channels (see [`RecordOverlay`]).
     overlay: Option<&'a RecordOverlay>,
@@ -250,6 +255,7 @@ impl<'a> Infer<'a> {
             inferred_bounds: Vec::new(),
             pending_binds: Vec::new(),
             bind_choices: Vec::new(),
+            bind_expects: HashMap::new(),
             overlay: None,
             #[cfg(test)]
             no_fast_paths: FORCE_GENERAL_PATHS.with(|f| f.get()),
@@ -1748,6 +1754,13 @@ impl<'a> Infer<'a> {
                     _ => "…".to_string(),
                 };
                 let span = body.expr_span(*callee).or(self.cur_span);
+                // A later line of a block: its result is the block's, which
+                // the enclosing bind line fixed. A line of another type is
+                // refused here, at its own `<-`, when its `andThen` is chosen.
+                if let Some(block) = self.bind_expects.remove(&e) {
+                    self.unify(result, block);
+                }
+                let errors_before = self.errors.len();
                 let chosen_before = self.bind_choices.len();
                 self.start_bind(crate::bind::PendingBind {
                     call: e,
@@ -1766,6 +1779,12 @@ impl<'a> Infer<'a> {
                         Ty::App(n, _) => Some(crate::nominal::strip(n.as_str()).to_string()),
                         _ => None,
                     });
+                // This line refused already (its type does not fit the
+                // block): one error per mixed block, at that line.
+                let refused = self.errors.len() > errors_before;
+                if let Some(next) = crate::bind::next_bind_line(body, lam) {
+                    self.bind_expects.insert(next, result);
+                }
                 let tl = self.infer_expr(body, lam);
                 let before = self.errors.len();
                 // A clash here is the rest of the block against this line.s
@@ -1774,7 +1793,9 @@ impl<'a> Infer<'a> {
                 self.cur_span = span;
                 self.unify(tl, tlam);
                 self.cur_span = saved;
-                if let Some(head) = head {
+                if refused {
+                    self.errors.truncate(before);
+                } else if let Some(head) = head {
                     let note = crate::bind::mixed_note(&head);
                     self.append_note(before, Some(note));
                 }
@@ -2514,7 +2535,9 @@ impl<'a> Infer<'a> {
         match res {
             Res::Kernel { module, func } => Some(format!("{}.{}", module.as_str(), func.as_str())),
             Res::Def(d) => self.db.def_loc(*d).map(|l| l.name.as_str().to_string()),
-            _ => None,
+            // A bind line is typed by its own `Call` arm and never named here.
+            Res::BindAndThen => None,
+            Res::Local(_) | Res::Ctor(_) | Res::Foreign { .. } | Res::Error => None,
         }
     }
 

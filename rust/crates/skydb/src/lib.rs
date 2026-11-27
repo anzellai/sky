@@ -272,7 +272,7 @@ pub fn record_result_sig_query(
     _file: SourceFile,
 ) -> Option<ty::Scheme> {
     let world = check_world_query(db);
-    world.record_result_scheme_for(db.sky_db(), def)
+    world.record_result_scheme_for(db.sky_db(), def, |m| elaborated_in(db, m, def))
 }
 
 /// Per-def call-site param-record harvest for the lowering `infer_query` (#166,
@@ -383,11 +383,12 @@ pub fn caller_record_args_query(
 ) -> ty::CallerParamRecords {
     let world = check_world_query(db);
     let sky = db.sky_db();
-    let resolved = sky.resolve(module);
-    let Some(body) = resolved.bodies.get(&caller) else {
+    // The caller is inferred on the check path, so its bind lines read the
+    // check path's choices (docs/design/let-bind-lines.md §5).
+    let Some(body) = elaborated_in(db, module, caller) else {
         return Vec::new();
     };
-    ty::caller_param_records(sky, world, body, |f| {
+    ty::caller_param_records(sky, world, &body, |f| {
         sky.def_loc(f)
             .is_some_and(|l| *wants_callsite_harvest_query(db, f, l.module))
     })
@@ -403,11 +404,15 @@ pub fn numeric_elaboration_query(
     module: ModuleId,
     _file: SourceFile,
 ) -> std::sync::Arc<ty::numeric::NumericElaboration> {
+    let Some(body) = elaborated_in(db, module, def) else {
+        return std::sync::Arc::default();
+    };
     std::sync::Arc::new(ty::numeric::compute_numeric_elaboration(
         &check_world_query(db),
         db.sky_db(),
         module,
         def,
+        &body,
     ))
 }
 
@@ -420,7 +425,6 @@ pub fn bind_elaboration_query(
     db: &dyn ResolveDb,
     def: DefId,
     module: ModuleId,
-    _file: SourceFile,
 ) -> std::sync::Arc<ty::BindElaboration> {
     std::sync::Arc::new(ty::compute_bind_elaboration(
         &check_world_query(db),
@@ -428,6 +432,38 @@ pub fn bind_elaboration_query(
         module,
         def,
     ))
+}
+
+/// [`ty::ElaboratedBody`] of `def` in `module` from inside a query: the shared
+/// body, or the memoised [`elaborated_body_query`] copy for a def with a bind
+/// line. The one way a query after inference reads a body.
+pub(crate) fn elaborated_in(
+    db: &dyn ResolveDb,
+    module: ModuleId,
+    def: DefId,
+) -> Option<ty::ElaboratedBody> {
+    let owner = db.sky_db().resolve(module);
+    if !owner.bodies.get(&def).is_some_and(ty::body_has_bind) {
+        return ty::ElaboratedBody::new(owner, def, None);
+    }
+    let elaborated = elaborated_body_query(db, def, module).clone();
+    ty::ElaboratedBody::new(owner, def, elaborated)
+}
+
+/// A def's body with each bind-line placeholder replaced by the `andThen`
+/// the check path chose (docs/design/let-bind-lines.md §5), memoised per def.
+/// `None` for a def with no bind line (the shared body is read as it is).
+/// Demanded only for a def with a bind line.
+#[salsa::tracked(no_eq)]
+pub fn elaborated_body_query(
+    db: &dyn ResolveDb,
+    def: DefId,
+    module: ModuleId,
+) -> Option<std::sync::Arc<hir::Body>> {
+    let resolved = db.sky_db().resolve(module);
+    ty::elaborate_with(resolved.bodies.get(&def)?, || {
+        bind_elaboration_query(db, def, module).clone()
+    })
 }
 
 /// `infer(DefId)` as a `#[salsa::tracked]` query (doc 01 `infer(DefId) -> types,
@@ -475,7 +511,7 @@ pub fn infer_query(
         .bodies
         .get(&def)
         .filter(|b| ty::body_has_bind(b))
-        .map(|_| bind_elaboration_query(db, def, module, _file).clone());
+        .map(|_| bind_elaboration_query(db, def, module).clone());
     if let Some(body) = resolved.bodies.get(&def) {
         let bases = ty::update_base_defs(body);
         // #166: a def that record-updates one of its own params closes the row
@@ -912,7 +948,15 @@ impl ty::TyDb for SkyDatabase {
         module: ModuleId,
         def: DefId,
     ) -> std::sync::Arc<ty::BindElaboration> {
-        bind_elaboration_query(self, def, module, self.source_file(module)).clone()
+        bind_elaboration_query(self, def, module).clone()
+    }
+    fn elaborated_body_of(&self, module: ModuleId, def: DefId) -> Option<ty::ElaboratedBody> {
+        let owner = self.resolve(module);
+        if !owner.bodies.get(&def).is_some_and(ty::body_has_bind) {
+            return ty::ElaboratedBody::new(owner, def, None);
+        }
+        let elaborated = elaborated_body_query(self, def, module).clone();
+        ty::ElaboratedBody::new(owner, def, elaborated)
     }
     fn as_sky_db(&self) -> &dyn SkyDb {
         self

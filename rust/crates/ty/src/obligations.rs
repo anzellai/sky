@@ -244,7 +244,7 @@ pub(crate) fn extend_routed_page_carriers(world: &mut World, db: &dyn SkyDb) {
         }
         let resolved = db.resolve(m);
         for (def, body) in &resolved.bodies {
-            user.push((*def, callees(body).0));
+            user.push((*def, callees(db, m, body).0));
         }
     }
     loop {
@@ -959,17 +959,33 @@ fn has_bound_var(t: &crate::Ty, encodable_only: bool) -> bool {
 }
 
 /// Every `Res::Def` / `Res::Kernel` a body references.
-fn callees(body: &hir::Body) -> (Vec<base::DefId>, Vec<(String, String)>) {
+/// The defs and kernels `body` (in `module`) references. These passes build
+/// the world the bind-line choice reads, so they cannot read that choice: a
+/// bind line adds every candidate `andThen` instead (conservative, as the
+/// SCC order does; docs/design/let-bind-lines.md §4).
+fn callees(
+    db: &dyn SkyDb,
+    module: base::ModuleId,
+    body: &hir::Body,
+) -> (Vec<base::DefId>, Vec<(String, String)>) {
     let mut defs = Vec::new();
     let mut kernels = Vec::new();
+    let mut bind = false;
     for (_, e) in body.exprs.iter() {
         match e {
             hir::Expr::Var(hir::Res::Def(d)) => defs.push(*d),
             hir::Expr::Var(hir::Res::Kernel { module, func }) => {
                 kernels.push((module.as_str().to_string(), func.as_str().to_string()))
             }
+            hir::Expr::Var(hir::Res::BindAndThen) => bind = true,
+            hir::Expr::Var(
+                hir::Res::Local(_) | hir::Res::Ctor(_) | hir::Res::Foreign { .. } | hir::Res::Error,
+            ) => {}
             _ => {}
         }
+    }
+    if bind {
+        defs.extend(crate::bind::candidate_and_thens(db, module));
     }
     (defs, kernels)
 }
@@ -1037,7 +1053,7 @@ impl World {
                         continue;
                     }
                 }
-                let (defs, kernels) = callees(body);
+                let (defs, kernels) = callees(db, m, body);
                 let later_siblings = defs
                     .iter()
                     .filter(|d| order.get(d).is_some_and(|&j| j > idx))

@@ -21,6 +21,7 @@ use crate::{nominal, Ty, TyVarId};
 use base::{DefId, ModuleId, Span};
 use hir::{Body, Expr, ExprId, Pattern, Res, SkyDb};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// The `andThen` each bind line of one def uses, keyed by the `ExprId` of the
 /// synthesised `Call` (the same id in the raw and the elaborated body).
@@ -86,17 +87,17 @@ pub fn bind_calls(body: &Body) -> Vec<(ExprId, ExprId, ExprId, ExprId)> {
 
 /// `body` with every bind-line placeholder replaced by the `Res` `elab` chose
 /// for it. `None` when the body has no bind line (callers keep the shared
-/// body). A placeholder with no choice stays a placeholder: the checker
-/// refused that bind line, so no build lowers it.
+/// body). A placeholder with no choice becomes `Res::Error`: the checker
+/// refused that bind line and reported it (`[E2015]` / `[E2016]`), which is
+/// what `Res::Error` means to every later pass (a diagnostic was emitted, L7).
+/// So `Res::BindAndThen` never reaches a pass after inference.
 pub fn elaborate_body(body: &Body, elab: &BindElaboration) -> Option<Body> {
     if !body_has_bind(body) {
         return None;
     }
     let mut out = body.clone();
     for (call, head, _, _) in bind_calls(body) {
-        if let Some(res) = elab.choice(call) {
-            out.exprs[head] = Expr::Var(res.clone());
-        }
+        out.exprs[head] = Expr::Var(elab.choice(call).cloned().unwrap_or(Res::Error));
     }
     Some(out)
 }
@@ -512,4 +513,133 @@ pub fn candidate_and_thens(db: &dyn SkyDb, module: ModuleId) -> Vec<DefId> {
         }
     }
     out
+}
+
+/// One def's body as every pass after type inference reads it
+/// (docs/design/let-bind-lines.md §5): the shared body of the resolved module
+/// when the def has no bind line, else a copy with each bind line's
+/// placeholder replaced by the `andThen` the check path chose. ExprIds are
+/// those of the shared body, so `BodyTypes` keys stay valid.
+///
+/// Obtain it ONLY through [`crate::TyDb::elaborated_body_of`] (or
+/// [`elaborated_bodies`]); a raw `resolve(m).bodies` read after inference is
+/// refused by the source-scan test `ty/tests/elaborated_body_scan.rs`. A bind
+/// line the checker refused has `Res::Error` in place of its `andThen` (the
+/// checker reported it), so no `Res::BindAndThen` is left.
+#[derive(Clone)]
+pub struct ElaboratedBody {
+    owner: Arc<hir::ResolveResult>,
+    def: DefId,
+    elaborated: Option<Arc<Body>>,
+}
+
+impl std::ops::Deref for ElaboratedBody {
+    type Target = Body;
+    fn deref(&self) -> &Body {
+        match &self.elaborated {
+            Some(b) => b,
+            None => &self.owner.bodies[&self.def],
+        }
+    }
+}
+
+impl std::fmt::Debug for ElaboratedBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ElaboratedBody")
+            .field("def", &self.def)
+            .field("elaborated", &self.elaborated.is_some())
+            .finish()
+    }
+}
+
+impl ElaboratedBody {
+    /// `owner`'s body of `def`, with `elaborated` in its place when the def
+    /// has a bind line. `None` when `owner` has no body for `def`.
+    pub fn new(
+        owner: Arc<hir::ResolveResult>,
+        def: DefId,
+        elaborated: Option<Arc<Body>>,
+    ) -> Option<Self> {
+        owner.bodies.get(&def)?;
+        Some(Self {
+            owner,
+            def,
+            elaborated,
+        })
+    }
+
+    /// The def whose body this is.
+    pub fn def(&self) -> DefId {
+        self.def
+    }
+
+    /// The resolved module that owns the shared body.
+    pub fn owner(&self) -> &Arc<hir::ResolveResult> {
+        &self.owner
+    }
+
+    /// The elaborated copy, when the def has a bind line.
+    pub fn elaborated(&self) -> Option<&Arc<Body>> {
+        self.elaborated.as_ref()
+    }
+
+    /// `(owner, def, elaborated copy)`.
+    pub fn into_parts(self) -> (Arc<hir::ResolveResult>, DefId, Option<Arc<Body>>) {
+        (self.owner, self.def, self.elaborated)
+    }
+}
+
+/// `raw` with the choices `elab()` gives in place of its placeholders, shared
+/// when `raw` has no bind line. `elab` runs only for a def with a bind line.
+pub fn elaborate_with(
+    raw: &Body,
+    elab: impl FnOnce() -> Arc<BindElaboration>,
+) -> Option<Arc<Body>> {
+    if !body_has_bind(raw) {
+        return None;
+    }
+    elaborate_body(raw, &elab()).map(Arc::new)
+}
+
+/// Every body of `module` as the passes after inference read it, in the
+/// resolved module's body order.
+pub fn elaborated_bodies(db: &dyn crate::TyDb, module: ModuleId) -> Vec<ElaboratedBody> {
+    let resolved = db.resolve(module);
+    resolved
+        .bodies
+        .keys()
+        .filter_map(|d| db.elaborated_body_of(module, *d))
+        .collect()
+}
+
+/// The internal error for a bind-line placeholder that reaches a pass after
+/// type inference. Such a pass reads [`ElaboratedBody`], which has none (a
+/// refused bind line has `Res::Error`). Reaching one is a compiler bug: fail
+/// closed, never skip it.
+#[track_caller]
+pub fn unchosen_bind(pass: &str) -> ! {
+    panic!(
+        "internal compiler error: a bind line placeholder with no chosen `andThen` reached \
+         {pass} (docs/design/let-bind-lines.md §5). Please report it."
+    )
+}
+
+/// The next bind line of the block whose bind line has continuation `lam`
+/// (`\p -> rest`): `rest` itself, or the body of the `let` segment `rest`
+/// is, when that is a bind line's `Call`.
+pub(crate) fn next_bind_line(body: &Body, lam: ExprId) -> Option<ExprId> {
+    let Expr::Lambda { body: mut cur, .. } = &body.exprs[lam] else {
+        return None;
+    };
+    while let Expr::Let { body: b, .. } = &body.exprs[cur] {
+        cur = *b;
+    }
+    match &body.exprs[cur] {
+        Expr::Call(f, args)
+            if args.len() == 2 && matches!(body.exprs[*f], Expr::Var(Res::BindAndThen)) =>
+        {
+            Some(cur)
+        }
+        _ => None,
+    }
 }

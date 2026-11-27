@@ -165,6 +165,17 @@ struct DefBody {
     elaborated: Option<std::sync::Arc<Body>>,
 }
 
+impl From<ty::ElaboratedBody> for DefBody {
+    fn from(b: ty::ElaboratedBody) -> Self {
+        let (owner, def, elaborated) = b.into_parts();
+        DefBody {
+            owner,
+            def,
+            elaborated,
+        }
+    }
+}
+
 impl std::ops::Deref for DefBody {
     type Target = Body;
     fn deref(&self) -> &Body {
@@ -398,11 +409,12 @@ fn lower_program_impl(
     let mut roots: Vec<DefId> = Vec::new();
     let mut candidates: BTreeMap<DefId, (ModuleId, Vec<DefId>)> = BTreeMap::new();
     let mut resolved_by_module = HashMap::new();
-    // Defs with a bind line (`p <- e`), each body with the type checker's
-    // chosen `andThen` in place of the placeholder (docs/design/
-    // let-bind-lines.md §4, §5). The reference closure below follows the
-    // chosen def, and every pass reads this body.
-    let mut elaborated: HashMap<DefId, std::sync::Arc<Body>> = HashMap::new();
+    // Every body as the passes after inference read it
+    // (`TyDb::elaborated_body_of`): a bind line (`p <- e`) has the type
+    // checker's chosen `andThen` in place of the placeholder
+    // (docs/design/let-bind-lines.md §5). The reference closure below
+    // follows the chosen def, and every pass reads this body.
+    let mut elaborated: HashMap<DefId, ty::ElaboratedBody> = HashMap::new();
 
     // Every top-level definition with a body, for a coverage build: the ones
     // the program never lowers are reported as functions that never ran.
@@ -429,7 +441,7 @@ fn lower_program_impl(
             def_spans.entry(*d).or_insert(*sp);
         }
         for td in &resolved.top_defs {
-            if let Some(body) = resolved.bodies.get(&td.def) {
+            if let Some(body) = db.elaborated_body_of(m, td.def) {
                 if cfg.coverage {
                     cov_all_tops.push((td.def, mname.clone(), td.name.as_str().to_string()));
                 }
@@ -443,16 +455,8 @@ fn lower_program_impl(
                 if is_root {
                     roots.push(td.def);
                 }
-                let body = if ty::body_has_bind(body) {
-                    let elab = db.bind_elaboration_of(m, td.def);
-                    match ty::elaborate_body(body, &elab) {
-                        Some(b) => &**elaborated.entry(td.def).or_insert(std::sync::Arc::new(b)),
-                        None => body,
-                    }
-                } else {
-                    body
-                };
-                candidates.insert(td.def, (m, body_def_refs(body)));
+                candidates.insert(td.def, (m, body_def_refs(&body)));
+                elaborated.insert(td.def, body);
             }
         }
         resolved_by_module.insert(m, resolved);
@@ -475,9 +479,8 @@ fn lower_program_impl(
             continue;
         }
         let resolved = &resolved_by_module[m];
-        let elab_body = elaborated.get(d).cloned();
         let (Some(body), Some(td)) = (
-            elab_body.as_deref().or_else(|| resolved.bodies.get(d)),
+            elaborated.get(d),
             resolved.top_defs.iter().find(|td| td.def == *d),
         ) else {
             continue;
@@ -492,11 +495,7 @@ fn lower_program_impl(
             DefEntry {
                 module_name: db.module_name(*m).to_string(),
                 name: td.name.as_str().to_string(),
-                body: DefBody {
-                    owner: std::sync::Arc::clone(resolved),
-                    def: *d,
-                    elaborated: elab_body.clone(),
-                },
+                body: DefBody::from(body.clone()),
                 types,
                 task_discards,
                 numeric,
@@ -1642,6 +1641,9 @@ fn compute_def_effect(
                     Res::Def(d2) => note_def(d2, &mut eff, &mut es),
                     _ => {}
                 },
+                // Lowering reads the elaborated body: a bind line names its
+                // chosen `andThen` as an ordinary `Res::Def` above.
+                Expr::Var(Res::BindAndThen) => ty::unchosen_bind("the effect scan"),
                 _ => {}
             }
         }

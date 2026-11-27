@@ -411,3 +411,35 @@ fn an_unknown_head_in_a_recursive_group_is_reported_once() {
     let n = got.iter().filter(|(c, _)| c == "E2015").count();
     assert_eq!(n, 1, "{got:#?}");
 }
+
+/// A block that mixes types gives ONE `[E2001]`, at the first bind line whose
+/// type does not fit the block, not one at each `<-` (C1 gave two at each).
+#[test]
+fn a_mixed_block_is_one_e2001_at_the_first_mismatching_bind_line() {
+    let body = "go : Task Error Int\ngo =\n    let\n        a <- Task.succeed 1\n        b <- String.toInt \"2\"\n        c <- Task.succeed 3\n    in\n    Task.succeed (a + b + c)";
+    let (db, ids) = db_of(body, &[]);
+    let src = db
+        .module_parse(*ids.last().unwrap())
+        .syntax()
+        .text()
+        .to_string();
+    let e2001: Vec<_> = ty::check_modules(&db, &ids)
+        .diagnostics
+        .into_iter()
+        .filter(|d| d.code.0 == "E2001")
+        .collect();
+    assert_eq!(e2001.len(), 1, "{e2001:#?}");
+    let label = e2001[0].labels.first().expect("a label").span.range;
+    let line = src[..label.0 as usize].lines().count();
+    let b_line = src
+        .lines()
+        .position(|l| l.contains("b <- String.toInt"))
+        .unwrap()
+        + 1;
+    assert_eq!(
+        line,
+        b_line,
+        "at the `<-` of `b`: {}",
+        &src[label.0 as usize..label.1 as usize]
+    );
+}
