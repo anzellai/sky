@@ -308,6 +308,13 @@ impl Ty {
     /// `main : t30` into `main : a` and `{ r61 | count : Int }` into
     /// `{ a | count : Int }`.
     pub fn render_pretty(&self) -> String {
+        self.render_pretty_avoiding(&std::collections::HashSet::new())
+    }
+
+    /// Like [`render_pretty`](Self::render_pretty), but a generated name is
+    /// never one of `avoid` (the names in scope where a message points, so
+    /// a type variable does not read as a value of the program).
+    pub fn render_pretty_avoiding(&self, avoid: &std::collections::HashSet<String>) -> String {
         let mut kept = std::collections::HashSet::new();
         self.for_each_var(&mut |n| {
             if !is_internal_var(n) {
@@ -317,6 +324,7 @@ impl Ty {
         let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let mut counter = 0usize;
         let mut used: std::collections::HashSet<String> = kept.clone();
+        used.extend(avoid.iter().cloned());
         self.for_each_var(&mut |n| {
             if is_internal_var(n) && !map.contains_key(n) {
                 // A minted bounded variable (`comparable12`) shows as its

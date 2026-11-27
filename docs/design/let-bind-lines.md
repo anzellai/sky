@@ -152,9 +152,19 @@ pattern is `[E3001]` with "use `case`". Find the union through
   (and its callers run it), or do this work in a function that returns a
   Task." It is advice: a changed signature is not a code fix this note
   checks. A `Maybe` or `Result` line adds the idiom that takes it apart.
+  A `Task` line in a block of the TEA update shape `( model, Cmd msg )`
+  says instead: "`update` returns `( Model, Cmd Msg )`, so a Task cannot run
+  in it directly. Put the Task block in its own function and run it with
+  `Cmd.perform`: `( model, Cmd.perform (save model) Saved )`; its result
+  comes back as a `Msg`." It names the def's model parameter and the `Msg`
+  constructor that takes a `Result`. Every note that prints a type shows a
+  record by the alias name the def's annotation wrote (`Model`).
+- `[E2015]` names a type variable that is not a name written in the def
+  (`a <- t` shows `b`, never `a`).
 - The block's type is the expected type when it is known: a block in tail
-  position of an annotated def's body (through `let`, `if` and `case`) has
-  the annotated result. Its first line unifies its result with it, so each
+  position of an annotated def's body (through `let`, `if`, `case` and the
+  continuation of a bind line, that is its later lines and its `in`
+  expression) has the annotated result. Its first line unifies its result with it, so each
   line whose head differs is the one blamed, at its own `<-`, with the
   conversion of that line (`n <- Task.fromResult (parse s)`), tried against
   the expected type. The `andThen` is still chosen from the type of `e`

@@ -1254,3 +1254,148 @@ fn two_decoders_of_one_name_are_shown_as_the_module_writes_them() {
         &["the `andThen` of `Maybe`, and the block is a `Task` block"],
     );
 }
+
+// ---- 7. a block nested in the continuation of a bind line -----------------
+
+/// Exactly one diagnostic in all, an `[E2001]` at the `<-` of the line that
+/// contains `line`, naming `fix`; the fix applied checks clean.
+fn nested_blames(body: &str, line: &str, fix: &str) {
+    let src = format!("{PARSE}{body}");
+    let got = check(&src, &[]);
+    assert_eq!(got.len(), 1, "{got:#?}");
+    one_e2001_at(&got, "<-", &[fix]);
+    assert!(got[0].line.contains(line), "{got:#?}");
+    let fixed = apply_named_fix(&src, &got).unwrap_or_else(|| panic!("no fix: {got:#?}"));
+    let after = check(&fixed, &[]);
+    assert!(after.is_empty(), "fix does not check:\n{fixed}\n{after:#?}");
+}
+
+/// Judge probe h5: the block in the `case` after `_ <- println "start"` is
+/// in tail position of the annotated body, so its `Result` line is blamed.
+#[test]
+fn a_block_in_the_continuation_of_a_bind_line_takes_the_annotated_type() {
+    nested_blames(
+        "go : String -> Task Error Int\ngo s =\n    let\n        _ <- println \"start\"\n    in\n    case String.length s of\n        0 ->\n            Task.succeed 0\n\n        _ ->\n            let\n                n <- parse s\n                _ <- println \"parsed\"\n            in\n            Task.succeed n",
+        "n <- parse s",
+        "n <- Task.fromResult (parse s)",
+    );
+}
+
+/// Judge probe h6: the same block without the outer bind line.
+#[test]
+fn a_block_in_a_case_arm_without_an_outer_bind_line_is_blamed_the_same() {
+    nested_blames(
+        "go : String -> Task Error Int\ngo s =\n    case String.length s of\n        0 ->\n            Task.succeed 0\n\n        _ ->\n            let\n                n <- parse s\n                _ <- println \"parsed\"\n            in\n            Task.succeed n",
+        "n <- parse s",
+        "n <- Task.fromResult (parse s)",
+    );
+}
+
+/// Judge probes h4 (a `case`) and g5 (an `if`): a `Maybe` line in a block
+/// nested in a `Task` block's `in` expression is one error, at that line.
+#[test]
+fn a_maybe_line_nested_in_a_case_or_if_after_a_bind_line_is_one_error() {
+    nested_blames(
+        "go : Int -> Task Error Int\ngo n =\n    let\n        a <- Task.succeed n\n    in\n    case a of\n        0 ->\n            let\n                b <- String.toInt \"2\"\n            in\n            Task.succeed b\n\n        _ ->\n            Task.succeed 0",
+        "b <- String.toInt \"2\"",
+        "b <- Task.fromResult (Result.fromMaybe err (String.toInt \"2\"))",
+    );
+    nested_blames(
+        "go : Int -> Task Error Int\ngo n =\n    let\n        a <- Task.succeed n\n    in\n    if a > 0 then\n        let\n            b <- Just 2\n        in\n        Task.succeed b\n\n    else\n        Task.succeed 0",
+        "b <- Just 2",
+        "b <- Task.fromResult (Result.fromMaybe err (Just 2))",
+    );
+}
+
+/// Three blocks deep, each in the `in` expression of the one before.
+#[test]
+fn a_block_three_deep_in_continuations_is_blamed_at_its_line() {
+    nested_blames(
+        "go : String -> Task Error Int\ngo s =\n    let\n        a <- Task.succeed 1\n    in\n    case a of\n        1 ->\n            let\n                b <- Task.succeed 2\n            in\n            if b > 1 then\n                let\n                    c <- parse s\n                in\n                Task.succeed (a + b + c)\n\n            else\n                Task.succeed 0\n\n        _ ->\n            Task.succeed 0",
+        "c <- parse s",
+        "c <- Task.fromResult (parse s)",
+    );
+}
+
+/// Well-typed nesting still checks, and a block in an argument (not in tail
+/// position) keeps the `andThen` of its own type.
+#[test]
+fn well_typed_nested_blocks_still_check() {
+    for body in [
+        "go : String -> Task Error Int\ngo s =\n    let\n        a <- Task.succeed 1\n    in\n    case a of\n        1 ->\n            let\n                b <- Task.succeed 2\n            in\n            if b > 1 then\n                let\n                    c <- Task.fromResult (parse s)\n                in\n                Task.succeed (a + b + c)\n\n            else\n                Task.succeed 0\n\n        _ ->\n            Task.succeed 0",
+        "go : String -> Task Error Int\ngo s =\n    let\n        a <- Task.succeed 1\n    in\n    Task.fromResult\n        (let\n            n <- parse s\n            m <- Result.fromMaybe (Error.invalidInput \"x\") (String.toInt s)\n         in\n         Ok (a + n + m)\n        )",
+    ] {
+        let got = check(&format!("{PARSE}{body}"), &[]);
+        assert!(got.is_empty(), "{body}\n{got:#?}");
+    }
+}
+
+// ---- 8. a Task line in a TEA `update`, and alias names in notes ------------
+
+const TEA: &str = "type alias Model =\n    { count : Int, note : String }\n\n\ntype Msg\n    = Bump\n    | Saved (Result Error Int)\n\n\n";
+
+/// Judge probe h8: `update` returns `( Model, Cmd Msg )`. The note says to
+/// run the Task with `Cmd.perform`, never to make `update` return a Task.
+#[test]
+fn a_task_line_in_a_tea_update_names_cmd_perform() {
+    let src = format!(
+        "{TEA}update : Msg -> Model -> ( Model, Cmd Msg )\nupdate msg model =\n    case msg of\n        Bump ->\n            let\n                v <- Task.succeed 3\n            in\n            ( {{ model | count = model.count + v }}, Cmd.none )\n\n        Saved _ ->\n            ( model, Cmd.none )"
+    );
+    let got = check_with(&src, &[], "import Std.Cmd as Cmd exposing (Cmd)\n");
+    one_e2001_at(
+        &got,
+        "<-",
+        &[
+            "`update` returns `( Model, Cmd Msg )`, so a Task cannot run in it directly. Put \
+           the Task block in its own function and run it with `Cmd.perform`: `( model, \
+           Cmd.perform (save model) Saved )`; its result comes back as a `Msg`.",
+        ],
+    );
+    let m = &got[0].message;
+    assert!(!m.contains("Make `update` return"), "{m}");
+    assert!(!m.contains("count : Int"), "{m}");
+}
+
+/// A note that prints the def's result type prints a record alias by name.
+#[test]
+fn a_cannot_run_note_prints_the_alias_name() {
+    let got = check(
+        &format!("{FETCH_INT}{TEA}f : Int -> Model\nf n =\n    let\n        x <- fetch\n    in\n    {{ count = x, note = \"\" }}"),
+        &[],
+    );
+    one_e2001_at(
+        &got,
+        "<-",
+        &[
+            "`f` returns `Model`, so the `Task` after `<-` cannot run here",
+            "Make `f` return `Task Error Model`",
+        ],
+    );
+    assert!(!got[0].message.contains("count : Int"), "{got:#?}");
+}
+
+/// The `[E2015]` type variable is not a name in scope at the line.
+#[test]
+fn the_e2015_type_variable_is_not_a_name_in_scope() {
+    for (body, names) in [
+        (
+            "go t =\n    let\n        a <- t\n    in\n    Task.succeed a",
+            &["a", "t"][..],
+        ),
+        (
+            "go a =\n    let\n        b <- a\n    in\n    Task.succeed b",
+            &["a", "b"][..],
+        ),
+    ] {
+        let got = check(body, &[]);
+        let e: Vec<_> = got.iter().filter(|g| g.code == "E2015").collect();
+        assert_eq!(e.len(), 1, "{got:#?}");
+        let m = &e[0].message;
+        let i = m
+            .find("that type is still `")
+            .unwrap_or_else(|| panic!("{m}"));
+        let rest = &m[i + "that type is still `".len()..];
+        let v = &rest[..rest.find('`').unwrap()];
+        assert!(!names.contains(&v), "{v} is in scope: {m}");
+    }
+}

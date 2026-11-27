@@ -84,8 +84,10 @@ pub(crate) struct PendingBind {
 
 /// The first bind line of each block in tail position of `root`: the whole
 /// of `root`, or a tail of it through the `let` segments (the resolver's and
-/// the written ones), the branches of an `if` and the arms of a `case`. Each
-/// such block has the type of `root`.
+/// the written ones), the branches of an `if` and the arms of a `case`, and
+/// the continuation of each bind line (its later lines and its `in`
+/// expression are the rest of the block, so a block nested in them is in
+/// tail position too). Each such block has the type of `root`.
 pub(crate) fn root_bind_calls(body: &Body, root: ExprId) -> Vec<ExprId> {
     let mut out = Vec::new();
     let mut todo = vec![root];
@@ -100,7 +102,10 @@ pub(crate) fn root_bind_calls(body: &Body, root: ExprId) -> Vec<ExprId> {
             Expr::Call(f, args)
                 if args.len() == 2 && matches!(body.exprs[*f], Expr::Var(Res::BindAndThen)) =>
             {
-                out.push(cur)
+                out.push(cur);
+                if let Expr::Lambda { body: lb, .. } = &body.exprs[args[0]] {
+                    todo.push(*lb);
+                }
             }
             _ => {}
         }
@@ -506,14 +511,15 @@ impl<'a> Infer<'a> {
                 self.bind_error(
                     pb,
                     NoAndThen::NeedsArgs {
-                        ty: raw.render_pretty(),
+                        ty: self.show(&raw),
                         args,
                     },
                 );
                 return Attempt::Done;
             }
             other => {
-                self.bind_error(pb, NoAndThen::NotNamed(other.render_pretty()));
+                let shown = self.show(other);
+                self.bind_error(pb, NoAndThen::NotNamed(shown));
                 return Attempt::Done;
             }
         };
@@ -876,7 +882,7 @@ impl<'a> Infer<'a> {
                 .map(|mid| self.qualifier_of(mid, f))
                 .unwrap_or_else(|| f.to_string())
         };
-        let shown = ty.render_pretty();
+        let shown = self.show(ty);
         let a = article(&shown);
         match nominal::strip(head) {
             "Maybe" => format!(
@@ -1106,8 +1112,8 @@ impl<'a> Infer<'a> {
         };
         let intro = format!(
             "\n\nNote: the `in` expression has type `{}`; this block needs `{}`.",
-            body_ty.render_pretty(),
-            block_ty.render_pretty()
+            self.show(&body_ty),
+            self.show(&block_ty)
         );
         // A conversion from another head, when the converted value fits.
         if let Some(h) = body_head
@@ -1405,7 +1411,15 @@ impl<'a> Infer<'a> {
         } else {
             head.clone()
         };
-        let block_text = block_ty.render_pretty();
+        let block_text = self.show(block_ty);
+        // A Task line in a TEA `update` (a block of `( model, Cmd msg )`):
+        // the Task runs through `Cmd.perform`, never by making `update`
+        // return a Task (the app builder takes no such `update`).
+        if head == "Task" {
+            if let Some(note) = self.tea_update_note(block_ty, &block_text) {
+                return note;
+            }
+        }
         // The type the block would need: the line's type with the block's
         // type as its result (`Task Error Int` with `String`: `Task Error
         // String`).
@@ -1419,8 +1433,8 @@ impl<'a> Infer<'a> {
                 Ty::App(Name::from(shown_head.as_str()), args)
             }
             _ => Ty::App(Name::from(shown_head.as_str()), vec![block_ty.clone()]),
-        }
-        .render_pretty();
+        };
+        let needed = self.show(&needed);
         let callers = if head == "Task" {
             "run it"
         } else {
@@ -1471,6 +1485,203 @@ impl<'a> Infer<'a> {
             }
         }
         (t.render_pretty() == ty.render_pretty()).then(|| loc.name.as_str().to_string())
+    }
+
+    /// The note on a `Task` bind line in a block of the TEA update shape
+    /// `( model, Cmd msg )`: the Task runs through `Cmd.perform`, and its
+    /// result comes back as a `Msg`. `None` for any other block type.
+    fn tea_update_note(&self, block_ty: &Ty, block_text: &str) -> Option<String> {
+        let Ty::Tuple(parts) = block_ty else {
+            return None;
+        };
+        let [_, Ty::App(cmd, cmd_args)] = parts.as_slice() else {
+            return None;
+        };
+        if nominal::strip(cmd.as_str()) != "Cmd" || cmd_args.len() != 1 {
+            return None;
+        }
+        let q = |m: &str, f: &str| -> String {
+            self.db
+                .module_by_name(m)
+                .map(|mid| self.qualifier_of(mid, f))
+                .unwrap_or_else(|| f.to_string())
+        };
+        let cmd_q = q("Std.Cmd", "Cmd");
+        // The model: the def's last parameter, when it is a plain name.
+        let model = self
+            .on_own_body(|b| {
+                let p = *b.params.last()?;
+                matches!(b.pats[p], Pattern::Var(_))
+                    .then(|| pat_text(self.db, self.self_def, b, p))
+                    .filter(|t| t != "…")
+            })
+            .flatten()
+            .unwrap_or_else(|| "model".to_string());
+        // The `Msg` constructor that takes a `Result`, when the msg type has
+        // one; else a name to declare.
+        let msg_name = match &cmd_args[0] {
+            Ty::App(m, a) if a.is_empty() => Some(m.as_str().to_string()),
+            _ => None,
+        };
+        let ctor = msg_name.as_deref().and_then(|m| {
+            let ctors = self
+                .world
+                .union_ctors
+                .get(m)
+                .or_else(|| self.world.union_ctors.get(nominal::strip(m)))?;
+            ctors.iter().find_map(|c| {
+                let s = self.world.ctors.get(c)?;
+                match &s.ty {
+                    Ty::Fun(arg, res)
+                        if matches!(arg.as_ref(), Ty::App(r, _) if nominal::strip(r.as_str()) == "Result")
+                            && matches!(res.as_ref(), Ty::App(..)) =>
+                    {
+                        Some(nominal::strip(c).to_string())
+                    }
+                    _ => None,
+                }
+            })
+        });
+        let msg_shown = msg_name
+            .as_deref()
+            .map(|m| nominal::strip(m).to_string())
+            .unwrap_or_else(|| "Msg".to_string());
+        let (ctor, declare) = match ctor {
+            Some(c) => (c, String::new()),
+            None => (
+                "Saved".to_string(),
+                format!(
+                    " (with a `{msg_shown}` constructor that takes its `Result`, such as \
+                     `Saved (Result Error a)`)"
+                ),
+            ),
+        };
+        let who = match self.def_returning(block_ty) {
+            Some(def) => format!("`{def}` returns"),
+            None => "this block has type".to_string(),
+        };
+        Some(format!(
+            "\n\nNote: {who} `{block_text}`, so a Task cannot run in it directly. Put the Task \
+             block in its own function and run it with `{cmd_q}.perform`: `( {model}, \
+             {cmd_q}.perform (save {model}) {ctor} )`{declare}; its result comes back as a \
+             `{msg_shown}`."
+        ))
+    }
+
+    /// The record aliases the def's annotation writes by name (`Model`),
+    /// each with the record type it stands for, as `render_pretty` shows it.
+    fn annotation_aliases(&self) -> Vec<(String, Name)> {
+        fn walk(raw: &Ty, ty: &Ty, out: &mut Vec<(String, Name)>) {
+            match (raw, ty) {
+                (Ty::App(name, args), Ty::Record(..)) if args.is_empty() => {
+                    out.push((ty.render_pretty(), name.clone()))
+                }
+                (Ty::App(_, args), Ty::App(_, targs)) if args.len() == targs.len() => {
+                    for (a, b) in args.iter().zip(targs) {
+                        walk(a, b, out);
+                    }
+                }
+                (Ty::Fun(a, b), Ty::Fun(x, y)) => {
+                    walk(a, x, out);
+                    walk(b, y, out);
+                }
+                (Ty::Tuple(xs), Ty::Tuple(ys)) if xs.len() == ys.len() => {
+                    for (a, b) in xs.iter().zip(ys) {
+                        walk(a, b, out);
+                    }
+                }
+                (Ty::Record(fs, _), Ty::Record(gs, _)) => {
+                    for (n, a) in fs {
+                        if let Some((_, b)) = gs.iter().find(|(m, _)| m == n) {
+                            walk(a, b, out);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        use syntax::ast;
+        let mut out = Vec::new();
+        let Some(def) = self.self_def else {
+            return out;
+        };
+        let (Some(loc), Some(scheme)) = (self.db.def_loc(def), self.world.value_sigs.get(&def))
+        else {
+            return out;
+        };
+        // The annotation as written: alias names unexpanded.
+        let tree = self.db.module_parse(loc.module).tree();
+        for decl in tree.decls() {
+            if let ast::Decl::TypeAnno(a) = &decl {
+                if a.name().map(|t| t.text().to_string()).as_deref() == Some(loc.name.as_str()) {
+                    if let Some(t) = a.ty() {
+                        walk(&crate::sig::ast_type_to_ty(&t), &scheme.ty, &mut out);
+                    }
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    /// `ty` as a note shows it: a record the def's annotation wrote through
+    /// an alias is shown by the alias name (`Model`, not its fields).
+    pub(crate) fn show(&self, ty: &Ty) -> String {
+        let aliases = self.annotation_aliases();
+        if aliases.is_empty() {
+            return ty.render_pretty();
+        }
+        fn sub(t: &Ty, al: &[(String, Name)]) -> Ty {
+            match t {
+                Ty::Record(fs, ext) => {
+                    let shown = t.render_pretty();
+                    if let Some((_, n)) = al.iter().find(|(r, _)| *r == shown) {
+                        return Ty::App(n.clone(), Vec::new());
+                    }
+                    Ty::Record(
+                        fs.iter().map(|(n, x)| (n.clone(), sub(x, al))).collect(),
+                        ext.clone(),
+                    )
+                }
+                Ty::Fun(a, b) => Ty::Fun(Box::new(sub(a, al)), Box::new(sub(b, al))),
+                Ty::App(n, xs) => Ty::App(n.clone(), xs.iter().map(|x| sub(x, al)).collect()),
+                Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| sub(x, al)).collect()),
+                other => other.clone(),
+            }
+        }
+        sub(ty, &aliases).render_pretty()
+    }
+
+    /// The names a message about the code at `span` must not give a type
+    /// variable: every lower-case name written in the top-level definition
+    /// that holds `span` (its name, its parameters and the names its body
+    /// binds or uses), so `a` never reads as a value. Read from the source,
+    /// so the answer is the same whichever def's inference reports it.
+    pub(crate) fn names_at(
+        &self,
+        module: Option<ModuleId>,
+        span: Option<Span>,
+    ) -> std::collections::HashSet<String> {
+        use syntax::ast::AstNode;
+        let mut out = std::collections::HashSet::new();
+        let (Some(module), Some(span)) = (module, span) else {
+            return out;
+        };
+        let tree = self.db.module_parse(module).tree();
+        let at = span.range.0;
+        for decl in tree.decls() {
+            let r = decl.syntax().text_range();
+            if u32::from(r.start()) <= at && at < u32::from(r.end()) {
+                let text = decl.syntax().text().to_string();
+                for w in text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '\'')) {
+                    if w.starts_with(|c: char| c.is_lowercase() || c == '_') {
+                        out.insert(w.to_string());
+                    }
+                }
+                break;
+            }
+        }
+        out
     }
 
     /// The source text at `span` in `module`, when it is short and on one
@@ -1589,7 +1800,9 @@ impl<'a> Infer<'a> {
                         example.render_pretty()
                     )
                 } else {
-                    let t = self.read_back(pb.e_ty).render_pretty();
+                    let t = self
+                        .read_back(pb.e_ty)
+                        .render_pretty_avoiding(&self.names_at(pb.module, pb.span));
                     format!(
                         "The bind line `{} <- …` chooses `andThen` from the type of the \
                          expression after `<-`, and that type is still `{t}`. Annotate it, \
