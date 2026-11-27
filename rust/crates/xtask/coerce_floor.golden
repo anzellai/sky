@@ -656,6 +656,14 @@
 #   encodeCheckedRows) stayed as `case`: as bind lines they raised every Store
 #   project by 7 (a nested Result bind lowers through the erased
 #   `Sky.Core.Result.andThen`), so they were not migrated.
+#
+# typed nested bind (v0.32.1): 2 rows FALL by 1 each (15414 -> 15412), none
+#   rose, adapter and dispatch 0; full run, 86 of 86 rows. A lambda
+#   continuation of `Result.andThen` / `Maybe.andThen` whose parameter is a
+#   list or holds `any` (`Json.Encode.Value`) now takes the typed twin (doc 14
+#   R12, lever §5.3, `lower.rs` `and_then_plan` + `monad_callback_reaches_slot`
+#   + `provable_or_any`). The seven Std.Db.Store ladders are bind lines again
+#   and every Store project stays at its golden.
 00-standard-libs	adapter=0	dispatch=0	narrow=103
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=5
@@ -717,7 +725,7 @@
 65-metadata-service	adapter=0	dispatch=0	narrow=15
 66-slack-agent	adapter=0	dispatch=0	narrow=121
 67-durable-counter	adapter=0	dispatch=0	narrow=62
-68-ai-dataset	adapter=0	dispatch=0	narrow=373
+68-ai-dataset	adapter=0	dispatch=0	narrow=372
 69-ai-scrub	adapter=0	dispatch=0	narrow=48
 70-ai-synthetic	adapter=0	dispatch=0	narrow=368
 71-ai-registry	adapter=0	dispatch=0	narrow=794
@@ -739,6 +747,6 @@ examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=1
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=103
 sky-bundled/ai	adapter=0	dispatch=0	narrow=599
 sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=482
-sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1145
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1144
 sky-bundled/console	adapter=0	dispatch=0	narrow=145
 sky-bundled/doc	adapter=0	dispatch=0	narrow=42

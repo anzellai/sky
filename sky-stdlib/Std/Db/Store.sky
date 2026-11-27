@@ -1497,19 +1497,11 @@ encodeCheckedRows verb s checks records =
             Ok []
 
         r :: rest ->
-            case encodeRowWith verb s checks r of
-
-                Err e ->
-                    Err e
-
-                Ok row ->
-                    case encodeCheckedRows verb s checks rest of
-
-                        Err e ->
-                            Err e
-
-                        Ok more ->
-                            Ok (row :: more)
+            let
+                row <- encodeRowWith verb s checks r
+                more <- encodeCheckedRows verb s checks rest
+            in
+                Ok (row :: more)
 
 
 -- The `defaultWith` values of each record of `insertMany`, computed per row.
@@ -1521,19 +1513,11 @@ checkedComputedRows s records =
             Ok []
 
         _ :: rest ->
-            case checkedComputed s of
-
-                Err e ->
-                    Err e
-
-                Ok row ->
-                    case checkedComputedRows s rest of
-
-                        Err e ->
-                            Err e
-
-                        Ok more ->
-                            Ok (row :: more)
+            let
+                row <- checkedComputed s
+                more <- checkedComputedRows s rest
+            in
+                Ok (row :: more)
 
 
 -- | Insert the record, or UPDATE it in place if its primary key already exists
@@ -4926,39 +4910,25 @@ assemble spec window fromSql selSql whereSql tailSql =
 -- PARTITION BY keys ORDER BY newest DESC NULLS LAST, pk DESC.
 latestRendered : Ctx -> String -> List String -> String -> Result Error String
 latestRendered ctx pk keys newestBy =
-    case refList ctx keys [] of
+    let
+        keySqls <- refList ctx keys []
+        ( nSql, _, _ ) <- refOf ctx newestBy
+        tie =
+            if pk == "" || pk == nSql then
+                ""
 
-        Err e ->
-            Err e
+            else
+                ", " ++ pk ++ " DESC"
+        partition =
+            case keySqls of
 
-        Ok keySqls ->
-            case refOf ctx newestBy of
+                [] ->
+                    ""
 
-                Err e ->
-                    Err e
-
-                Ok ( nSql, _, _ ) ->
-                    let
-                        tie =
-                            if pk == "" || pk == nSql then
-                                ""
-
-                            else
-                                ", " ++ pk ++ " DESC"
-                        partition =
-                            case keySqls of
-
-                                [] ->
-                                    ""
-
-                                _ ->
-                                    "PARTITION BY " ++ String.join ", " keySqls
-                                        ++ " "
-                    in
-                        Ok
-                            (partition ++ "ORDER BY " ++ nSql
-                                ++ " DESC NULLS LAST"
-                                ++ tie)
+                _ ->
+                    "PARTITION BY " ++ String.join ", " keySqls ++ " "
+    in
+        Ok (partition ++ "ORDER BY " ++ nSql ++ " DESC NULLS LAST" ++ tie)
 
 
 -- ── The SELECT list ──────────────────────────────────────────────────────────
@@ -4972,23 +4942,11 @@ selectList ctx spec =
                 Ok ( "*", [], [] )
 
             else
-                case prefixedItems "a" spec.source.cols [] of
-
-                    Err e ->
-                        Err e
-
-                    Ok leftItems ->
-                        case prefixedItems "b" spec.right.cols [] of
-
-                            Err e ->
-                                Err e
-
-                            Ok rightItems ->
-                                Ok
-                                    ( String.join ", " (leftItems ++ rightItems)
-                                    , []
-                                    , []
-                                    )
+                let
+                    leftItems <- prefixedItems "a" spec.source.cols []
+                    rightItems <- prefixedItems "b" spec.right.cols []
+                in
+                    Ok ( String.join ", " (leftItems ++ rightItems), [], [] )
 
         OutCount ->
             Ok ( "COUNT(*) AS n", [], [] )
@@ -5003,41 +4961,29 @@ selectList ctx spec =
                     Ok ( String.join ", " items, [], [] )
 
         OutAggs aggs ->
-            case refList ctx spec.groups [] of
+            let
+                groupSqls <- refList ctx spec.groups []
+                ( items, params, aliases ) <-
+                    aggItems
+                        ctx
+                        groupSqls
+                        (not (List.isEmpty spec.groups))
+                        ( spec.outCols, spec.outNodes )
+                        aggs
+                        []
+                        []
+                        []
+            in
+                case uncovered spec.outCols aliases of
 
-                Err e ->
-                    Err e
+                    Just col ->
+                        Err
+                            <| storeErr
+                                   ("aggregate: result field \"" ++ col
+                                       ++ "\" has no Agg")
 
-                Ok groupSqls ->
-                    case aggItems
-                             ctx
-                             groupSqls
-                             (not (List.isEmpty spec.groups))
-                             ( spec.outCols, spec.outNodes )
-                             aggs
-                             []
-                             []
-                             [] of
-
-                        Err e ->
-                            Err e
-
-                        Ok ( items, params, aliases ) ->
-                            case uncovered spec.outCols aliases of
-
-                                Just col ->
-                                    Err
-                                        <| storeErr
-                                               ("aggregate: result field \""
-                                                   ++ col
-                                                   ++ "\" has no Agg")
-
-                                Nothing ->
-                                    Ok
-                                        ( String.join ", " items
-                                        , params
-                                        , aliases
-                                        )
+                    Nothing ->
+                        Ok ( String.join ", " items, params, aliases )
 
 
 -- `a.col AS "a__col", …`: every column of one side of a join, under a quoted
@@ -5475,36 +5421,17 @@ whereClause ctx conds =
 -- GROUP BY + HAVING + ORDER BY + LIMIT/OFFSET, after the WHERE.
 clauseTail : Ctx -> QuerySpec -> List ( String, Ref ) -> Result Error ( String, List SqlValue )
 clauseTail ctx spec aliases =
-    case refList ctx spec.groups [] of
-
-        Err e ->
-            Err e
-
-        Ok groupSqls ->
-            case havingClause ctx spec.outCols aliases spec.having of
-
-                Err e ->
-                    Err e
-
-                Ok ( havingSql, havingParams ) ->
-                    case orderClause ctx spec of
-
-                        Err e ->
-                            Err e
-
-                        Ok orderSql ->
-                            case pageClause ctx.dialect spec.limitN spec.offsetN of
-
-                                Err e ->
-                                    Err e
-
-                                Ok pageSql ->
-                                    Ok
-                                        ( groupClause groupSqls ++ havingSql
-                                              ++ orderSql
-                                              ++ pageSql
-                                        , havingParams
-                                        )
+    let
+        groupSqls <- refList ctx spec.groups []
+        ( havingSql, havingParams ) <-
+            havingClause ctx spec.outCols aliases spec.having
+        orderSql <- orderClause ctx spec
+        pageSql <- pageClause ctx.dialect spec.limitN spec.offsetN
+    in
+        Ok
+            ( groupClause groupSqls ++ havingSql ++ orderSql ++ pageSql
+            , havingParams
+            )
 
 
 latestCheck : Ctx -> QuerySpec -> Result Error String
@@ -5818,33 +5745,23 @@ renderCond ctx c =
                 col = l.col
                 op = l.op
                 v = l.value
+                ( rSql, rParams, k ) <- refOf ctx col
             in
-                case refOf ctx col of
+                if isJsonRef col && not (isSqlString v) then
+                    Err
+                        <| storeErr
+                               ("a value compared with jsonText \"" ++ col
+                                   ++ "\" must be SqlString")
 
-                    Err e ->
-                        Err e
-
-                    Ok ( rSql, rParams, k ) ->
-                        if isJsonRef col && not (isSqlString v) then
-                            Err
-                                <| storeErr
-                                       ("a value compared with jsonText \""
-                                           ++ col
-                                           ++ "\" must be SqlString")
-
-                        else
-                            case condValue "Store: " col k v of
-
-                                Err e ->
-                                    Err e
-
-                                Ok bound ->
-                                    Ok
-                                        ( collated ctx k rSql ++ " " ++ op
-                                              ++ " "
-                                              ++ condParam ctx col k
-                                        , rParams ++ [ bound ]
-                                        )
+                else
+                    let
+                        bound <- condValue "Store: " col k v
+                    in
+                        Ok
+                            ( collated ctx k rSql ++ " " ++ op ++ " "
+                                  ++ condParam ctx col k
+                            , rParams ++ [ bound ]
+                            )
 
         CondNull l ->
             let
@@ -5867,58 +5784,44 @@ renderCond ctx c =
             let
                 col = l.col
                 vs = l.values
+                ( rSql, rParams, k ) <- refOf ctx col
             in
-                case refOf ctx col of
+                case vs of
 
-                    Err e ->
-                        Err e
+                    [] ->
+                        Ok ( "1 = 0", [] )
 
-                    Ok ( rSql, rParams, k ) ->
-                        case vs of
+                    _ ->
+                        if isJsonRef col && not (allSqlString vs) then
+                            Err
+                                <| storeErr
+                                       ("values compared with jsonText \"" ++ col
+                                           ++ "\" must be SqlString")
 
-                            [] ->
-                                Ok ( "1 = 0", [] )
-
-                            _ ->
-                                if isJsonRef col && not (allSqlString vs) then
-                                    Err
-                                        <| storeErr
-                                               ("values compared with jsonText \""
-                                                   ++ col
-                                                   ++ "\" must be SqlString")
+                        else
+                            let
+                                bound <- condValues "Store: " col k vs
+                            in
+                                if List.length bound > listParamFrom then
+                                    Ok
+                                        ( collated ctx k rSql
+                                              ++ listParamSql
+                                                     ctx
+                                                     col
+                                                     k
+                                                     (List.length bound)
+                                        , rParams ++ bound
+                                        )
 
                                 else
-                                    case condValues "Store: " col k vs of
-
-                                        Err e ->
-                                            Err e
-
-                                        Ok bound ->
-                                            if List.length bound > listParamFrom then
-                                                Ok
-                                                    ( collated ctx k rSql
-                                                          ++ listParamSql
-                                                                 ctx
-                                                                 col
-                                                                 k
-                                                                 (List.length
-                                                                     bound)
-                                                    , rParams ++ bound
-                                                    )
-
-                                            else
-                                                Ok
-                                                    ( collated ctx k rSql
-                                                          ++ " IN ("
-                                                          ++ markedPlaceholders
-                                                                 (condParam
-                                                                     ctx
-                                                                     col
-                                                                     k)
-                                                                 bound
-                                                          ++ ")"
-                                                    , rParams ++ bound
-                                                    )
+                                    Ok
+                                        ( collated ctx k rSql ++ " IN ("
+                                              ++ markedPlaceholders
+                                                     (condParam ctx col k)
+                                                     bound
+                                              ++ ")"
+                                        , rParams ++ bound
+                                        )
 
         CondAnd cs ->
             renderGroup ctx "1 = 1" " AND " cs
@@ -5940,37 +5843,24 @@ renderCond ctx c =
                 op = l.op
                 left = l.col
                 right = l.text
+                ( lSql, lParams, lk ) <- refOf ctx left
+                ( rSql, rParams, rk ) <- refOf ctx right
             in
-                case refOf ctx left of
+                if kindBase lk /= kindBase rk then
+                    Err
+                        <| storeErr
+                               ("\"" ++ left ++ "\" is " ++ kindBase lk
+                                   ++ " and \""
+                                   ++ right
+                                   ++ "\" is "
+                                   ++ kindBase rk
+                                   ++ ": compare columns of one kind")
 
-                    Err e ->
-                        Err e
-
-                    Ok ( lSql, lParams, lk ) ->
-                        case refOf ctx right of
-
-                            Err e ->
-                                Err e
-
-                            Ok ( rSql, rParams, rk ) ->
-                                if kindBase lk /= kindBase rk then
-                                    Err
-                                        <| storeErr
-                                               ("\"" ++ left ++ "\" is "
-                                                   ++ kindBase lk
-                                                   ++ " and \""
-                                                   ++ right
-                                                   ++ "\" is "
-                                                   ++ kindBase rk
-                                                   ++ ": compare columns of one kind")
-
-                                else
-                                    Ok
-                                        ( collated ctx lk lSql ++ " " ++ op
-                                              ++ " "
-                                              ++ rSql
-                                        , lParams ++ rParams
-                                        )
+                else
+                    Ok
+                        ( collated ctx lk lSql ++ " " ++ op ++ " " ++ rSql
+                        , lParams ++ rParams
+                        )
 
         CondText l ->
             let
@@ -7126,19 +7016,11 @@ condValues prefix col kind vs =
             Ok []
 
         v :: rest ->
-            case condValue prefix col kind v of
-
-                Err msg ->
-                    Err msg
-
-                Ok one ->
-                    case condValues prefix col kind rest of
-
-                        Err msg ->
-                            Err msg
-
-                        Ok more ->
-                            Ok (one :: more)
+            let
+                one <- condValue prefix col kind v
+                more <- condValues prefix col kind rest
+            in
+                Ok (one :: more)
 
 
 -- A value written into a column: the kind rule, `SqlNull` only into a

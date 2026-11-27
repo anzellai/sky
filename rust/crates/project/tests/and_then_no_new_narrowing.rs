@@ -220,3 +220,64 @@ fn the_ledger_sign_up_chain_stays_typed() {
         assert!(!body.contains(erased), "{erased} in:\n{body}");
     }
 }
+
+/// The `Std.Db.Store` ladder shape (`condValues`, `encodeCheckedRows`): a
+/// recursive list walk whose second bind line binds the rest of the list, so
+/// the nested continuation takes a slice (`\more -> Ok (v :: more)`). Every
+/// bind line and every hand-written nested `andThen` of that shape stays on
+/// the typed twin. A lambda is lowered at the slot's own Go types
+/// (`lower_lambda` widens only a struct param, which `provable` refuses), so
+/// a slice parameter needs no per-call rebuild (doc 14 R12, lever §5.3).
+const LIST_LADDER_SRC: &str = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Sky.Core.Maybe as Maybe\n\
+import Sky.Core.Result as Result\n\
+import Sky.Core.String as String\n\
+import Sky.Core.List as List\n\
+import Sky.Core.Json.Encode as Encode exposing (Value)\n\
+import Sky.Core.Error as Error exposing (Error)\n\
+import Std.Log exposing (println)\n\n\n\
+one : String -> Result Error Int\n\
+one s =\n    Result.fromMaybe (Error.invalidInput s) (String.toInt s)\n\n\n\
+many : List String -> Result Error (List Int)\n\
+many xs =\n    case xs of\n        [] ->\n            Ok []\n\n        x :: rest ->\n            let\n                v <- one x\n                more <- many rest\n            in\n            Ok (v :: more)\n\n\n\
+manyHand : List String -> Result Error (List Int)\n\
+manyHand xs =\n    case xs of\n        [] ->\n            Ok []\n\n        x :: rest ->\n            one x |> Result.andThen (\\v -> manyHand rest |> Result.andThen (\\more -> Ok (v :: more)))\n\n\n\
+manyMaybe : List String -> Maybe (List Int)\n\
+manyMaybe xs =\n    case xs of\n        [] ->\n            Just []\n\n        x :: rest ->\n            let\n                v <- String.toInt x\n                more <- manyMaybe rest\n            in\n            Just (v :: more)\n\n\n\
+asValue : String -> Result Error Value\n\
+asValue s =\n    Ok (Encode.string s)\n\n\n\
+encodeAll : List String -> Result Error (List Value)\n\
+encodeAll xs =\n    case xs of\n        [] ->\n            Ok []\n\n        x :: rest ->\n            let\n                v <- asValue x\n                more <- encodeAll rest\n            in\n            Ok (v :: more)\n\n\n\
+pairs : List String -> Result Error ( String, List Int )\n\
+pairs xs =\n    let\n        ns <- many xs\n        ms <- manyHand xs\n    in\n    Ok ( String.join \",\" xs, ns ++ ms )\n\n\n\
+main =\n    println (String.fromInt (List.length (Result.withDefault [] (many [ \"1\" ]))) ++ String.fromInt (List.length (Result.withDefault [] (manyHand [ \"1\" ]))) ++ String.fromInt (List.length (Maybe.withDefault [] (manyMaybe [ \"1\" ]))) ++ String.fromInt (List.length (Tuple.second (Result.withDefault ( \"\", [] ) (pairs [ \"1\" ])))) ++ String.fromInt (List.length (Result.withDefault [] (encodeAll [ \"1\" ]))))\n";
+
+#[test]
+fn a_nested_bind_over_a_list_stays_on_the_typed_twin() {
+    let go = emit("list-ladder", LIST_LADDER_SRC);
+    for (f, twin) in [
+        ("Main_many", "rt.Result_andThenT["),
+        ("Main_manyHand", "rt.Result_andThenT["),
+        ("Main_manyMaybe", "rt.Maybe_andThenT["),
+        ("Main_pairs", "rt.Result_andThenT["),
+        // The bound value is a `Json.Encode.Value`, whose Go type is `any`.
+        ("Main_encodeAll", "rt.Result_andThenT["),
+    ] {
+        let body = func_body(&go, f);
+        assert_eq!(body.matches(twin).count(), 2, "{f}:\n{body}");
+        for erased in [
+            "Sky_Core_Result_andThen(",
+            "Sky_Core_Maybe_andThen(",
+            "rt.AsListT",
+            "rt.Coerce[",
+            "rt.CoerceFuncSlot",
+            "rt.ResultCoerce",
+            // `String.toInt` keeps its own kernel `rt.MaybeCoerce[int]`.
+            "rt.MaybeCoerce[any]",
+            "rt.MaybeCoerce[[]",
+        ] {
+            assert!(!body.contains(erased), "{f}: {erased} in:\n{body}");
+        }
+    }
+}
