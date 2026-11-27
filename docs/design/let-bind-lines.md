@@ -136,8 +136,19 @@ pattern is `[E3001]` with "use `case`". Find the union through
   `andThen` adds "(its `andThen : …` has another shape)" and never suggests
   calling it by name. Also covers an unexposed andThen ("expose it") and the
   self-reference case.
-- Mixed types in one block: ordinary `[E2001]`, with a note suggesting
-  `Task.fromResult` / `Maybe.toResult err`.
+- Mixed types in one block: ordinary `[E2001]`, with a note.
+- A note names a fix ONLY when the fix type-checks. The checker decides it
+  by unifying the fixed expression on a copy of the union-find taken before
+  the clash (`Infer::fits_on`, ty/src/bind.rs), never from the error text.
+  The conversion of a line or of the `in` body (`Task.fromResult
+  (Result.fromMaybe err e)`, `Task.fromResult`, `Result.fromMaybe err`,
+  `Result.toMaybe`) is named when the converted value fits the block. The
+  wrap of the `in` body (`Task.succeed` / `Ok` / `Just` / the home
+  `succeed`) is named when the wrapped value fits. Otherwise the note gives
+  the two types, and, for a function, how many arguments make it fit. "bind
+  it with `a <- e`" is named when `a` is bound with `=` to a value of type
+  `M … x`, the use (a call argument, a field access, an operator operand)
+  refuses `M … x`, and the same use with `x` type-checks.
 - Docs: `docs/errors/E2015-*.md`, `E2016-*.md`, the diagnostics registry
   (diagnostics/src/lib.rs ~304) and doc 03 §14.
 

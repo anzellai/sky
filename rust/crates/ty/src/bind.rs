@@ -17,8 +17,9 @@
 
 use crate::infer::Infer;
 use crate::sig::World;
+use crate::unify::{Content, FlatTy, UnionFind};
 use crate::{nominal, Ty, TyVarId};
-use base::{DefId, ModuleId, Span};
+use base::{DefId, ModuleId, Name, Span};
 use hir::{Body, Expr, ExprId, Pattern, Res, SkyDb};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -58,6 +59,47 @@ pub(crate) struct PendingBind {
     pub pat_text: String,
     /// The span of the expression after `<-`, to quote it in a message.
     pub e_span: Option<Span>,
+    /// The annotated result, when the block is the whole body of an
+    /// annotated def: a note tries its fix against it.
+    pub expected: Option<TyVarId>,
+}
+
+/// The first bind line of the block that is the whole of `root` (through
+/// the `let` segments the resolver wraps around it), when there is one.
+pub(crate) fn root_bind_call(body: &Body, root: ExprId) -> Option<ExprId> {
+    let mut cur = root;
+    loop {
+        match &body.exprs[cur] {
+            Expr::Let { body: b, .. } => cur = *b,
+            Expr::Call(f, args)
+                if args.len() == 2 && matches!(body.exprs[*f], Expr::Var(Res::BindAndThen)) =>
+            {
+                return Some(cur)
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// A name bound with `=` to a value whose type `M … x` has an `andThen`,
+/// at one use ([`Infer::eq_bound_value`]).
+pub(crate) struct EqBound {
+    name: Name,
+    /// The expression after `=`.
+    rhs: ExprId,
+    /// `M`.
+    head: String,
+    /// `x`, the result a bind line would give.
+    pub(crate) inner: TyVarId,
+    /// `M … x`, the type at this use.
+    ty: TyVarId,
+}
+
+impl EqBound {
+    /// The head `M` of the value's type.
+    pub(crate) fn head(&self) -> &str {
+        &self.head
+    }
 }
 
 /// Fixed homes of the kernel-implicit heads (§4): the bare builtin names have
@@ -401,20 +443,32 @@ impl<'a> Infer<'a> {
         // A clash inside one head (`Maybe Int` against `Maybe Float`) gets
         // the plain mismatch, as the hand-written `andThen` chain does.
         let callee = self.read_back(pb.callee_ty);
-        let mixed = match &callee {
+        // The other head the block needs: its result's, else the one the
+        // continuation ends in.
+        let block = match &callee {
             Ty::Fun(lam, rest) => {
                 let result = match rest.as_ref() {
                     Ty::Fun(_, r) => r.as_ref(),
                     other => other,
                 };
-                other_head(final_result(lam), &name) || other_head(result, &name)
+                [result, final_result(lam)]
+                    .into_iter()
+                    .find(|t| other_head(t, &name))
+                    .and_then(|t| match t {
+                        Ty::App(n, _) => Some(n.as_str().to_string()),
+                        _ => None,
+                    })
             }
-            _ => false,
+            _ => None,
         };
+        let snap = block.as_ref().map(|_| self.uf.clone());
         let before = self.errors.len();
         self.unify(inst, pb.callee_ty);
-        if mixed {
-            self.append_note(before, Some(mixed_note(&shown)));
+        if let (Some(block), Some(snap)) = (block, snap) {
+            if self.errors.len() > before {
+                let note = self.line_conversion_note(pb, &snap, &name, &block);
+                self.append_note(before, Some(note));
+            }
         }
         self.cur_span = saved;
         self.bind_choices.push((pb.call, res));
@@ -474,17 +528,151 @@ impl<'a> Infer<'a> {
             .unwrap_or_else(|| fallback.to_string())
     }
 
-    /// The note for a block of bind lines whose `in` expression (`body_e`,
-    /// of type `body_ty`) does not have the block's type `block_head`. It
-    /// names the fix: the conversion for a value of another type with an
-    /// `andThen`, else the wrap for a plain value. `None` when the body has
-    /// the block's head (a clash inside one head is a plain mismatch).
-    pub(crate) fn body_note(
+    /// Run `f` on a copy of `snap` (a union-find taken before a failed
+    /// unification), then put every piece of inference state `f` may touch
+    /// back as it was. A note that names a fix is decided this way: the fix
+    /// is unified on the copy, and nothing of the trial is kept.
+    pub(crate) fn on_snapshot<R>(&mut self, snap: &UnionFind, f: impl FnOnce(&mut Self) -> R) -> R {
+        let real = std::mem::replace(&mut self.uf, snap.clone());
+        let errors = self.errors.len();
+        let obligations = self.obligations.len();
+        let page_ties = self.page_ties.len();
+        let bound_seen = self.bound_seen.clone();
+        let inferred_bounds = self.inferred_bounds.len();
+        let unresolved = self.unresolved_seen;
+        let span = self.cur_span;
+        let out = f(self);
+        self.uf = real;
+        self.errors.truncate(errors);
+        self.obligations.truncate(obligations);
+        self.page_ties.truncate(page_ties);
+        self.bound_seen = bound_seen;
+        self.inferred_bounds.truncate(inferred_bounds);
+        self.unresolved_seen = unresolved;
+        self.cur_span = span;
+        out
+    }
+
+    /// Does `f` succeed on a copy of `snap` without a type error?
+    pub(crate) fn fits_on(&mut self, snap: &UnionFind, f: impl FnOnce(&mut Self) -> bool) -> bool {
+        self.on_snapshot(snap, |s| {
+            let before = s.errors.len();
+            f(s) && s.errors.len() == before
+        })
+    }
+
+    fn fun_var(&mut self, from: TyVarId, to: TyVarId) -> TyVarId {
+        self.uf.fresh(Content::Structure(FlatTy::Fun(from, to)))
+    }
+
+    /// The head and the last argument of the application `v`, when it is one.
+    fn app_parts(&mut self, v: TyVarId) -> Option<(Name, TyVarId)> {
+        match self.uf.content(v) {
+            Content::Structure(FlatTy::App(n, args)) => args.last().map(|l| (n, *l)),
+            _ => None,
+        }
+    }
+
+    /// The type of `chain` applied to a value of type `v`, on the current
+    /// union-find: each `(module, function, holes)` is applied after `holes`
+    /// leading arguments of any type (`err` in `Result.fromMaybe err`).
+    /// `None` when a step does not type-check.
+    fn apply_chain(&mut self, v: TyVarId, chain: &[(&str, &str, usize)]) -> Option<TyVarId> {
+        let mut cur = v;
+        for (module, name, holes) in chain {
+            let mid = self.db.module_by_name(module)?;
+            let def = self.db.module_exports(mid).value(name)?;
+            let mut f = self.infer_res(Res::Def(def));
+            for _ in 0..*holes {
+                let (h, r) = (self.uf.fresh_flex(), self.uf.fresh_flex());
+                let want = self.fun_var(h, r);
+                self.uf.unify(f, want).ok()?;
+                f = r;
+            }
+            let r = self.uf.fresh_flex();
+            let want = self.fun_var(cur, r);
+            self.uf.unify(f, want).ok()?;
+            cur = r;
+        }
+        Some(cur)
+    }
+
+    /// The conversion of a value of head `from` into head `to`, as the
+    /// functions to apply and the text that shows it around `arg`.
+    fn conversion(
         &self,
+        from: &str,
+        to: &str,
+        arg: &str,
+    ) -> Option<(Vec<(&'static str, &'static str, usize)>, String)> {
+        let q = |m: &str, f: &str| -> String {
+            self.db
+                .module_by_name(m)
+                .map(|mid| self.qualifier_of(mid, f))
+                .unwrap_or_else(|| f.to_string())
+        };
+        let task = || q("Sky.Core.Task", "Task");
+        let result = || q("Sky.Core.Result", "Result");
+        Some(match (from, to) {
+            ("Maybe", "Task") => (
+                vec![
+                    ("Sky.Core.Result", "fromMaybe", 1),
+                    ("Sky.Core.Task", "fromResult", 0),
+                ],
+                format!("{}.fromResult ({}.fromMaybe err {arg})", task(), result()),
+            ),
+            ("Result", "Task") => (
+                vec![("Sky.Core.Task", "fromResult", 0)],
+                format!("{}.fromResult {arg}", task()),
+            ),
+            ("Maybe", "Result") => (
+                vec![("Sky.Core.Result", "fromMaybe", 1)],
+                format!("{}.fromMaybe err {arg}", result()),
+            ),
+            ("Result", "Maybe") => (
+                vec![("Sky.Core.Result", "toMaybe", 0)],
+                format!("{}.toMaybe {arg}", result()),
+            ),
+            _ => return None,
+        })
+    }
+
+    /// The note for a block of bind lines whose `in` expression does not have
+    /// the block's type. `lam` is the inferred type of the last bind line's
+    /// continuation (`p -> body`), `want` the type its `andThen` gives it
+    /// (`a -> M … R`), `expected` the annotated result of a block that is a
+    /// whole def's body; all are read on `snap`, the union-find before the
+    /// clash, with the parameters of `lam` and `want` unified and `M … R`
+    /// unified with `expected`. A fix (a conversion, or a wrap such as
+    /// `Task.succeed`) is named only when the fixed expression unifies with
+    /// `M … R` on a copy of it; otherwise the note gives the two types, and,
+    /// for a function, how many arguments make it fit. `None` when the body's
+    /// type is not known.
+    pub(crate) fn body_note(
+        &mut self,
+        snap: &UnionFind,
         block_head: &str,
-        body_ty: &Ty,
+        lam: TyVarId,
+        want: TyVarId,
+        expected: Option<TyVarId>,
         body_text: Option<String>,
     ) -> Option<String> {
+        let (prepared, body_ty, block_ty, bv, rv, body_head) = self.on_snapshot(snap, |s| {
+            let (pl, bv) = s.fun_parts(lam)?;
+            let (pw, rv) = s.fun_parts(want)?;
+            let _ = s.uf.unify(pl, pw);
+            if let Some(x) = expected {
+                let _ = s.uf.unify(rv, x);
+            }
+            let body_ty = s.read_back(bv);
+            if matches!(body_ty, Ty::Var(_) | Ty::Error) {
+                return None;
+            }
+            let head = s.app_parts(bv).map(|(n, _)| n.as_str().to_string());
+            let block_ty = s.read_back(rv);
+            Some((s.uf.clone(), body_ty, block_ty, bv, rv, head))
+        })?;
+        let snap = &prepared;
         let b = nominal::strip(block_head).to_string();
         let v = body_text.unwrap_or_else(|| "…".to_string());
         let arg = if v.contains(' ') && !(v.starts_with('(') && v.ends_with(')')) {
@@ -492,131 +680,222 @@ impl<'a> Infer<'a> {
         } else {
             v.clone()
         };
-        let body_head = match body_ty {
-            Ty::App(n, args) if !args.is_empty() => Some(n.as_str()),
-            Ty::Var(_) | Ty::Error => return None,
-            _ => None,
-        };
         let intro = format!(
-            "\n\nNote: the `in` expression of a block of bind lines must have the block's \
-             type, `{b}`. To fix it,"
+            "\n\nNote: the `in` expression has type `{}`; this block needs `{}`.",
+            body_ty.render_pretty(),
+            block_ty.render_pretty()
         );
-        if let Some(h) = body_head {
-            if nominal::same(h, block_head) {
-                return None;
-            }
-            let h = nominal::strip(h);
-            let conversion = match (h, b.as_str()) {
-                ("Maybe", "Task") => Some(format!(
-                    "Convert the `Maybe` with `Task.fromResult (Result.fromMaybe err {arg})`"
-                )),
-                ("Result", "Task") => {
-                    Some(format!("Convert the `Result` with `Task.fromResult {arg}`"))
+        // A conversion from another head, when the converted value fits.
+        if let Some(h) = body_head
+            .as_deref()
+            .filter(|h| !nominal::same(h, block_head))
+        {
+            if let Some((chain, text)) = self.conversion(nominal::strip(h), &b, &arg) {
+                let fits = self.fits_on(snap, |s| {
+                    s.apply_chain(bv, &chain)
+                        .is_some_and(|c| s.uf.unify(c, rv).is_ok())
+                });
+                if fits {
+                    return Some(format!("{intro} To fix it, convert it: `{text}`."));
                 }
-                ("Maybe", "Result") => Some(format!(
-                    "Convert the `Maybe` with `Result.fromMaybe err {arg}`"
-                )),
-                ("Result", "Maybe") => {
-                    Some(format!("Convert the `Result` with `Result.toMaybe {arg}`"))
-                }
-                ("Task", _) => Some(format!(
-                    "A `Task` cannot run inside a `{b}` block: make the block a `Task` \
-                     block and convert each `{b}` line to a `Task`"
-                )),
-                _ => None,
-            };
-            if let Some(c) = conversion {
-                return Some(format!("{intro} {}{}.", c[..1].to_lowercase(), &c[1..]));
-            }
-            // Another named type with an `andThen` of its own: not a plain
-            // value, and no conversion is known.
-            if self.home_exposes(h, "andThen").is_some() {
-                return Some(format!("{intro} convert the `{h}` to a `{b}` first."));
             }
         }
+        // A wrap of a plain value, when the wrapped value fits.
         let wrap = match b.as_str() {
-            "Task" => Some("Task.succeed".to_string()),
-            "Result" => Some("Ok".to_string()),
-            "Maybe" => Some("Just".to_string()),
-            _ => self.home_exposes(block_head, "succeed").map(|mid| {
+            "Task" => Some(("Task.succeed".to_string(), None)),
+            "Result" => Some(("Ok".to_string(), None)),
+            "Maybe" => Some(("Just".to_string(), None)),
+            _ => self.home_exposes(block_head, "succeed").and_then(|mid| {
+                let def = self.db.module_exports(mid).value("succeed")?;
                 let fallback = if b == "Decoder" {
                     "Decode".to_string()
                 } else {
                     self.head_home(block_head).unwrap_or_default()
                 };
-                format!("{}.succeed", self.qualifier_of(mid, &fallback))
+                Some((
+                    format!("{}.succeed", self.qualifier_of(mid, &fallback)),
+                    Some(def),
+                ))
             }),
-        }?;
-        Some(format!(
-            "{intro} wrap a plain value in `{wrap}`: `{wrap} {arg}`."
-        ))
+        };
+        if let Some((wrap, def)) = wrap {
+            let fits = self.fits_on(snap, |s| match def {
+                // The home `succeed` itself, instantiated and applied.
+                Some(def) => {
+                    let f = s.infer_res(Res::Def(def));
+                    let want = s.fun_var(bv, rv);
+                    s.uf.unify(f, want).is_ok()
+                }
+                // `Task.succeed`, `Ok`, `Just`: `a -> M … a`, so the body
+                // fits when it unifies with the block's last argument.
+                None => s
+                    .app_parts(rv)
+                    .is_some_and(|(_, r)| s.uf.unify(bv, r).is_ok()),
+            });
+            if fits {
+                return Some(format!(
+                    "{intro} To fix it, wrap the value in `{wrap}`: `{wrap} {arg}`."
+                ));
+            }
+        }
+        // A function: the number of arguments after which it fits.
+        let arrows = {
+            let mut n = 0;
+            let mut t = &body_ty;
+            while let Ty::Fun(_, r) = t {
+                n += 1;
+                t = r;
+            }
+            n
+        };
+        let needs = (1..=arrows).find(|&k| {
+            self.fits_on(snap, |s| {
+                let mut cur = bv;
+                for _ in 0..k {
+                    let Some((_, r)) = s.fun_parts(cur) else {
+                        return false;
+                    };
+                    cur = r;
+                }
+                s.uf.unify(cur, rv).is_ok()
+            })
+        });
+        Some(match needs {
+            Some(k) => format!("{intro} It is a function: it needs {k} more argument(s)."),
+            None => intro,
+        })
     }
 
-    /// The note for a clash on a name bound with `=` to a value whose type
-    /// has an `andThen` (`a = fetch 1`, then `a + 1`): "`a` is a `Task`; to
-    /// use its result, bind it with `a <- fetch 1`". `e` is the expression
-    /// that clashed; the name is `e` itself or an operand of its arithmetic.
-    /// `want` is the type the slot expects, when known: a slot of the same
-    /// head (a `Task` given where a `Task` is wanted) gets no note, since
-    /// binding the result would not fit it either. Only when the clash
-    /// reported from `from` on names the name's type.
-    pub(crate) fn result_note(
+    /// A name bound with `=` in a `let` to a value whose type `M … x` has an
+    /// `andThen`, when `e` is that name and `te` its type here.
+    pub(crate) fn eq_bound_value(
         &mut self,
         body: &Body,
         e: ExprId,
-        want: Option<Ty>,
-        from: usize,
+        te: TyVarId,
+    ) -> Option<EqBound> {
+        let Expr::Var(Res::Local(l)) = &body.exprs[e] else {
+            return None;
+        };
+        let (name, rhs) = self.eq_bound.get(l).cloned()?;
+        let (head, inner) = self.app_parts(te)?;
+        self.home_exposes(head.as_str(), "andThen")?;
+        Some(EqBound {
+            name,
+            rhs,
+            head: head.as_str().to_string(),
+            inner,
+            ty: te,
+        })
+    }
+
+    /// Can the parameter of the callee type `tf` refuse the value of `c`? A
+    /// free variable or a parameter of the same head takes it (a cheap test,
+    /// so the union-find is copied only for a call that may clash).
+    pub(crate) fn param_may_refuse(&mut self, tf: TyVarId, c: &EqBound) -> bool {
+        let Some((p, _)) = self.fun_parts(tf) else {
+            return false;
+        };
+        match self.uf.content(p) {
+            Content::Flex | Content::Error => false,
+            Content::Structure(FlatTy::App(n, _)) => !nominal::same(n.as_str(), &c.head),
+            _ => true,
+        }
+    }
+
+    /// "`a` is a `Task`; to use its result, bind it with `a <- fetch 1`",
+    /// when the slot `c` was used in failed with `M … x` and `fits(x)` (the
+    /// same use with the result `x` in its place) type-checks on a copy of
+    /// `snap`, the union-find before the clash. The note is never given when
+    /// the slot takes `M … x` itself (`fits(M … x)` holds).
+    pub(crate) fn bind_result_note(
+        &mut self,
+        body: &Body,
+        c: &EqBound,
+        snap: &UnionFind,
+        fits: impl Fn(&mut Self, TyVarId) -> bool,
     ) -> Option<String> {
-        let mut stack = vec![e];
-        let mut cands = Vec::new();
-        while let Some(x) = stack.pop() {
-            match &body.exprs[x] {
-                Expr::Var(Res::Local(l)) => cands.push(*l),
-                Expr::Binop { lhs, rhs, .. } => {
-                    stack.push(*rhs);
-                    stack.push(*lhs);
-                }
-                Expr::Negate(inner) => stack.push(*inner),
-                _ => {}
-            }
+        if self.fits_on(snap, |s| fits(s, c.ty)) || !self.fits_on(snap, |s| fits(s, c.inner)) {
+            return None;
         }
         let module = self
             .self_def
             .and_then(|d| self.db.def_loc(d))
             .map(|l| l.module);
-        for l in cands {
-            let Some((name, rhs)) = self.eq_bound.get(&l).cloned() else {
-                continue;
+        let rhs_text = self
+            .span_text(module, body.expr_span(c.rhs))
+            .unwrap_or_else(|| "…".to_string());
+        Some(format!(
+            "\n\nNote: `{}` is a `{}`; to use its result, bind it with `{} <- {rhs_text}`.",
+            c.name.as_str(),
+            nominal::strip(&c.head),
+            c.name.as_str()
+        ))
+    }
+
+    /// The note on a bind line `p <- e` whose `e` has the head `name` while
+    /// the block needs another head `block`. It names the conversion of the
+    /// line when the converted `e` chains with `block`'s `andThen` on a copy
+    /// of `snap` (the union-find before the clash), else only the two heads.
+    fn line_conversion_note(
+        &mut self,
+        pb: &PendingBind,
+        snap: &UnionFind,
+        name: &str,
+        block: &str,
+    ) -> String {
+        let shown = nominal::strip(name).to_string();
+        let b = nominal::strip(block).to_string();
+        let plain = format!(
+            "\n\nNote: this bind line chains with the `andThen` of `{shown}`, and the block \
+             is a `{b}` block. One block of bind lines chains one type."
+        );
+        let e_text = self
+            .span_text(pb.module, pb.e_span)
+            .unwrap_or_else(|| "…".to_string());
+        let arg = if e_text.contains(' ') && !(e_text.starts_with('(') && e_text.ends_with(')')) {
+            format!("({e_text})")
+        } else {
+            e_text
+        };
+        let Some((chain, text)) = self.conversion(&shown, &b, &arg) else {
+            return plain;
+        };
+        let Some(and_then) = self
+            .home_exposes(block, "andThen")
+            .and_then(|mid| self.db.module_exports(mid).value("andThen"))
+        else {
+            return plain;
+        };
+        let (e_ty, callee, expected) = (pb.e_ty, pb.callee_ty, pb.expected);
+        let fits = self.fits_on(snap, |s| {
+            let Some((lam, rest)) = s.fun_parts(callee) else {
+                return false;
             };
-            let name = name.as_str();
-            let Some(tv) = self.local_ty(l) else { continue };
-            let t = self.read_back(tv);
-            let Ty::App(head, args) = &t else { continue };
-            if args.is_empty() || self.home_exposes(head.as_str(), "andThen").is_none() {
-                continue;
-            }
-            if let Some(Ty::App(w, _)) = &want {
-                if nominal::same(w.as_str(), head.as_str()) {
-                    continue;
+            let Some((_, result)) = s.fun_parts(rest) else {
+                return false;
+            };
+            if let Some(x) = expected {
+                if s.uf.unify(result, x).is_err() {
+                    return false;
                 }
             }
-            let shown = t.render_pretty();
-            if !self.errors[from..]
-                .iter()
-                .any(|err| err.message.contains(&format!("`{shown}`")))
-            {
-                continue;
-            }
-            let rhs_text = self
-                .span_text(module, body.expr_span(rhs))
-                .unwrap_or_else(|| "…".to_string());
-            return Some(format!(
-                "\n\nNote: `{name}` is a `{}`; to use its result, bind it with \
-                 `{name} <- {rhs_text}`.",
-                nominal::strip(head.as_str())
-            ));
+            let Some(conv) = s.apply_chain(e_ty, &chain) else {
+                return false;
+            };
+            let f = s.infer_res(Res::Def(and_then));
+            let rest = s.fun_var(conv, result);
+            let want = s.fun_var(lam, rest);
+            s.uf.unify(f, want).is_ok()
+        });
+        if fits {
+            format!(
+                "{plain} To fix it, convert the line: `{} <- {text}`.",
+                pb.pat_text
+            )
+        } else {
+            plain
         }
-        None
     }
 
     /// The source text at `span` in `module`, when it is short and on one
@@ -736,13 +1015,12 @@ pub(crate) fn other_head(t: &Ty, head: &str) -> bool {
 }
 
 /// The note on a type clash in a block of bind lines: every line and the
-/// `in` expression must have the head type of the first.
+/// `in` expression must have the head type of the first. It names no fix
+/// (no fix was checked here).
 pub(crate) fn mixed_note(head: &str) -> String {
     format!(
         "\n\nNote: this bind line chains with the `andThen` of `{head}`, so the rest of the \
-         block must be a `{head}` too. One block cannot mix types: convert first, e.g. \
-         `Task.fromResult` for a `Result` in a `Task` block, or `Maybe.toResult err` for a \
-         `Maybe` in a `Result` block."
+         block must be a `{head}` too. One block of bind lines chains one type."
     )
 }
 

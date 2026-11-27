@@ -538,7 +538,7 @@ impl Infer<'_> {
     }
 
     /// The `(argument, result)` of a function type, if `t` is one.
-    fn fun_parts(&mut self, t: TyVarId) -> Option<(TyVarId, TyVarId)> {
+    pub(crate) fn fun_parts(&mut self, t: TyVarId) -> Option<(TyVarId, TyVarId)> {
         match self.uf.content(t) {
             Content::Structure(FlatTy::Fun(a, b)) => Some((a, b)),
             _ => None,

@@ -4,7 +4,7 @@
 //! (it names the bind line that gives the result).
 
 use base::{FileId, ModuleId};
-use hir::{SkyDb, SourceDb};
+use hir::SourceDb;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -92,7 +92,7 @@ fn a_plain_value_body_in_a_task_block_names_task_succeed() {
     one_e2001_at(
         &got,
         "b",
-        &["wrap a plain value in `Task.succeed`", "`Task.succeed b`"],
+        &["wrap the value in `Task.succeed`", "`Task.succeed b`"],
     );
 }
 
@@ -108,7 +108,7 @@ fn a_maybe_body_in_a_task_block_names_the_conversion() {
         "Just a",
         &["Task.fromResult (Result.fromMaybe err (Just a))"],
     );
-    assert!(!got[0].message.contains("wrap a plain value"), "{got:#?}");
+    assert!(!got[0].message.contains("wrap the value"), "{got:#?}");
 }
 
 #[test]
@@ -293,6 +293,206 @@ fn a_name_from_a_bind_line_or_a_parameter_gives_no_note() {
     );
     assert!(
         got.iter().all(|g| !g.message.contains("to use its result")),
+        "{got:#?}"
+    );
+}
+
+// ---- 4. every note names a fix only when the fix type-checks ------------
+
+/// The source with the fix the first `[E2001]` note names applied: a bind
+/// note turns `name = rhs` into `name <- rhs`; a "To fix it" note replaces
+/// the labelled expression (or the bind line it names) with the backticked
+/// fix, `err` taken as `Error.notFound`. `None` when the note names no fix.
+fn apply_named_fix(body: &str, got: &[Got]) -> Option<String> {
+    let e = got.iter().find(|g| g.code == "E2001")?;
+    let m = &e.message;
+    if let Some(i) = m.find("bind it with `") {
+        let rest = &m[i + "bind it with `".len()..];
+        let fix = &rest[..rest.find('`')?];
+        let (name, rhs) = fix.split_once(" <- ")?;
+        let eq = format!("{name} = {rhs}");
+        assert!(body.contains(&eq), "{eq:?} not in {body}");
+        return Some(body.replacen(&eq, fix, 1));
+    }
+    let i = m.find("To fix it")?;
+    let tail = &m[i..];
+    let end = tail.rfind('`')?;
+    let start = tail[..end].rfind('`')? + 1;
+    let fix = tail[start..end].replace("err ", "Error.notFound ");
+    if let Some((pat, _)) = fix.split_once(" <- ") {
+        let line = body
+            .lines()
+            .find(|l| l.trim_start().starts_with(&format!("{pat} <- ")))?;
+        let indent = &line[..line.len() - line.trim_start().len()];
+        return Some(body.replacen(line, &format!("{indent}{fix}"), 1));
+    }
+    let at = e.at.trim();
+    let pos = body.rfind(at)?;
+    Some(format!(
+        "{}{}{}",
+        &body[..pos],
+        fix,
+        &body[pos + at.len()..]
+    ))
+}
+
+/// The note names a fix, and that fix applied to the source type-checks.
+fn named_fix_type_checks(body: &str) -> String {
+    let got = check(body, &[]);
+    let fixed = apply_named_fix(body, &got).unwrap_or_else(|| panic!("no fix named: {got:#?}"));
+    let after = check(&fixed, &[]);
+    assert!(after.is_empty(), "fix does not check:\n{fixed}\n{after:#?}");
+    got.iter()
+        .find(|g| g.code == "E2001")
+        .map(|g| g.message.clone())
+        .unwrap()
+}
+
+const FETCH_USER: &str = "type alias User =\n    { name : String }\n\n\nfetchUser : Int -> Task Error User\nfetchUser n =\n    Task.succeed { name = \"a\" }\n\n\n";
+
+#[test]
+fn a_task_bound_with_eq_and_read_as_a_record_names_the_bind_line() {
+    let m = named_fix_type_checks(&format!(
+        "{FETCH_USER}go : Task Error ()\ngo =\n    let\n        user = fetchUser 1\n    in\n    println user.name"
+    ));
+    assert!(m.contains("bind it with `user <- fetchUser 1`"), "{m}");
+}
+
+#[test]
+fn a_task_bound_with_eq_and_passed_to_from_int_names_the_bind_line() {
+    let m = named_fix_type_checks(
+        "go : Task Error ()\ngo =\n    let\n        x = Task.succeed 1\n    in\n    println (String.fromInt x)",
+    );
+    assert!(m.contains("bind it with `x <- Task.succeed 1`"), "{m}");
+}
+
+#[test]
+fn a_task_bound_with_eq_used_in_arithmetic_names_the_bind_line() {
+    let m = named_fix_type_checks(&format!(
+        "{FETCH}go : Task Error ()\ngo =\n    let\n        s = fetch 1\n        _ <- println \"x\"\n    in\n    println (String.fromInt (s + 1))"
+    ));
+    assert!(m.contains("bind it with `s <- fetch 1`"), "{m}");
+}
+
+#[test]
+fn a_task_bound_with_eq_and_appended_names_the_bind_line() {
+    let m = named_fix_type_checks(
+        "fetchS : Int -> Task Error String\nfetchS n =\n    Task.succeed \"a\"\n\n\ngo : Task Error ()\ngo =\n    let\n        s = fetchS 1\n    in\n    println (s ++ \"!\")",
+    );
+    assert!(m.contains("bind it with `s <- fetchS 1`"), "{m}");
+}
+
+#[test]
+fn the_bind_note_is_not_given_when_the_result_does_not_fit_either() {
+    // `x` is a Task of Int; `String.length` wants a String: binding the
+    // result gives an Int, which does not fit, so no bind note.
+    let got = check(
+        "go : Task Error ()\ngo =\n    let\n        x = Task.succeed 1\n    in\n    println (String.fromInt (String.length x))",
+        &[],
+    );
+    assert!(got.iter().any(|g| g.code == "E2001"), "{got:#?}");
+    assert!(
+        got.iter().all(|g| !g.message.contains("to use its result")),
+        "{got:#?}"
+    );
+    // A record without the field.
+    let got = check(
+        &format!("{FETCH_USER}go : Task Error ()\ngo =\n    let\n        user = fetchUser 1\n    in\n    println user.email"),
+        &[],
+    );
+    assert!(
+        got.iter().all(|g| !g.message.contains("to use its result")),
+        "{got:#?}"
+    );
+}
+
+#[test]
+fn an_in_body_of_another_type_names_no_wrap_that_does_not_fit() {
+    // `x` is an Int, the block needs `Task Error String`: `Task.succeed x`
+    // would not fit, so no wrap advice, only the two types.
+    let got = check(
+        "go : Task Error String\ngo =\n    let\n        x <- Task.succeed 1\n    in\n    x",
+        &[],
+    );
+    one_e2001_at(
+        &got,
+        "x",
+        &["has type `Int`", "this block needs `Task Error String`"],
+    );
+    assert!(!got[0].message.contains("wrap"), "{got:#?}");
+    assert!(!got[0].message.contains("To fix it"), "{got:#?}");
+}
+
+#[test]
+fn an_in_body_that_is_a_function_says_how_many_arguments_it_needs() {
+    let got = check(
+        "go : Task Error Int\ngo =\n    let\n        x <- Task.succeed 1\n    in\n    Task.succeed",
+        &[],
+    );
+    one_e2001_at(
+        &got,
+        "Task.succeed",
+        &[
+            "it needs 1 more argument(s)",
+            "this block needs `Task Error Int`",
+        ],
+    );
+    assert!(!got[0].message.contains("wrap"), "{got:#?}");
+    assert!(!got[0].message.contains("To fix it"), "{got:#?}");
+}
+
+#[test]
+fn a_unit_body_in_a_task_block_names_a_wrap_that_checks() {
+    let m = named_fix_type_checks(
+        "go : Task Error ()\ngo =\n    let\n        x <- Task.succeed 1\n    in\n    ()",
+    );
+    assert!(m.contains("`Task.succeed ()`"), "{m}");
+}
+
+#[test]
+fn every_body_and_conversion_note_names_a_fix_that_checks() {
+    for body in [
+        "step : Int -> Task Error Int\nstep n =\n    let\n        a <- Task.succeed n\n        b <- Task.succeed (a + 1)\n    in\n    b",
+        "step : Int -> Task Error Int\nstep n =\n    let\n        a <- Task.succeed n\n    in\n    Just a",
+        "step : Int -> Task Error Int\nstep n =\n    let\n        a <- Task.succeed n\n    in\n    Ok a",
+        "step : Int -> Result Error Int\nstep n =\n    let\n        a <- Ok n\n    in\n    a + 1",
+        "step : Int -> Result Error Int\nstep n =\n    let\n        a <- Ok n\n    in\n    Just a",
+        "step : Int -> Maybe Int\nstep n =\n    let\n        a <- Just n\n    in\n    a",
+        "dec : Decoder Int\ndec =\n    let\n        a <- Decode.int\n    in\n    a",
+        "go : Task Error Int\ngo =\n    let\n        x <- Task.succeed 1\n    in\n    String.toInt \"3\"",
+        "go =\n    let\n        x <- Task.succeed 1\n    in\n    x + 1",
+        // A bind line of another type in the block: the conversion of that line.
+        "go : Task Error Int\ngo =\n    let\n        a <- Task.succeed 1\n        b <- String.toInt \"2\"\n    in\n    Task.succeed (a + b)",
+    ] {
+        named_fix_type_checks(body);
+    }
+}
+
+#[test]
+fn a_conversion_that_does_not_fit_is_not_named() {
+    // A `Result String Int` converted with `Task.fromResult` is a
+    // `Task String Int`, not the block's `Task Error Int`.
+    let got = check(
+        "r : Result String Int\nr =\n    Ok 1\n\n\ngo : Task Error Int\ngo =\n    let\n        x <- Task.succeed 1\n    in\n    r",
+        &[],
+    );
+    one_e2001_at(&got, "r", &["this block needs `Task Error Int`"]);
+    assert!(!got[0].message.contains("Task.fromResult"), "{got:#?}");
+    assert!(!got[0].message.contains("To fix it"), "{got:#?}");
+    // A Task in a Maybe block: no conversion exists, so none is named.
+    let got = check(
+        "go : Maybe Int\ngo =\n    let\n        x <- String.toInt \"1\"\n    in\n    Task.succeed x",
+        &[],
+    );
+    one_e2001_at(&got, "Task.succeed x", &["this block needs `Maybe Int`"]);
+    assert!(!got[0].message.contains("To fix it"), "{got:#?}");
+    // A same-head body with another content type: the types only.
+    let got = check(
+        "go : Task Error String\ngo =\n    let\n        x <- Task.succeed 1\n    in\n    Task.succeed x",
+        &[],
+    );
+    assert!(
+        got.iter().all(|g| !g.message.contains("To fix it")),
         "{got:#?}"
     );
 }

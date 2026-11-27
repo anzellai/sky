@@ -445,8 +445,7 @@ fn mixed_types_in_one_block_are_e2001_with_a_conversion_note() {
     let got = errors("go : Task Error Int\ngo =\n    let\n        a <- Task.succeed 1\n        b <- String.toInt \"2\"\n    in\n    Task.succeed (a + b)");
     assert!(
         got.iter().any(|(c, m)| c == "E2001"
-            && m.contains("Task.fromResult")
-            && m.contains("Maybe.toResult")),
+            && m.contains("`b <- Task.fromResult (Result.fromMaybe err (String.toInt \"2\"))`")),
         "{got:#?}"
     );
 }
