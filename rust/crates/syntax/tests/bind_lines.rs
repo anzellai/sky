@@ -567,3 +567,121 @@ fn larrow_in_a_case_arm_pattern_says_case_arms_use_arrow() {
 fn is_bind_hint(m: &str) -> bool {
     m == BIND_HINT || m == BIND_LINE_FORM || m == NEEDS_PATTERN || m.starts_with(CASE_ARM_HINT)
 }
+
+/// The one diagnostic for a `let` line with neither `=` nor `<-`.
+fn bare_line_msg(shown: &str) -> String {
+    format!(
+        "a line in a `let` block needs `=` or `<-`. To run an effect and drop its result, \
+         write `_ <- {shown}`; to name a value, write `name = {shown}`"
+    )
+}
+
+/// A bare expression line in a `let` block (`println "a"` with no `=` or
+/// `<-`) is ONE `[E0001]` on that line, never "expected Eq" at the `in`,
+/// in a block with bind lines and in one without.
+#[test]
+fn a_bare_expression_line_in_a_let_block_is_one_error_on_that_line() {
+    let src = "x =\n    let\n        a <- fetch 1\n        println (String.fromInt a)\n    in\n    Task.succeed a\n";
+    let parsed = p(src);
+    assert_eq!(parsed.reprint(), src);
+    let errs = parsed.errors();
+    assert_eq!(
+        errs.len(),
+        1,
+        "{:?}",
+        errs.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+    assert_eq!(errs[0].code.0, "E0001");
+    assert_eq!(errs[0].message, bare_line_msg("println (String.fromInt a)"));
+    let at = src.find("println").unwrap() as u32;
+    assert!(errs[0].labels.iter().any(|l| l.span.range.0 == at));
+    // No bind line in the block.
+    let src = "x =\n    let\n        a = 1\n        println \"a\"\n    in\n    a\n";
+    assert_one_error(src, "a line in a `let` block needs `=` or `<-`");
+    // The first line, and a long line names its first word.
+    let src = "x =\n    let\n        println (String.fromInt (List.length [ 1, 2, 3, 4, 5, 6, 7 ]))\n        a = 1\n    in\n    a\n";
+    let parsed = p(src);
+    assert_eq!(parsed.errors().len(), 1);
+    assert_eq!(parsed.errors()[0].message, bare_line_msg("println …"));
+}
+
+/// Property: every bare expression line, at every position of a block with
+/// and without bind lines, gives exactly one `[E0001]` with the bare-line
+/// message on its own first token, the tree reprints byte for byte, and
+/// both fixes the message names (`_ <- e`, `name = e`) parse clean.
+#[test]
+fn every_bare_let_line_gets_one_error_and_both_fixes_parse() {
+    let exprs = [
+        "println \"a\"",
+        "println (String.fromInt a)",
+        "f a b",
+        "a + 1",
+        "a |> f",
+        "Task.succeed ()",
+        "[ 1, 2 ]",
+        "{ r | a = 1 }",
+        "( a, b )",
+        "\\x -> x",
+        "if c then a else b",
+        "case m of\n            Just v ->\n                v\n\n            Nothing ->\n                0",
+        "let\n            q = 1\n        in q",
+        "f\n            a\n            b",
+        "1",
+        "\"s\"",
+        "Just a",
+        "a == b",
+    ];
+    let blocks: [&[&str]; 3] = [
+        &["a = 1"],
+        &["a <- t", "b = 2"],
+        &["a = 1", "_ <- t", "c <- u"],
+    ];
+    let mut checked = 0;
+    for e in exprs {
+        for lines in blocks {
+            for at in 0..=lines.len() {
+                let mk = |line: &str| {
+                    let mut ls: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+                    ls.insert(at, line.to_string());
+                    format!(
+                        "x =\n    let\n        {}\n    in\n    a\n",
+                        ls.join("\n        ")
+                    )
+                };
+                let src = mk(e);
+                let parsed = p(&src);
+                assert_eq!(parsed.reprint(), src, "round-trip for {src:?}");
+                let msgs: Vec<_> = parsed
+                    .errors()
+                    .iter()
+                    .map(|d| format!("[{}] {}", d.code.0, d.message))
+                    .collect();
+                assert!(
+                    msgs.len() == 1
+                        && msgs[0].starts_with("[E0001] a line in a `let` block needs `=` or `<-`"),
+                    "{src:?}: {msgs:?}"
+                );
+                let line_at = {
+                    let mut off = 0;
+                    let head = "x =\n    let\n        ";
+                    off += head.len();
+                    for l in &lines[..at] {
+                        off += l.len() + "\n        ".len();
+                    }
+                    off as u32
+                };
+                assert!(
+                    parsed.errors()[0]
+                        .labels
+                        .iter()
+                        .any(|l| l.span.range.0 == line_at),
+                    "the error must sit on the line's first token: {src:?}"
+                );
+                assert!(is_clean(&mk(&format!("_ <- {e}"))), "`_ <- {e}`");
+                assert!(is_clean(&mk(&format!("name = {e}"))), "`name = {e}`");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 100, "{checked}");
+}

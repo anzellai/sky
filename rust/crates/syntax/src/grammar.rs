@@ -47,6 +47,12 @@ const PAT_ATOM_START: TokenSet = TokenSet::new(&[
     FalseKw,
 ]);
 
+/// The tokens an expression line in a `let` block can start with: an
+/// argument atom, or a `let`, `case`, `if`, a lambda or a negation. A line
+/// that starts with another token is no expression, and keeps the
+/// diagnostic it had before the bare-line rule.
+const BARE_LINE_START: TokenSet = ARG_START.union(TokenSet::new(&[LetKw, CaseKw, IfKw, Backslash]));
+
 const DECL_START: TokenSet = TokenSet::new(&[TypeKw, LowerIdent, UpperIdent]);
 
 /// The tokens that begin a lexical top-level unit when they start a line at
@@ -1235,9 +1241,55 @@ fn bind_line(p: &mut Parser, anchor: u32, after_anno: bool, off: usize) -> LetLi
     LetLine::Bind
 }
 
+/// The diagnostic for a `let` line with neither `=` nor `<-` (a bare
+/// expression). `line` is the line's text when it is short, else its first
+/// word and `…`.
+pub(crate) fn bare_let_line(line: &str) -> std::string::String {
+    format!(
+        "a line in a `let` block needs `=` or `<-`. To run an effect and drop its result, \
+         write `_ <- {line}`; to name a value, write `name = {line}`"
+    )
+}
+
+/// A `let` line with neither `=` nor `<-` (`println "x"`): one `[E0001]` at
+/// the line's start, and the line parses as an expression in an ERROR node.
+fn bare_let_line_rest(p: &mut Parser, anchor: u32, last: usize) {
+    let text = p.text_to(last);
+    let shown = if text.contains('\n') || text.chars().count() > 40 {
+        let head: std::string::String = text
+            .split(|c: char| c.is_whitespace())
+            .next()
+            .unwrap_or("")
+            .to_string();
+        format!("{head} …")
+    } else {
+        text.to_string()
+    };
+    let m = p.start();
+    p.error_on_line(bare_let_line(&shown), last);
+    let cp = p.checkpoint();
+    p.with_indent(anchor, |p| {
+        expr(p);
+    });
+    // A line no expression starts (`)`): take its tokens, so the block
+    // moves on.
+    if p.consumed_since(&cp) == 0 {
+        while !p.at_end() && p.pos_le(last) {
+            p.bump();
+        }
+    }
+    m.complete(p, Error);
+}
+
 fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
     if let Some(off) = p.let_line_arrow(anchor) {
         return bind_line(p, anchor, after_anno, off);
+    }
+    if p.at_any(BARE_LINE_START) || (p.at(Op) && p.cur_text() == "-") {
+        if let Some(last) = p.let_line_bare(anchor) {
+            bare_let_line_rest(p, anchor, last);
+            return LetLine::Equals;
+        }
     }
     if p.at(LowerIdent) && p.nth(1) == Colon {
         // `name : Type` annotation binding

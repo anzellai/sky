@@ -411,6 +411,106 @@ impl<'a> Parser<'a> {
         None
     }
 
+    /// A `let` line that is a bare expression: from the cursor to the end of
+    /// the line there is no `=` outside brackets and nested `let … in`, and
+    /// no `<-`, and it is not an annotation (`name : T`). The line ends at
+    /// the next token on a later line at a column at or left of `anchor`
+    /// (except a column-1 `as`, which continues a destructure), at an `in`
+    /// outside brackets, or at the end of input. A `let` opens a nested block
+    /// only where an expression can start (first on the line, or after an
+    /// operator or an opening bracket), so `g let = 1` stays a binding head
+    /// for the reserved-word diagnostic. Returns the index of the line's last
+    /// token.
+    pub(crate) fn let_line_bare(&self, anchor: u32) -> Option<usize> {
+        use SyntaxKind as K;
+        let end = self.limit.min(self.toks.len());
+        if self.pos >= end {
+            return None;
+        }
+        if self.nth(1) == K::Colon {
+            return None;
+        }
+        let mut depth = 0i32;
+        let mut lets = 0;
+        let mut last = self.pos;
+        for i in self.pos..end {
+            let t = &self.toks[i];
+            if i > self.pos
+                && t.newline_before
+                && t.col <= anchor
+                && t.kind != K::AsKw
+                && !(t.kind == K::InKw && t.col == anchor && lets > 0 && depth > 0)
+            {
+                break;
+            }
+            match t.kind {
+                K::LArrow => return None,
+                K::Eq if depth <= 0 => return None,
+                K::InKw if depth <= 0 => break,
+                K::LetKw => {
+                    let opens = self.toks.get(i + 1).is_some_and(|n| n.kind != K::Eq)
+                        && (i == self.pos
+                            || !matches!(
+                                self.toks[i - 1].kind,
+                                K::LowerIdent
+                                    | K::UpperIdent
+                                    | K::Underscore
+                                    | K::RParen
+                                    | K::RBrack
+                                    | K::RBrace
+                            ));
+                    if opens {
+                        depth += 1;
+                        lets += 1;
+                    }
+                }
+                K::InKw | K::RParen | K::RBrack | K::RBrace => depth -= 1,
+                K::LParen | K::LBrack | K::LBrace => depth += 1,
+                _ => {}
+            }
+            last = i;
+        }
+        // A `let` with no `in` on the line opened no block: it is a name
+        // (`let y = y`), and the line is a binding head.
+        if lets > 0 && depth > 0 {
+            return None;
+        }
+        Some(last)
+    }
+
+    /// `error` with the diagnostic's label on tokens from the cursor to
+    /// `last`, raised (for the reserved-word pass) at the token after
+    /// `last`, where the line's missing `=` would have been reported.
+    pub(crate) fn error_on_line(&mut self, msg: std::string::String, last: usize) {
+        self.error_calls += 1;
+        if self.unit_errored {
+            return;
+        }
+        self.unit_errored = true;
+        self.sites.push(ErrorSite {
+            diag: self.diags.len(),
+            at: last + 1,
+            unit: self.unit,
+        });
+        let start = self.toks[self.pos].start;
+        let end = self.toks[last].end;
+        let span = Span::new(self.file, start, end);
+        self.diags
+            .push(Diagnostic::error("E0001", msg.clone()).with_label(span, msg));
+    }
+
+    /// The cursor is at or before token index `i`.
+    pub(crate) fn pos_le(&self, i: usize) -> bool {
+        self.pos <= i
+    }
+
+    /// The source text from the cursor's token to token `to`.
+    pub(crate) fn text_to(&self, to: usize) -> &str {
+        let a = self.toks[self.pos].start as usize;
+        let b = self.toks[to].end as usize;
+        &self.src[a..b]
+    }
+
     // ---- marker API ----
 
     pub(crate) fn start(&mut self) -> Marker {
