@@ -49,8 +49,8 @@ fn repo_root() -> PathBuf {
 /// Advertised kernel-qualifier members with NO Sky-level signature. Each row is
 /// a program the checker cannot arity-check. **Ratchets DOWNWARD only.**
 ///
-/// 94 rows when this gate was added; **69** now (`Server.use` typed in v0.27.0,
-/// G-14). It fell to 67, then the
+/// 94 rows when this gate was added; **67** now (`Server.use` typed in v0.27.0,
+/// G-14; `Maybe.andThen` and `Result.andThen` typed in v0.32.0). It fell to 67, then the
 /// `kernel-members` SSOT sync (the `xtask kernel-members` gate) COMPLETED
 /// `KERNEL_FUNCTIONS` against the runtime — advertising ~78 previously-missing
 /// real members. Most already carried a `.sky` signature; nine did not, and
@@ -203,7 +203,6 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
         "Maybe",
         &[
             "andMap",
-            "andThen",
             "combine",
             "map",
             "map2",
@@ -227,7 +226,6 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
         "Result",
         &[
             "andMap",
-            "andThen",
             "andThenTask",
             "combine",
             "map",
@@ -453,7 +451,7 @@ fn the_remaining_untyped_kernel_surface_is_still_within_its_review_date() {
     assert!(
         !expired,
         "the untyped kernel surface passed its review date of {UNTYPED_KERNEL_REVIEW_BY}.\n\n\
-         69 advertised kernel members across 14 pseudo-modules still have no Sky \
+         67 advertised kernel members across 14 pseudo-modules still have no Sky \
          signature, so the checker cannot arity-check a call to any of them. They \
          do NOT reach `go build` as raw Go errors — `lower::reject_over_application` \
          catches over-application one stage later — but the diagnostic has no span \
@@ -472,9 +470,9 @@ fn the_remaining_untyped_kernel_surface_is_still_within_its_review_date() {
 fn the_declared_remaining_count_matches_the_allowlist() {
     let declared: usize = UNTYPED_KERNEL_MEMBERS.iter().map(|(_, ms)| ms.len()).sum();
     assert_eq!(
-        declared, 69,
+        declared, 67,
         "the untyped-kernel allowlist holds {declared} member(s), but the \
-         re-declaration above and the module docstring both say 69. Update BOTH \
+         re-declaration above and the module docstring both say 67. Update BOTH \
          when the list moves — a hand-maintained count that nothing checks is a \
          number that goes stale silently, which is what happened at 988de75b."
     );
