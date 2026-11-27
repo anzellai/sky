@@ -47,6 +47,9 @@ pub(crate) struct PendingBind {
     pub callee_ty: TyVarId,
     /// The type of `e`.
     pub e_ty: TyVarId,
+    /// Inferring `e` reported a type error: an unknown head is its result,
+    /// so it gives no `[E2015]` (the head is treated as `Ty::Error`).
+    pub e_errored: bool,
     /// The span of the `<-` token.
     pub span: Option<Span>,
     /// The module of the def the bind line is in.
@@ -411,6 +414,9 @@ impl<'a> Infer<'a> {
         }
         if fin {
             for pb in std::mem::take(&mut self.pending_binds) {
+                if pb.e_errored {
+                    continue;
+                }
                 let t = self.read_back(pb.e_ty).render_pretty();
                 self.errors.push(crate::infer::TypeError {
                     message: format!(

@@ -1739,7 +1739,11 @@ impl<'a> Infer<'a> {
                     && matches!(body.exprs[*callee], Expr::Var(Res::BindAndThen)) =>
             {
                 let (lam, ex) = (args[0], args[1]);
+                let errors_in_e = self.errors.len();
                 let te = self.infer_expr(body, ex);
+                // A type error inside `e` already reported this line: a head
+                // left unknown by it is no second report (like `Ty::Error`).
+                let e_errored = self.errors.len() > errors_in_e;
                 let tlam = self.uf.fresh_flex();
                 let result = self.uf.fresh_flex();
                 let rest = self.fun(te, result);
@@ -1766,6 +1770,7 @@ impl<'a> Infer<'a> {
                     call: e,
                     callee_ty,
                     e_ty: te,
+                    e_errored,
                     span,
                     module: self
                         .self_def

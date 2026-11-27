@@ -443,3 +443,13 @@ fn a_mixed_block_is_one_e2001_at_the_first_mismatching_bind_line() {
         &src[label.0 as usize..label.1 as usize]
     );
 }
+
+/// A type error inside the expression after `<-` is reported once, as that
+/// error: the bind line adds no `[E2015]` on the same line (phase G1).
+#[test]
+fn a_type_error_in_e_gives_no_extra_e2015() {
+    let body = "import Std.Sync as Sync exposing (Ref)\ngo : Bool -> Ref Int -> Task Error Int\ngo c ref =\n    let\n        _ <- Task.unless c (Sync.update (\\n -> n + 1) ref)\n    in\n    Task.succeed 1";
+    let got = errors_with_import(body);
+    assert!(got.iter().any(|(c, _)| c == "E2001"), "{got:#?}");
+    assert!(got.iter().all(|(c, _)| c != "E2015"), "{got:#?}");
+}
