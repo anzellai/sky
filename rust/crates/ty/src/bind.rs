@@ -200,6 +200,31 @@ fn template_text(ty: &str, arity: usize) -> String {
     format!("andThen : (a -> {}) -> {} -> {}", t("b"), t("a"), t("b"))
 }
 
+/// "`T` (module M) has no `andThen : …`; use `case`, or add one to M". A
+/// stdlib module is not the user's to change, so it says `case` only.
+fn no_fitting_and_then(
+    ty: &str,
+    module: &str,
+    arity: usize,
+    pat: &str,
+    found: Option<&Ty>,
+) -> String {
+    let fix = if module.starts_with("Sky.") || module.starts_with("Std.") {
+        "use `case`".to_string()
+    } else {
+        format!("use `case`, or add one to {module}")
+    };
+    let other = match found {
+        Some(f) => format!(" (its `andThen : {}` has another shape)", f.render_pretty()),
+        None => String::new(),
+    };
+    format!(
+        "`{ty}` (module {module}) has no `{}`{other}; {fix}. The bind line `{pat} <- …` \
+         needs one to chain with. See docs/errors/E2016-no-andthen.md",
+        template_text(ty, arity)
+    )
+}
+
 impl NoAndThen {
     fn message(&self, pat: &str) -> String {
         match self {
@@ -210,38 +235,31 @@ impl NoAndThen {
             ),
             NoAndThen::NoHome(t) => format!(
                 "The bind line `{pat} <- …` chooses `andThen` from the module that declares \
-                 `{t}`, and that module is not known. Use `case`, or call its `andThen` by name. \
+                 `{t}`, and that module is not known. Use `case`. \
                  See docs/errors/E2016-no-andthen.md"
             ),
             NoAndThen::Missing {
                 ty,
                 module,
                 arity,
-                unexposed,
-            } => {
-                let why = if *unexposed {
-                    "declares `andThen` but does not expose it"
-                } else {
-                    "exposes no `andThen`"
-                };
-                format!(
-                    "`{ty}` ({module}) {why}, so the bind line `{pat} <- …` has no \
-                     `{}` to chain with. Use `case`. See docs/errors/E2016-no-andthen.md",
-                    template_text(ty, *arity)
-                )
-            }
+                unexposed: true,
+            } => format!(
+                "`{ty}` (module {module}) declares `andThen` but does not expose it, so the \
+                 bind line `{pat} <- …` has no `{}` to chain with. Use `case`, or expose it \
+                 from {module}. See docs/errors/E2016-no-andthen.md",
+                template_text(ty, *arity)
+            ),
+            NoAndThen::Missing {
+                ty, module, arity, ..
+            } => no_fitting_and_then(ty, module, *arity, pat, None),
+            // The exposed `andThen` does not fit: calling it by name would
+            // not fit either, so the fix is `case` or a fitting one.
             NoAndThen::Shape {
                 ty,
                 module,
                 arity,
                 found,
-            } => format!(
-                "`{ty}` ({module}) exposes `andThen : {}`, but a bind line `{pat} <- …` \
-                 needs `{}`. Use `case`, or call that `andThen` by name. \
-                 See docs/errors/E2016-no-andthen.md",
-                found.render_pretty(),
-                template_text(ty, *arity)
-            ),
+            } => no_fitting_and_then(ty, module, *arity, pat, Some(found)),
             NoAndThen::SelfReference { ty, module } => format!(
                 "The bind line `{pat} <- …` would chain with `{module}.andThen` for `{ty}`, \
                  and it is a bind line in `andThen` itself (or in a definition that \

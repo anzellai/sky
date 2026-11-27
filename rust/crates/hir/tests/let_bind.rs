@@ -184,7 +184,18 @@ fn a_reference_across_the_split_names_the_bind_line() {
     let got = messages(&r, "E1001");
     assert!(
         got.iter().any(|m| m.contains("Undefined name: c")
-            && m.contains("a bind line splits the block: move this definition above `b <- …`")),
+            && m.contains("a bind line splits the block: move `a` below `b <- …`")),
+        "{got:?}"
+    );
+    // The name is defined after a second bind line: the line that reads it
+    // moves below that one.
+    let r = resolve_main(&module(
+        "go t u =\n    let\n        a = c + 1\n        b <- t\n        d <- u\n        c = b + d\n    in\n    a",
+    ));
+    let got = messages(&r, "E1001");
+    assert!(
+        got.iter()
+            .any(|m| m.contains("Undefined name: c") && m.contains("move `a` below `d <- …`")),
         "{got:?}"
     );
     // The bound expression may not read a later name either.
@@ -193,8 +204,8 @@ fn a_reference_across_the_split_names_the_bind_line() {
     ));
     let got = messages(&r, "E1001");
     assert!(
-        got.iter()
-            .any(|m| m.contains("Undefined name: c") && m.contains("`b <- …`")),
+        got.iter().any(|m| m.contains("Undefined name: c")
+            && m.contains("move the definition of `c` above `b <- …`")),
         "{got:?}"
     );
 }

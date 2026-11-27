@@ -327,8 +327,11 @@ fn a_head_with_no_and_then_is_e2016() {
     let got =
         errors("go : List Int -> List Int\ngo xs =\n    let\n        a <- xs\n    in\n    [ a ]");
     assert!(
-        got.iter()
-            .any(|(c, m)| c == "E2016" && m.contains("exposes no `andThen")),
+        got.iter().any(|(c, m)| c == "E2016"
+            && m.contains("`List` (module Sky.Core.List) has no `andThen : (a -> List b)")
+            && m.contains("; use `case`.")
+            && !m.contains("add one")
+            && !m.contains("by name")),
         "{got:#?}"
     );
 }
@@ -365,10 +368,53 @@ fn a_misshaped_and_then_is_e2016() {
         &[("Lib.Box", BOX_SHAPE)],
     );
     assert!(
-        got.iter()
-            .any(|(c, m)| c == "E2016" && m.contains("needs `andThen : (a -> Box b)")),
+        got.iter().any(|(c, m)| c == "E2016"
+            && m.contains(
+                "`Box` (module Lib.Box) has no `andThen : (a -> Box b) -> Box a -> Box b`"
+            )
+            && m.contains("has another shape")
+            && m.contains("use `case`, or add one to Lib.Box")
+            && !m.contains("by name")),
         "{got:#?}"
     );
+}
+
+/// An `andThen` of another type (here `Box`'s module exposes one over
+/// `List`): the message never says to call it by name, since it does not fit.
+const BOX_OTHER_TYPE: &str = "module Lib.Box exposing (Box, box, andThen)\n\n\
+import Sky.Core.Prelude exposing (..)\n\n\n\
+type Box a\n    = Box a\n\n\n\
+box : a -> Box a\nbox v =\n    Box v\n\n\n\
+andThen : (a -> List b) -> List a -> List b\nandThen f xs =\n    []\n";
+
+#[test]
+fn an_and_then_of_another_type_is_e2016_without_call_it_by_name() {
+    let got = errors_in(
+        "go : Lib.Box.Box Int -> Lib.Box.Box Int\ngo b =\n    let\n        a <- b\n    in\n    Lib.Box.box a",
+        &[("Lib.Box", BOX_OTHER_TYPE)],
+    );
+    assert!(
+        got.iter().any(|(c, m)| c == "E2016"
+            && m.contains("has no `andThen : (a -> Box b) -> Box a -> Box b`")
+            && m.contains("use `case`, or add one to Lib.Box")
+            && !m.contains("by name")),
+        "{got:#?}"
+    );
+}
+
+/// The `[E1001]` across a bind split names a fix, and that fix compiles.
+#[test]
+fn the_split_hint_names_a_fix_that_compiles() {
+    let broken = "f : Task Error Int\nf =\n    let\n        a = b + 1\n        x <- Task.succeed 1\n        b = x\n    in\n    Task.succeed a";
+    let got = errors(broken);
+    assert!(
+        got.iter().any(|(c, m)| c == "E1001"
+            && m.contains("Undefined name: b")
+            && m.contains("move `a` below `x <- …`")),
+        "{got:#?}"
+    );
+    // The fix applied: `a` below `x <- …`.
+    clean("f : Task Error Int\nf =\n    let\n        x <- Task.succeed 1\n        a = b + 1\n        b = x\n    in\n    Task.succeed a");
 }
 
 #[test]

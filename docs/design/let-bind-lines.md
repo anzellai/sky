@@ -54,7 +54,10 @@ segments:
 - `e` sees seg1 (and outer scope), not `p` and not later segments.
 - A line before a bind line cannot see a name defined after it. A reference
   across the split is `[E1001]` with the hint "a bind line splits the block:
-  move this definition above `p <- …`".
+  move `a` below `p <- …`", where `a` is the line that reads the name and
+  `p <- …` is the bind line directly above the name's definition (always a
+  valid fix). In the expression of a bind line the hint is "move the
+  definition of `c` above `p <- …`".
 - An annotation line directly before a bind line (`x : T` then `x <- e`) is
   refused with a hint to annotate `e` instead.
 - A block whose LAST line is a bind line is fine: the body is the `in`
@@ -123,9 +126,12 @@ pattern is `[E3001]` with "use `case`". Find the union through
 
 - `[E2015]` BIND NEEDS A TYPE: "`x <- t` chooses `andThen` from the type of
   `t`, which is still `a`. Annotate `t`, e.g. `fetch : String -> Task Error User`."
-- `[E2016]` NO ANDTHEN: "`Response` (Std.Http) exposes no
-  `andThen : (a -> Response b) -> Response a -> Response b`. Use `case`." Also
-  covers a wrong shape, an unexposed andThen and the self-reference case.
+- `[E2016]` NO ANDTHEN: "`Decoder` (module P) has no
+  `andThen : (a -> Decoder b) -> Decoder a -> Decoder b`; use `case`, or add
+  one to P". A stdlib module says "use `case`" only. A wrong-shaped
+  `andThen` adds "(its `andThen : …` has another shape)" and never suggests
+  calling it by name. Also covers an unexposed andThen ("expose it") and the
+  self-reference case.
 - Mixed types in one block: ordinary `[E2001]`, with a note suggesting
   `Task.fromResult` / `Maybe.toResult err`.
 - Docs: `docs/errors/E2015-*.md`, `E2016-*.md`, the diagnostics registry

@@ -34,7 +34,7 @@ where `T` is the type with its other arguments (`Task e`, `Result e`,
 | Case | Example |
 |---|---|
 | The type has no named head | an `Int`, a function, a record, a tuple |
-| The module exposes no `andThen` | `List Int` (`Sky.Core.List` has none) |
+| The module has no `andThen` of that shape | `List Int` (`Sky.Core.List` has none) |
 | The module declares `andThen` but does not expose it | `module Lib.Box exposing (Box)` |
 | The exposed `andThen` has another shape | `andThen : Box a -> (a -> Box b) -> Box b` |
 | The bind line is inside that `andThen` itself | a bind line on `Box` in `Box`'s own `andThen` |
@@ -48,5 +48,7 @@ used.
 ## How to fix it
 
 Use `case` for a value with no `andThen`, or a plain `let` line (`n = e`) when
-`e` is not a computation to chain. For your own type, expose an `andThen` of
-the shape above. Inside `andThen` itself, write the body with `case`.
+`e` is not a computation to chain. For your own type, add (or expose) an
+`andThen` of the shape above. An `andThen` of another shape does not fit a
+bind line, and calling it by name does not fit the chain either: use `case`,
+or add one of the shape above. Inside `andThen` itself, write the body with `case`.

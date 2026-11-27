@@ -615,12 +615,11 @@ struct Resolver<'a> {
     /// destructure pattern whose binder names were already bound by the `let`
     /// pre-pass — so the pattern's `Var` ids match the ids the body references.
     reuse_binders: bool,
-    /// Names a `let` block defines AFTER a bind line, keyed to the pattern
-    /// text of the first bind line that hides them from the code being
-    /// resolved (docs/design/let-bind-lines.md §2). Read only to add the
+    /// Names a `let` block defines AFTER a bind line, with the line that
+    /// reads them (docs/design/let-bind-lines.md §2). Read only to add the
     /// "a bind line splits the block" hint to an `[E1001]`. A stack: one
     /// frame per `let` segment being resolved.
-    hidden_by_bind: Vec<HashMap<String, String>>,
+    hidden_by_bind: Vec<BindFrame>,
     /// Non-zero suppresses diagnostics/class tracking (interpolation interior,
     /// which the oracle never rejects — doc 03 §1.6).
     quiet: u32,
@@ -2942,19 +2941,20 @@ impl<'a> Resolver<'a> {
         self.push_scope();
         // A line of segment `i` cannot see a name of a later segment or of a
         // later bind pattern: the first bind line after it hides them.
-        let label = plan.binds.get(i).map(bind_label);
-        let hidden_from = |skip_own_pattern: bool| -> HashMap<String, String> {
+        // Each hidden name maps to the bind line directly above its
+        // definition: a line that reads it is valid once moved below that
+        // bind line.
+        let hidden: HashMap<String, String> = {
             let mut m = HashMap::new();
-            if let Some(label) = &label {
+            if i < plan.binds.len() {
                 for (j, names) in plan.bind_names.iter().enumerate().skip(i) {
-                    if j == i && skip_own_pattern {
-                        continue;
-                    }
+                    let label = bind_label(&plan.binds[j]);
                     for n in names {
                         m.entry(n.clone()).or_insert_with(|| label.clone());
                     }
                 }
-                for names in plan.seg_names.iter().skip(i + 1) {
+                for (j, names) in plan.seg_names.iter().enumerate().skip(i + 1) {
+                    let label = bind_label(&plan.binds[j - 1]);
                     for n in names {
                         m.entry(n.clone()).or_insert_with(|| label.clone());
                     }
@@ -2962,13 +2962,26 @@ impl<'a> Resolver<'a> {
             }
             m
         };
-        self.hidden_by_bind.push(hidden_from(false));
+        self.hidden_by_bind.push(BindFrame {
+            hidden: hidden.clone(),
+            user: None,
+            bound_by: None,
+        });
         let defs = self.resolve_let_lines(&plan.segments[i]);
         self.hidden_by_bind.pop();
         let body = match plan.binds.get(i) {
             Some(b) => {
                 // `e`: its own pattern is not in scope either.
-                self.hidden_by_bind.push(hidden_from(true));
+                let own = bind_label(b);
+                let mut hidden = hidden;
+                for n in &plan.bind_names[i] {
+                    hidden.remove(n);
+                }
+                self.hidden_by_bind.push(BindFrame {
+                    hidden,
+                    user: None,
+                    bound_by: Some(own),
+                });
                 let e = match b.expr() {
                     Some(e) => self.resolve_expr(&e),
                     None => self.body.expr(Expr::Error),
@@ -3068,6 +3081,9 @@ impl<'a> Resolver<'a> {
                     };
                     let i = binding_ix;
                     binding_ix += 1;
+                    if let (Some(frame), Some(n)) = (self.hidden_by_bind.last_mut(), b.name()) {
+                        frame.user = Some(n.text().to_string());
+                    }
                     let binders = match (b.name(), binder_ids.get(i).copied().flatten()) {
                         (Some(n), Some(id)) => vec![(Name::new(n.text()), id)],
                         _ => Vec::new(),
@@ -3132,6 +3148,12 @@ impl<'a> Resolver<'a> {
                     // The pre-pass already bound this destructure's binder names
                     // for forward references; reuse those ids so the pattern's
                     // `Var` ids match what sibling bindings + body point to.
+                    if let (Some(frame), Some(p)) = (
+                        self.hidden_by_bind.last_mut(),
+                        cst::child_pats(&child).first(),
+                    ) {
+                        frame.user = Some(normalise_ws(&p.syntax().text().to_string()));
+                    }
                     self.reuse_binders = true;
                     let pat = cst::child_pats(&child)
                         .first()
@@ -4048,15 +4070,27 @@ impl<'a> Resolver<'a> {
         };
         // The name is defined in this `let` block, after a bind line.
         if qualifier.is_none() {
-            if let Some(label) = self
+            if let Some((frame, label)) = self
                 .hidden_by_bind
                 .iter()
                 .rev()
-                .find_map(|frame| frame.get(name))
+                .find_map(|frame| frame.hidden.get(name).map(|l| (frame, l)))
             {
-                msg.push_str(&format!(
-                    ". Hint: a bind line splits the block: move this definition above `{label} <- …`"
-                ));
+                let hint = match (&frame.bound_by, &frame.user) {
+                    // `x <- f c` with `c` defined below: the expression after
+                    // `<-` sees only the lines above it.
+                    (Some(own), _) => format!(
+                        "the expression after `<-` sees only the lines above it: \
+                         move the definition of `{name}` above `{own} <- …`"
+                    ),
+                    (None, Some(user)) => {
+                        format!("a bind line splits the block: move `{user}` below `{label} <- …`")
+                    }
+                    (None, None) => {
+                        format!("a bind line splits the block: move this line below `{label} <- …`")
+                    }
+                };
+                msg.push_str(&format!(". Hint: {hint}"));
             }
         }
         let mut diag = Diagnostic::error("E1001", msg);
@@ -4292,6 +4326,16 @@ impl<'a> Resolver<'a> {
 /// tuples / lists / cons / ctor args / parens / aliases / records). `_`
 /// (wildcard) and literal patterns introduce no binder. Used by the linearity
 /// gate; mirrors the binder set `bind_pattern_names` registers.
+/// One `let` segment being resolved, for the `[E1001]` split hint: the
+/// names defined after a bind line, each with the bind line directly above
+/// its definition; the `=` line being resolved (its name or pattern), and,
+/// while resolving the expression of a bind line, that line's pattern.
+struct BindFrame {
+    hidden: HashMap<String, String>,
+    user: Option<String>,
+    bound_by: Option<String>,
+}
+
 /// A `let` block split at its bind lines: `segments[i]` is the `=` lines
 /// before `binds[i]` (the last segment has no bind line after it).
 struct LetPlan {
@@ -4304,15 +4348,13 @@ struct LetPlan {
 /// The pattern of a bind line as the hint quotes it (`( a, b )`).
 fn bind_label(b: &ast::BindBinding) -> String {
     b.pattern()
-        .map(|p| {
-            p.syntax()
-                .text()
-                .to_string()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
+        .map(|p| normalise_ws(&p.syntax().text().to_string()))
         .unwrap_or_default()
+}
+
+/// Source text on one line, runs of white space as one space.
+fn normalise_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The names the `=` lines of one `let` segment define.
