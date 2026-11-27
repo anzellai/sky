@@ -185,6 +185,10 @@ pub struct Infer<'a> {
     /// types is then refused once, at its first bind line that does not fit
     /// (`crate::bind`).
     pub(crate) bind_expects: HashMap<ExprId, TyVarId>,
+    /// Each name bound by a plain `name = e` line of a `let` (no parameters),
+    /// with its `e`: a clash on such a name whose type has an `andThen`
+    /// names the bind line `name <- e` (`crate::bind::result_note`).
+    pub(crate) eq_bound: HashMap<LocalId, (Name, ExprId)>,
     /// Per-def entries that take the place of the world's own in its two
     /// lowering-only record channels (see [`RecordOverlay`]).
     overlay: Option<&'a RecordOverlay>,
@@ -261,6 +265,7 @@ impl<'a> Infer<'a> {
             pending_binds: Vec::new(),
             bind_choices: Vec::new(),
             bind_expects: HashMap::new(),
+            eq_bound: HashMap::new(),
             overlay: None,
             #[cfg(test)]
             no_fast_paths: FORCE_GENERAL_PATHS.with(|f| f.get()),
@@ -1807,14 +1812,42 @@ impl<'a> Infer<'a> {
                     crate::bind::other_head(crate::bind::final_result(&self.read_back(tl)), h)
                 });
                 let before = self.errors.len();
-                // A clash here is the rest of the block against this line.s
+                // A clash here is the rest of the block against this line's
                 // type: report it at the `<-`.
                 let saved = self.cur_span;
                 self.cur_span = span;
                 self.unify(tl, tlam);
                 self.cur_span = saved;
+                // When this is the block's last bind line and the `in`
+                // expression has the wrong type, the clash is that
+                // expression's: report it there, with the fix for the
+                // block's type.
+                let body_fix = (self.errors.len() > before && !refused)
+                    .then_some(())
+                    .and(head.as_deref())
+                    .and_then(|h| {
+                        let fb = crate::bind::final_body(body, lam)?;
+                        let body_ty = match &self.read_back(tl) {
+                            Ty::Fun(_, r) => r.as_ref().clone(),
+                            _ => return None,
+                        };
+                        let module = self
+                            .self_def
+                            .and_then(|d| self.db.def_loc(d))
+                            .map(|l| l.module);
+                        let text = self.span_text(module, body.expr_span(fb));
+                        let note = self.body_note(h, &body_ty, text)?;
+                        Some((body.expr_span(fb), note))
+                    });
                 if refused {
                     self.errors.truncate(before);
+                } else if let Some((at, note)) = body_fix {
+                    if let Some(at) = at {
+                        for err in &mut self.errors[before..] {
+                            err.span = Some(at);
+                        }
+                    }
+                    self.append_note(before, Some(note));
                 } else if let Some(head) = head.filter(|_| mixed) {
                     let note = crate::bind::mixed_note(crate::nominal::strip(&head));
                     self.append_note(before, Some(note));
@@ -1881,7 +1914,17 @@ impl<'a> Infer<'a> {
                     if self.errors.len() > before {
                         let note = self
                             .any_fill_note(body, *callee)
-                            .or_else(|| self.any_fill_note(body, arg));
+                            .or_else(|| self.any_fill_note(body, arg))
+                            .or_else(|| {
+                                // The parameter's type, for the bind-line
+                                // note (a Task given where a Task is wanted
+                                // gets none).
+                                let param_ty = match &self.read_back(tf) {
+                                    Ty::Fun(p, _) => p.as_ref().clone(),
+                                    _ => Ty::Error,
+                                };
+                                self.result_note(body, arg, Some(param_ty), before)
+                            });
                         self.append_note(before, note);
                     }
                     tf = res;
@@ -1891,7 +1934,13 @@ impl<'a> Infer<'a> {
             Expr::Binop { op, lhs, rhs, .. } => {
                 let tl = self.infer_expr(body, *lhs);
                 let tr = self.infer_expr(body, *rhs);
-                self.infer_binop(op.as_str(), tl, tr)
+                let before = self.errors.len();
+                let t = self.infer_binop(op.as_str(), tl, tr);
+                if self.errors.len() > before {
+                    let note = self.result_note(body, e, None, before);
+                    self.append_note(before, note);
+                }
+                t
             }
             Expr::If { arms, els } => {
                 let result = self.uf.fresh_flex();
@@ -1907,6 +1956,13 @@ impl<'a> Infer<'a> {
                 result
             }
             Expr::Let { defs, body: lb } => {
+                for d in defs {
+                    if let ([(name, lid)], None, true) =
+                        (d.binders.as_slice(), &d.pat, d.params.is_empty())
+                    {
+                        self.eq_bound.insert(*lid, (name.clone(), d.body));
+                    }
+                }
                 // pre-bind binder names for forward reference / recursion.
                 for d in defs {
                     for (_, lid) in &d.binders {
@@ -2597,6 +2653,14 @@ impl<'a> Infer<'a> {
             }
         }
         t
+    }
+
+    /// The type variable of a local, for a message (no instantiation).
+    pub(crate) fn local_ty(&self, id: LocalId) -> Option<TyVarId> {
+        self.poly_locals
+            .get(&id)
+            .map(|(g, _)| *g)
+            .or_else(|| self.locals.get(&id).copied())
     }
 
     fn infer_res_plain(&mut self, res: Res) -> TyVarId {

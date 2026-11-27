@@ -328,22 +328,7 @@ impl<'a> Infer<'a> {
             self.bind_error(pb, NoAndThen::NotNamed(shown));
             return Attempt::Done;
         }
-        let home = KERNEL_BIND_HOMES
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, m)| m.to_string())
-            .or_else(|| hir::kernel_implicit_home(&name).map(str::to_string))
-            .or_else(|| {
-                (nominal::is_qualified(&name) && !nominal::is_go_type(&name))
-                    .then(|| name.rsplit_once('.').map(|(m, _)| m.to_string()))
-                    .flatten()
-            })
-            // Another builtin (`List`, `Dict`, …): its `Sky.Core` module.
-            .or_else(|| {
-                (!nominal::is_qualified(&name))
-                    .then(|| format!("Sky.Core.{name}"))
-                    .filter(|m| self.db.module_by_name(m).is_some())
-            });
+        let home = self.head_home(&name);
         let Some(home) = home else {
             self.bind_error(pb, NoAndThen::NoHome(shown));
             return Attempt::Done;
@@ -436,9 +421,207 @@ impl<'a> Infer<'a> {
         Attempt::Done
     }
 
+    /// The home module of a type head (§4): the fixed table for the kernel
+    /// heads, the kernel-implicit homes, the module part of a qualified name,
+    /// else the `Sky.Core` module of a builtin.
+    pub(crate) fn head_home(&self, name: &str) -> Option<String> {
+        KERNEL_BIND_HOMES
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, m)| m.to_string())
+            .or_else(|| hir::kernel_implicit_home(name).map(str::to_string))
+            .or_else(|| {
+                (nominal::is_qualified(name) && !nominal::is_go_type(name))
+                    .then(|| name.rsplit_once('.').map(|(m, _)| m.to_string()))
+                    .flatten()
+            })
+            // Another builtin (`List`, `Dict`, …): its `Sky.Core` module.
+            .or_else(|| {
+                (!nominal::is_qualified(name))
+                    .then(|| format!("Sky.Core.{name}"))
+                    .filter(|m| self.db.module_by_name(m).is_some())
+            })
+    }
+
+    /// Does the home module of the head `name` expose `value`?
+    fn home_exposes(&self, name: &str, value: &str) -> Option<ModuleId> {
+        let mid = self.db.module_by_name(&self.head_home(name)?)?;
+        self.db.module_exports(mid).value(value).map(|_| mid)
+    }
+
+    /// How the module of the def being checked writes a qualified name of
+    /// module `mid`: its import alias (`Decode`), else `fallback`.
+    fn qualifier_of(&self, mid: ModuleId, fallback: &str) -> String {
+        let own = self
+            .self_def
+            .and_then(|d| self.db.def_loc(d))
+            .map(|l| l.module);
+        let Some(own) = own else {
+            return fallback.to_string();
+        };
+        let mut names: Vec<String> = self
+            .db
+            .resolve(own)
+            .qualifiers
+            .iter()
+            .filter(|(_, src)| matches!(src, hir::ImportSource::Dep(m) if *m == mid))
+            .map(|(q, _)| q.to_string())
+            .collect();
+        names.sort_by_key(|q| (q.len(), q.clone()));
+        names
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| fallback.to_string())
+    }
+
+    /// The note for a block of bind lines whose `in` expression (`body_e`,
+    /// of type `body_ty`) does not have the block's type `block_head`. It
+    /// names the fix: the conversion for a value of another type with an
+    /// `andThen`, else the wrap for a plain value. `None` when the body has
+    /// the block's head (a clash inside one head is a plain mismatch).
+    pub(crate) fn body_note(
+        &self,
+        block_head: &str,
+        body_ty: &Ty,
+        body_text: Option<String>,
+    ) -> Option<String> {
+        let b = nominal::strip(block_head).to_string();
+        let v = body_text.unwrap_or_else(|| "…".to_string());
+        let arg = if v.contains(' ') && !(v.starts_with('(') && v.ends_with(')')) {
+            format!("({v})")
+        } else {
+            v.clone()
+        };
+        let body_head = match body_ty {
+            Ty::App(n, args) if !args.is_empty() => Some(n.as_str()),
+            Ty::Var(_) | Ty::Error => return None,
+            _ => None,
+        };
+        let intro = format!(
+            "\n\nNote: the `in` expression of a block of bind lines must have the block's \
+             type, `{b}`. To fix it,"
+        );
+        if let Some(h) = body_head {
+            if nominal::same(h, block_head) {
+                return None;
+            }
+            let h = nominal::strip(h);
+            let conversion = match (h, b.as_str()) {
+                ("Maybe", "Task") => Some(format!(
+                    "Convert the `Maybe` with `Task.fromResult (Result.fromMaybe err {arg})`"
+                )),
+                ("Result", "Task") => {
+                    Some(format!("Convert the `Result` with `Task.fromResult {arg}`"))
+                }
+                ("Maybe", "Result") => Some(format!(
+                    "Convert the `Maybe` with `Result.fromMaybe err {arg}`"
+                )),
+                ("Result", "Maybe") => {
+                    Some(format!("Convert the `Result` with `Result.toMaybe {arg}`"))
+                }
+                ("Task", _) => Some(format!(
+                    "A `Task` cannot run inside a `{b}` block: make the block a `Task` \
+                     block and convert each `{b}` line to a `Task`"
+                )),
+                _ => None,
+            };
+            if let Some(c) = conversion {
+                return Some(format!("{intro} {}{}.", c[..1].to_lowercase(), &c[1..]));
+            }
+            // Another named type with an `andThen` of its own: not a plain
+            // value, and no conversion is known.
+            if self.home_exposes(h, "andThen").is_some() {
+                return Some(format!("{intro} convert the `{h}` to a `{b}` first."));
+            }
+        }
+        let wrap = match b.as_str() {
+            "Task" => Some("Task.succeed".to_string()),
+            "Result" => Some("Ok".to_string()),
+            "Maybe" => Some("Just".to_string()),
+            _ => self.home_exposes(block_head, "succeed").map(|mid| {
+                let fallback = if b == "Decoder" {
+                    "Decode".to_string()
+                } else {
+                    self.head_home(block_head).unwrap_or_default()
+                };
+                format!("{}.succeed", self.qualifier_of(mid, &fallback))
+            }),
+        }?;
+        Some(format!(
+            "{intro} wrap a plain value in `{wrap}`: `{wrap} {arg}`."
+        ))
+    }
+
+    /// The note for a clash on a name bound with `=` to a value whose type
+    /// has an `andThen` (`a = fetch 1`, then `a + 1`): "`a` is a `Task`; to
+    /// use its result, bind it with `a <- fetch 1`". `e` is the expression
+    /// that clashed; the name is `e` itself or an operand of its arithmetic.
+    /// `want` is the type the slot expects, when known: a slot of the same
+    /// head (a `Task` given where a `Task` is wanted) gets no note, since
+    /// binding the result would not fit it either. Only when the clash
+    /// reported from `from` on names the name's type.
+    pub(crate) fn result_note(
+        &mut self,
+        body: &Body,
+        e: ExprId,
+        want: Option<Ty>,
+        from: usize,
+    ) -> Option<String> {
+        let mut stack = vec![e];
+        let mut cands = Vec::new();
+        while let Some(x) = stack.pop() {
+            match &body.exprs[x] {
+                Expr::Var(Res::Local(l)) => cands.push(*l),
+                Expr::Binop { lhs, rhs, .. } => {
+                    stack.push(*rhs);
+                    stack.push(*lhs);
+                }
+                Expr::Negate(inner) => stack.push(*inner),
+                _ => {}
+            }
+        }
+        let module = self
+            .self_def
+            .and_then(|d| self.db.def_loc(d))
+            .map(|l| l.module);
+        for l in cands {
+            let Some((name, rhs)) = self.eq_bound.get(&l).cloned() else {
+                continue;
+            };
+            let name = name.as_str();
+            let Some(tv) = self.local_ty(l) else { continue };
+            let t = self.read_back(tv);
+            let Ty::App(head, args) = &t else { continue };
+            if args.is_empty() || self.home_exposes(head.as_str(), "andThen").is_none() {
+                continue;
+            }
+            if let Some(Ty::App(w, _)) = &want {
+                if nominal::same(w.as_str(), head.as_str()) {
+                    continue;
+                }
+            }
+            let shown = t.render_pretty();
+            if !self.errors[from..]
+                .iter()
+                .any(|err| err.message.contains(&format!("`{shown}`")))
+            {
+                continue;
+            }
+            let rhs_text = self
+                .span_text(module, body.expr_span(rhs))
+                .unwrap_or_else(|| "…".to_string());
+            return Some(format!(
+                "\n\nNote: `{name}` is a `{}`; to use its result, bind it with \
+                 `{name} <- {rhs_text}`.",
+                nominal::strip(head.as_str())
+            ));
+        }
+        None
+    }
+
     /// The source text at `span` in `module`, when it is short and on one
     /// line (for a message).
-    fn span_text(&self, module: Option<ModuleId>, span: Option<Span>) -> Option<String> {
+    pub(crate) fn span_text(&self, module: Option<ModuleId>, span: Option<Span>) -> Option<String> {
         let (module, span) = (module?, span?);
         let src = self.db.module_parse(module).syntax().text().to_string();
         let t = src
@@ -513,6 +696,26 @@ impl<'a> Infer<'a> {
                     code: "E2015",
                 });
             }
+        }
+    }
+}
+
+/// The expression a bind line's continuation `lam` ends in, when no later
+/// bind line follows in its block: the `in` expression (through the `let`
+/// segments the resolver wraps it in, and a `let` written in the body).
+pub(crate) fn final_body(body: &Body, lam: ExprId) -> Option<ExprId> {
+    let Expr::Lambda { body: mut b, .. } = &body.exprs[lam] else {
+        return None;
+    };
+    loop {
+        match &body.exprs[b] {
+            Expr::Let { body: inner, .. } => b = *inner,
+            Expr::Call(f, args)
+                if args.len() == 2 && matches!(body.exprs[*f], Expr::Var(Res::BindAndThen)) =>
+            {
+                return None
+            }
+            _ => return Some(b),
         }
     }
 }
