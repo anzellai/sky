@@ -24,6 +24,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- **`HttpStream.forEachChunk` reads the whole stream.** It could return `Ok`
+  after reading only part of a finished stream when the reader started after
+  the stream had ended: it now hands out every chunk that arrived before the
+  end. WebSocket readers already did. The release now runs the runtime's
+  timing-dependent tests many times on Linux and macOS (`gate-stress`).
+
 - **A nested bind line stays typed.** In a `Result` or `Maybe` bind block, the
   second and later lines lowered to the untyped `Sky.Core.Result.andThen` /
   `Maybe.andThen` (with a runtime narrowing of the result) when the

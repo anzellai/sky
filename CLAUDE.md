@@ -394,6 +394,25 @@ and deferred the secondary; the instruction is that both should have shipped
 together. Hold the tag, do the work, ship once. See
 [[feedback_no_defer_found_bugs_same_release]].
 
+### 0.2.3 An intermittent failure is a bug, never a flake — INVIOLABLE
+
+A CI failure the change did not cause is a defect we have not found yet. Before
+the merge or the tag, it is either **root-caused** (a deterministic test that
+reproduces it, then the fix) or **filed as an issue with the run link**. Never
+re-run the job until it is green and move on. "Flaky", "infra", "timing" and
+"passed on retry" are a description of the symptom, not a verdict. A test whose
+outcome depends on scheduling gets a deterministic seam (a channel, a hook, an
+injected clock) in place of a sleep where possible, and the release runs the
+rest many times (`gate-stress`, `scripts/ci/go-test-stress.sh`).
+
+**The lesson (v0.32.1).** `HttpStream.forEachChunk` could return `Ok` with part
+of a finished stream: a Go `select` picked `done` over chunks still queued. Its
+test passed every run but one per-commit macOS run, about one in 40. The
+release gate trusted one green run of a timing-dependent test, ran no Go
+runtime test on macOS, and an earlier intermittent browser failure had been
+called a flake with no root cause. One unexplained red run was the only signal
+(fixed in f7fd47176, with a deterministic regression test).
+
 ### 0.3 Architectural-mechanism citation — INVIOLABLE for compiler workflows
 
 A compiler-level workflow that proposes closing a strategic goal via
