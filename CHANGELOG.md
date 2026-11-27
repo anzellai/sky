@@ -119,6 +119,9 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   for the same line.
 - `a <- Task.succeed` (an argument missing) is `[E2016]` that names the
   function, its type and how many arguments it still needs.
+- `sky fuzz --target web:app` failed the split oracle for an app whose `page`
+  type has one constructor ("model field `page` took one value"). A field of a
+  type with one value is no longer in the variety check.
 
 ## v0.31.2 — the app icon reaches Std.App mobile releases (2026-11-24)
 

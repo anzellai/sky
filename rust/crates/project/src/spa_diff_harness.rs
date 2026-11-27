@@ -311,7 +311,13 @@ pub fn emit_harness(
     ));
     s.push('\n');
     s.push_str(&emit_client_arms(&checked));
-    s.push_str(&emit_driver(model_type, model_fields, iters, seed0));
+    s.push_str(&emit_driver(
+        model_type,
+        model_fields,
+        resolver,
+        iters,
+        seed0,
+    ));
 
     out.snippet = s;
     out.checked = checked.iter().map(|b| b.ctor.clone()).collect();
@@ -525,6 +531,39 @@ fn emit_check_one(
     s
 }
 
+/// Does `t` have exactly one value: `()`, a union of one constructor whose
+/// arguments each have one value, or a record or tuple of such fields? A type
+/// the resolver does not know, a type variable and a recursive type past a
+/// small depth are not (they keep the variety check).
+fn one_valued(t: &ty::Ty, resolver: &dyn TypeResolver, depth: usize) -> bool {
+    use crate::spa_diff_gen::TypeDef;
+    if depth > 8 {
+        return false;
+    }
+    match t {
+        ty::Ty::Unit => true,
+        ty::Ty::Tuple(xs) => xs.iter().all(|x| one_valued(x, resolver, depth + 1)),
+        ty::Ty::Record(fs, None) => fs.iter().all(|(_, x)| one_valued(x, resolver, depth + 1)),
+        ty::Ty::App(n, args) if args.is_empty() => {
+            let name = n.as_str();
+            match resolver.resolve(name) {
+                Some(TypeDef::Union(ctors)) => {
+                    ctors.len() == 1
+                        && ctors[0]
+                            .1
+                            .iter()
+                            .all(|x| one_valued(x, resolver, depth + 1))
+                }
+                Some(TypeDef::Record(fs)) => {
+                    fs.iter().all(|(_, x)| one_valued(x, resolver, depth + 1))
+                }
+                None => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 /// The fuzz driver + `main`. Pure loop (`genModel` + `genMsg` + `spaDiffCheckOne`
 /// are pure); `main` prints and `Task.fail`s on the first divergence so the
 /// process exits non-zero — the gate goes red. Before the loop it checks that
@@ -534,6 +573,7 @@ fn emit_check_one(
 fn emit_driver(
     model_type: &str,
     model_fields: &[ModelFieldTy],
+    resolver: &dyn TypeResolver,
     iters: usize,
     seed0: i64,
 ) -> String {
@@ -541,11 +581,20 @@ fn emit_driver(
         "\x20           Ok ()\n".to_string()
     } else {
         // Chain the per-field checks: the first failure wins.
+        // A field whose type has ONE value (a page type of one constructor,
+        // `()`, a record of such fields) cannot vary, and no branch can test
+        // it: it is not checked. Requiring it to vary failed every app whose
+        // `page` type has one constructor (Judge 6).
         let parts: Vec<String> = model_fields
             .iter()
+            .filter(|f| !f.ty.as_ref().is_some_and(|t| one_valued(t, resolver, 0)))
             .map(|f| format!("spaDiffVaries_ (\\m -> m.{0} /= m0.{0}) \"{0}\" ms", f.name))
             .collect();
-        format!("\x20           spaDiffAll_ [ {} ]\n", parts.join(", "))
+        if parts.is_empty() {
+            "\x20           Ok ()\n".to_string()
+        } else {
+            format!("\x20           spaDiffAll_ [ {} ]\n", parts.join(", "))
+        }
     };
     format!(
         "spaDiffOne : Seed -> Result String Seed\n\
@@ -1012,6 +1061,65 @@ mod tests {
         assert!(at("        Pick (0 as spaArg0_) ->") < at("        Pick n ->\n            Ok ()"));
         assert!(one.contains("update (Pick p.spaArg0_) m"), "{one}");
         well_formed(&out.snippet);
+    }
+
+    /// A Model field whose type has one value (a `page` type of one
+    /// constructor) is not in the variety check: it cannot vary, and the
+    /// oracle failed every such app (Judge 6). A field of two constructors is
+    /// still checked, so a branch that tests it must run both ways.
+    #[test]
+    fn a_one_constructor_field_is_not_in_the_variety_check() {
+        let branch = || CheckableBranch {
+            ctor: "Inc".to_string(),
+            io: BranchIo {
+                reads_whole_model: false,
+                read_fields: vec!["count".to_string()],
+                msg_args: vec![],
+                writes_whole_model: false,
+                write_fields: vec!["count".to_string()],
+                always_written: vec![],
+                fresh_response: false,
+            },
+            msg_arg_tys: vec![],
+            arms: vec![],
+            client_arms: Default::default(),
+        };
+        let page = ModelFieldTy {
+            name: "page".to_string(),
+            ty_name: "Page".to_string(),
+            codec: None,
+            ty: Some(ty::Ty::app("Page", vec![])),
+        };
+        let unit = ModelFieldTy {
+            name: "nothing".to_string(),
+            ty_name: "()".to_string(),
+            codec: None,
+            ty: Some(ty::Ty::Unit),
+        };
+        let fields = vec![f("count", "Int"), page, unit];
+        let one = Env(HashMap::from([(
+            "Page".to_string(),
+            TypeDef::Union(vec![("HomePage".to_string(), vec![])]),
+        )]));
+        let out = emit_harness("Model", "Msg", &fields, &[branch()], &one, 50, 1);
+        assert_eq!(out.checked, vec!["Inc".to_string()], "{:?}", out.notes);
+        assert!(
+            out.snippet.contains("\"count\" ms")
+                && !out.snippet.contains("\"page\" ms")
+                && !out.snippet.contains("\"nothing\" ms"),
+            "{}",
+            out.snippet
+        );
+        well_formed(&out.snippet);
+        let two = Env(HashMap::from([(
+            "Page".to_string(),
+            TypeDef::Union(vec![
+                ("HomePage".to_string(), vec![]),
+                ("OtherPage".to_string(), vec![]),
+            ]),
+        )]));
+        let out = emit_harness("Model", "Msg", &fields, &[branch()], &two, 50, 1);
+        assert!(out.snippet.contains("\"page\" ms"), "{}", out.snippet);
     }
 
     #[test]

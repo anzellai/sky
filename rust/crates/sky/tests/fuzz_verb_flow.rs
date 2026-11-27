@@ -303,3 +303,26 @@ fn the_split_oracle_diffs_server_arms_that_match_inside_their_arguments() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A Model field whose type has ONE value cannot vary, so the oracle's
+/// variety check leaves it out. `tests/fixtures/spa-one-page` has a `page`
+/// type of one constructor (`type Page = HomePage`): the oracle used to fail
+/// it ("model field `page` took one value over every generated model"), and
+/// passed the same app with a second constructor (Judge 6).
+#[test]
+fn a_one_constructor_page_type_passes_the_split_oracle() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-one-page");
+    let dir = scratch("onepage");
+    std::fs::copy(fixture.join("sky.toml"), dir.join("sky.toml")).unwrap();
+    std::fs::copy(fixture.join("src/Main.sky"), dir.join("src/Main.sky")).unwrap();
+    let (code, text) = run_fuzz_target(&dir, 200, "web:app");
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.contains("split oracle PASS") && !text.contains("took one value"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
