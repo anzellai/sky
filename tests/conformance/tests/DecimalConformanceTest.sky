@@ -17,7 +17,7 @@ import Sky.Test as Test exposing (Test)
 -- parse failure surfaces as a wrong toString, not a silent zero masking a bug.
 d : String -> Decimal.Decimal
 d s =
-    Result.withDefault (Decimal.fromInt -999999) (Decimal.fromString s)
+    Result.withDefault (Decimal.fromInt (-999999)) (Decimal.fromString s)
 
 
 str : Decimal.Decimal -> String

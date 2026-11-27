@@ -42,9 +42,7 @@ import Std.Money as Money exposing (Money, Currency(..))
 import Sky.Core.Error as Error exposing (Error, ErrorKind(..), ErrorDetails(..))
 import Sky.Test as Test exposing (Test)
 
-
 -- ── Types under test ─────────────────────────────────────────────────────────
-
 type alias Prim =
     { name : String
     , count : Int
@@ -52,12 +50,10 @@ type alias Prim =
     , active : Bool
     }
 
-
 type alias Inner =
     { tag : String
     , n : Int
     }
-
 
 type alias Outer =
     { title : String
@@ -65,12 +61,10 @@ type alias Outer =
     , items : List Int
     }
 
-
 type alias Opt =
     { label : String
     , note : Maybe String
     }
-
 
 type alias Product =
     { name : String
@@ -78,11 +72,9 @@ type alias Product =
     , active : Bool
     }
 
-
 type Shipment
     = NotShipped
     | Shipped String Int
-
 
 type Category
     = Stickers
@@ -91,7 +83,6 @@ type Category
 
 
 -- ── Codecs ───────────────────────────────────────────────────────────────────
-
 primCodec : Codec Prim
 primCodec =
     Codec.auto { name = "", count = 0, ratio = 0.0, active = False }
@@ -122,14 +113,22 @@ productCamel =
 -- A Bool persisted as 0/1 via `map`, injected over auto-derivation with autoWith.
 intBool : Codec Bool
 intBool =
-    Codec.map (\i -> i /= 0) (\b -> if b then 1 else 0) Codec.int
+    Codec.map
+        (\i -> i /= 0)
+        (\b ->
+            if b then
+                1
+
+            else
+                0)
+        Codec.int
 
 
 productOverride : Codec Product
 productOverride =
-    Codec.autoWith [ ( "active", intBool ) ]
+    Codec.autoWith
+        [ ( "active", intBool ) ]
         { name = "", priceMinor = 0, active = False }
-
 
 -- A Dict whose VALUE is a data-carrying ADT (`Money` = rt.SkyADT). The decoder
 -- must thread the Dict's declared value type down so the Money value routes to
@@ -148,8 +147,7 @@ ledgerCodec =
 -- Explicit object builder with hand-picked (non-derived) key names.
 customInner : Codec Inner
 customInner =
-    Codec.object Inner
-        |> Codec.field "t" .tag Codec.string
+    Codec.object Inner |> Codec.field "t" .tag Codec.string
         |> Codec.field "num" .n Codec.int
         |> Codec.buildObject
 
@@ -158,13 +156,11 @@ customInner =
 -- (the `auto` decoder is permissive — see KNOWN BUG 2).
 primObjCodec : Codec Prim
 primObjCodec =
-    Codec.object Prim
-        |> Codec.field "name" .name Codec.string
+    Codec.object Prim |> Codec.field "name" .name Codec.string
         |> Codec.field "count" .count Codec.int
         |> Codec.field "ratio" .ratio Codec.float
         |> Codec.field "active" .active Codec.bool
         |> Codec.buildObject
-
 
 -- `Codec.inline`: a record that embeds `Prim` as one field, with a codec that
 -- writes the embedded fields flat. `PrimFlat` is the same data as one flat
@@ -173,7 +169,6 @@ type alias PrimTagged =
     { prim : Prim
     , label : String
     }
-
 
 type alias PrimFlat =
     { name : String
@@ -186,8 +181,7 @@ type alias PrimFlat =
 
 primFields : Codec.ObjectCodec Prim Prim
 primFields =
-    Codec.object Prim
-        |> Codec.field "name" .name Codec.string
+    Codec.object Prim |> Codec.field "name" .name Codec.string
         |> Codec.field "count" .count Codec.int
         |> Codec.field "ratio" .ratio Codec.float
         |> Codec.field "active" .active Codec.bool
@@ -195,22 +189,19 @@ primFields =
 
 primTaggedCodec : Codec PrimTagged
 primTaggedCodec =
-    Codec.object PrimTagged
-        |> Codec.inline .prim primFields
+    Codec.object PrimTagged |> Codec.inline .prim primFields
         |> Codec.field "label" .label Codec.string
         |> Codec.buildObject
 
 
 primFlatCodec : Codec PrimFlat
 primFlatCodec =
-    Codec.object PrimFlat
-        |> Codec.field "name" .name Codec.string
+    Codec.object PrimFlat |> Codec.field "name" .name Codec.string
         |> Codec.field "count" .count Codec.int
         |> Codec.field "ratio" .ratio Codec.float
         |> Codec.field "active" .active Codec.bool
         |> Codec.field "label" .label Codec.string
         |> Codec.buildObject
-
 
 -- A repeated JSON key: two fields, or an inlined record and its host, that
 -- share one key. Encoding writes both pairs; decoding cannot tell them apart
@@ -224,11 +215,9 @@ type alias Pair =
 
 dupCodec : Codec Pair
 dupCodec =
-    Codec.object Pair
-        |> Codec.field "x" .a Codec.int
+    Codec.object Pair |> Codec.field "x" .a Codec.int
         |> Codec.field "x" .b Codec.int
         |> Codec.buildObject
-
 
 -- Two keys repeat ("y" then "x"): the error names the key whose second use
 -- comes first while reading the fields in order ("y"), not the key that
@@ -243,8 +232,7 @@ type alias Quad =
 
 twoDupCodec : Codec Quad
 twoDupCodec =
-    Codec.object Quad
-        |> Codec.field "x" .a Codec.int
+    Codec.object Quad |> Codec.field "x" .a Codec.int
         |> Codec.field "y" .b Codec.int
         |> Codec.field "y" .c Codec.int
         |> Codec.field "x" .d Codec.int
@@ -254,8 +242,7 @@ twoDupCodec =
 -- `label` reuses the inlined `Prim`'s `name` key.
 dupInlineCodec : Codec PrimTagged
 dupInlineCodec =
-    Codec.object PrimTagged
-        |> Codec.inline .prim primFields
+    Codec.object PrimTagged |> Codec.inline .prim primFields
         |> Codec.field "name" .label Codec.string
         |> Codec.buildObject
 
@@ -263,6 +250,7 @@ dupInlineCodec =
 errorMessage : Result Error a -> String
 errorMessage r =
     case r of
+
         Err (Error.Error _ info) ->
             info.message
 
@@ -272,7 +260,9 @@ errorMessage r =
 
 primTagged : PrimTagged
 primTagged =
-    { prim = { name = metaString, count = -3, ratio = 2.5, active = True }, label = "tag" }
+    { prim = { name = metaString, count = -3, ratio = 2.5, active = True }
+    , label = "tag"
+    }
 
 
 primFlat : PrimFlat
@@ -285,6 +275,7 @@ shipmentCodec =
     Codec.taggedUnion
         (\v ->
             case v of
+
                 NotShipped ->
                     ( "NotShipped", [] )
 
@@ -293,8 +284,7 @@ shipmentCodec =
                     , [ Codec.toValue Codec.string carrier
                       , Codec.toValue Codec.int ts
                       ]
-                    )
-        )
+                    ))
         [ Codec.var0 "NotShipped" NotShipped
         , Codec.var2 "Shipped" Shipped Codec.string Codec.int
         ]
@@ -310,10 +300,11 @@ categoryCodec =
 
 
 -- ── Helpers ──────────────────────────────────────────────────────────────────
-
 fits : Codec t -> Codec s -> Bool
 fits target source =
-    Codec.schemaFitError (Codec.jsonSchema target).schema (Codec.jsonSchema source).schema
+    Codec.schemaFitError
+        (Codec.jsonSchema target).schema
+        (Codec.jsonSchema source).schema
         == Nothing
 
 
@@ -330,7 +321,9 @@ roundTrip codec x =
 
 roundTripStr : String -> Test.TestResult
 roundTripStr s =
-    Test.equal (Ok s) (Codec.fromJson Codec.string (Codec.toJson Codec.string s))
+    Test.equal
+        (Ok s)
+        (Codec.fromJson Codec.string (Codec.toJson Codec.string s))
 
 
 -- Adversarial JSON metacharacters + escapes: quotes, backslash, newline, tab,
@@ -345,13 +338,11 @@ mkErr : ErrorKind -> String -> Maybe ErrorDetails -> Error
 mkErr kind msg details =
     Error.Error kind { message = msg, details = details }
 
-
 -- v0.29.1: Maybe fields of every kind with a `Nothing` blank, and `autoWith`
 -- overrides of 1, 2 and 3 Maybe Int fields. Before the fix an override read
 -- 3000 as `Just 0` and null as `Just 0`, with no error.
 type alias MbPt =
     { x : Int }
-
 
 type alias Mb =
     { id : String
@@ -420,7 +411,7 @@ mbValues =
     , d = Just ""
     , e = Just { x = 7 }
     , f = Just (Just 5)
-    , h = Just -1
+    , h = Just (-1)
     }
 
 
@@ -1052,21 +1043,23 @@ tests =
                 ))
     ]
 
-
 -- A `List Json.Value` or `Dict String Json.Value` field under Codec.auto: the
 -- blank cannot mark the elements, so a read is a loud Err. One `Json.Value`
 -- field holding the whole array (hookAuto above) reads.
 type alias HooksAuto =
-    { id : String, items : List Encode.Value }
+    { id : String
+    , items : List Encode.Value
+    }
 
 
 hooksAuto : Codec HooksAuto
 hooksAuto =
     Codec.auto { id = "", items = [ Encode.null ] }
 
-
 type alias HookMapAuto =
-    { id : String, items : Dict String Encode.Value }
+    { id : String
+    , items : Dict String Encode.Value
+    }
 
 
 hookMapAuto : Codec HookMapAuto
@@ -1078,28 +1071,29 @@ hookMapAuto =
 -- raw Json.Value, so a List or Dict of them reads.
 hooksObject : Codec HooksAuto
 hooksObject =
-    Codec.object HooksAuto
-        |> Codec.field "id" .id Codec.string
+    Codec.object HooksAuto |> Codec.field "id" .id Codec.string
         |> Codec.field "items" .items (Codec.list Codec.value)
         |> Codec.buildObject
 
 
 hookMapObject : Codec HookMapAuto
 hookMapObject =
-    Codec.object HookMapAuto
-        |> Codec.field "id" .id Codec.string
+    Codec.object HookMapAuto |> Codec.field "id" .id Codec.string
         |> Codec.field "items" .items (Codec.dict Codec.string Codec.value)
         |> Codec.buildObject
 
 
 hooksAutoWith : Codec HooksAuto
 hooksAutoWith =
-    Codec.autoWith [ ( "items", Codec.list Codec.value ) ] { id = "", items = [ Encode.null ] }
-
+    Codec.autoWith
+        [ ( "items", Codec.list Codec.value ) ]
+        { id = "", items = [ Encode.null ] }
 
 -- A `Json.Value` field under Codec.auto: the blank's JSON value marks it.
 type alias HookAuto =
-    { id : String, data : Encode.Value }
+    { id : String
+    , data : Encode.Value
+    }
 
 
 hookAuto : Codec HookAuto
@@ -1117,53 +1111,57 @@ failed r =
         Err _ ->
             True
 
-
 type alias ZeroAuto =
-    { tagList : List String, total : Int, note : Maybe String }
+    { tagList : List String
+    , total : Int
+    , note : Maybe String
+    }
 
 
 zeroAutoBlank : ZeroAuto
 zeroAutoBlank =
     { tagList = [ "it's" ], total = 0, note = Nothing }
 
-
 type alias ZeroRecord =
-    { n : String, xs : List Int, on : Bool, m : Maybe Float }
+    { n : String
+    , xs : List Int
+    , on : Bool
+    , m : Maybe Float
+    }
 
 
 zeroRecord : Codec ZeroRecord
 zeroRecord =
-    Codec.object ZeroRecord
-        |> Codec.field "n" .n Codec.string
+    Codec.object ZeroRecord |> Codec.field "n" .n Codec.string
         |> Codec.field "xs" .xs (Codec.list Codec.int)
         |> Codec.field "on" .on Codec.bool
         |> Codec.field "m" .m (Codec.maybe Codec.float)
         |> Codec.buildObject
 
-
 type alias ZeroRecordNoZero =
-    { n : String, e : Error }
+    { n : String
+    , e : Error
+    }
 
 
 -- A field with no zero (an `Error`, a taggedUnion) leaves the whole object
 -- with none: a partial object would be a DEFAULT no existing row decodes.
 zeroRecordNoZero : Codec ZeroRecordNoZero
 zeroRecordNoZero =
-    Codec.object ZeroRecordNoZero
-        |> Codec.field "n" .n Codec.string
+    Codec.object ZeroRecordNoZero |> Codec.field "n" .n Codec.string
         |> Codec.field "e" .e Codec.error
         |> Codec.buildObject
 
-
 type alias ZeroOuter =
-    { inner : ZeroRecordNoZero, xs : List Int }
+    { inner : ZeroRecordNoZero
+    , xs : List Int
+    }
 
 
 -- The nested object has no zero, so it is left out. The list keeps `[]`.
 zeroOuter : Codec ZeroOuter
 zeroOuter =
-    Codec.object ZeroOuter
-        |> Codec.field "inner" .inner zeroRecordNoZero
+    Codec.object ZeroOuter |> Codec.field "inner" .inner zeroRecordNoZero
         |> Codec.field "xs" .xs (Codec.list Codec.int)
         |> Codec.buildObject
 
@@ -1176,7 +1174,8 @@ dcm t =
 
 mnyText : Money -> String
 mnyText m =
-    Decimal.toString (Money.amount m) ++ " " ++ Money.currencyCode (Money.currency m)
+    Decimal.toString (Money.amount m) ++ " "
+        ++ Money.currencyCode (Money.currency m)
 
 
 isErrC : Result e a -> Bool
@@ -1189,15 +1188,15 @@ isErrC r =
         Err _ ->
             True
 
-
 type alias DcmPair =
-    { price : Money, qty : Decimal }
+    { price : Money
+    , qty : Decimal
+    }
 
 
 dcmAuto : Codec DcmPair
 dcmAuto =
     Codec.auto { price = Money.zero GBP, qty = Decimal.zero }
-
 
 type alias DcmOne =
     { qty : Decimal }
@@ -1205,10 +1204,8 @@ type alias DcmOne =
 
 dcmRecord : Codec DcmOne
 dcmRecord =
-    Codec.object DcmOne
-        |> Codec.field "qty" .qty Codec.decimal
+    Codec.object DcmOne |> Codec.field "qty" .qty Codec.decimal
         |> Codec.buildObject
-
 
 type alias DcmMoney =
     { price : Money }
@@ -1256,14 +1253,15 @@ kindRoundTrip c =
     let
         want =
             case Codec.shape c of
+
                 Codec.SScalar t ->
                     t
 
                 _ ->
                     Codec.CBlob
-
         got =
             case Codec.shape (Codec.autoWith [ ( "f", c ) ] { f = 0 }) of
+
                 Codec.SRecord [ ( "f", t ) ] ->
                     t
 
@@ -1276,6 +1274,7 @@ kindRoundTrip c =
 ctName : Codec.ColType -> String
 ctName ct =
     case ct of
+
         Codec.CText ->
             "CText"
 
@@ -1303,4 +1302,13 @@ ctName ct =
 
 dedupSorted : List String -> List String
 dedupSorted xs =
-    List.foldl (\x acc -> if List.member x acc then acc else x :: acc) [] xs |> List.sort
+    List.foldl
+        (\x acc ->
+            if List.member x acc then
+                acc
+
+            else
+                x :: acc)
+        []
+        xs
+        |> List.sort

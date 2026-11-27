@@ -35,7 +35,6 @@ import Std.Ui.Transition as Transition
 import Std.Html as Html
 import Sky.Test as Test exposing (Test)
 
-
 type Msg
     = Noop
 

@@ -198,7 +198,7 @@ jobsOf job =
 
                                                   else
                                                       now - j.createMs)
-                                                // 1000)
+                                                      // 1000)
                                         0
                                         jobs
                                   )))
@@ -264,7 +264,7 @@ run : List String -> Task Error ()
 run args =
     case args of
 
-        ["l2"] ->
+        [ "l2" ] ->
             world
                 |> Task.andThen
                        (\w ->
@@ -302,7 +302,7 @@ run args =
                                                                    )
                                                                  ])))
 
-        ["l3-once"] ->
+        [ "l3-once" ] ->
             world
                 |> Task.andThen
                        (\w ->
@@ -349,7 +349,7 @@ run args =
                                                                                 "n2-standard-4"
                                                                                 outcome))))
 
-        ["l3-crash"] ->
+        [ "l3-crash" ] ->
             world
                 |> Task.andThen
                        (\w ->
@@ -362,7 +362,7 @@ run args =
                                    |> Task.andThen
                                           (report "l3-crash" job "n2-standard-4"))
 
-        ["l3-cancel"] ->
+        [ "l3-cancel" ] ->
             world
                 |> Task.andThen
                        (\w ->
@@ -377,7 +377,7 @@ run args =
                                    |> Task.andThen
                                           (report "l3-cancel" job "n2-standard-4"))
 
-        ["l3-budget"] ->
+        [ "l3-budget" ] ->
             world
                 |> Task.andThen
                        (\w ->
@@ -402,7 +402,7 @@ run args =
                                    |> Task.andThen
                                           (report "l3-budget" job "n2-standard-4"))
 
-        ["l4"] ->
+        [ "l4" ] ->
             world
                 |> Task.andThen
                        (\w ->
@@ -440,7 +440,7 @@ run args =
                                    |> Task.andThen
                                           (report "l4" job "g2-standard-4"))
 
-        ["l5-prep"] ->
+        [ "l5-prep" ] ->
             -- The two versions l5 serves: two small Fake runs on CPU Vertex
             -- jobs (real PEFT files for the base's shapes), registered as
             -- support v1 and v2 in l5's own world, so l5 needs no other stage.
@@ -467,7 +467,7 @@ run args =
                                               second
                                               "n2-standard-4"))
 
-        ["l5"] ->
+        [ "l5" ] ->
             world |> Task.andThen serveScenario
 
         _ ->
@@ -609,7 +609,8 @@ modelsList url =
                               ("Bearer " ++ Secret.reveal t)
                        |> Http.withTimeout 120000
                        |> Http.request
-                       |> Task.andThen (\resp -> Task.fromResult (modelIds resp.body)))
+                       |> Task.andThen
+                              (\resp -> Task.fromResult (modelIds resp.body)))
 
 
 -- The model ids of a /v1/models body, joined by commas. The whole body is
@@ -617,7 +618,9 @@ modelsList url =
 -- report keeps 400 characters of a text.
 modelIds : String -> Result Error String
 modelIds body =
-    JsonD.decodeString (JsonD.field "data" (JsonD.list (JsonD.field "id" JsonD.string))) body
+    JsonD.decodeString
+        (JsonD.field "data" (JsonD.list (JsonD.field "id" JsonD.string)))
+        body
         |> Result.map (String.join ",")
 
 
@@ -684,52 +687,74 @@ serveChecks w url ( t0, t1, t2 ) first =
                                       (result
                                           (rawStatus url True "not-the-token"))
                                       |> Task.andThen
-                                             (\( noId, badToken ) -> idleCold url |> Task.andThen (\( idleMs, idle ) ->
-                                                 emit
-                                                     [ ( "scenario"
-                                                       , JsonE.string "l5"
-                                                       )
-                                                     , ( "deploySeconds"
-                                                       , JsonE.int
-                                                             ((t1 - t0) // 1000)
-                                                       )
-                                                     , ( "coldStartMs"
-                                                       , JsonE.int (t2 - t1)
-                                                       )
-                                                     , ( "base"
-                                                       , outcomeValue first
-                                                       )
-                                                     , ( "v1"
-                                                       , outcomeValue
-                                                             (Tuple.first
-                                                                 adapters)
-                                                       )
-                                                     , ( "v2"
-                                                       , outcomeValue
-                                                             (Tuple.second
-                                                                 adapters)
-                                                       )
-                                                     , ( "models"
-                                                       , outcomeValue models
-                                                       )
-                                                     , ( "hotLoadOk"
-                                                       , JsonE.int okCount
-                                                       )
-                                                     , ( "hotLoadErrors"
-                                                       , JsonE.list
-                                                             JsonE.string
-                                                             errors
-                                                       )
-                                                     , ( "noIdTokenStatus"
-                                                       , statusValue noId
-                                                       )
-                                                     , ( "badTokenStatus"
-                                                       , statusValue badToken
-                                                       )
-                                                       , ( "idleSeconds", JsonE.int idleSeconds )
-  , ( "idleColdStartMs", JsonE.int idleMs )
-  , ( "idleCold", outcomeValue idle )
-  ]))))
+                                             (\( noId, badToken ) ->
+                                                 idleCold url
+                                                     |> Task.andThen
+                                                            (\( idleMs, idle ) ->
+                                                                emit
+                                                                    [ ( "scenario"
+                                                                      , JsonE.string
+                                                                            "l5"
+                                                                      )
+                                                                    , ( "deploySeconds"
+                                                                      , JsonE.int
+                                                                            ((t1
+                                                                                - t0)
+                                                                                // 1000)
+                                                                      )
+                                                                    , ( "coldStartMs"
+                                                                      , JsonE.int
+                                                                            (t2
+                                                                                - t1)
+                                                                      )
+                                                                    , ( "base"
+                                                                      , outcomeValue
+                                                                            first
+                                                                      )
+                                                                    , ( "v1"
+                                                                      , outcomeValue
+                                                                            (Tuple.first
+                                                                                adapters)
+                                                                      )
+                                                                    , ( "v2"
+                                                                      , outcomeValue
+                                                                            (Tuple.second
+                                                                                adapters)
+                                                                      )
+                                                                    , ( "models"
+                                                                      , outcomeValue
+                                                                            models
+                                                                      )
+                                                                    , ( "hotLoadOk"
+                                                                      , JsonE.int
+                                                                            okCount
+                                                                      )
+                                                                    , ( "hotLoadErrors"
+                                                                      , JsonE.list
+                                                                            JsonE.string
+                                                                            errors
+                                                                      )
+                                                                    , ( "noIdTokenStatus"
+                                                                      , statusValue
+                                                                            noId
+                                                                      )
+                                                                    , ( "badTokenStatus"
+                                                                      , statusValue
+                                                                            badToken
+                                                                      )
+                                                                    , ( "idleSeconds"
+                                                                      , JsonE.int
+                                                                            idleSeconds
+                                                                      )
+                                                                    , ( "idleColdStartMs"
+                                                                      , JsonE.int
+                                                                            idleMs
+                                                                      )
+                                                                    , ( "idleCold"
+                                                                      , outcomeValue
+                                                                            idle
+                                                                      )
+                                                                    ]))))
 
 
 -- The scale-from-zero cold start. The deploy waits for a ready instance, so
@@ -744,13 +769,14 @@ idleSeconds =
 
 idleCold : String -> Task Error ( Int, Result Error String )
 idleCold url =
-    Time.sleep (idleSeconds * 1000)
-        |> Task.andThen (\_ -> Time.unixMillis ())
+    Time.sleep (idleSeconds * 1000) |> Task.andThen (\_ -> Time.unixMillis ())
         |> Task.andThen
                (\t0 ->
                    result (ask (baseSlot url) "")
                        |> Task.andThen
-                              (\r -> Time.unixMillis () |> Task.map (\t1 -> ( t1 - t0, r ))))
+                              (\r ->
+                                  Time.unixMillis ()
+                                      |> Task.map (\t1 -> ( t1 - t0, r ))))
 
 
 outcomeValue : Result Error String -> JsonE.Value

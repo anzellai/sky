@@ -4,13 +4,13 @@ module State exposing (..)
 -- type-checker stays well below the heap-exhaustion limit (CLAUDE.md
 -- Limitation #17): the heavy unification load is in the per-View
 -- modules.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
 import Sky.Core.String as String
 
 -- ─── State types ─────────────────────────────────────────────────
-
 -- `votes` is the BASE score (from seed/import) — what the post would
 -- be worth before any logged-in user's vote. The displayed score is
 -- derived: `votes + length upvoters - length downvoters`. This way
@@ -83,7 +83,6 @@ type Msg
 
 
 -- ─── Pure helpers (no Std.Ui dependency) ─────────────────────────
-
 -- ─── Vote scoring ────────────────────────────────────────────────
 postScore : Post -> Int
 postScore p =
@@ -113,8 +112,9 @@ togglePostUpvote username targetId post =
         { post | upvoters = removeMember username post.upvoters }
 
     else
-        { post | upvoters = username :: post.upvoters
-        , downvoters = removeMember username post.downvoters
+        { post
+            | upvoters = username :: post.upvoters
+            , downvoters = removeMember username post.downvoters
         }
 
 
@@ -127,8 +127,9 @@ togglePostDownvote username targetId post =
         { post | downvoters = removeMember username post.downvoters }
 
     else
-        { post | downvoters = username :: post.downvoters
-        , upvoters = removeMember username post.upvoters
+        { post
+            | downvoters = username :: post.downvoters
+            , upvoters = removeMember username post.upvoters
         }
 
 
@@ -141,8 +142,9 @@ toggleCommentUpvote username targetId comment =
         { comment | upvoters = removeMember username comment.upvoters }
 
     else
-        { comment | upvoters = username :: comment.upvoters
-        , downvoters = removeMember username comment.downvoters
+        { comment
+            | upvoters = username :: comment.upvoters
+            , downvoters = removeMember username comment.downvoters
         }
 
 
@@ -155,8 +157,9 @@ toggleCommentDownvote username targetId comment =
         { comment | downvoters = removeMember username comment.downvoters }
 
     else
-        { comment | downvoters = username :: comment.downvoters
-        , upvoters = removeMember username comment.upvoters
+        { comment
+            | downvoters = username :: comment.downvoters
+            , upvoters = removeMember username comment.upvoters
         }
 
 

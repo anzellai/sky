@@ -41,7 +41,8 @@ sha512Abc =
 -- source indentation.
 privPem : String
 privPem =
-    String.join "\n"
+    String.join
+        "\n"
         [ "-----BEGIN PRIVATE KEY-----"
         , "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCzn1DHzsNRdIfI"
         , "uO6AFFKc+r1DxZXDitoMWZ5OQUdYwhdR8oqrnfRLYx02X80EQK2igX6ZCIVMNrMz"
@@ -75,7 +76,8 @@ privPem =
 
 pubPem : String
 pubPem =
-    String.join "\n"
+    String.join
+        "\n"
         [ "-----BEGIN PUBLIC KEY-----"
         , "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs59Qx87DUXSHyLjugBRS"
         , "nPq9Q8WVw4raDFmeTkFHWMIXUfKKq530S2MdNl/NBECtooF+mQiFTDazM6gMNfqh"

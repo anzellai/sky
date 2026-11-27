@@ -54,7 +54,9 @@ import Far
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { n = 0, flag = False, mode = Nothing, log = "", busy = False }, Cmd.none )
+    ( { n = 0, flag = False, mode = Nothing, log = "", busy = False }
+    , Cmd.none
+    )
 
 
 price : String
@@ -98,7 +100,9 @@ openItem id model =
                     ( { opened | log = s, busy = False }, Cmd.none )
 
                 else
-                    ( { opened | busy = True }, Cmd.perform (fetchWith "open") Got )
+                    ( { opened | busy = True }
+                    , Cmd.perform (fetchWith "open") Got
+                    )
 
             Nothing ->
                 ( opened, Cmd.none )
@@ -130,10 +134,7 @@ aliasPick m =
         ( m, Cmd.none )
 
 
-multiPick :
-    Int
-    -> Model
-    -> ( Model, Cmd Msg )
+multiPick : Int -> Model -> ( Model, Cmd Msg )
 multiPick k m =
     if k > m.n then
         ( { m | busy = True, n = k }, Cmd.perform (fetchWith "multi") Got )
@@ -342,7 +343,9 @@ view model =
             [ Ui.text (Remote.label model)
             , Ui.button [] { onPress = Just CaseWrap, label = Ui.text "case" }
             , Ui.button [] { onPress = Just IfWrap, label = Ui.text "if" }
-            , Ui.button [] { onPress = Just (Helper 2), label = Ui.text "helper" }
+            , Ui.button
+                  []
+                  { onPress = Just (Helper 2), label = Ui.text "helper" }
             ])
 
 

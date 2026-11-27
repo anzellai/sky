@@ -78,12 +78,18 @@ intSortedPairs =
 -- ─── String-keyed dicts built TWO ways ──────────────────────────────
 strForward : Dict String String
 strForward =
-    Dict.insert "cherry" "c" (Dict.insert "banana" "b" (Dict.insert "apple" "a" Dict.empty))
+    Dict.insert
+        "cherry"
+        "c"
+        (Dict.insert "banana" "b" (Dict.insert "apple" "a" Dict.empty))
 
 
 strReverse : Dict String String
 strReverse =
-    Dict.insert "apple" "a" (Dict.insert "banana" "b" (Dict.insert "cherry" "c" Dict.empty))
+    Dict.insert
+        "apple"
+        "a"
+        (Dict.insert "banana" "b" (Dict.insert "cherry" "c" Dict.empty))
 
 
 strFromShuffled : Dict String String
@@ -147,7 +153,6 @@ collidingLists : Set (List String)
 collidingLists =
     Set.fromList [ [ "a b" ], [ "a", "b" ] ]
 
-
 type StrPair
     = StrPair String String
 
@@ -156,15 +161,16 @@ collidingAdts : Set StrPair
 collidingAdts =
     Set.fromList [ StrPair "x y" "z", StrPair "x" "y z" ]
 
-
 type alias Named =
-    { first : String, last : String }
+    { first : String
+    , last : String
+    }
 
 
 collidingRecords : Set Named
 collidingRecords =
-    Set.fromList [ { first = "x y", last = "z" }, { first = "x", last = "y z" } ]
-
+    Set.fromList
+        [ { first = "x y", last = "z" }, { first = "x", last = "y z" } ]
 
 -- #173 — an annotated function returning `Dict k (List Record)`. The annotation
 -- forces `rt.AsMapT[[]Record]` over the foldl accumulator (a typed
@@ -172,12 +178,17 @@ collidingRecords =
 -- entry → an empty Dict, while the identical unannotated body worked. Pins the
 -- Dict is non-empty AND round-trips its keys.
 type alias Item173 =
-    { name : String, value : Int }
+    { name : String
+    , value : Int
+    }
 
 
 buildDict173 : List Item173 -> Dict Int (List Item173)
 buildDict173 items =
-    List.foldl (\item acc -> Dict.insert item.value [ item ] acc) Dict.empty items
+    List.foldl
+        (\item acc -> Dict.insert item.value [ item ] acc)
+        Dict.empty
+        items
 
 
 tests : List Test

@@ -25,6 +25,7 @@ re p =
 groups : Maybe Match -> List (Maybe String)
 groups m =
     case m of
+
         Just x ->
             x.submatches
 
@@ -35,7 +36,9 @@ groups m =
 -- `2026-10-28 12:00:01 [WARN] disk at 91%` → ( level, message )
 logLine : String -> Maybe ( String, String )
 logLine line =
-    case Regex.findMatch (re "^(\\S+) (\\S+) \\[(\\w+)\\] (.*)$") line |> Maybe.map .submatches of
+    case Regex.findMatch (re "^(\\S+) (\\S+) \\[(\\w+)\\] (.*)$") line
+             |> Maybe.map .submatches of
+
         Just [ _, _, Just level, Just message ] ->
             Just ( level, message )
 
@@ -46,9 +49,11 @@ logLine line =
 -- Fill `{{name}}` placeholders from a list of pairs; unknown names stay.
 fill : List ( String, String ) -> String -> String
 fill vars template =
-    Regex.replaceWith (re "\\{\\{(\\w+)\\}\\}")
+    Regex.replaceWith
+        (re "\\{\\{(\\w+)\\}\\}")
         (\m ->
             case m.submatches of
+
                 [ Just key ] ->
                     List.filterMap
                         (\( k, v ) ->
@@ -56,15 +61,13 @@ fill vars template =
                                 Just v
 
                             else
-                                Nothing
-                        )
+                                Nothing)
                         vars
                         |> List.head
                         |> Maybe.withDefault m.match
 
                 _ ->
-                    m.match
-        )
+                    m.match)
         template
 
 

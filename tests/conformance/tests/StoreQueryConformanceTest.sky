@@ -679,7 +679,11 @@ aggregateTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      ( "SELECT customer_id AS \"customer_id\", COUNT(*) AS \"sent\", CAST(COALESCE(SUM(CASE WHEN opened_at > " ++ intParam "sqc_invoices" "opened_at" ++ " THEN 1 ELSE 0 END), 0) AS BIGINT) AS \"opened\", MAX(sent_at) AS \"last_sent_at\" FROM sqc_invoices WHERE (sent_at > " ++ intParam "sqc_invoices" "sent_at" ++ ") GROUP BY customer_id HAVING (COUNT(*) >= ?) ORDER BY \"sent\" DESC"
+                      ( "SELECT customer_id AS \"customer_id\", COUNT(*) AS \"sent\", CAST(COALESCE(SUM(CASE WHEN opened_at > "
+                            ++ intParam "sqc_invoices" "opened_at"
+                            ++ " THEN 1 ELSE 0 END), 0) AS BIGINT) AS \"opened\", MAX(sent_at) AS \"last_sent_at\" FROM sqc_invoices WHERE (sent_at > "
+                            ++ intParam "sqc_invoices" "sent_at"
+                            ++ ") GROUP BY customer_id HAVING (COUNT(*) >= ?) ORDER BY \"sent\" DESC"
                       , [ SqlInt 0, SqlInt 0, SqlInt 2 ]
                       ))
                   (Store.toSql
@@ -2024,7 +2028,9 @@ subqueryTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      ("SELECT * FROM sqc_import_rows WHERE (batch_id IN (SELECT sq1.id FROM sqc_batches sq1 WHERE (sq1.created_at < " ++ intParam "sqc_batches" "created_at" ++ ") AND sq1.id IS NOT NULL))"))
+                      ("SELECT * FROM sqc_import_rows WHERE (batch_id IN (SELECT sq1.id FROM sqc_batches sq1 WHERE (sq1.created_at < "
+                          ++ intParam "sqc_batches" "created_at"
+                          ++ ") AND sq1.id IS NOT NULL))"))
                   (sqlOnly
                       (Store.toSql
                           db
@@ -2151,7 +2157,9 @@ subqueryTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      ("SELECT * FROM sqc_clients WHERE (NOT EXISTS (SELECT 1 FROM sqc_bills sq1 WHERE sq1.client_id = sqc_clients.id AND (sq1.sent_at > " ++ intParam "sqc_bills" "sent_at" ++ ")))"))
+                      ("SELECT * FROM sqc_clients WHERE (NOT EXISTS (SELECT 1 FROM sqc_bills sq1 WHERE sq1.client_id = sqc_clients.id AND (sq1.sent_at > "
+                          ++ intParam "sqc_bills" "sent_at"
+                          ++ ")))"))
                   (sqlOnly
                       (Store.toSql
                           db
@@ -2254,7 +2262,9 @@ subqueryTests db =
           (\_ ->
               Test.equal
                   (Ok
-                      ("SELECT * FROM sqc_batches WHERE (id IN (SELECT sq1.batch_id FROM sqc_import_rows sq1 WHERE (EXISTS (SELECT 1 FROM sqc_batches sq2 WHERE sq2.id = sq1.batch_id AND (sq2.created_at > " ++ intParam "sqc_batches" "created_at" ++ "))) AND sq1.batch_id IS NOT NULL))"))
+                      ("SELECT * FROM sqc_batches WHERE (id IN (SELECT sq1.batch_id FROM sqc_import_rows sq1 WHERE (EXISTS (SELECT 1 FROM sqc_batches sq2 WHERE sq2.id = sq1.batch_id AND (sq2.created_at > "
+                          ++ intParam "sqc_batches" "created_at"
+                          ++ "))) AND sq1.batch_id IS NOT NULL))"))
                   (sqlOnly
                       (Store.toSql
                           db
@@ -6528,7 +6538,6 @@ decimalTests db =
                                      (\r -> ( r.id, Decimal.toString r.amount ))))))
     ]
 
-
 -- ── The codec matrix (v0.29.2, third Judge) ─────────────────────────────────
 -- Each v0.29.2 codec (Codec.decimal, Codec.moneyIn, Codec.moneyObject,
 -- Codec.isoCurrency, Codec.value) in each way a record uses it (a
@@ -6559,7 +6568,9 @@ mxDecAuto =
 
 mxDecAutoMaybe : Codec (MxRow (Maybe Decimal))
 mxDecAutoMaybe =
-    Codec.autoWith [ ( "v", Codec.maybe Codec.decimal ) ] { id = "", v = Nothing }
+    Codec.autoWith
+        [ ( "v", Codec.maybe Codec.decimal ) ]
+        { id = "", v = Nothing }
 
 
 mxDecAutoList : Codec (MxRow (List Decimal))
@@ -6583,7 +6594,9 @@ mxGbpAutoMaybe =
 
 mxGbpAutoList : Codec (MxRow (List Money))
 mxGbpAutoList =
-    Codec.autoWith [ ( "v", Codec.list (Codec.moneyIn Money.GBP) ) ] { id = "", v = [] }
+    Codec.autoWith
+        [ ( "v", Codec.list (Codec.moneyIn Money.GBP) ) ]
+        { id = "", v = [] }
 
 
 mxObjAuto : Codec (MxRow Money)
@@ -6595,7 +6608,9 @@ mxObjAuto =
 
 mxObjAutoMaybe : Codec (MxRow (Maybe Money))
 mxObjAutoMaybe =
-    Codec.autoWith [ ( "v", Codec.maybe Codec.moneyObject ) ] { id = "", v = Nothing }
+    Codec.autoWith
+        [ ( "v", Codec.maybe Codec.moneyObject ) ]
+        { id = "", v = Nothing }
 
 
 mxObjAutoList : Codec (MxRow (List Money))
@@ -6610,7 +6625,9 @@ mxCurAuto =
 
 mxCurAutoMaybe : Codec (MxRow (Maybe Money.Currency))
 mxCurAutoMaybe =
-    Codec.autoWith [ ( "v", Codec.maybe Codec.isoCurrency ) ] { id = "", v = Nothing }
+    Codec.autoWith
+        [ ( "v", Codec.maybe Codec.isoCurrency ) ]
+        { id = "", v = Nothing }
 
 
 mxCurAutoList : Codec (MxRow (List Money.Currency))
@@ -6704,13 +6721,14 @@ mxRun db table codec show rows ordered =
         store = Store.fromCodec table codec |> Store.primaryKey "id"
     in
         Task.run
-            (drop db table
-                |> Task.andThen (\_ -> unit (Store.migrate db store))
+            (drop db table |> Task.andThen (\_ -> unit (Store.migrate db store))
                 |> Task.andThen
                        (\_ ->
                            unit
                                (Task.sequence
-                                   (List.map (\r -> unit (Store.insert db store r)) rows)))
+                                   (List.map
+                                       (\r -> unit (Store.insert db store r))
+                                       rows)))
                 |> Task.andThen (\_ -> mxColumnType db table)
                 |> Task.andThen
                        (\ty ->
@@ -6718,11 +6736,15 @@ mxRun db table codec show rows ordered =
                                (\byId byValue ->
                                    ( mxShape codec
                                    , ty
-                                   , ( List.map (\r -> r.id ++ "=" ++ show r.v) byId
+                                   , ( List.map
+                                           (\r -> r.id ++ "=" ++ show r.v)
+                                           byId
                                      , byValue
                                      )
                                    ))
-                               (Store.toList db (Store.query store |> Store.orderAsc "id"))
+                               (Store.toList
+                                   db
+                                   (Store.query store |> Store.orderAsc "id"))
                                (if ordered then
                                    Store.toList
                                        db
@@ -6745,8 +6767,10 @@ mxForeign db table codec foreign =
                   (drop db table
                       |> Task.andThen (\_ -> unit (Store.migrate db store))
                       |> Task.andThen
-                             (\_ -> Store.insert db store { id = "x", v = foreign })))
-        , Task.run (Store.toList db (Store.query store) |> Task.map (List.map .id))
+                             (\_ ->
+                                 Store.insert db store { id = "x", v = foreign })))
+        , Task.run
+              (Store.toList db (Store.query store) |> Task.map (List.map .id))
         )
 
 
@@ -6963,7 +6987,6 @@ codecMatrixTests db =
           (\_ -> Test.equal ( True, Ok [] ) (mxForeign db "sqc_mx_gbp_autol" mxGbpAutoList [ gbp "2", Money.Money (dec "1") Money.USD ]))
     ]
 
-
 -- ── v0.29.2 fourth Judge ────────────────────────────────────────────────────
 -- A record with a Codec.list (Codec.moneyIn GBP) JSON column, a Maybe nested
 -- record, a Codec.value list and a plain list: the write check runs on the
@@ -6980,8 +7003,7 @@ type alias J4Row =
 
 j4Codec : Codec J4Row
 j4Codec =
-    Codec.object J4Row
-        |> Codec.field "id" .id Codec.string
+    Codec.object J4Row |> Codec.field "id" .id Codec.string
         |> Codec.field "prices" .prices (Codec.list (Codec.moneyIn Money.GBP))
         |> Codec.field
                "nest"
@@ -7026,12 +7048,14 @@ j4Write db write =
             |> Task.andThen (\_ -> unit (Store.insert db j4Store (j4Plain "a")))
             |> Task.andThen
                    (\_ ->
-                       write db
-                           |> Task.map (\_ -> "ok")
-                           |> Task.onError (\e -> Task.succeed (Error.toString e)))
+                       write db |> Task.map (\_ -> "ok")
+                           |> Task.onError
+                                  (\e -> Task.succeed (Error.toString e)))
             |> Task.andThen
                    (\msg ->
-                       Store.toList db (Store.query j4Store |> Store.orderAsc "id")
+                       Store.toList
+                           db
+                           (Store.query j4Store |> Store.orderAsc "id")
                            |> Task.map (\rows -> ( msg, List.map .id rows ))))
 
 
@@ -7040,21 +7064,24 @@ j4Write db write =
 j4Refused : Db -> String -> (Db -> Task Error x) -> Test
 j4Refused db verb write =
     Test.test
-        ("fourth Judge: Store." ++ verb ++ " refuses a USD Money in a Codec.list (Codec.moneyIn GBP) column, naming the verb")
+        ("fourth Judge: Store." ++ verb
+            ++ " refuses a USD Money in a Codec.list (Codec.moneyIn GBP) column, naming the verb")
         (\_ ->
             case j4Write db write of
 
                 Ok ( msg, ids ) ->
                     Test.equal
                         ( True, True, [ "a" ] )
-                        ( String.contains ("Store." ++ verb ++ ": column \"sqc_j4_rows.prices\"") msg
+                        ( String.contains
+                              ("Store." ++ verb
+                                  ++ ": column \"sqc_j4_rows.prices\"")
+                              msg
                         , String.contains "this codec holds GBP" msg
                         , ids
                         )
 
                 Err e ->
                     Test.fail (Error.toString e))
-
 
 type alias J4Price =
     { id : String
@@ -7064,7 +7091,9 @@ type alias J4Price =
 
 j4PriceBy : String -> Money.Currency -> Codec J4Price
 j4PriceBy key cur =
-    Codec.autoWith [ ( key, Codec.moneyIn cur ) ] { id = "", unitPrice = Money.zero cur }
+    Codec.autoWith
+        [ ( key, Codec.moneyIn cur ) ]
+        { id = "", unitPrice = Money.zero cur }
 
 
 -- Migrate, insert `rows`, read them back as "id=amount code", and the column
@@ -7075,21 +7104,26 @@ j4RoundTrip db table codec rows =
         store = Store.fromCodec table codec |> Store.primaryKey "id"
     in
         Task.run
-            (drop db table
-                |> Task.andThen (\_ -> unit (Store.migrate db store))
+            (drop db table |> Task.andThen (\_ -> unit (Store.migrate db store))
                 |> Task.andThen (\_ -> unit (Store.insertMany db store rows))
                 |> Task.andThen
                        (\_ ->
-                           Store.toList db (Store.query store |> Store.orderAsc "unit_price")
+                           Store.toList
+                               db
+                               (Store.query store |> Store.orderAsc "unit_price")
                                |> Task.map
                                       (\got ->
                                           ( j4Shape codec
                                           , List.map
                                                 (\r ->
                                                     r.id ++ "="
-                                                        ++ Decimal.toString (Money.amount r.unitPrice)
+                                                        ++ Decimal.toString
+                                                               (Money.amount
+                                                                   r.unitPrice)
                                                         ++ " "
-                                                        ++ Money.currencyCode (Money.currency r.unitPrice))
+                                                        ++ Money.currencyCode
+                                                               (Money.currency
+                                                                   r.unitPrice))
                                                 got
                                           ))))
 
@@ -7115,13 +7149,14 @@ j4Price id amount cur =
 -- The Err of a store's first verb, as text ("ok" when it ran).
 j4FirstVerb : Db -> String -> Codec J4Price -> String
 j4FirstVerb db table codec =
-    case
-        Task.run
-            (drop db table
-                |> Task.andThen
-                       (\_ ->
-                           Store.migrate db (Store.fromCodec table codec |> Store.primaryKey "id")))
-    of
+    case Task.run
+             (drop db table
+                 |> Task.andThen
+                        (\_ ->
+                            Store.migrate
+                                db
+                                (Store.fromCodec table codec
+                                    |> Store.primaryKey "id"))) of
 
         Ok _ ->
             "ok"
@@ -7133,14 +7168,37 @@ j4FirstVerb db table codec =
 j4Tests : Db -> List Test
 j4Tests db =
     [ j4Refused db "insert" (\d -> Store.insert d j4Store (j4Usd "x"))
-    , j4Refused db "insertMany" (\d -> Store.insertMany d j4Store [ j4Plain "m1", j4Usd "m2" ])
+    , j4Refused
+          db
+          "insertMany"
+          (\d -> Store.insertMany d j4Store [ j4Plain "m1", j4Usd "m2" ])
     , j4Refused db "upsert" (\d -> Store.upsert d j4Store (j4Usd "a"))
-    , j4Refused db "upsertWith" (\d -> Store.upsertWith d j4Store (j4Usd "x") { conflictOn = [ "id" ], onConflict = [] })
-    , j4Refused db "insertReturning" (\d -> Store.insertReturning d j4Store (j4Usd "x"))
-    , j4Refused db "insertOrIgnore" (\d -> Store.insertOrIgnore d j4Store (j4Usd "x"))
-    , j4Refused db "insertOrIgnoreOn" (\d -> Store.insertOrIgnoreOn [ "id" ] d j4Store (j4Usd "x"))
+    , j4Refused
+          db
+          "upsertWith"
+          (\d ->
+              Store.upsertWith
+                  d
+                  j4Store
+                  (j4Usd "x")
+                  { conflictOn = [ "id" ], onConflict = [] })
+    , j4Refused
+          db
+          "insertReturning"
+          (\d -> Store.insertReturning d j4Store (j4Usd "x"))
+    , j4Refused
+          db
+          "insertOrIgnore"
+          (\d -> Store.insertOrIgnore d j4Store (j4Usd "x"))
+    , j4Refused
+          db
+          "insertOrIgnoreOn"
+          (\d -> Store.insertOrIgnoreOn [ "id" ] d j4Store (j4Usd "x"))
     , j4Refused db "update" (\d -> Store.update d j4Store (j4Usd "a"))
-    , j4Refused db "updateWhere" (\d -> Store.updateWhere d j4Store Store.noCond (j4Usd "a"))
+    , j4Refused
+          db
+          "updateWhere"
+          (\d -> Store.updateWhere d j4Store Store.noCond (j4Usd "a"))
     , Test.test
           "fourth Judge: no false refusal: Nothing, a nested record, Json.Value, a 20,000-element list, through insert and insertMany"
           (\_ ->
@@ -7155,17 +7213,33 @@ j4Tests db =
                               { id = "b"
                               , prices = []
                               , nest = Just { a = 1, b = [ "q" ] }
-                              , vals = [ JE.null, JE.object [ ( "k", JE.list JE.int [ 1, 2 ] ) ], JE.string "s" ]
-                              , big = List.map String.fromInt (List.range 1 20000)
+                              , vals =
+                                  [ JE.null
+                                  , JE.object
+                                        [ ( "k", JE.list JE.int [ 1, 2 ] ) ]
+                                  , JE.string "s"
+                                  ]
+                              , big =
+                                  List.map String.fromInt (List.range 1 20000)
                               }
                               |> Task.andThen
                                      (\_ ->
                                          Store.insertMany
                                              d
                                              j4Store
-                                             [ { id = "c", prices = [ gbp "3", gbp "4" ], nest = Nothing, vals = [ JE.int 1 ], big = [] }
+                                             [ { id = "c"
+                                               , prices = [ gbp "3", gbp "4" ]
+                                               , nest = Nothing
+                                               , vals = [ JE.int 1 ]
+                                               , big = []
+                                               }
                                              , { id = "d"
-                                               , prices = List.map (\i -> gbp (String.fromInt i)) (List.range 1 2000)
+                                               , prices =
+                                                   List.map
+                                                       (\i ->
+                                                           gbp
+                                                               (String.fromInt i))
+                                                       (List.range 1 2000)
                                                , nest = Just { a = 2, b = [] }
                                                , vals = []
                                                , big = [ "z" ]
@@ -7177,46 +7251,82 @@ j4Tests db =
               Test.equal
                   ( [ "prices" ], [ "prices" ], [ "unit_price" ] )
                   ( List.map (\( k, _ ) -> k) (Codec.writeChecks j4Codec)
-                  , List.map (\( k, _ ) -> k) (Codec.writeChecks (Codec.auto (j4Plain "z")))
-                  , List.map (\( k, _ ) -> k) (Codec.writeChecks (j4PriceBy "unitPrice" Money.GBP))
+                  , List.map
+                        (\( k, _ ) -> k)
+                        (Codec.writeChecks (Codec.auto (j4Plain "z")))
+                  , List.map
+                        (\( k, _ ) -> k)
+                        (Codec.writeChecks (j4PriceBy "unitPrice" Money.GBP))
                   ))
-
     -- Gap 2: the currency of Codec.moneyIn follows Money.currencyFromCode.
     , Test.test
           "fourth Judge: Codec.moneyIn USDT keeps its currency: a decimal column, values read back, a USDC Money refused"
           (\_ ->
               Test.equal
-                  ( Ok ( "CMoneyIn USDT", [ "b=2 USDT", "a=10.5 USDT" ] ), True )
-                  ( j4RoundTrip db "sqc_j4_usdt" (j4PriceBy "unit_price" Money.USDT) [ j4Price "a" "10.5" Money.USDT, j4Price "b" "2" Money.USDT ]
+                  ( Ok ( "CMoneyIn USDT", [ "b=2 USDT", "a=10.5 USDT" ] )
+                  , True
+                  )
+                  ( j4RoundTrip
+                        db
+                        "sqc_j4_usdt"
+                        (j4PriceBy "unit_price" Money.USDT)
+                        [ j4Price "a" "10.5" Money.USDT
+                        , j4Price "b" "2" Money.USDT
+                        ]
                   , isErr
                         (Task.run
                             (Store.insert
                                 db
-                                (Store.fromCodec "sqc_j4_usdt" (j4PriceBy "unit_price" Money.USDT) |> Store.primaryKey "id")
+                                (Store.fromCodec
+                                    "sqc_j4_usdt"
+                                    (j4PriceBy "unit_price" Money.USDT)
+                                    |> Store.primaryKey "id")
                                 (j4Price "c" "1" Money.USDC)))
                   ))
     , Test.test
           "fourth Judge: Codec.moneyIn USDC and BTC keep their currency"
           (\_ ->
               Test.equal
-                  ( Ok ( "CMoneyIn USDC", [ "a=1 USDC" ] ), Ok ( "CMoneyIn BTC", [ "a=0.5 BTC" ] ) )
-                  ( j4RoundTrip db "sqc_j4_usdc" (j4PriceBy "unit_price" Money.USDC) [ j4Price "a" "1" Money.USDC ]
-                  , j4RoundTrip db "sqc_j4_btc" (j4PriceBy "unit_price" Money.BTC) [ j4Price "a" "0.5" Money.BTC ]
+                  ( Ok ( "CMoneyIn USDC", [ "a=1 USDC" ] )
+                  , Ok ( "CMoneyIn BTC", [ "a=0.5 BTC" ] )
+                  )
+                  ( j4RoundTrip
+                        db
+                        "sqc_j4_usdc"
+                        (j4PriceBy "unit_price" Money.USDC)
+                        [ j4Price "a" "1" Money.USDC ]
+                  , j4RoundTrip
+                        db
+                        "sqc_j4_btc"
+                        (j4PriceBy "unit_price" Money.BTC)
+                        [ j4Price "a" "0.5" Money.BTC ]
                   ))
     , Test.test
           "fourth Judge: Codec.moneyIn (CurrencyRaw \"gbp\") is Codec.moneyIn GBP, and a GBP Money is written and read"
           (\_ ->
               Test.equal
                   (Ok ( "CMoneyIn GBP", [ "a=7 GBP" ] ))
-                  (j4RoundTrip db "sqc_j4_rawgbp" (j4PriceBy "unit_price" (Money.CurrencyRaw "gbp")) [ j4Price "a" "7" Money.GBP ]))
+                  (j4RoundTrip
+                      db
+                      "sqc_j4_rawgbp"
+                      (j4PriceBy "unit_price" (Money.CurrencyRaw "gbp"))
+                      [ j4Price "a" "7" Money.GBP ]))
     , Test.test
           "fourth Judge: Codec.moneyIn of a code that is not a currency code is a Store builder problem"
           (\_ ->
               let
-                  msg = j4FirstVerb db "sqc_j4_badcode" (j4PriceBy "unit_price" (Money.CurrencyRaw "G P"))
+                  msg =
+                      j4FirstVerb
+                          db
+                          "sqc_j4_badcode"
+                          (j4PriceBy "unit_price" (Money.CurrencyRaw "G P"))
               in
                   Test.equal
-                      ( True, True, [ "Codec.moneyIn: \"G P\" is not a currency code (3 to 10 ASCII letters or digits, as Money.currencyFromCode reads one)" ] )
+                      ( True
+                      , True
+                      , [ "Codec.moneyIn: \"G P\" is not a currency code (3 to 10 ASCII letters or digits, as Money.currencyFromCode reads one)"
+                        ]
+                      )
                       ( String.contains "Store.fromCodec \"sqc_j4_badcode\"" msg
                       , String.contains "\"G P\" is not a currency code" msg
                       , Codec.problems (Codec.moneyIn (Money.CurrencyRaw "G P"))
@@ -7226,21 +7336,34 @@ j4Tests db =
           (\_ ->
               let
                   autoStore =
-                      Store.fromCodec "sqc_j4_legacy" (Codec.auto { id = "", unitPrice = Money.zero Money.USDT })
+                      Store.fromCodec
+                          "sqc_j4_legacy"
+                          (Codec.auto
+                              { id = "", unitPrice = Money.zero Money.USDT })
                           |> Store.primaryKey "id"
                   msg =
-                      case
-                          Task.run
-                              (drop db "sqc_j4_legacy"
-                                  |> Task.andThen (\_ -> unit (Store.migrate db autoStore))
-                                  |> Task.andThen (\_ -> unit (Store.insert db autoStore (j4Price "a" "5" Money.USDT)))
-                                  |> Task.andThen
-                                         (\_ ->
-                                             Store.migrate
-                                                 db
-                                                 (Store.fromCodec "sqc_j4_legacy" (j4PriceBy "unit_price" Money.USDT)
-                                                     |> Store.primaryKey "id")))
-                      of
+                      case Task.run
+                               (drop db "sqc_j4_legacy"
+                                   |> Task.andThen
+                                          (\_ ->
+                                              unit (Store.migrate db autoStore))
+                                   |> Task.andThen
+                                          (\_ ->
+                                              unit
+                                                  (Store.insert
+                                                      db
+                                                      autoStore
+                                                      (j4Price "a" "5" Money.USDT)))
+                                   |> Task.andThen
+                                          (\_ ->
+                                              Store.migrate
+                                                  db
+                                                  (Store.fromCodec
+                                                      "sqc_j4_legacy"
+                                                      (j4PriceBy
+                                                          "unit_price"
+                                                          Money.USDT)
+                                                      |> Store.primaryKey "id"))) of
 
                           Ok _ ->
                               "ok"
@@ -7254,7 +7377,6 @@ j4Tests db =
                       , String.contains "Codec.decimal" msg
                       , String.contains "'USDT'" msg
                       ))
-
     -- Gap 5: an autoWith key is the column or the record field.
     , Test.test
           "fourth Judge: codec matrix, camelCase key: autoWith [ ( \"priceList\", Codec.list (Codec.moneyIn GBP) ) ] is column price_list and refuses a USD Money"
@@ -7262,9 +7384,14 @@ j4Tests db =
               let
                   codec =
                       Codec.autoWith
-                          [ ( "priceList", Codec.list (Codec.moneyIn Money.GBP) ) ]
+                          [ ( "priceList"
+                            , Codec.list (Codec.moneyIn Money.GBP)
+                            )
+                          ]
                           { id = "", priceList = [] }
-                  store = Store.fromCodec "sqc_j4_camel_list" codec |> Store.primaryKey "id"
+                  store =
+                      Store.fromCodec "sqc_j4_camel_list" codec
+                          |> Store.primaryKey "id"
                   shape =
                       case Codec.shape codec of
 
@@ -7275,16 +7402,42 @@ j4Tests db =
                               []
               in
                   Test.equal
-                      ( [ "id:CText", "price_list:CBlob" ], [ "price_list" ], ( True, Ok [ "a" ] ) )
+                      ( [ "id:CText", "price_list:CBlob" ]
+                      , [ "price_list" ]
+                      , ( True, Ok [ "a" ] )
+                      )
                       ( shape
                       , List.map (\( k, _ ) -> k) (Codec.writeChecks codec)
                       , ( isErr
                               (Task.run
                                   (drop db "sqc_j4_camel_list"
-                                      |> Task.andThen (\_ -> unit (Store.migrate db store))
-                                      |> Task.andThen (\_ -> unit (Store.insert db store { id = "a", priceList = [ gbp "1" ] }))
-                                      |> Task.andThen (\_ -> Store.insert db store { id = "b", priceList = [ Money.Money (dec "1") Money.USD ] })))
-                        , Task.run (Store.toList db (Store.query store) |> Task.map (List.map .id))
+                                      |> Task.andThen
+                                             (\_ -> unit (Store.migrate db store))
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 unit
+                                                     (Store.insert
+                                                         db
+                                                         store
+                                                         { id = "a"
+                                                         , priceList =
+                                                             [ gbp "1" ]
+                                                         }))
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Store.insert
+                                                     db
+                                                     store
+                                                     { id = "b"
+                                                     , priceList =
+                                                         [ Money.Money
+                                                               (dec "1")
+                                                               Money.USD
+                                                         ]
+                                                     })))
+                        , Task.run
+                              (Store.toList db (Store.query store)
+                                  |> Task.map (List.map .id))
                         )
                       ))
     , Test.test
@@ -7292,7 +7445,10 @@ j4Tests db =
           (\_ ->
               Test.equal
                   [ "id:CText", "unit_price:CDecimal" ]
-                  (case Codec.shape (Codec.autoWith [ ( "unitPrice", Codec.decimal ) ] { id = "", unitPrice = Decimal.zero }) of
+                  (case Codec.shape
+                           (Codec.autoWith
+                               [ ( "unitPrice", Codec.decimal ) ]
+                               { id = "", unitPrice = Decimal.zero }) of
 
                       Codec.SRecord cols ->
                           List.map (\( n, c ) -> n ++ ":" ++ mxCt c) cols
@@ -7304,7 +7460,13 @@ j4Tests db =
           (\_ ->
               Test.equal
                   ( Ok ( "CMoneyIn GBP", [ "b=2 GBP", "a=10 GBP" ] ), [] )
-                  ( j4RoundTrip db "sqc_j4_camel" (j4PriceBy "unitPrice" Money.GBP) [ j4Price "a" "10" Money.GBP, j4Price "b" "2" Money.GBP ]
+                  ( j4RoundTrip
+                        db
+                        "sqc_j4_camel"
+                        (j4PriceBy "unitPrice" Money.GBP)
+                        [ j4Price "a" "10" Money.GBP
+                        , j4Price "b" "2" Money.GBP
+                        ]
                   , Codec.problems (j4PriceBy "unitPrice" Money.GBP)
                   ))
     , Test.test
@@ -7314,7 +7476,9 @@ j4Tests db =
                   bad = j4PriceBy "unitPrise" Money.GBP
                   msg = j4FirstVerb db "sqc_j4_badkey" bad
                   decoded =
-                      case Codec.fromJson bad "{\"id\":\"a\",\"unit_price\":\"1\"}" of
+                      case Codec.fromJson
+                               bad
+                               "{\"id\":\"a\",\"unit_price\":\"1\"}" of
 
                           Ok _ ->
                               "ok"
@@ -7324,12 +7488,13 @@ j4Tests db =
               in
                   Test.equal
                       ( True, True, True )
-                      ( String.contains "Codec.autoWith: the key \"unitPrise\" names no field of the record" msg
+                      ( String.contains
+                            "Codec.autoWith: the key \"unitPrise\" names no field of the record"
+                            msg
                       , String.contains "id, unit_price (unitPrice)" msg
                       , String.contains "\"unitPrise\" names no field" decoded
                       ))
     ]
-
 
 -- ── inList of any length: one parameter for a long list (v0.29.2) ───────────
 -- One parameter per value stopped at SQLite's 32,766 ("too many SQL
@@ -7382,10 +7547,54 @@ tinyFloat =
 
 inKindRows : List InKind
 inKindRows =
-    [ { id = "a", n = 1, r = 0.1, b = True, t = "Ada", d = dec "12.30", mn = Just 1, mr = Just 0.1, mb = Just True, mt = Just "Ada", md = Just (dec "12.30") }
-    , { id = "b", n = 2, r = 2.5, b = False, t = "ada", d = dec "7", mn = Nothing, mr = Nothing, mb = Nothing, mt = Nothing, md = Nothing }
-    , { id = "c", n = -3, r = tinyFloat, b = True, t = "BO", d = dec "-0.5", mn = Just -3, mr = Just tinyFloat, mb = Just False, mt = Just "bo", md = Just (dec "0") }
-    , { id = "d", n = 9007199254740993, r = 7.0, b = False, t = "", d = dec "100", mn = Just 3, mr = Just 7.0, mb = Nothing, mt = Just "", md = Nothing }
+    [ { id = "a"
+      , n = 1
+      , r = 0.1
+      , b = True
+      , t = "Ada"
+      , d = dec "12.30"
+      , mn = Just 1
+      , mr = Just 0.1
+      , mb = Just True
+      , mt = Just "Ada"
+      , md = Just (dec "12.30")
+      }
+    , { id = "b"
+      , n = 2
+      , r = 2.5
+      , b = False
+      , t = "ada"
+      , d = dec "7"
+      , mn = Nothing
+      , mr = Nothing
+      , mb = Nothing
+      , mt = Nothing
+      , md = Nothing
+      }
+    , { id = "c"
+      , n = -3
+      , r = tinyFloat
+      , b = True
+      , t = "BO"
+      , d = dec "-0.5"
+      , mn = Just (-3)
+      , mr = Just tinyFloat
+      , mb = Just False
+      , mt = Just "bo"
+      , md = Just (dec "0")
+      }
+    , { id = "d"
+      , n = 9007199254740993
+      , r = 7.0
+      , b = False
+      , t = ""
+      , d = dec "100"
+      , mn = Just 3
+      , mr = Just 7.0
+      , mb = Nothing
+      , mt = Just ""
+      , md = Nothing
+      }
     ]
 
 
@@ -7431,7 +7640,8 @@ inKindRawIds db col negated vs =
     in
         Db.query
             db
-            ("SELECT id FROM sqc_inlist_kinds WHERE " ++ whereSql ++ " ORDER BY id")
+            ("SELECT id FROM sqc_inlist_kinds WHERE " ++ whereSql
+                ++ " ORDER BY id")
             vs
             |> Task.map
                    (List.map (\row -> Maybe.withDefault "" (Dict.get "id" row)))
@@ -7482,16 +7692,56 @@ bigInts from count =
 
 inListTests : Db -> List Test
 inListTests db =
-    [ inKindCompare db "n" [ "a", "c", "d" ] [ SqlInt 1, SqlInt -3, SqlInt 1, SqlInt 9007199254740993 ] (\i -> SqlInt (100000 + i))
-    , inKindCompare db "r" [ "a", "c", "d" ] [ SqlFloat 0.1, SqlFloat tinyFloat, SqlInt 7 ] (\i -> SqlFloat (toFloat i + 0.25))
+    [ inKindCompare
+          db
+          "n"
+          [ "a", "c", "d" ]
+          [ SqlInt 1, SqlInt (-3), SqlInt 1, SqlInt 9007199254740993 ]
+          (\i -> SqlInt (100000 + i))
+    , inKindCompare
+          db
+          "r"
+          [ "a", "c", "d" ]
+          [ SqlFloat 0.1, SqlFloat tinyFloat, SqlInt 7 ]
+          (\i -> SqlFloat (toFloat i + 0.25))
     , inKindCompare db "b" [ "a", "c" ] [ SqlBool True ] (\_ -> SqlBool True)
-    , inKindCompare db "t" [ "b", "c", "d" ] [ SqlString "ada", SqlString "BO", SqlString "" ] (\i -> SqlString ("pad" ++ String.fromInt i))
-    , inKindCompare db "d" [ "a", "b", "c" ] [ SqlDecimal (dec "12.3"), SqlInt 7, SqlDecimal (dec "-0.50") ] (\i -> SqlInt (100000 + i))
-    , inKindCompare db "mn" [ "a", "c" ] [ SqlInt 1, SqlInt -3 ] (\i -> SqlInt (100000 + i))
-    , inKindCompare db "mr" [ "c", "d" ] [ SqlFloat tinyFloat, SqlFloat 7.0 ] (\i -> SqlFloat (toFloat i + 0.25))
+    , inKindCompare
+          db
+          "t"
+          [ "b", "c", "d" ]
+          [ SqlString "ada", SqlString "BO", SqlString "" ]
+          (\i -> SqlString ("pad" ++ String.fromInt i))
+    , inKindCompare
+          db
+          "d"
+          [ "a", "b", "c" ]
+          [ SqlDecimal (dec "12.3"), SqlInt 7, SqlDecimal (dec "-0.50") ]
+          (\i -> SqlInt (100000 + i))
+    , inKindCompare
+          db
+          "mn"
+          [ "a", "c" ]
+          [ SqlInt 1, SqlInt (-3) ]
+          (\i -> SqlInt (100000 + i))
+    , inKindCompare
+          db
+          "mr"
+          [ "c", "d" ]
+          [ SqlFloat tinyFloat, SqlFloat 7.0 ]
+          (\i -> SqlFloat (toFloat i + 0.25))
     , inKindCompare db "mb" [ "c" ] [ SqlBool False ] (\_ -> SqlBool False)
-    , inKindCompare db "mt" [ "a", "d" ] [ SqlString "Ada", SqlString "" ] (\i -> SqlString ("pad" ++ String.fromInt i))
-    , inKindCompare db "md" [ "a", "c" ] [ SqlInt 0, SqlDecimal (dec "12.30") ] (\i -> SqlInt (100000 + i))
+    , inKindCompare
+          db
+          "mt"
+          [ "a", "d" ]
+          [ SqlString "Ada", SqlString "" ]
+          (\i -> SqlString ("pad" ++ String.fromInt i))
+    , inKindCompare
+          db
+          "md"
+          [ "a", "c" ]
+          [ SqlInt 0, SqlDecimal (dec "12.30") ]
+          (\i -> SqlInt (100000 + i))
     , Test.test
           "inList: an empty list matches nothing, and not_ of it every row (NULLs too)"
           (\_ ->
@@ -7504,7 +7754,9 @@ inListTests db =
                                      Task.map2
                                          (\x y -> ( x, y ))
                                          (inKindIds db (Store.inList "mn" []))
-                                         (inKindIds db (Store.not_ (Store.inList "mn" [])))))))
+                                         (inKindIds
+                                             db
+                                             (Store.not_ (Store.inList "mn" [])))))))
     , Test.test
           "inList: 40,000 values run as one statement on both engines"
           (\_ ->
@@ -7516,8 +7768,17 @@ inListTests db =
                                  (\_ ->
                                      Task.map2
                                          (\x y -> ( x, y ))
-                                         (inKindIds db (Store.inList "n" (bigInts -3 40000)))
-                                         (inKindIds db (Store.not_ (Store.inList "n" (bigInts -3 40000))))))))
+                                         (inKindIds
+                                             db
+                                             (Store.inList
+                                                 "n"
+                                                 (bigInts (-3) 40000)))
+                                         (inKindIds
+                                             db
+                                             (Store.not_
+                                                 (Store.inList
+                                                     "n"
+                                                     (bigInts (-3) 40000))))))))
     , Test.test
           "inList: 70,000 values run as one statement on both engines (over PostgreSQL's 65,535 parameters)"
           (\_ ->
@@ -7529,11 +7790,30 @@ inListTests db =
                                  (\_ ->
                                      Task.map2
                                          (\x y -> ( x, y ))
-                                         (inKindIds db (Store.inList "n" (bigInts -3 70000)))
-                                         (inKindIds db
+                                         (inKindIds
+                                             db
+                                             (Store.inList
+                                                 "n"
+                                                 (bigInts (-3) 70000)))
+                                         (inKindIds
+                                             db
                                              (Store.and_
-                                                 [ Store.inList "mn" (bigInts -70000 70004)
-                                                 , Store.inList "t" (SqlString "Ada" :: SqlString "BO" :: List.map (\i -> SqlString ("v" ++ String.fromInt i)) (List.range 1 70000))
+                                                 [ Store.inList
+                                                       "mn"
+                                                       (bigInts (-70000) 70004)
+                                                 , Store.inList
+                                                       "t"
+                                                       (SqlString "Ada"
+                                                           :: SqlString "BO"
+                                                           :: List.map
+                                                                  (\i ->
+                                                                      SqlString
+                                                                          ("v"
+                                                                              ++ String.fromInt
+                                                                                     i))
+                                                                  (List.range
+                                                                      1
+                                                                      70000))
                                                  ]))))))
     , Test.test
           "inList: toSql keeps one placeholder per value up to 1,000 values and marks one placeholder for a longer list, and its SQL and parameters run through Db.query"
@@ -7543,16 +7823,17 @@ inListTests db =
                       Store.toSql
                           db
                           (Store.query inKinds
-                              |> Store.where_ (Store.inList col (bigInts -3 n)))
-                          |> Result.map (\( sql, ps ) -> ( sql, List.length ps ))
+                              |> Store.where_
+                                     (Store.inList col (bigInts (-3) n)))
+                          |> Result.map
+                                 (\( sql, ps ) -> ( sql, List.length ps ))
                   rerun =
-                      case
-                          Store.toSql
-                              db
-                              (Store.query inKinds
-                                  |> Store.where_ (Store.inList "mn" (bigInts -3 1001))
-                                  |> Store.orderAsc "id")
-                      of
+                      case Store.toSql
+                               db
+                               (Store.query inKinds
+                                   |> Store.where_
+                                          (Store.inList "mn" (bigInts (-3) 1001))
+                                   |> Store.orderAsc "id") of
 
                           Ok ( sql, ps ) ->
                               Task.run
@@ -7570,8 +7851,14 @@ inListTests db =
                   Test.equal
                       ( [ Ok
                               ( byDialect
-                                    ("SELECT * FROM sqc_inlist_kinds WHERE (mn IN (?" ++ String.repeat 999 ", ?" ++ "))")
-                                    ("SELECT * FROM sqc_inlist_kinds WHERE (mn IN (?/*sky-int:sqc_inlist_kinds|mn*/" ++ String.repeat 999 ", ?/*sky-int:sqc_inlist_kinds|mn*/" ++ "))")
+                                    ("SELECT * FROM sqc_inlist_kinds WHERE (mn IN (?"
+                                        ++ String.repeat 999 ", ?"
+                                        ++ "))")
+                                    ("SELECT * FROM sqc_inlist_kinds WHERE (mn IN (?/*sky-int:sqc_inlist_kinds|mn*/"
+                                        ++ String.repeat
+                                               999
+                                               ", ?/*sky-int:sqc_inlist_kinds|mn*/"
+                                        ++ "))")
                               , 1000
                               )
                         , Ok
@@ -7590,9 +7877,9 @@ inListTests db =
                       , Ok [ "a", "c", "d" ]
                       )
                       ( [ shown "mn" 1000, shown "mn" 1001, shown "mr" 1001 ]
-                      , Task.run (inKindSetup db) |> Result.andThen (\_ -> rerun)
-                      )
-          )
+                      , Task.run (inKindSetup db)
+                            |> Result.andThen (\_ -> rerun)
+                      ))
     , Test.test
           "inList: a long list on a v0.28 TEXT Bool / Float column matches v0.28's text and new rows"
           (\_ ->
@@ -7625,12 +7912,22 @@ inListTests db =
                                  (\_ ->
                                      Task.map2
                                          (\x y -> ( x, y ))
-                                         (oldFlagsBigIds db (Store.inList "flag" (List.repeat 1100 (SqlBool True))))
+                                         (oldFlagsBigIds
+                                             db
+                                             (Store.inList
+                                                 "flag"
+                                                 (List.repeat 1100 (SqlBool True))))
                                          (oldFlagsBigIds
                                              db
                                              (Store.inList
                                                  "score"
-                                                 (SqlFloat 7.0 :: List.map (\i -> SqlFloat (toFloat i + 0.25)) (List.range 1 1100))))))))
+                                                 (SqlFloat 7.0
+                                                     :: List.map
+                                                            (\i ->
+                                                                SqlFloat
+                                                                    (toFloat i
+                                                                        + 0.25))
+                                                            (List.range 1 1100))))))))
     ]
 
 
@@ -7645,7 +7942,6 @@ oldFlagsBigIds db cond =
         db
         (Store.query oldFlagsBig |> Store.where_ cond |> Store.orderAsc "id")
         |> Task.map (List.map .id)
-
 
 -- ── Fifth Judge: no codec writes what it cannot read (v0.29.2) ──────────────
 -- The class: a codec can write a value its own reader refuses, and a Store
@@ -7675,7 +7971,6 @@ type G5Spec
     | GObj G5Spec
     | GUnion G5Spec
     | GMap G5Spec
-
 
 type G5U
     = UStr String
@@ -7971,8 +8266,7 @@ g5Codec s =
             Codec.map URes g5ResOf (Codec.result (g5Codec x) (g5Codec x))
 
         GObj x ->
-            Codec.object UPair
-                |> Codec.field "a" g5Fst (g5Codec x)
+            Codec.object UPair |> Codec.field "a" g5Fst (g5Codec x)
                 |> Codec.field "b" g5Snd (g5Codec x)
                 |> Codec.buildObject
 
@@ -8003,12 +8297,14 @@ g5UnionCodec c =
 
                 _ ->
                     ( "Unlisted", [] ))
-        [ Codec.var0 "Zero" (UTag 0 []), Codec.var1 "One" (\x -> UTag 1 [ x ]) c ]
+        [ Codec.var0 "Zero" (UTag 0 [])
+        , Codec.var1 "One" (\x -> UTag 1 [ x ]) c
+        ]
 
 
 g5Nan : Float
 g5Nan =
-    Math.sqrt -1.0
+    Math.sqrt (-1.0)
 
 
 g5Inf : Float
@@ -8032,10 +8328,23 @@ g5Values s =
     case s of
 
         GStr ->
-            List.map UStr [ "", "Ada", "ünï 😀 \"q\" \\ line\nbreak", String.repeat 5000 "x" ]
+            List.map
+                UStr
+                [ ""
+                , "Ada"
+                , "ünï 😀 \"q\" \\ line\nbreak"
+                , String.repeat 5000 "x"
+                ]
 
         GInt ->
-            List.map UInt [ 0, -1, 9007199254740993, 9223372036854775807, -9223372036854775807 - 1 ]
+            List.map
+                UInt
+                [ 0
+                , -1
+                , 9007199254740993
+                , 9223372036854775807
+                , -9223372036854775807 - 1
+                ]
 
         GFlt ->
             List.map UFlt [ 0.0, -0.5, 1.0e308, 5.0e-324, g5Nan, g5Inf ]
@@ -8044,19 +8353,50 @@ g5Values s =
             [ UBool True, UBool False ]
 
         GDec ->
-            List.map UDec [ dec "0", dec "-12.50", dec "123456789012345678901234567890.000000001", dec (String.repeat 1000 "9"), g5Long ]
+            List.map
+                UDec
+                [ dec "0"
+                , dec "-12.50"
+                , dec "123456789012345678901234567890.000000001"
+                , dec (String.repeat 1000 "9")
+                , g5Long
+                ]
 
         GMoneyIn ->
-            List.map UMoney [ gbp "1.5", Money.Money (dec "2") Money.USD, Money.Money g5Long Money.GBP, Money.Money (dec "3") (Money.CurrencyRaw "gbp") ]
+            List.map
+                UMoney
+                [ gbp "1.5"
+                , Money.Money (dec "2") Money.USD
+                , Money.Money g5Long Money.GBP
+                , Money.Money (dec "3") (Money.CurrencyRaw "gbp")
+                ]
 
         GMoneyObj ->
-            List.map UMoney [ gbp "1", Money.Money (dec "0.5") Money.USDT, Money.Money (dec "7") (Money.CurrencyRaw "zz"), Money.Money g5Long Money.EUR ]
+            List.map
+                UMoney
+                [ gbp "1"
+                , Money.Money (dec "0.5") Money.USDT
+                , Money.Money (dec "7") (Money.CurrencyRaw "zz")
+                , Money.Money g5Long Money.EUR
+                ]
 
         GIso ->
-            List.map UCur [ Money.GBP, Money.USDT, Money.CurrencyRaw "gbp", Money.CurrencyRaw "a b" ]
+            List.map
+                UCur
+                [ Money.GBP
+                , Money.USDT
+                , Money.CurrencyRaw "gbp"
+                , Money.CurrencyRaw "a b"
+                ]
 
         GVal ->
-            List.map UVal [ JE.object [ ( "k", JE.list JE.string [ "a", "ü" ] ) ], JE.int 1, JE.null, JE.string "" ]
+            List.map
+                UVal
+                [ JE.object [ ( "k", JE.list JE.string [ "a", "ü" ] ) ]
+                , JE.int 1
+                , JE.null
+                , JE.string ""
+                ]
 
         GEnum ->
             [ UEnum 0, UEnum 1, UEnum 2 ]
@@ -8075,24 +8415,34 @@ g5Values s =
                 vs = g5Values x
             in
                 UDict Dict.empty
-                    :: List.map (\v -> UDict (Dict.fromList [ ( "kü😀", v ) ])) vs
-                    ++ [ UDict (Dict.fromList (List.indexedMap (\i v -> ( "k" ++ String.fromInt i, v )) vs)) ]
+                    :: List.map
+                           (\v -> UDict (Dict.fromList [ ( "kü😀", v ) ]))
+                           vs
+                    ++ [ UDict
+                             (Dict.fromList
+                                 (List.indexedMap
+                                     (\i v -> ( "k" ++ String.fromInt i, v ))
+                                     vs))
+                       ]
 
         GRes x ->
             let
                 vs = g5Values x
             in
-                List.map (\v -> URes (Ok v)) vs ++ List.map (\v -> URes (Err v)) vs
+                List.map (\v -> URes (Ok v)) vs
+                    ++ List.map (\v -> URes (Err v)) vs
 
         GObj x ->
             let
                 vs = g5Values x
                 first = Maybe.withDefault (UInt 0) (List.head vs)
             in
-                List.map (\v -> UPair v first) vs ++ List.map (\v -> UPair first v) vs
+                List.map (\v -> UPair v first) vs
+                    ++ List.map (\v -> UPair first v) vs
 
         GUnion x ->
-            UTag 0 [] :: List.map (\v -> UTag 1 [ v ]) (g5Values x) ++ [ UTag 2 [] ]
+            UTag 0 [] :: List.map (\v -> UTag 1 [ v ]) (g5Values x)
+                ++ [ UTag 2 [] ]
 
         GMap x ->
             g5Values x
@@ -8117,7 +8467,9 @@ g5Valid s u =
 
         ( GMoneyObj, UMoney m ) ->
             g5DecOk (Money.amount m)
-                && Money.currencyFromCode (Money.currencyCode (Money.currency m)) /= Nothing
+                && Money.currencyFromCode
+                       (Money.currencyCode (Money.currency m))
+                       /= Nothing
 
         ( GIso, UCur c ) ->
             Money.currencyFromCode (Money.currencyCode c) /= Nothing
@@ -8307,7 +8659,10 @@ g5Eq s a b =
         ( GDict x, UDict p, UDict q ) ->
             List.map (\( k, _ ) -> k) (Dict.toList p)
                 == List.map (\( k, _ ) -> k) (Dict.toList q)
-                && g5ListEq x (List.map (\( _, v ) -> v) (Dict.toList p)) (List.map (\( _, v ) -> v) (Dict.toList q))
+                && g5ListEq
+                       x
+                       (List.map (\( _, v ) -> v) (Dict.toList p))
+                       (List.map (\( _, v ) -> v) (Dict.toList q))
 
         ( GRes x, URes p, URes q ) ->
             case ( p, q ) of
@@ -8358,7 +8713,9 @@ g5MoneyEq x y =
 -- (`CurrencyRaw "gbp"` is `GBP`, as `Money.currencyFromCode` reads it).
 g5CurEq : Money.Currency -> Money.Currency -> Bool
 g5CurEq x y =
-    case ( Money.currencyFromCode (Money.currencyCode x), Money.currencyFromCode (Money.currencyCode y) ) of
+    case ( Money.currencyFromCode (Money.currencyCode x)
+         , Money.currencyFromCode (Money.currencyCode y)
+         ) of
 
         ( Just a, Just b ) ->
             Money.currencyCode a == Money.currencyCode b
@@ -8366,15 +8723,15 @@ g5CurEq x y =
         _ ->
             False
 
-
 type alias G5Row =
-    { id : String, f : G5U }
+    { id : String
+    , f : G5U
+    }
 
 
 g5RowCodec : G5Spec -> Codec G5Row
 g5RowCodec s =
-    Codec.object G5Row
-        |> Codec.field "id" .id Codec.string
+    Codec.object G5Row |> Codec.field "id" .id Codec.string
         |> Codec.field "f" .f (g5Codec s)
         |> Codec.buildObject
 
@@ -8389,7 +8746,10 @@ g5JsonCase s c checks v =
 
     else
         let
-            refused = List.any (\( _, chk ) -> chk (Codec.toValue c v) /= Nothing) checks
+            refused =
+                List.any
+                    (\( _, chk ) -> chk (Codec.toValue c v) /= Nothing)
+                    checks
             label = g5Show s ++ " " ++ String.left 120 (Codec.toJson c v)
         in
             case Codec.fromJson c (Codec.toJson c v) of
@@ -8399,7 +8759,9 @@ g5JsonCase s c checks v =
                         Nothing
 
                     else if g5Valid s v && refused then
-                        Just (label ++ ": a valid value is refused by its write check")
+                        Just
+                            (label
+                                ++ ": a valid value is refused by its write check")
 
                     else if g5Valid s v then
                         Just (label ++ ": reads back as another value")
@@ -8412,14 +8774,20 @@ g5JsonCase s c checks v =
                         Nothing
 
                     else
-                        Just (label ++ ": a value the codec cannot write reads back")
+                        Just
+                            (label
+                                ++ ": a value the codec cannot write reads back")
 
                 Err e ->
                     if g5Valid s v then
-                        Just (label ++ ": a valid value does not read back: " ++ String.left 200 (Error.toString e))
+                        Just
+                            (label ++ ": a valid value does not read back: "
+                                ++ String.left 200 (Error.toString e))
 
                     else if not refused then
-                        Just (label ++ ": written, not read, and no write check refuses it")
+                        Just
+                            (label
+                                ++ ": written, not read, and no write check refuses it")
 
                     else
                         Nothing
@@ -8432,7 +8800,9 @@ g5JsonFailures specs =
             let
                 c = g5Codec s
                 checks =
-                    List.filter (\( k, _ ) -> k == "f") (Codec.writeChecks (g5RowCodec s))
+                    List.filter
+                        (\( k, _ ) -> k == "f")
+                        (Codec.writeChecks (g5RowCodec s))
             in
                 List.filterMap (g5JsonCase s c checks) (g5Values s))
         specs
@@ -8468,13 +8838,16 @@ g5StoreCase : Db -> Int -> G5Spec -> List String
 g5StoreCase db i s =
     let
         table = "sqc_g5_" ++ String.fromInt i
-        store = Store.fromCodec table (g5RowCodec s) |> Store.primaryKey "id"
+        store =
+            Store.fromCodec table (g5RowCodec s) |> Store.primaryKey "id"
         values = g5Values s
-        rows = List.indexedMap (\j v -> { id = "v" ++ String.fromInt (1000 + j), f = v }) values
+        rows =
+            List.indexedMap
+                (\j v -> { id = "v" ++ String.fromInt (1000 + j), f = v })
+                values
         label = g5Show s
         run =
-            drop db table
-                |> Task.andThen (\_ -> unit (Store.migrate db store))
+            drop db table |> Task.andThen (\_ -> unit (Store.migrate db store))
                 |> Task.andThen
                        (\_ ->
                            Task.sequence
@@ -8482,17 +8855,26 @@ g5StoreCase db i s =
                                    (\r ->
                                        Store.insert db store r
                                            |> Task.map (\_ -> ( r, "" ))
-                                           |> Task.onError (\e -> Task.succeed ( r, Error.toString e )))
+                                           |> Task.onError
+                                                  (\e ->
+                                                      Task.succeed
+                                                          ( r
+                                                          , Error.toString e
+                                                          )))
                                    rows))
                 |> Task.andThen
                        (\results ->
-                           Store.toList db (Store.query store |> Store.orderAsc "id")
+                           Store.toList
+                               db
+                               (Store.query store |> Store.orderAsc "id")
                                |> Task.map (\got -> ( results, got )))
     in
         case Task.run run of
 
             Err e ->
-                [ label ++ ": the table does not read after the writes: " ++ String.left 300 (Error.toString e) ]
+                [ label ++ ": the table does not read after the writes: "
+                      ++ String.left 300 (Error.toString e)
+                ]
 
             Ok ( results, got ) ->
                 List.filterMap
@@ -8509,23 +8891,32 @@ g5StoreCase db i s =
                                             Nothing
 
                                         else
-                                            Just (what ++ ": reads back as another value")
+                                            Just
+                                                (what
+                                                    ++ ": reads back as another value")
 
                                     _ ->
-                                        Just (what ++ ": a valid value was not written: " ++ String.left 200 err)
+                                        Just
+                                            (what
+                                                ++ ": a valid value was not written: "
+                                                ++ String.left 200 err)
 
                             else if err == "" || stored /= [] then
-                                Just (what ++ ": a value its codec cannot read back was written")
+                                Just
+                                    (what
+                                        ++ ": a value its codec cannot read back was written")
 
                             else
                                 Nothing)
                     results
-                    ++ (if List.length got == List.length (List.filter (\r -> g5StoreValid s r.f) rows) then
-                            []
+                    ++ (if List.length got
+                           == List.length
+                                  (List.filter (\r -> g5StoreValid s r.f) rows) then
+                           []
 
-                        else
-                            [ label ++ ": the table holds another number of rows" ]
-                       )
+                       else
+                           [ label ++ ": the table holds another number of rows"
+                           ])
 
 
 g5StoreFailures : Db -> Int -> List G5Spec -> List String
@@ -8555,7 +8946,6 @@ g5Tests db =
           (\_ -> Test.equal [] (g5StoreFailures db 1000 (g5Depth 3)))
     ]
 
-
 -- ── Fifth Judge: the named cases ────────────────────────────────────────────
 type J5Status
     = J5Active
@@ -8566,39 +8956,41 @@ j5StatusCodec : Codec J5Status
 j5StatusCodec =
     Codec.enum [ ( J5Active, "active" ) ]
 
-
 type alias J5Enum =
-    { id : String, status : J5Status, history : List J5Status }
+    { id : String
+    , status : J5Status
+    , history : List J5Status
+    }
 
 
 j5EnumStore : Store J5Enum
 j5EnumStore =
     Store.fromCodec
         "sqc_j5_enum"
-        (Codec.object J5Enum
-            |> Codec.field "id" .id Codec.string
+        (Codec.object J5Enum |> Codec.field "id" .id Codec.string
             |> Codec.field "status" .status j5StatusCodec
             |> Codec.field "history" .history (Codec.list j5StatusCodec)
             |> Codec.buildObject)
         |> Store.primaryKey "id"
 
-
 type alias J5Dec =
-    { id : String, d : Decimal, ds : List Decimal, m : Money }
+    { id : String
+    , d : Decimal
+    , ds : List Decimal
+    , m : Money
+    }
 
 
 j5DecStore : Store J5Dec
 j5DecStore =
     Store.fromCodec
         "sqc_j5_dec"
-        (Codec.object J5Dec
-            |> Codec.field "id" .id Codec.string
+        (Codec.object J5Dec |> Codec.field "id" .id Codec.string
             |> Codec.field "d" .d Codec.decimal
             |> Codec.field "ds" .ds (Codec.list Codec.decimal)
             |> Codec.field "m" .m (Codec.moneyIn Money.GBP)
             |> Codec.buildObject)
         |> Store.primaryKey "id"
-
 
 type alias J5Auto =
     { id : String
@@ -8625,28 +9017,26 @@ j5AutoBlank =
 
 j5AutoStore : Store J5Auto
 j5AutoStore =
-    Store.fromCodec "sqc_j5_auto" (Codec.auto j5AutoBlank) |> Store.primaryKey "id"
+    Store.fromCodec "sqc_j5_auto" (Codec.auto j5AutoBlank)
+        |> Store.primaryKey "id"
 
 
 -- A fresh `table` from `setup`, then `write`; the error text (or "ok") and
 -- whether the whole table still reads.
 j5Write : Db -> String -> Task Error x -> Task Error y -> Task Error z -> ( String, Bool )
 j5Write db table setup write readAll =
-    case
-        Task.run
-            (drop db table
-                |> Task.andThen (\_ -> unit setup)
-                |> Task.andThen
-                       (\_ ->
-                           write
-                               |> Task.map (\_ -> "ok")
-                               |> Task.onError (\e -> Task.succeed (Error.toString e)))
-                |> Task.andThen
-                       (\msg ->
-                           readAll
-                               |> Task.map (\_ -> ( msg, True ))
-                               |> Task.onError (\_ -> Task.succeed ( msg, False ))))
-    of
+    case Task.run
+             (drop db table |> Task.andThen (\_ -> unit setup)
+                 |> Task.andThen
+                        (\_ ->
+                            write |> Task.map (\_ -> "ok")
+                                |> Task.onError
+                                       (\e -> Task.succeed (Error.toString e)))
+                 |> Task.andThen
+                        (\msg ->
+                            readAll |> Task.map (\_ -> ( msg, True ))
+                                |> Task.onError
+                                       (\_ -> Task.succeed ( msg, False )))) of
 
         Ok r ->
             r
@@ -8657,26 +9047,33 @@ j5Write db table setup write readAll =
 
 j5Long : Decimal
 j5Long =
-    Decimal.mul (dec ("1" ++ String.repeat 599 "7")) (dec ("1" ++ String.repeat 599 "7"))
+    Decimal.mul
+        (dec ("1" ++ String.repeat 599 "7"))
+        (dec ("1" ++ String.repeat 599 "7"))
 
 
 j5Nan : Float
 j5Nan =
-    Math.sqrt -1.0
-
+    Math.sqrt (-1.0)
 
 type alias J5Narrow =
-    { id : String, i : Int, s : Int }
+    { id : String
+    , i : Int
+    , s : Int
+    }
 
 
 j5NarrowStore : Store J5Narrow
 j5NarrowStore =
-    Store.fromCodec "sqc_j5_narrow" (Codec.auto { id = "", i = 0, s = 0 }) |> Store.primaryKey "id"
+    Store.fromCodec "sqc_j5_narrow" (Codec.auto { id = "", i = 0, s = 0 })
+        |> Store.primaryKey "id"
 
 
 j5NarrowIds : Db -> Store.Cond -> Task Error (List String)
 j5NarrowIds db cond =
-    Store.toList db (Store.query j5NarrowStore |> Store.where_ cond |> Store.orderAsc "id")
+    Store.toList
+        db
+        (Store.query j5NarrowStore |> Store.where_ cond |> Store.orderAsc "id")
         |> Task.map (List.map .id)
 
 
@@ -8684,12 +9081,17 @@ j5NarrowCase : Db -> String -> List String -> Test
 j5NarrowCase db col expected =
     let
         -- Outside INTEGER (3,000,000,000) and SMALLINT (70,000, and every pad).
-        values = [ 1, 3000000000, 70000, 2000000000, 30000, -9223372036854775807 ]
+        values =
+            [ 1, 3000000000, 70000, 2000000000, 30000, -9223372036854775807 ]
         long = values ++ List.map (\i -> 100000 + i) (List.range 1 1100)
     in
         Test.test
             ("fifth Judge: inList over 1,000 values on a foreign "
-                ++ (if col == "i" then "INTEGER" else "SMALLINT")
+                ++ (if col == "i" then
+                       "INTEGER"
+
+                   else
+                       "SMALLINT")
                 ++ " column with values outside its range gives the rows the short IN (…) gives, and eq of an out-of-range value matches nothing, never an out-of-range error")
             (\_ ->
                 Test.equal
@@ -8712,18 +9114,42 @@ j5NarrowCase db col expected =
                                    (\_ ->
                                        Task.map3
                                            (\x y z -> ( x, y, z ))
-                                           (j5NarrowIds db (Store.not_ (Store.not_ (Store.eq col (SqlInt 3000000000)))) |> Task.map (\none -> if none == [] then expected else none))
-                                           (j5NarrowIds db (Store.inList col (List.map SqlInt long)))
-                                           (j5NarrowIds db (Store.inList col (List.map SqlInt values)))))))
+                                           (j5NarrowIds
+                                               db
+                                               (Store.not_
+                                                   (Store.not_
+                                                       (Store.eq
+                                                           col
+                                                           (SqlInt 3000000000))))
+                                               |> Task.map
+                                                      (\none ->
+                                                          if none == [] then
+                                                              expected
 
+                                                          else
+                                                              none))
+                                           (j5NarrowIds
+                                               db
+                                               (Store.inList
+                                                   col
+                                                   (List.map SqlInt long)))
+                                           (j5NarrowIds
+                                               db
+                                               (Store.inList
+                                                   col
+                                                   (List.map SqlInt values)))))))
 
 type alias J6Foreign =
-    { id : Int, t : Int, nu : Int }
+    { id : Int
+    , t : Int
+    , nu : Int
+    }
 
 
 j6ForeignStore : Store J6Foreign
 j6ForeignStore =
-    Store.fromCodec "sqc_j6_foreign" (Codec.auto { id = 0, t = 0, nu = 0 }) |> Store.primaryKey "id"
+    Store.fromCodec "sqc_j6_foreign" (Codec.auto { id = 0, t = 0, nu = 0 })
+        |> Store.primaryKey "id"
 
 
 -- An Int field on a foreign TEXT or NUMERIC column, which v0.29.1 compared
@@ -8733,12 +9159,19 @@ j6ForeignStore =
 j6ForeignCase : Db -> String -> Test
 j6ForeignCase db col =
     let
-        long = List.map SqlInt (List.range 1000 2000) ++ [ SqlInt 5, SqlInt 99999999999 ]
-        count cond = Store.count db (Store.query j6ForeignStore |> Store.where_ cond)
+        long =
+            List.map SqlInt (List.range 1000 2000)
+                ++ [ SqlInt 5, SqlInt 99999999999 ]
+        count cond =
+            Store.count db (Store.query j6ForeignStore |> Store.where_ cond)
     in
         Test.test
             ("sixth Judge: an Int condition on a foreign "
-                ++ (if col == "t" then "TEXT" else "NUMERIC")
+                ++ (if col == "t" then
+                       "TEXT"
+
+                   else
+                       "NUMERIC")
                 ++ " column answers as in v0.29.1 (eq, lt, a short and a long inList, findBy) and toSql names the column")
             (\_ ->
                 Test.equal
@@ -8762,15 +9195,27 @@ j6ForeignCase db col =
                                        Task.map3
                                            (\a b c -> ( a, b, c ))
                                            (count (Store.eq col (SqlInt 5)))
-                                           (count (Store.eq col (SqlInt 99999999999)))
-                                           (count (Store.lt col (SqlInt 99999999999))))
+                                           (count
+                                               (Store.eq col (SqlInt 99999999999)))
+                                           (count
+                                               (Store.lt col (SqlInt 99999999999))))
                             |> Task.andThen
                                    (\first ->
                                        Task.map3
                                            (\a b c -> ( first, ( a, b, c ) ))
-                                           (count (Store.inList col [ SqlInt 5, SqlInt 99999999999 ]))
+                                           (count
+                                               (Store.inList
+                                                   col
+                                                   [ SqlInt 5
+                                                   , SqlInt 99999999999
+                                                   ]))
                                            (count (Store.inList col long))
-                                           (Store.findBy db j6ForeignStore col "5" |> Task.map (\m -> m /= Nothing))))))
+                                           (Store.findBy
+                                               db
+                                               j6ForeignStore
+                                               col
+                                               "5"
+                                               |> Task.map (\m -> m /= Nothing))))))
 
 
 j6ForeignTests : Db -> List Test
@@ -8789,21 +9234,31 @@ j6ForeignTests db =
                             "SELECT * FROM sqc_j6_foreign WHERE (t IN (SELECT +value FROM json_each(?/*sky-list:1001*/)))"
                             "SELECT * FROM sqc_j6_foreign WHERE (t = ANY(?/*sky-list:1001:int:sqc_j6_foreign|t*/))"
                       , 1
-                      )
-                  )
+                      ))
                   (Result.map3
                       (\( a, _ ) ( b, _ ) rows -> ( a, b, rows ))
-                      (Store.toSql db (Store.query j6ForeignStore |> Store.where_ (Store.eq "t" (SqlInt 5))))
-                      (Store.toSql db (Store.query j6ForeignStore |> Store.where_ (Store.inList "t" (List.map SqlInt (List.range 1 1001)))))
-                      (case Store.toSql db (Store.query j6ForeignStore |> Store.where_ (Store.eq "t" (SqlInt 5))) of
+                      (Store.toSql
+                          db
+                          (Store.query j6ForeignStore
+                              |> Store.where_ (Store.eq "t" (SqlInt 5))))
+                      (Store.toSql
+                          db
+                          (Store.query j6ForeignStore
+                              |> Store.where_
+                                     (Store.inList
+                                         "t"
+                                         (List.map SqlInt (List.range 1 1001)))))
+                      (case Store.toSql
+                               db
+                               (Store.query j6ForeignStore
+                                   |> Store.where_ (Store.eq "t" (SqlInt 5))) of
 
                           Ok ( sql, ps ) ->
-                              Task.run (Db.query db sql ps |> Task.map List.length)
+                              Task.run
+                                  (Db.query db sql ps |> Task.map List.length)
 
                           Err e ->
-                              Err e
-                      ))
-          )
+                              Err e)))
     ]
 
 
@@ -8816,20 +9271,59 @@ j5Tests db =
                   setup = Store.migrate db j5EnumStore
                   readAll = Store.toList db (Store.query j5EnumStore)
                   ( scalar, ok1 ) =
-                      j5Write db "sqc_j5_enum" setup (Store.insert db j5EnumStore { id = "c", status = J5Suspended, history = [] }) readAll
+                      j5Write
+                          db
+                          "sqc_j5_enum"
+                          setup
+                          (Store.insert
+                              db
+                              j5EnumStore
+                              { id = "c", status = J5Suspended, history = [] })
+                          readAll
                   ( inList, ok2 ) =
-                      j5Write db "sqc_j5_enum" setup (Store.insert db j5EnumStore { id = "b", status = J5Active, history = [ J5Active, J5Suspended ] }) readAll
+                      j5Write
+                          db
+                          "sqc_j5_enum"
+                          setup
+                          (Store.insert
+                              db
+                              j5EnumStore
+                              { id = "b"
+                              , status = J5Active
+                              , history = [ J5Active, J5Suspended ]
+                              })
+                          readAll
               in
                   Test.equal
-                      ( ( True, True, True ), ( True, True ), [ "status", "history" ] )
+                      ( ( True, True, True )
+                      , ( True, True )
+                      , [ "status", "history" ]
+                      )
                       ( ( String.contains "column \"sqc_j5_enum.status\"" scalar
-                        , String.contains "the value J5Suspended is not one of the enum's values (active)" scalar
+                        , String.contains
+                              "the value J5Suspended is not one of the enum's values (active)"
+                              scalar
                         , ok1 && ok2
                         )
-                      , ( String.contains "column \"sqc_j5_enum.history\"" inList
+                      , ( String.contains
+                              "column \"sqc_j5_enum.history\""
+                              inList
                         , String.contains "J5Suspended" inList
                         )
-                      , List.map (\( k, _ ) -> k) (Codec.writeChecks (Codec.object J5Enum |> Codec.field "id" .id Codec.string |> Codec.field "status" .status j5StatusCodec |> Codec.field "history" .history (Codec.list j5StatusCodec) |> Codec.buildObject))
+                      , List.map
+                            (\( k, _ ) -> k)
+                            (Codec.writeChecks
+                                (Codec.object J5Enum
+                                    |> Codec.field "id" .id Codec.string
+                                    |> Codec.field
+                                           "status"
+                                           .status
+                                           j5StatusCodec
+                                    |> Codec.field
+                                           "history"
+                                           .history
+                                           (Codec.list j5StatusCodec)
+                                    |> Codec.buildObject))
                       ))
     , Test.test
           "fifth Judge: Codec.toJson of an unlisted enum value writes {\"notInEnum\": <constructor>}, never \"\", and fromJson refuses it naming the constructor"
@@ -8837,7 +9331,9 @@ j5Tests db =
               Test.equal
                   ( "{\"notInEnum\":\"J5Suspended\"}", True, "\"active\"" )
                   ( Codec.toJson j5StatusCodec J5Suspended
-                  , case Codec.fromJson j5StatusCodec (Codec.toJson j5StatusCodec J5Suspended) of
+                  , case Codec.fromJson
+                             j5StatusCodec
+                             (Codec.toJson j5StatusCodec J5Suspended) of
 
                         Err e ->
                             String.contains "J5Suspended" (Error.toString e)
@@ -8852,7 +9348,8 @@ j5Tests db =
               Test.equal
                   ( True, Ok 1000 )
                   ( isErr (Decimal.fromString "1e1500")
-                  , Decimal.fromString "1e999" |> Result.map (\d -> String.length (Decimal.toString d))
+                  , Decimal.fromString "1e999"
+                        |> Result.map (\d -> String.length (Decimal.toString d))
                   ))
     , Test.test
           "fifth Judge: a computed Decimal over 1000 characters is refused by Codec.decimal, a list of it and Codec.moneyIn; the table reads"
@@ -8861,14 +9358,49 @@ j5Tests db =
                   setup = Store.migrate db j5DecStore
                   readAll = Store.toList db (Store.query j5DecStore)
                   row = { id = "a", d = Decimal.zero, ds = [], m = gbp "1" }
-                  r1 = j5Write db "sqc_j5_dec" setup (Store.insert db j5DecStore { row | d = j5Long }) readAll
-                  r2 = j5Write db "sqc_j5_dec" setup (Store.insert db j5DecStore { row | ds = [ Decimal.one, j5Long ] }) readAll
-                  r3 = j5Write db "sqc_j5_dec" setup (Store.insert db j5DecStore { row | m = Money.Money j5Long Money.GBP }) readAll
-                  r4 = j5Write db "sqc_j5_dec" setup (Store.insert db j5DecStore row) readAll
-                  says ( msg, readable ) = ( String.contains "at most 1000" msg, readable )
+                  r1 =
+                      j5Write
+                          db
+                          "sqc_j5_dec"
+                          setup
+                          (Store.insert db j5DecStore { row | d = j5Long })
+                          readAll
+                  r2 =
+                      j5Write
+                          db
+                          "sqc_j5_dec"
+                          setup
+                          (Store.insert
+                              db
+                              j5DecStore
+                              { row | ds = [ Decimal.one, j5Long ] })
+                          readAll
+                  r3 =
+                      j5Write
+                          db
+                          "sqc_j5_dec"
+                          setup
+                          (Store.insert
+                              db
+                              j5DecStore
+                              { row | m = Money.Money j5Long Money.GBP })
+                          readAll
+                  r4 =
+                      j5Write
+                          db
+                          "sqc_j5_dec"
+                          setup
+                          (Store.insert db j5DecStore row)
+                          readAll
+                  says ( msg, readable ) =
+                      ( String.contains "at most 1000" msg, readable )
               in
                   Test.equal
-                      ( ( True, True ), ( True, True ), ( True, True ), ( "ok", True ) )
+                      ( ( True, True )
+                      , ( True, True )
+                      , ( True, True )
+                      , ( "ok", True )
+                      )
                       ( says r1, says r2, says r3, r4 ))
     , Test.test
           "fifth Judge: Codec.auto refuses a Decimal or Money field it cannot read back (a field, a list, a Maybe) and a NaN Float; writeChecks lists only those fields"
@@ -8877,31 +9409,57 @@ j5Tests db =
                   setup = Store.migrate db j5AutoStore
                   readAll = Store.toList db (Store.query j5AutoStore)
                   base = { j5AutoBlank | id = "a" }
-                  write r = j5Write db "sqc_j5_auto" setup (Store.insert db j5AutoStore r) readAll
+                  write r =
+                      j5Write
+                          db
+                          "sqc_j5_auto"
+                          setup
+                          (Store.insert db j5AutoStore r)
+                          readAll
                   refusedAt col ( msg, readable ) =
-                      ( String.contains ("\"sqc_j5_auto." ++ col ++ "\"") msg || String.contains ("column \"" ++ col ++ "\"") msg
+                      ( String.contains ("\"sqc_j5_auto." ++ col ++ "\"") msg
+                            || String.contains ("column \"" ++ col ++ "\"") msg
                       , readable
                       )
               in
                   Test.equal
-                      ( [ ( True, True ), ( True, True ), ( True, True ), ( True, True ), ( True, True ) ]
+                      ( [ ( True, True )
+                        , ( True, True )
+                        , ( True, True )
+                        , ( True, True )
+                        , ( True, True )
+                        ]
                       , ( "ok", True )
                       , [ "d", "ds", "m", "md" ]
                       )
                       ( [ refusedAt "d" (write { base | d = j5Long })
                         , refusedAt "ds" (write { base | ds = [ j5Long ] })
                         , refusedAt "md" (write { base | md = Just j5Long })
-                        , refusedAt "m" (write { base | m = Money.Money j5Long Money.GBP })
+                        , refusedAt
+                              "m"
+                              (write { base | m = Money.Money j5Long Money.GBP })
                         , refusedAt "f" (write { base | f = j5Nan })
                         ]
-                      , write { base | d = dec "12.5", ds = [ dec (String.repeat 1000 "9") ], m = gbp "3" }
-                      , List.sort (List.map (\( k, _ ) -> k) (Codec.writeChecks (Codec.auto j5AutoBlank)))
+                      , write
+                            { base
+                                | d = dec "12.5"
+                                , ds = [ dec (String.repeat 1000 "9") ]
+                                , m = gbp "3"
+                            }
+                      , List.sort
+                            (List.map
+                                (\( k, _ ) -> k)
+                                (Codec.writeChecks (Codec.auto j5AutoBlank)))
                       ))
     , Test.test
           "fifth Judge: a NaN or infinite Float is refused by a Store write on a Codec.auto Float column; the table reads"
           (\_ ->
               let
-                  store = Store.fromCodec "sqc_j5_float" (Codec.auto { id = "", f = 0.0 }) |> Store.primaryKey "id"
+                  store =
+                      Store.fromCodec
+                          "sqc_j5_float"
+                          (Codec.auto { id = "", f = 0.0 })
+                          |> Store.primaryKey "id"
                   setup = Store.migrate db store
                   readAll = Store.toList db (Store.query store)
               in
@@ -8910,36 +9468,63 @@ j5Tests db =
                       (List.map
                           (\f ->
                               let
-                                  ( msg, readable ) = j5Write db "sqc_j5_float" setup (Store.insert db store { id = "a", f = f }) readAll
+                                  ( msg, readable ) =
+                                      j5Write
+                                          db
+                                          "sqc_j5_float"
+                                          setup
+                                          (Store.insert
+                                              db
+                                              store
+                                              { id = "a", f = f })
+                                          readAll
                               in
                                   String.contains "is a Float" msg && readable)
-                          [ j5Nan, Math.pow 10.0 400.0, 0.0 - Math.pow 10.0 400.0 ]))
+                          [ j5Nan
+                          , Math.pow 10.0 400.0
+                          , 0.0 - Math.pow 10.0 400.0
+                          ]))
     , Test.test
           "fifth Judge: Codec.autoWith with two keys naming one column is a builder problem naming both keys, and a decode Err"
           (\_ ->
               let
                   codec =
                       Codec.autoWith
-                          [ ( "price_list", Codec.list Codec.int ), ( "priceList", Codec.list Codec.int ) ]
+                          [ ( "price_list", Codec.list Codec.int )
+                          , ( "priceList", Codec.list Codec.int )
+                          ]
                           { id = "", priceList = [ 0 ] }
                   twice =
-                      Codec.autoWith [ ( "tags", Codec.list Codec.int ), ( "tags", Codec.list Codec.int ) ] { id = "", tags = [ 0 ] }
+                      Codec.autoWith
+                          [ ( "tags", Codec.list Codec.int )
+                          , ( "tags", Codec.list Codec.int )
+                          ]
+                          { id = "", tags = [ 0 ] }
               in
                   Test.equal
-                      ( [ "Codec.autoWith: the keys \"price_list\" and \"priceList\" both name the column \"price_list\", so one override would be dropped; give each field one override" ]
+                      ( [ "Codec.autoWith: the keys \"price_list\" and \"priceList\" both name the column \"price_list\", so one override would be dropped; give each field one override"
+                        ]
                       , True
                       , True
                       )
                       ( Codec.problems codec
-                      , isErr (Codec.fromJson codec "{\"id\":\"a\",\"price_list\":[1]}")
-                      , List.any (String.contains "the keys \"tags\" and \"tags\"") (Codec.problems twice)
+                      , isErr
+                            (Codec.fromJson
+                                codec
+                                "{\"id\":\"a\",\"price_list\":[1]}")
+                      , List.any
+                            (String.contains "the keys \"tags\" and \"tags\"")
+                            (Codec.problems twice)
                       ))
     , Test.test
           "fifth Judge: one enum name for two values, one union tag for two variants and one object key for two fields are builder problems"
           (\_ ->
               Test.equal
                   ( 1, 1, 1 )
-                  ( List.length (Codec.problems (Codec.enum [ ( J5Active, "a" ), ( J5Suspended, "a" ) ]))
+                  ( List.length
+                        (Codec.problems
+                            (Codec.enum
+                                [ ( J5Active, "a" ), ( J5Suspended, "a" ) ]))
                   , List.length
                         (Codec.problems
                             (Codec.taggedUnion
@@ -8951,7 +9536,9 @@ j5Tests db =
 
                                         J5Suspended ->
                                             ( "X", [] ))
-                                [ Codec.var0 "X" J5Active, Codec.var0 "X" J5Suspended ]))
+                                [ Codec.var0 "X" J5Active
+                                , Codec.var0 "X" J5Suspended
+                                ]))
                   , List.length
                         (Codec.problems
                             (Codec.object (\a b -> { a = a, b = b })
@@ -8965,22 +9552,52 @@ j5Tests db =
               let
                   setup = Store.migrate db j5EnumStore
                   readAll = Store.toList db (Store.query j5EnumStore)
-                  ( set, _ ) = j5Write db "sqc_j5_enum" setup (Store.setFields db j5EnumStore (SqlString "a") [ ( "status", SqlInt 1 ) ]) readAll
-                  ( ret, _ ) = j5Write db "sqc_j5_enum" setup (Store.updateFieldsReturning db j5EnumStore Store.noCond [ ( "status", SqlString "gone" ) ]) readAll
-                  ( copy, _ ) = j5Write db "sqc_j5_enum" setup (Store.copyIntoOrIgnore db j5EnumStore (Store.query j5EnumStore) []) readAll
+                  ( set, _ ) =
+                      j5Write
+                          db
+                          "sqc_j5_enum"
+                          setup
+                          (Store.setFields
+                              db
+                              j5EnumStore
+                              (SqlString "a")
+                              [ ( "status", SqlInt 1 ) ])
+                          readAll
+                  ( ret, _ ) =
+                      j5Write
+                          db
+                          "sqc_j5_enum"
+                          setup
+                          (Store.updateFieldsReturning
+                              db
+                              j5EnumStore
+                              Store.noCond
+                              [ ( "status", SqlString "gone" ) ])
+                          readAll
+                  ( copy, _ ) =
+                      j5Write
+                          db
+                          "sqc_j5_enum"
+                          setup
+                          (Store.copyIntoOrIgnore
+                              db
+                              j5EnumStore
+                              (Store.query j5EnumStore)
+                              [])
+                          readAll
               in
                   Test.equal
                       ( True, True, True )
-                      ( String.contains "setFields" set && not (String.contains "updateFields" set)
+                      ( String.contains "setFields" set
+                            && not (String.contains "updateFields" set)
                       , String.contains "updateFieldsReturning:" ret
-                      , String.contains "copyIntoOrIgnore: no columns to copy" copy
+                      , String.contains
+                            "copyIntoOrIgnore: no columns to copy"
+                            copy
                       ))
     , j5NarrowCase db "i" [ "a", "b" ]
     , j5NarrowCase db "s" [ "a", "b" ]
     ]
-
-
-
 
 -- ── The sixth Judge (v0.29.2) ──────────────────────────────────────────────
 -- A custom type in a Codec.auto record round-trips exactly or is a builder
@@ -8989,11 +9606,10 @@ j5Tests db =
 -- as null is refused; a long decimal through updateFields is refused; a
 -- currency code is read in upper case by Money too; a SQLite decimal column
 -- holding a REAL is refused by migrate.
-
-
 type alias J6Inner =
-    { label : String, n : Int }
-
+    { label : String
+    , n : Int
+    }
 
 type J6Box
     = J6BoxM (Maybe Int)
@@ -9002,76 +9618,83 @@ type J6Box
     | J6BoxS J5Status
     | J6BoxN
 
-
 type J6Price
     = J6Fixed Decimal
     | J6Free
 
-
 type alias J6BoxRow =
-    { id : String, box : J6Box }
+    { id : String
+    , box : J6Box
+    }
 
 
 j6BoxStore : Store J6BoxRow
 j6BoxStore =
-    Store.fromCodec "sqc_j6_box" (Codec.auto { id = "", box = J6BoxN }) |> Store.primaryKey "id"
-
+    Store.fromCodec "sqc_j6_box" (Codec.auto { id = "", box = J6BoxN })
+        |> Store.primaryKey "id"
 
 type alias J6Nest =
-    { id : String, nest : { inner : List Money } }
+    { id : String
+    , nest : { inner : List Money }
+    }
 
 
 j6NestBlank : J6Nest
 j6NestBlank =
     { id = "", nest = { inner = [] } }
 
-
 type alias J6Priced =
-    { id : String, price : J6Price }
+    { id : String
+    , price : J6Price
+    }
 
 
 j6PriceCodec : Codec J6Priced
 j6PriceCodec =
     Codec.auto { id = "", price = J6Free }
 
-
 type alias J6List =
-    { id : String, v : List Int }
+    { id : String
+    , v : List Int
+    }
 
 
 j6ListCodec : Codec J6List
 j6ListCodec =
     Codec.auto { id = "", v = [] }
 
-
 type alias J6Dict =
-    { id : String, v : Dict.Dict String Int }
+    { id : String
+    , v : Dict.Dict String Int
+    }
 
 
 j6DictCodec : Codec J6Dict
 j6DictCodec =
     Codec.auto { id = "", v = Dict.empty }
 
-
 type alias J6Vals =
-    { id : String, vs : List JE.Value }
+    { id : String
+    , vs : List JE.Value
+    }
 
 
 j6ValsCodec : Codec J6Vals
 j6ValsCodec =
     Codec.auto { id = "", vs = [ JE.null ] }
 
-
 type alias J6Nested =
-    { id : String, mm : Maybe (Maybe Int), mv : Maybe JE.Value }
+    { id : String
+    , mm : Maybe (Maybe Int)
+    , mv : Maybe JE.Value
+    }
 
 
 j6NestedStore : Store J6Nested
 j6NestedStore =
     Store.fromCodec
         "sqc_j6_nested"
-        (Codec.object J6Nested
-            |> Codec.field "id" .id Codec.string
+        (Codec.object J6Nested |> Codec.field "id" .id Codec.string
             |> Codec.field "mm" .mm (Codec.maybe (Codec.maybe Codec.int))
             |> Codec.field "mv" .mv (Codec.maybe Codec.value)
             |> Codec.buildObject)
@@ -9080,31 +9703,34 @@ j6NestedStore =
 
 j6NestedAutoStore : Store J6Nested
 j6NestedAutoStore =
-    Store.fromCodec "sqc_j6_nested_auto" (Codec.auto { id = "", mm = Just Nothing, mv = Just JE.null }) |> Store.primaryKey "id"
-
+    Store.fromCodec
+        "sqc_j6_nested_auto"
+        (Codec.auto { id = "", mm = Just Nothing, mv = Just JE.null })
+        |> Store.primaryKey "id"
 
 type alias J6Cur =
-    { id : String, cur : Money.Currency }
+    { id : String
+    , cur : Money.Currency
+    }
 
 
 j6CurStore : Store J6Cur
 j6CurStore =
-    Store.fromCodec "sqc_j6_cur" (Codec.auto { id = "", cur = Money.GBP }) |> Store.primaryKey "id"
+    Store.fromCodec "sqc_j6_cur" (Codec.auto { id = "", cur = Money.GBP })
+        |> Store.primaryKey "id"
 
 
 -- Write `v` to a fresh table, read every row back: the error text (or "ok")
 -- and whether the rows read are `[ v ]` (`==`).
 j6Same : Db -> String -> Store a -> a -> ( String, Bool )
 j6Same db table store v =
-    case
-        Task.run
-            (drop db table
-                |> Task.andThen (\_ -> unit (Store.migrate db store))
-                |> Task.andThen (\_ -> Store.insert db store v)
-                |> Task.andThen (\_ -> Store.all db store)
-                |> Task.map (\rs -> ( "ok", rs == [ v ] ))
-                |> Task.onError (\e -> Task.succeed ( Error.toString e, False )))
-    of
+    case Task.run
+             (drop db table |> Task.andThen (\_ -> unit (Store.migrate db store))
+                 |> Task.andThen (\_ -> Store.insert db store v)
+                 |> Task.andThen (\_ -> Store.all db store)
+                 |> Task.map (\rs -> ( "ok", rs == [ v ] ))
+                 |> Task.onError
+                        (\e -> Task.succeed ( Error.toString e, False ))) of
 
         Ok r ->
             r
@@ -9119,33 +9745,67 @@ j6Tests db =
           "sixth Judge: a Codec.auto custom type field round-trips each variant exactly (Maybe, List, record, enum, nullary payloads)"
           (\_ ->
               Test.equal
-                  [ ( "ok", True ), ( "ok", True ), ( "ok", True ), ( "ok", True ), ( "ok", True ), ( "ok", True ) ]
+                  [ ( "ok", True )
+                  , ( "ok", True )
+                  , ( "ok", True )
+                  , ( "ok", True )
+                  , ( "ok", True )
+                  , ( "ok", True )
+                  ]
                   (List.map
-                      (\b -> j6Same db "sqc_j6_box" j6BoxStore { id = "a", box = b })
-                      [ J6BoxM (Just 3), J6BoxM Nothing, J6BoxL [ 9007199254740993, -1 ], J6BoxR { label = "x", n = 7 }, J6BoxS J5Suspended, J6BoxN ]))
+                      (\b ->
+                          j6Same
+                              db
+                              "sqc_j6_box"
+                              j6BoxStore
+                              { id = "a", box = b })
+                      [ J6BoxM (Just 3)
+                      , J6BoxM Nothing
+                      , J6BoxL [ 9007199254740993, -1 ]
+                      , J6BoxR { label = "x", n = 7 }
+                      , J6BoxS J5Suspended
+                      , J6BoxN
+                      ]))
     , Test.test
           "sixth Judge: a Codec.auto field whose variant carries a Decimal (or a nested anonymous record holding a Money) is a builder problem naming the field and the variant; the store is refused; the reader refuses it"
           (\_ ->
               let
-                  store = Store.fromCodec "sqc_j6_price" j6PriceCodec |> Store.primaryKey "id"
+                  store =
+                      Store.fromCodec "sqc_j6_price" j6PriceCodec
+                          |> Store.primaryKey "id"
                   probs = Codec.problems j6PriceCodec
               in
                   Test.equal
                       ( True, True, True, True )
-                      ( List.any (\p -> String.contains "\"price\"" p && String.contains "J6Fixed" p) probs
-                      , List.any (String.contains "\"nest\"") (Codec.problems (Codec.auto j6NestBlank))
+                      ( List.any
+                            (\p ->
+                                String.contains "\"price\"" p
+                                    && String.contains "J6Fixed" p)
+                            probs
+                      , List.any
+                            (String.contains "\"nest\"")
+                            (Codec.problems (Codec.auto j6NestBlank))
                       , isErr (Task.run (Store.migrate db store))
-                      , isErr (Codec.fromJson j6PriceCodec "{\"id\":\"a\",\"price\":{\"tag\":\"J6Fixed\",\"v0\":\"12.5\"}}")
+                      , isErr
+                            (Codec.fromJson
+                                j6PriceCodec
+                                "{\"id\":\"a\",\"price\":{\"tag\":\"J6Fixed\",\"v0\":\"12.5\"}}")
                       ))
     , Test.test
           "sixth Judge: an annotated Codec.auto with an empty List or Dict witness reads its elements; a List Json.Value witness reads"
           (\_ ->
               Test.equal
                   ( Ok [ 1, 2 ], Ok [ ( "k", 1 ) ], Ok True )
-                  ( Codec.fromJson j6ListCodec "{\"id\":\"a\",\"v\":[1,2]}" |> Result.map .v
-                  , Codec.fromJson j6DictCodec "{\"id\":\"a\",\"v\":{\"k\":1}}" |> Result.map (\r -> Dict.toList r.v)
-                  , Codec.fromJson j6ValsCodec "{\"id\":\"a\",\"vs\":[5,\"x\",null]}"
-                      |> Result.map (\r -> r.vs == [ JE.int 5, JE.string "x", JE.null ])
+                  ( Codec.fromJson j6ListCodec "{\"id\":\"a\",\"v\":[1,2]}"
+                        |> Result.map .v
+                  , Codec.fromJson j6DictCodec "{\"id\":\"a\",\"v\":{\"k\":1}}"
+                        |> Result.map (\r -> Dict.toList r.v)
+                  , Codec.fromJson
+                        j6ValsCodec
+                        "{\"id\":\"a\",\"vs\":[5,\"x\",null]}"
+                        |> Result.map
+                               (\r ->
+                                   r.vs == [ JE.int 5, JE.string "x", JE.null ])
                   ))
     , Test.test
           "sixth Judge: two Codec.auto fields that become one key (aB and a_b) are a builder problem and a decode Err"
@@ -9155,7 +9815,9 @@ j6Tests db =
               in
                   Test.equal
                       ( True, True )
-                      ( List.any (String.contains "\"aB\" and \"a_b\"") (Codec.problems codec)
+                      ( List.any
+                            (String.contains "\"aB\" and \"a_b\"")
+                            (Codec.problems codec)
                       , isErr (Codec.fromJson codec "{\"id\":\"1\",\"a_b\":1}")
                       ))
     , Test.test
@@ -9173,31 +9835,93 @@ j6Tests db =
               in
                   Test.equal
                       ( ( True, True, False ), ( True, True ), ( "ok", True ) )
-                      ( ( dec "1.10" == dec "1.1", Decimal.mul (dec "1.5") (dec "2") == dec "3", dec "1.1" == dec "1.11" )
-                      , ( Codec.fromJson Codec.value (Codec.toJson Codec.value (JE.int 5)) == Ok (JE.int 5)
-                        , Codec.fromJson Codec.value "{\"b\":[1.0,null],\"a\":\"x\"}" == Ok (JE.object [ ( "a", JE.string "x" ), ( "b", JE.list identity [ JE.int 1, JE.null ] ) ])
+                      ( ( dec "1.10" == dec "1.1"
+                        , Decimal.mul (dec "1.5") (dec "2") == dec "3"
+                        , dec "1.1" == dec "1.11"
                         )
-                      , j6Same db "sqc_j6_deceq" store { id = "a", d = dec "12.30" }
+                      , ( Codec.fromJson
+                              Codec.value
+                              (Codec.toJson Codec.value (JE.int 5))
+                              == Ok (JE.int 5)
+                        , Codec.fromJson
+                              Codec.value
+                              "{\"b\":[1.0,null],\"a\":\"x\"}"
+                              == Ok
+                                     (JE.object
+                                         [ ( "a", JE.string "x" )
+                                         , ( "b"
+                                           , JE.list
+                                                 identity
+                                                 [ JE.int 1, JE.null ]
+                                           )
+                                         ])
+                        )
+                      , j6Same
+                            db
+                            "sqc_j6_deceq"
+                            store
+                            { id = "a", d = dec "12.30" }
                       ))
     , Test.test
           "sixth Judge: a Just written as null (Just Nothing, Just Json.Encode.null) is refused by a Store write, by Codec.maybe and by Codec.auto; Nothing and Just values write; the table reads"
           (\_ ->
               let
                   row = { id = "a", mm = Nothing, mv = Nothing }
-                  w store table r = j5Write db table (Store.migrate db store) (Store.insert db store r) (Store.all db store)
-                  refused ( msg, readable ) = ( String.contains "Just" msg && String.contains "Nothing" msg, readable )
+                  w store table r =
+                      j5Write
+                          db
+                          table
+                          (Store.migrate db store)
+                          (Store.insert db store r)
+                          (Store.all db store)
+                  refused ( msg, readable ) =
+                      ( String.contains "Just" msg
+                            && String.contains "Nothing" msg
+                      , readable
+                      )
               in
                   Test.equal
-                      ( [ ( True, True ), ( True, True ), ( True, True ), ( True, True ) ]
+                      ( [ ( True, True )
+                        , ( True, True )
+                        , ( True, True )
+                        , ( True, True )
+                        ]
                       , [ ( "ok", True ), ( "ok", True ) ]
                       )
-                      ( [ refused (w j6NestedStore "sqc_j6_nested" { row | mm = Just Nothing })
-                        , refused (w j6NestedStore "sqc_j6_nested" { row | mv = Just JE.null })
-                        , refused (w j6NestedAutoStore "sqc_j6_nested_auto" { row | mm = Just Nothing })
-                        , refused (w j6NestedAutoStore "sqc_j6_nested_auto" { row | mv = Just JE.null })
+                      ( [ refused
+                              (w
+                                  j6NestedStore
+                                  "sqc_j6_nested"
+                                  { row | mm = Just Nothing })
+                        , refused
+                              (w
+                                  j6NestedStore
+                                  "sqc_j6_nested"
+                                  { row | mv = Just JE.null })
+                        , refused
+                              (w
+                                  j6NestedAutoStore
+                                  "sqc_j6_nested_auto"
+                                  { row | mm = Just Nothing })
+                        , refused
+                              (w
+                                  j6NestedAutoStore
+                                  "sqc_j6_nested_auto"
+                                  { row | mv = Just JE.null })
                         ]
-                      , [ j6Same db "sqc_j6_nested" j6NestedStore { row | mm = Just (Just 3), mv = Just (JE.int 1) }
-                        , j6Same db "sqc_j6_nested_auto" j6NestedAutoStore { row | mm = Just (Just 3), mv = Just (JE.string "x") }
+                      , [ j6Same
+                              db
+                              "sqc_j6_nested"
+                              j6NestedStore
+                              { row | mm = Just (Just 3), mv = Just (JE.int 1) }
+                        , j6Same
+                              db
+                              "sqc_j6_nested_auto"
+                              j6NestedAutoStore
+                              { row
+                                  | mm = Just (Just 3)
+                                  , mv = Just (JE.string "x")
+                              }
                         ]
                       ))
     , Test.test
@@ -9206,30 +9930,83 @@ j6Tests db =
               let
                   setup =
                       Store.migrate db j5DecStore
-                          |> Task.andThen (\_ -> Store.insert db j5DecStore { id = "a", d = Decimal.zero, ds = [], m = gbp "1" })
+                          |> Task.andThen
+                                 (\_ ->
+                                     Store.insert
+                                         db
+                                         j5DecStore
+                                         { id = "a"
+                                         , d = Decimal.zero
+                                         , ds = []
+                                         , m = gbp "1"
+                                         })
                   readAll = Store.toList db (Store.query j5DecStore)
-                  says ( msg, readable ) = ( String.contains "at most 1000" msg, readable )
+                  says ( msg, readable ) =
+                      ( String.contains "at most 1000" msg, readable )
               in
                   Test.equal
                       ( ( True, True ), ( True, True ), ( "ok", True ) )
-                      ( says (j5Write db "sqc_j5_dec" setup (Store.updateFields db j5DecStore (Store.eq "id" (SqlString "a")) [ ( "d", SqlDecimal j5Long ) ]) readAll)
-                      , says (j5Write db "sqc_j5_dec" setup (Store.setFields db j5DecStore (SqlString "a") [ ( "d", SqlDecimal j5Long ) ]) readAll)
-                      , j5Write db "sqc_j5_dec" setup (Store.updateFields db j5DecStore (Store.eq "id" (SqlString "a")) [ ( "d", SqlDecimal (dec "12.5") ) ]) readAll
+                      ( says
+                            (j5Write
+                                db
+                                "sqc_j5_dec"
+                                setup
+                                (Store.updateFields
+                                    db
+                                    j5DecStore
+                                    (Store.eq "id" (SqlString "a"))
+                                    [ ( "d", SqlDecimal j5Long ) ])
+                                readAll)
+                      , says
+                            (j5Write
+                                db
+                                "sqc_j5_dec"
+                                setup
+                                (Store.setFields
+                                    db
+                                    j5DecStore
+                                    (SqlString "a")
+                                    [ ( "d", SqlDecimal j5Long ) ])
+                                readAll)
+                      , j5Write
+                            db
+                            "sqc_j5_dec"
+                            setup
+                            (Store.updateFields
+                                db
+                                j5DecStore
+                                (Store.eq "id" (SqlString "a"))
+                                [ ( "d", SqlDecimal (dec "12.5") ) ])
+                            readAll
                       ))
     , Test.test
           "sixth Judge: Money reads a currency code in upper case, as every codec does: CurrencyRaw \"gbp\" is GBP to add, eq, eqCurrency, rates and a moneyObject round trip"
           (\_ ->
               let
                   lower = Money.Money (dec "1") (Money.CurrencyRaw "gbp")
-                  back = Codec.fromJson Codec.moneyObject (Codec.toJson Codec.moneyObject lower)
+                  back =
+                      Codec.fromJson
+                          Codec.moneyObject
+                          (Codec.toJson Codec.moneyObject lower)
               in
                   Test.equal
                       ( Ok "2", True, Ok True, Ok "2" )
-                      ( Money.add lower (gbp "1") |> Result.map (\m -> Decimal.toString (Money.amount m))
+                      ( Money.add lower (gbp "1")
+                            |> Result.map
+                                   (\m -> Decimal.toString (Money.amount m))
                       , Money.eqCurrency (Money.CurrencyRaw "gbp") Money.GBP
                       , Result.map (Money.eq lower) back
-                      , Money.convert (Money.rates [ ( Money.CurrencyRaw "usd", Money.EUR, dec "2" ) ]) Money.EUR (Money.Money (dec "1") Money.USD)
-                          |> Result.map (\m -> Decimal.toString (Money.amount m))
+                      , Money.convert
+                            (Money.rates
+                                [ ( Money.CurrencyRaw "usd"
+                                  , Money.EUR
+                                  , dec "2"
+                                  )
+                                ])
+                            Money.EUR
+                            (Money.Money (dec "1") Money.USD)
+                            |> Result.map
+                                   (\m -> Decimal.toString (Money.amount m))
                       ))
     , Test.test
           "sixth Judge: a Codec.auto Currency field round-trips through a Store (it used to write a tagged object no read rebuilt)"
@@ -9237,7 +10014,12 @@ j6Tests db =
               Test.equal
                   [ ( "ok", True ), ( "ok", True ), ( "ok", True ) ]
                   (List.map
-                      (\c -> j6Same db "sqc_j6_cur" j6CurStore { id = "a", cur = c })
+                      (\c ->
+                          j6Same
+                              db
+                              "sqc_j6_cur"
+                              j6CurStore
+                              { id = "a", cur = c })
                       [ Money.USD, Money.USDT, Money.CurrencyRaw "XYZ" ]))
     , Test.test
           "sixth Judge: on SQLite, migrate refuses a decimal column holding a REAL or exponent text it would not read, naming the values"
@@ -9254,31 +10036,46 @@ j6Tests db =
                   result =
                       Task.run
                           (drop db "sqc_j6_real"
-                              |> Task.andThen (\_ -> unit (Db.exec db "CREATE TABLE sqc_j6_real (id TEXT PRIMARY KEY, d TEXT NOT NULL)" []))
-                              |> Task.andThen (\_ -> unit (Db.exec db "INSERT INTO sqc_j6_real VALUES ('a', 1.2345678901234568e22), ('b', '1e3'), ('c', '12.5')" []))
+                              |> Task.andThen
+                                     (\_ ->
+                                         unit
+                                             (Db.exec
+                                                 db
+                                                 "CREATE TABLE sqc_j6_real (id TEXT PRIMARY KEY, d TEXT NOT NULL)"
+                                                 []))
+                              |> Task.andThen
+                                     (\_ ->
+                                         unit
+                                             (Db.exec
+                                                 db
+                                                 "INSERT INTO sqc_j6_real VALUES ('a', 1.2345678901234568e22), ('b', '1e3'), ('c', '12.5')"
+                                                 []))
                               |> Task.andThen (\_ -> Store.migrate db store))
               in
                   if dsn == "" then
                       Test.equal
                           ( True, True )
                           ( case result of
-                              Err e ->
-                                  String.contains "does not read as a decimal" (Error.toString e)
 
-                              Ok _ ->
-                                  False
+                                Err e ->
+                                    String.contains
+                                        "does not read as a decimal"
+                                        (Error.toString e)
+
+                                Ok _ ->
+                                    False
                           , case result of
-                              Err e ->
-                                  String.contains "1e3" (Error.toString e)
 
-                              Ok _ ->
-                                  False
+                                Err e ->
+                                    String.contains "1e3" (Error.toString e)
+
+                                Ok _ ->
+                                    False
                           )
 
                   else
                       Test.equal True (isErr result))
     ]
-
 
 -- ── The seventh Judge (v0.29.2) ────────────────────────────────────────────
 -- The Codec.auto checks walk every shape: a Just written as null in a Dict
@@ -9286,13 +10083,10 @@ j6Tests db =
 -- one key in a nested record (a List, a Maybe, a variant payload) are a
 -- builder problem; a Json.Value slot whose blank shows no JSON value is a
 -- builder problem.
-
-
 type J7Box
     = J7BoxMm (Maybe (Maybe Int))
     | J7BoxR { aB : Int, c : Int }
     | J7BoxE
-
 
 type alias J7Row =
     { id : String
@@ -9309,26 +10103,37 @@ j7Blank =
 
 j7Store : Store J7Row
 j7Store =
-    Store.fromCodec "sqc_j7_jnull" (Codec.auto { j7Blank | id = "" }) |> Store.primaryKey "id"
-
+    Store.fromCodec "sqc_j7_jnull" (Codec.auto { j7Blank | id = "" })
+        |> Store.primaryKey "id"
 
 type J7DupBox
     = J7DupR { aB : Int, a_b : Int }
     | J7DupN
 
-
 type alias J7Vals =
-    { id : String, vs : List JE.Value, dv : Dict.Dict String JE.Value, mv : Maybe JE.Value, nv : { inner : List JE.Value } }
+    { id : String
+    , vs : List JE.Value
+    , dv : Dict.Dict String JE.Value
+    , mv : Maybe JE.Value
+    , nv : { inner : List JE.Value }
+    }
 
 
 j7EmptyCodec : Codec J7Vals
 j7EmptyCodec =
-    Codec.auto { id = "", vs = [], dv = Dict.empty, mv = Nothing, nv = { inner = [] } }
+    Codec.auto
+        { id = "", vs = [], dv = Dict.empty, mv = Nothing, nv = { inner = [] } }
 
 
 j7MarkedCodec : Codec J7Vals
 j7MarkedCodec =
-    Codec.auto { id = "", vs = [ JE.null ], dv = Dict.fromList [ ( "k", JE.null ) ], mv = Just JE.null, nv = { inner = [ JE.null ] } }
+    Codec.auto
+        { id = ""
+        , vs = [ JE.null ]
+        , dv = Dict.fromList [ ( "k", JE.null ) ]
+        , mv = Just JE.null
+        , nv = { inner = [ JE.null ] }
+        }
 
 
 j7Tests : Db -> List Test
@@ -9337,40 +10142,102 @@ j7Tests db =
           "seventh Judge: a Codec.auto Just written as null in a Dict value, a variant payload or a Maybe of a variant is refused by a Store write; Just values there round-trip; the table reads"
           (\_ ->
               let
-                  w r = j5Write db "sqc_j7_jnull" (Store.migrate db j7Store) (Store.insert db j7Store r) (Store.all db j7Store)
-                  refused ( msg, readable ) = ( String.contains "Just" msg && String.contains "Nothing" msg, readable )
+                  w r =
+                      j5Write
+                          db
+                          "sqc_j7_jnull"
+                          (Store.migrate db j7Store)
+                          (Store.insert db j7Store r)
+                          (Store.all db j7Store)
+                  refused ( msg, readable ) =
+                      ( String.contains "Just" msg
+                            && String.contains "Nothing" msg
+                      , readable
+                      )
               in
                   Test.equal
                       ( [ ( True, True ), ( True, True ), ( True, True ) ]
                       , [ ( "ok", True ), ( "ok", True ), ( "ok", True ) ]
                       )
-                      ( [ refused (w { j7Blank | d = Dict.fromList [ ( "k", Just Nothing ) ] })
+                      ( [ refused
+                              (w
+                                  { j7Blank
+                                      | d =
+                                          Dict.fromList
+                                              [ ( "k", Just Nothing ) ]
+                                  })
                         , refused (w { j7Blank | b = J7BoxMm (Just Nothing) })
-                        , refused (w { j7Blank | mb = Just (J7BoxMm (Just Nothing)) })
+                        , refused
+                              (w { j7Blank | mb = Just (J7BoxMm (Just Nothing)) })
                         ]
-                      , [ j6Same db "sqc_j7_jnull" j7Store { j7Blank | d = Dict.fromList [ ( "k", Just (Just 3) ), ( "z", Nothing ) ] }
-                        , j6Same db "sqc_j7_jnull" j7Store { j7Blank | b = J7BoxMm (Just (Just 4)), mb = Just (J7BoxMm Nothing) }
-                        , j6Same db "sqc_j7_jnull" j7Store { j7Blank | b = J7BoxR { aB = 1, c = 2 } }
+                      , [ j6Same
+                              db
+                              "sqc_j7_jnull"
+                              j7Store
+                              { j7Blank
+                                  | d =
+                                      Dict.fromList
+                                          [ ( "k", Just (Just 3) )
+                                          , ( "z", Nothing )
+                                          ]
+                              }
+                        , j6Same
+                              db
+                              "sqc_j7_jnull"
+                              j7Store
+                              { j7Blank
+                                  | b = J7BoxMm (Just (Just 4))
+                                  , mb = Just (J7BoxMm Nothing)
+                              }
+                        , j6Same
+                              db
+                              "sqc_j7_jnull"
+                              j7Store
+                              { j7Blank | b = J7BoxR { aB = 1, c = 2 } }
                         ]
                       ))
     , Test.test
           "seventh Judge: two fields that become one key in a nested record, a List or Maybe of records or a variant payload are a builder problem naming the field, and a decode Err; under autoCamel they are not"
           (\_ ->
               let
-                  dupIn codec = List.any (\p -> String.contains "\"aB\" and \"a_b\"" p) (Codec.problems codec)
+                  dupIn codec =
+                      List.any
+                          (\p -> String.contains "\"aB\" and \"a_b\"" p)
+                          (Codec.problems codec)
                   nested = Codec.auto { id = "", n = { aB = 0, a_b = 0 } }
-                  listed = Codec.auto { id = "", l = [ { aB = 0, a_b = 0 } ] }
-                  maybed = Codec.auto { id = "", m = Just { aB = 0, a_b = 0 } }
+                  listed =
+                      Codec.auto { id = "", l = [ { aB = 0, a_b = 0 } ] }
+                  maybed =
+                      Codec.auto { id = "", m = Just { aB = 0, a_b = 0 } }
                   variant = Codec.auto { id = "", v = J7DupN }
               in
                   Test.equal
-                      ( ( True, True, True, True ), ( True, True ), ( False, True ) )
-                      ( ( dupIn nested, dupIn listed, dupIn maybed, dupIn variant )
-                      , ( List.any (String.contains "(in the field \"n\")") (Codec.problems nested)
-                        , isErr (Codec.fromJson nested "{\"id\":\"1\",\"n\":{\"a_b\":1}}")
+                      ( ( True, True, True, True )
+                      , ( True, True )
+                      , ( False, True )
+                      )
+                      ( ( dupIn nested
+                        , dupIn listed
+                        , dupIn maybed
+                        , dupIn variant
                         )
-                      , ( dupIn (Codec.autoCamel { id = "", n = { aB = 0, a_b = 0 } })
-                        , isErr (Task.run (Store.migrate db (Store.fromCodec "sqc_j7_dup" nested |> Store.primaryKey "id")))
+                      , ( List.any
+                              (String.contains "(in the field \"n\")")
+                              (Codec.problems nested)
+                        , isErr
+                              (Codec.fromJson
+                                  nested
+                                  "{\"id\":\"1\",\"n\":{\"a_b\":1}}")
+                        )
+                      , ( dupIn
+                              (Codec.autoCamel
+                                  { id = "", n = { aB = 0, a_b = 0 } })
+                        , isErr
+                              (Task.run
+                                  (Store.migrate
+                                      db
+                                      (Store.fromCodec "sqc_j7_dup" nested
+                                          |> Store.primaryKey "id")))
                         )
                       ))
     , Test.test
@@ -9379,29 +10246,60 @@ j7Tests db =
               let
                   empty = j7EmptyCodec
                   marked = j7MarkedCodec
-                  says field = List.any (\p -> String.contains ("\"" ++ field ++ "\"") p && String.contains "no JSON value" p) (Codec.problems empty)
-                  row = { id = "a", vs = [ JE.int 1, JE.string "x" ], dv = Dict.fromList [ ( "k", JE.bool True ) ], mv = Just (JE.int 5), nv = { inner = [ JE.null, JE.int 2 ] } }
-                  store = Store.fromCodec "sqc_j7_vals" marked |> Store.primaryKey "id"
+                  says field =
+                      List.any
+                          (\p ->
+                              String.contains ("\"" ++ field ++ "\"") p
+                                  && String.contains "no JSON value" p)
+                          (Codec.problems empty)
+                  row =
+                      { id = "a"
+                      , vs = [ JE.int 1, JE.string "x" ]
+                      , dv = Dict.fromList [ ( "k", JE.bool True ) ]
+                      , mv = Just (JE.int 5)
+                      , nv = { inner = [ JE.null, JE.int 2 ] }
+                      }
+                  store =
+                      Store.fromCodec "sqc_j7_vals" marked
+                          |> Store.primaryKey "id"
               in
                   Test.equal
-                      ( ( True, True, True, True ), True, ( [], ( "ok", True ) ) )
+                      ( ( True, True, True, True )
+                      , True
+                      , ( [], ( "ok", True ) )
+                      )
                       ( ( says "vs", says "dv", says "mv", says "nv" )
-                      , isErr (Task.run (Store.migrate db (Store.fromCodec "sqc_j7_vals_empty" empty |> Store.primaryKey "id")))
-                      , ( Codec.problems marked, j6Same db "sqc_j7_vals" store row )
+                      , isErr
+                            (Task.run
+                                (Store.migrate
+                                    db
+                                    (Store.fromCodec "sqc_j7_vals_empty" empty
+                                        |> Store.primaryKey "id")))
+                      , ( Codec.problems marked
+                        , j6Same db "sqc_j7_vals" store row
+                        )
                       ))
     ]
 
 
-
 -- An arithmetic write must fail atomically when the sum leaves Int's range.
 j8Arithmetic : Db -> Bool -> ( Int, Int ) -> Bool
-j8Arithmetic db upsert (initial, delta) =
+j8Arithmetic db upsert ( initial, delta ) =
     let
-        store = Store.fromCodec "sqc_j8_arithmetic" (Codec.auto { id = "", n = 0 }) |> Store.primaryKey "id"
+        store =
+            Store.fromCodec "sqc_j8_arithmetic" (Codec.auto { id = "", n = 0 })
+                |> Store.primaryKey "id"
         row = { id = "a", n = initial }
-        prepare = Task.run (Task.sequence [ drop db "sqc_j8_arithmetic", unit (Store.migrate db store), unit (Store.insert db store row) ])
+        prepare =
+            Task.run
+                (Task.sequence
+                    [ drop db "sqc_j8_arithmetic"
+                    , unit (Store.migrate db store)
+                    , unit (Store.insert db store row)
+                    ])
     in
         case prepare of
+
             Err _ ->
                 False
 
@@ -9409,13 +10307,24 @@ j8Arithmetic db upsert (initial, delta) =
                 let
                     written =
                         if upsert then
-                            Task.run (Store.upsertWith db store { id = "a", n = delta } { conflictOn = [ "id" ], onConflict = [ Store.addExcluded "n" ] })
+                            Task.run
+                                (Store.upsertWith
+                                    db
+                                    store
+                                    { id = "a", n = delta }
+                                    { conflictOn = [ "id" ]
+                                    , onConflict = [ Store.addExcluded "n" ]
+                                    })
 
                         else
-                            Task.run (Store.adjust db store (Store.eq "id" (SqlString "a")) [ ( "n", delta ) ])
+                            Task.run
+                                (Store.adjust
+                                    db
+                                    store
+                                    (Store.eq "id" (SqlString "a"))
+                                    [ ( "n", delta ) ])
                 in
                     isErr written && Task.run (Store.all db store) == Ok [ row ]
-
 
 type alias J8Values =
     { id : String
@@ -9429,40 +10338,76 @@ type alias J8Values =
 
 j8Values : J8Values
 j8Values =
-    { id = "a", cur = Money.GBP, curs = [ Money.JPY ], mc = Just Money.EUR
-    , pair = ( dec "12.50", 3 ), mixed = ( gbp "4", Money.CHF )
+    { id = "a"
+    , cur = Money.GBP
+    , curs = [ Money.JPY ]
+    , mc = Just Money.EUR
+    , pair = ( dec "12.50", 3 )
+    , mixed = ( gbp "4", Money.CHF )
     }
 
 
 j8ValueStore : Store J8Values
 j8ValueStore =
-    Store.fromCodec "sqc_j8_values" (Codec.auto j8Values) |> Store.primaryKey "id"
+    Store.fromCodec "sqc_j8_values" (Codec.auto j8Values)
+        |> Store.primaryKey "id"
 
 
 j8RefusedCurrency : Db -> J8Values -> Bool
 j8RefusedCurrency db row =
     let
-        ( msg, readable ) = j5Write db "sqc_j8_values" (Store.migrate db j8ValueStore) (Store.insert db j8ValueStore row) (Store.all db j8ValueStore)
+        ( msg, readable ) =
+            j5Write
+                db
+                "sqc_j8_values"
+                (Store.migrate db j8ValueStore)
+                (Store.insert db j8ValueStore row)
+                (Store.all db j8ValueStore)
     in
         String.contains "column" msg && readable
 
 
 j8Tests : Db -> List Test
 j8Tests db =
-    [ Test.test "Int adjust overflow is refused and the original row stays readable on both dialects"
-          (\_ -> Test.equal True (List.all (j8Arithmetic db False) [ ( 9223372036854775807, 1 ), ( -9223372036854775807 - 1, -1 ) ]))
-    , Test.test "Int addExcluded overflow is refused and the original row stays readable on both dialects"
-          (\_ -> Test.equal True (List.all (j8Arithmetic db True) [ ( 9223372036854775807, 1 ), ( -9223372036854775807 - 1, -1 ) ]))
-    , Test.test "Codec.auto round-trips compiled tuple fields holding Decimal, Money and Currency"
-          (\_ -> Test.equal ( "ok", True ) (j6Same db "sqc_j8_values" j8ValueStore j8Values))
-    , Test.test "Codec.auto refuses invalid currencies in every container before a write and keeps the table readable"
+    [ Test.test
+          "Int adjust overflow is refused and the original row stays readable on both dialects"
           (\_ ->
-              Test.equal True
-                  (List.all (j8RefusedCurrency db)
+              Test.equal
+                  True
+                  (List.all
+                      (j8Arithmetic db False)
+                      [ ( 9223372036854775807, 1 )
+                      , ( -9223372036854775807 - 1, -1 )
+                      ]))
+    , Test.test
+          "Int addExcluded overflow is refused and the original row stays readable on both dialects"
+          (\_ ->
+              Test.equal
+                  True
+                  (List.all
+                      (j8Arithmetic db True)
+                      [ ( 9223372036854775807, 1 )
+                      , ( -9223372036854775807 - 1, -1 )
+                      ]))
+    , Test.test
+          "Codec.auto round-trips compiled tuple fields holding Decimal, Money and Currency"
+          (\_ ->
+              Test.equal
+                  ( "ok", True )
+                  (j6Same db "sqc_j8_values" j8ValueStore j8Values))
+    , Test.test
+          "Codec.auto refuses invalid currencies in every container before a write and keeps the table readable"
+          (\_ ->
+              Test.equal
+                  True
+                  (List.all
+                      (j8RefusedCurrency db)
                       [ { j8Values | cur = Money.CurrencyRaw "zz" }
                       , { j8Values | curs = [ Money.CurrencyRaw "zz" ] }
                       , { j8Values | mc = Just (Money.CurrencyRaw "zz") }
-                      , { j8Values | mixed = ( gbp "4", Money.CurrencyRaw "zz" ) }
+                      , { j8Values
+                            | mixed = ( gbp "4", Money.CurrencyRaw "zz" )
+                        }
                       ]))
     ]
 

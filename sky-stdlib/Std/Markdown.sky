@@ -110,9 +110,7 @@ import Std.Ui.Font as Font
 -- trivial markdown (multiple paragraphs, lists, etc.).
 render : String -> Element msg
 render src =
-    Ui.column
-        [ Ui.spacing 12 ]
-        (List.map renderBlock (parseBlocks src))
+    Ui.column [ Ui.spacing 12 ] (List.map renderBlock (parseBlocks src))
 
 
 -- Render a SINGLE line of inline markdown (bold, italic, code,
@@ -123,10 +121,7 @@ renderInline : String -> Element msg
 renderInline line =
     Ui.paragraph [] (renderSpans (parseSpans line))
 
-
 -- ─── Block parsing ──────────────────────────────────────────────
-
-
 -- A block is one "paragraph-shaped" chunk: a heading, a fenced
 -- code block, a list, a horizontal rule, a table, a blockquote, or
 -- a plain paragraph.
@@ -242,8 +237,7 @@ isHrLine t =
     let
         first = String.slice 0 1 t
     in
-        String.length t >= 3
-            && (first == "-" || first == "*" || first == "_")
+        String.length t >= 3 && (first == "-" || first == "*" || first == "_")
             && restIsAll first t 1
 
 
@@ -316,8 +310,7 @@ stripQuoteMarker l =
 
 isBulletLine : String -> Bool
 isBulletLine l =
-    String.startsWith "- " l
-        || String.startsWith "* " l
+    String.startsWith "- " l || String.startsWith "* " l
         || String.startsWith "  - " l
         || String.startsWith "  * " l
 
@@ -356,7 +349,8 @@ digitRunThenDot l i =
 
 isDigitAt : String -> Int -> Bool
 isDigitAt l i =
-    List.member (String.slice i (i + 1) l)
+    List.member
+        (String.slice i (i + 1) l)
         [ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" ]
 
 
@@ -392,8 +386,6 @@ codeFenceLoop lines acc =
 -- cell-lists, remaining lines). NB: returns 3-tuple via two
 -- 2-tuples internally (Sky parses nested-tuple destructure in
 -- recursive contexts unreliably; using fst/snd everywhere).
-
-
 -- Group consecutive bullet lines. Stops at the first non-bullet,
 -- non-blank line (or EOF).
 takeBulletGroup : List String -> ( List String, List String )
@@ -439,7 +431,8 @@ looksLikeTableRow l =
     let
         t = String.trim l
     in
-        String.startsWith "|" t && String.contains "|" (String.slice 1 (String.length t) t)
+        String.startsWith "|" t
+            && String.contains "|" (String.slice 1 (String.length t) t)
 
 
 isTableSeparator : String -> Bool
@@ -459,14 +452,12 @@ tableSeparatorOk : String -> Bool
 tableSeparatorOk t =
     let
         stripped =
-            t |> String.replace "|" ""
-                |> String.replace "-" ""
+            t |> String.replace "|" "" |> String.replace "-" ""
                 |> String.replace ":" ""
                 |> String.replace "=" ""
                 |> String.trim
     in
         stripped == ""
-
 
 -- Take a table: header row + separator + zero or more data rows
 -- until a non-table-row line. Returns (header cells, list of row
@@ -489,10 +480,7 @@ takeTable lines =
                 headerCells = parseTableRow header
                 tbl = takeTableRows dataLines
             in
-                { header = headerCells
-                , rows = fst tbl
-                , after = snd tbl
-                }
+                { header = headerCells, rows = fst tbl, after = snd tbl }
 
         _ ->
             { header = [], rows = [], after = lines }
@@ -529,7 +517,6 @@ parseTableRow l =
 
             else
                 t
-
         trimmedTrailing =
             if String.endsWith "|" stripped then
                 String.slice 0 (String.length stripped - 1) stripped
@@ -597,7 +584,12 @@ takeParagraph lines =
                     p = takeParagraph rest
                     more = fst p
                     after = snd p
-                    body = if more == "" then l else l ++ " " ++ more
+                    body =
+                        if more == "" then
+                            l
+
+                        else
+                            l ++ " " ++ more
                 in
                     ( body, after )
 
@@ -617,8 +609,6 @@ isBlockStarter l =
 
 
 -- ─── Block rendering (Block → Element) ──────────────────────────
-
-
 renderBlock : Block -> Element msg
 renderBlock b =
     case b of
@@ -633,22 +623,20 @@ renderBlock b =
             Ui.el
                 [ Ui.width Ui.fill
                 , Ui.paddingXY 12 10
-                , Ui.htmlAttribute "style"
-                    "background:#101116;color:#e6e6ec;border:1px solid #2A2A33;border-radius:8px;overflow-x:auto;white-space:pre"
-                , Font.family "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
+                , Ui.htmlAttribute
+                      "style"
+                      "background:#101116;color:#e6e6ec;border:1px solid #2A2A33;border-radius:8px;overflow-x:auto;white-space:pre"
+                , Font.family
+                      "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
                 , Font.size 13
                 ]
                 (Ui.text body)
 
         BulletBlock items ->
-            Ui.column
-                [ Ui.spacing 4 ]
-                (List.map (bulletRow "•") items)
+            Ui.column [ Ui.spacing 4 ] (List.map (bulletRow "•") items)
 
         NumberedBlock items ->
-            Ui.column
-                [ Ui.spacing 4 ]
-                (List.indexedMap numberedRow items)
+            Ui.column [ Ui.spacing 4 ] (List.indexedMap numberedRow items)
 
         TableBlock header rows ->
             renderTable header rows
@@ -670,8 +658,9 @@ renderBlock b =
         RuleBlock ->
             Ui.el
                 [ Ui.width Ui.fill
-                , Ui.htmlAttribute "style"
-                    "border-top:1px solid #2A2A33;margin:4px 0"
+                , Ui.htmlAttribute
+                      "style"
+                      "border-top:1px solid #2A2A33;margin:4px 0"
                 ]
                 Ui.none
 
@@ -680,8 +669,9 @@ renderTable : List String -> List (List String) -> Element msg
 renderTable header rows =
     Ui.column
         [ Ui.width Ui.fill
-        , Ui.htmlAttribute "style"
-            "border:1px solid #2A2A33;border-radius:8px;overflow:hidden"
+        , Ui.htmlAttribute
+              "style"
+              "border:1px solid #2A2A33;border-radius:8px;overflow:hidden"
         ]
         (renderTableHeader header :: List.map renderTableRow rows)
 
@@ -690,8 +680,9 @@ renderTableHeader : List String -> Element msg
 renderTableHeader cells =
     Ui.row
         [ Ui.width Ui.fill
-        , Ui.htmlAttribute "style"
-            "background:#1c1c23;border-bottom:1px solid #2A2A33"
+        , Ui.htmlAttribute
+              "style"
+              "background:#1c1c23;border-bottom:1px solid #2A2A33"
         ]
         (List.map renderTableHeaderCell cells)
 
@@ -699,11 +690,7 @@ renderTableHeader cells =
 renderTableHeaderCell : String -> Element msg
 renderTableHeaderCell text =
     Ui.el
-        [ Ui.width Ui.fill
-        , Ui.paddingXY 12 8
-        , Font.semiBold
-        , Font.size 13
-        ]
+        [ Ui.width Ui.fill, Ui.paddingXY 12 8, Font.semiBold, Font.size 13 ]
         (Ui.paragraph [] (renderSpans (parseSpans text)))
 
 
@@ -719,10 +706,7 @@ renderTableRow cells =
 renderTableCell : String -> Element msg
 renderTableCell text =
     Ui.el
-        [ Ui.width Ui.fill
-        , Ui.paddingXY 12 8
-        , Font.size 13
-        ]
+        [ Ui.width Ui.fill, Ui.paddingXY 12 8, Font.size 13 ]
         (Ui.paragraph [] (renderSpans (parseSpans text)))
 
 
@@ -741,7 +725,6 @@ renderHeader level text =
 
             else
                 14
-
         weight =
             if level <= 3 then
                 Font.bold
@@ -749,18 +732,14 @@ renderHeader level text =
             else
                 Font.semiBold
     in
-        Ui.paragraph
-            [ Font.size size, weight ]
-            (renderSpans (parseSpans text))
+        Ui.paragraph [ Font.size size, weight ] (renderSpans (parseSpans text))
 
 
 bulletRow : String -> String -> Element msg
 bulletRow marker text =
     Ui.row
         [ Ui.spacing 8 ]
-        [ Ui.el
-              [ Font.color (Ui.rgb 158 158 175) ]
-              (Ui.text marker)
+        [ Ui.el [ Font.color (Ui.rgb 158 158 175) ] (Ui.text marker)
         , Ui.paragraph [] (renderSpans (parseSpans text))
         ]
 
@@ -769,7 +748,6 @@ numberedRow : Int -> String -> Element msg
 numberedRow i text =
     bulletRow (String.fromInt (i + 1) ++ ".") text
 
-
 -- ─── Inline parsing (spans) ─────────────────────────────────────
 --
 -- A line of markdown text is a sequence of inline spans. The
@@ -777,8 +755,6 @@ numberedRow i text =
 -- code (`X`), links ([text](url)). Spans nest: bold-italic via
 -- ***X*** would be nice but defers — flat parse is enough for
 -- chat-grade content.
-
-
 type Span
     = PlainSpan String
     | BoldSpan String
@@ -803,7 +779,10 @@ spanLoop remaining acc pending =
 
     else if String.startsWith "**" remaining then
         let
-            tb = takeBetween "**" (String.slice 2 (String.length remaining) remaining)
+            tb =
+                takeBetween
+                    "**"
+                    (String.slice 2 (String.length remaining) remaining)
             inner = fst tb
             after = snd tb
         in
@@ -811,7 +790,10 @@ spanLoop remaining acc pending =
 
     else if String.startsWith "`" remaining then
         let
-            tb = takeBetween "`" (String.slice 1 (String.length remaining) remaining)
+            tb =
+                takeBetween
+                    "`"
+                    (String.slice 1 (String.length remaining) remaining)
             inner = fst tb
             after = snd tb
         in
@@ -824,7 +806,10 @@ spanLoop remaining acc pending =
         case takeLink (String.slice 1 (String.length remaining) remaining) of
 
             Just ( alt, url, after ) ->
-                spanLoop after (ImageSpan alt url :: flushPending pending acc) ""
+                spanLoop
+                    after
+                    (ImageSpan alt url :: flushPending pending acc)
+                    ""
 
             Nothing ->
                 spanLoop
@@ -836,7 +821,10 @@ spanLoop remaining acc pending =
         case takeLink remaining of
 
             Just ( text, url, after ) ->
-                spanLoop after (LinkSpan text url :: flushPending pending acc) ""
+                spanLoop
+                    after
+                    (LinkSpan text url :: flushPending pending acc)
+                    ""
 
             Nothing ->
                 spanLoop
@@ -846,7 +834,10 @@ spanLoop remaining acc pending =
 
     else if String.startsWith "*" remaining then
         let
-            tb = takeBetween "*" (String.slice 1 (String.length remaining) remaining)
+            tb =
+                takeBetween
+                    "*"
+                    (String.slice 1 (String.length remaining) remaining)
             inner = fst tb
             after = snd tb
         in
@@ -930,7 +921,8 @@ takeLink s =
 
                 else
                     let
-                        urlAndAfter = String.slice 1 (String.length afterClose) afterClose
+                        urlAndAfter =
+                            String.slice 1 (String.length afterClose) afterClose
                         closeParen = indexOfFirst ")" urlAndAfter
                     in
                         if closeParen < 0 then
@@ -939,15 +931,18 @@ takeLink s =
                         else
                             let
                                 linkText = String.slice 1 close s
-                                linkUrl = String.slice 0 closeParen urlAndAfter
-                                afterLink = String.slice (closeParen + 1) (String.length urlAndAfter) urlAndAfter
+                                linkUrl =
+                                    String.slice 0 closeParen urlAndAfter
+                                afterLink =
+                                    String.slice
+                                        (closeParen + 1)
+                                        (String.length urlAndAfter)
+                                        urlAndAfter
                             in
                                 Just ( linkText, linkUrl, afterLink )
 
 
 -- ─── Span rendering (Span → Element) ────────────────────────────
-
-
 renderSpans : List Span -> List (Element msg)
 renderSpans spans =
     List.map renderSpan spans
@@ -968,9 +963,11 @@ renderSpan span =
 
         CodeSpan text ->
             Ui.el
-                [ Font.family "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
-                , Ui.htmlAttribute "style"
-                    "background:#1c1c23;color:#e6e6ec;padding:1px 5px;border-radius:3px"
+                [ Font.family
+                      "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
+                , Ui.htmlAttribute
+                      "style"
+                      "background:#1c1c23;color:#e6e6ec;padding:1px 5px;border-radius:3px"
                 ]
                 (Ui.text text)
 
@@ -988,6 +985,4 @@ renderSpan span =
             -- `executableURLScheme`, which permits `data:image/` and nothing
             -- else in the `data:` family). The alt text is a typed
             -- `description`, so it is escaped like any other text node.
-            Ui.image
-                [ Ui.width Ui.fill ]
-                { src = url, description = alt }
+            Ui.image [ Ui.width Ui.fill ] { src = url, description = alt }

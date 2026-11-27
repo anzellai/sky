@@ -34,13 +34,9 @@ import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 
-
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Model
 -- ═══════════════════════════════════════════════════════════════════
-
-
 type alias Model =
     { running : Bool
     , elapsedMs : Int  -- accumulated milliseconds
@@ -48,12 +44,10 @@ type alias Model =
     , startedAt : Int -- the time of the current run's first tick (0: none yet)
     }
 
-
 type alias KeyEvent =
     { kind : String
     , value : String
     }
-
 
 type Msg
     = Tick Int
@@ -65,18 +59,18 @@ type Msg
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { running = False, elapsedMs = 0, accumulatedMs = 0, startedAt = 0 }, Cmd.none )
-
+    ( { running = False, elapsedMs = 0, accumulatedMs = 0, startedAt = 0 }
+    , Cmd.none
+    )
 
 
 -- ═══════════════════════════════════════════════════════════════════
 -- Update
 -- ═══════════════════════════════════════════════════════════════════
-
-
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Tick now ->
             -- A tick is a wake-up, not a clock: a throttled window or a busy
             -- machine delivers fewer ticks than asked for. The elapsed time
@@ -90,17 +84,34 @@ update msg model =
                 ( { model | startedAt = now }, Cmd.none )
 
             else
-                ( { model | elapsedMs = model.accumulatedMs + (now - model.startedAt) }, Cmd.none )
+                ( { model
+                      | elapsedMs =
+                          model.accumulatedMs + (now - model.startedAt)
+                  }
+                , Cmd.none
+                )
 
         Toggle ->
             if model.running then
-                ( { model | running = False, accumulatedMs = model.elapsedMs, startedAt = 0 }, Cmd.none )
+                ( { model
+                      | running = False
+                      , accumulatedMs = model.elapsedMs
+                      , startedAt = 0
+                  }
+                , Cmd.none
+                )
 
             else
                 ( { model | running = True, startedAt = 0 }, Cmd.none )
 
         Reset ->
-            ( { running = False, elapsedMs = 0, accumulatedMs = 0, startedAt = 0 }, Cmd.none )
+            ( { running = False
+              , elapsedMs = 0
+              , accumulatedMs = 0
+              , startedAt = 0
+              }
+            , Cmd.none
+            )
 
         Quit ->
             ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
@@ -109,12 +120,9 @@ update msg model =
             ( model, Cmd.none )
 
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Subscriptions
 -- ═══════════════════════════════════════════════════════════════════
-
-
 subscriptions : Model -> Sub Msg
 subscriptions model =
     if model.running then
@@ -124,18 +132,13 @@ subscriptions model =
         Sub.none
 
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- View
 -- ═══════════════════════════════════════════════════════════════════
-
-
 view : Model -> String
 view model =
     let
-        time =
-            formatElapsed model.elapsedMs
-
+        time = formatElapsed model.elapsedMs
         status =
             if model.running then
                 "[ running ]"
@@ -143,13 +146,16 @@ view model =
             else
                 "[ paused  ]"
     in
-        "\r\n"
-            ++ "  ╭───────────────────────────────╮\r\n"
+        "\r\n" ++ "  ╭───────────────────────────────╮\r\n"
             ++ "  │       Sky TUI Stopwatch       │\r\n"
             ++ "  ╰───────────────────────────────╯\r\n"
             ++ "\r\n"
-            ++ "        " ++ time ++ "\r\n"
-            ++ "        " ++ status ++ "\r\n"
+            ++ "        "
+            ++ time
+            ++ "\r\n"
+            ++ "        "
+            ++ status
+            ++ "\r\n"
             ++ "\r\n"
             ++ "    space  start / pause\r\n"
             ++ "    r      reset\r\n"
@@ -169,17 +175,19 @@ formatElapsed totalMs =
 
 pad2 : Int -> String
 pad2 n =
-    let s = String.fromInt n
+    let
+        s = String.fromInt n
     in
-        if String.length s < 2 then "0" ++ s else s
+        if String.length s < 2 then
+            "0" ++ s
 
+        else
+            s
 
 
 -- ═══════════════════════════════════════════════════════════════════
 -- Key dispatch
 -- ═══════════════════════════════════════════════════════════════════
-
-
 onKey : KeyEvent -> Msg
 onKey k =
     if k.kind == "space" then
@@ -198,12 +206,9 @@ onKey k =
         NoOp
 
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Main
 -- ═══════════════════════════════════════════════════════════════════
-
-
 main =
     App.run
         (App.tui
@@ -212,5 +217,4 @@ main =
             , view = view
             , subscriptions = subscriptions
             }
-            |> App.withOnKey onKey
-        )
+            |> App.withOnKey onKey)
