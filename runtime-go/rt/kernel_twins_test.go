@@ -249,3 +249,39 @@ func TestResultWithDefaultTwinMatchesErased(t *testing.T) {
 		}
 	}
 }
+
+// `Maybe.andThen` / `Result.andThen` over a proven argument and continuation
+// are lowered to `Maybe_andThenT[A, B]` / `Result_andThenT[E, A, B]` (v0.32.0,
+// lower.rs `and_then_plan`). Each runs the continuation on Just / Ok, passes
+// Nothing / the Err through, and never calls the continuation then.
+func TestAndThenTwinsChainAndShortCircuit(t *testing.T) {
+	calls := 0
+	half := func(n int) SkyMaybe[int] {
+		calls++
+		if n%2 == 0 {
+			return Just[int](n / 2)
+		}
+		return Nothing[int]()
+	}
+	if got := Maybe_andThenT(half, Just[int](8)); got.Tag != 0 || got.JustValue != 4 {
+		t.Fatalf("Maybe_andThenT Just 8: %#v", got)
+	}
+	if got := Maybe_andThenT(half, Just[int](3)); got.Tag != 1 {
+		t.Fatalf("Maybe_andThenT Just 3: %#v", got)
+	}
+	before := calls
+	if got := Maybe_andThenT(half, Nothing[int]()); got.Tag != 1 || calls != before {
+		t.Fatalf("Maybe_andThenT Nothing: %#v, calls %d -> %d", got, before, calls)
+	}
+	inc := func(n int) SkyResult[string, int] {
+		calls++
+		return Ok[string, int](n + 1)
+	}
+	if got := Result_andThenT(inc, Ok[string, int](1)); got.Tag != 0 || got.OkValue != 2 {
+		t.Fatalf("Result_andThenT Ok 1: %#v", got)
+	}
+	before = calls
+	if got := Result_andThenT(inc, Err[string, int]("no")); got.Tag != 1 || got.ErrValue != "no" || calls != before {
+		t.Fatalf("Result_andThenT Err: %#v, calls %d -> %d", got, before, calls)
+	}
+}

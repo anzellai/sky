@@ -119,11 +119,52 @@ fn a_bound_name_gets_an_inlay_hint() {
         "`n` binds an Int: {hints:?}"
     );
     // `m` is bound from `Just (n + 1)` through `Maybe.andThen`, whose
-    // declarations-world scheme is weak while it is unannotated (the same
-    // hint a hand-written chain gets): the hint is there, its type is not
-    // pinned here.
+    // annotation gives the declarations world its full scheme (phase G2).
     assert!(
-        hints.iter().any(|(l, c, _)| (*l, *c) == (7, 9)),
-        "`m` gets a hint: {hints:?}"
+        hints.contains(&(7, 9, " : Int".to_string())),
+        "`m` binds an Int: {hints:?}"
     );
+}
+
+// line 5: `    String.toInt s |> Maybe.andThen (\x -> Just x)`
+// line 9: `    Ok 1 |> Result.andThen (\y -> Ok y)`
+const CHAIN: &str = "module Main exposing (main)\n\
+                     import Sky.Core.Prelude exposing (..)\n\
+                     import Sky.Core.String as String\n\
+                     \n\
+                     parse s =\n    \
+                     String.toInt s |> Maybe.andThen (\\x -> Just x)\n\
+                     \n\
+                     \n\
+                     step =\n    \
+                     Ok 1 |> Result.andThen (\\y -> Ok y)\n\
+                     \n\
+                     main = parse \"1\"\n";
+
+fn hover_text(a: &Analysis, url: &Url, line: u32, character: u32) -> String {
+    match a.hover(url, at(line, character)).map(|h| h.contents) {
+        Some(HoverContents::Markup(m)) => m.value,
+        other => panic!("no hover at {line}:{character}: {other:?}"),
+    }
+}
+
+/// A hand-written `Maybe.andThen` / `Result.andThen` chain: the
+/// continuation's parameter and the chain itself show their precise types
+/// (phase G2), not a bare type variable.
+#[test]
+fn a_hand_written_chain_shows_precise_types() {
+    let mut a = Analysis::new();
+    a.load_stdlib(Some(&repo_root()));
+    let url = Url::from_file_path("/tmp/lsp-bind-lines-chain/src/Main.sky").unwrap();
+    a.set_document(url.clone(), CHAIN.to_string());
+    let line5 = CHAIN.lines().nth(5).unwrap();
+    let x = line5.find("\\x").unwrap() as u32 + 1;
+    let h = hover_text(&a, &url, 5, x);
+    assert!(h.contains("Int"), "`x` is an Int: {h}");
+    let p = hover_text(&a, &url, 4, 1);
+    assert!(p.contains("Maybe Int"), "`parse` returns a Maybe Int: {p}");
+    let line9 = CHAIN.lines().nth(9).unwrap();
+    let y = line9.find("\\y").unwrap() as u32 + 1;
+    let h = hover_text(&a, &url, 9, y);
+    assert!(h.contains("Int"), "`y` is an Int: {h}");
 }

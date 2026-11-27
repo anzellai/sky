@@ -7643,6 +7643,11 @@ impl<'a> Ctx<'a> {
                     b,
                 ))
             }
+            // andThen fn m — see `and_then_plan`.
+            "rt.Maybe_andThenT" | "rt.Result_andThenT" => {
+                let (targs, slots, ret) = self.and_then_plan(args, sym == "rt.Result_andThenT")?;
+                Some((sym, targs, slots, ret))
+            }
             // any pred list
             "rt.List_anyT" => {
                 let Ok(a) = self.probe_goty(args[1]).into_slice() else {
@@ -7705,6 +7710,74 @@ impl<'a> Ctx<'a> {
             return None;
         }
         Some((vec![e, a.clone()], vec![a.clone(), r.clone()], a))
+    }
+
+    /// `Maybe.andThen fn m` / `Result.andThen fn r` (a hand-written chain, or
+    /// the `andThen` a bind line chose) whose argument and continuation lower
+    /// to proven Go types: the typed generic `rt.Maybe_andThenT[A, B]` /
+    /// `rt.Result_andThenT[E, A, B]` (`rt.go`), with `fn` lowered at
+    /// `func(A) rt.SkyMaybe[B]` and `m` at `rt.SkyMaybe[A]`.
+    ///
+    /// Doc 14: origin R12 (`Sky.Core.Maybe.andThen` erases to
+    /// `func(func(any) rt.SkyMaybe[any], rt.SkyMaybe[any]) rt.SkyMaybe[any]`,
+    /// `lower_def`), which surfaces at the CALLER as R1 (`rt.MaybeCoerce[any]`
+    /// on the argument, `rt.MaybeCoerce[B]` on the result) and, once the call
+    /// site types its continuation, as R2 (an eta wrapper with an `rt.AsInt`
+    /// per parameter). Lever §5.3, a typed entry point for a Sky def (the
+    /// def-path form of §5.5, as `result_with_default_plan`). Floor check
+    /// (§1): `A`, `B` (and `E`) are read off the Go types the argument and the
+    /// continuation lower to, and `provable` refuses `any`, a type parameter
+    /// and an anonymous struct, so both shapes are known at emit time. A func
+    /// payload keeps the erased call (the eta lever decides those). Unproven:
+    /// the erased call, byte-identical. Gate: `coerce-floor` and
+    /// `project/tests/and_then_no_new_narrowing.rs`.
+    fn and_then_plan(
+        &mut self,
+        args: &[ExprId],
+        result: bool,
+    ) -> Option<(Vec<GoTy>, Vec<GoTy>, GoTy)> {
+        if args.len() != 2 {
+            return None;
+        }
+        let m = self.probe_goty(args[1]);
+        let GoTy::Named(n, ta) = &m else {
+            return None;
+        };
+        let (head, want) = if result {
+            ("rt.SkyResult", 2)
+        } else {
+            ("rt.SkyMaybe", 1)
+        };
+        if n != head || ta.len() != want {
+            return None;
+        }
+        let a = ta[want - 1].clone();
+        let prefix: Vec<GoTy> = ta[..want - 1].to_vec();
+        if !provable(&m) || matches!(a, GoTy::Func(..)) {
+            return None;
+        }
+        let (ps, r) = closure::split_function_type(&self.probe_goty(args[0]), 1)?;
+        if ps != vec![a.clone()] {
+            return None;
+        }
+        let GoTy::Named(rn, rta) = &r else {
+            return None;
+        };
+        if rn != head || rta.len() != want || rta[..want - 1] != prefix[..] {
+            return None;
+        }
+        let b = rta[want - 1].clone();
+        if !provable(&r) || matches!(b, GoTy::Func(..)) {
+            return None;
+        }
+        if !self.callback_reaches_slot(args[0], &[a.clone()], &r) {
+            return None;
+        }
+        let mut targs = prefix;
+        targs.push(a.clone());
+        targs.push(b);
+        let cb = GoTy::Func(vec![a], Box::new(r.clone()));
+        Some((targs, vec![cb, m], r))
     }
 
     /// Keep the declarations of the named types in `targs` past the
@@ -11309,6 +11382,8 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
         "rt.Result_withDefaultT",
         2,
     ),
+    ("Sky.Core.Maybe", "andThen", "rt.Maybe_andThenT", 2),
+    ("Sky.Core.Result", "andThen", "rt.Result_andThenT", 2),
 ];
 
 /// The UNARY list kernels whose typed twin returns a Go PRIMITIVE, keyed by the

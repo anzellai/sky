@@ -51,6 +51,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   on `<-` shows the chosen `andThen`, its type and the bound type,
   go-to-definition on `<-` opens that `andThen`, `<-` is a keyword token, and
   each bound name gets an inlay hint.
+- **`Maybe.andThen` and `Result.andThen` chains are typed.** A chain,
+  written by hand or with bind lines, whose value and continuation have known
+  types now compiles to typed Go (`rt.Maybe_andThenT` / `rt.Result_andThenT`):
+  the continuation takes its real type and arithmetic is plain Go, with no
+  runtime conversion. Both functions carry their type annotation, so hover
+  and inlay hints show `Int` where they showed a type variable. A type error
+  in the expression after `<-` is reported once, with no extra `[E2015]`.
 - **`Task.bestEffort`, `Task.unless` and `Task.toResult`.** `bestEffort t`
   runs `t` and ignores its error. `unless cond t` runs `t` only when `cond` is
   `False`. `toResult t` gives the outcome of `t` as a `Result` and never
