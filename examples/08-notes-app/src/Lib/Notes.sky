@@ -22,14 +22,9 @@ createNote userId title content =
             , createdAt = ""
             , updatedAt = ""
             }
+        _ <- Task.run (Store.insert Db.conn Db.noteStore newNote)
     in
-        case Task.run (Store.insert Db.conn Db.noteStore newNote) of
-
-            Ok _ ->
-                Ok ()
-
-            Err e ->
-                Err e
+        Ok ()
 
 
 -- updateNote : ownership-scoped update. Store.updateWhere sets the record's
@@ -37,31 +32,27 @@ createNote userId title content =
 -- note); touchOnUpdate bumps updated_at with no raw SQL.
 updateNote : String -> Int -> String -> String -> Result Error ()
 updateNote noteId userId title content =
-    case Task.run (getNoteTask noteId userId) of
+    let
+        found <- Task.run (getNoteTask noteId userId)
+    in
+        case found of
 
-        Err e ->
-            Err e
+            Nothing ->
+                Ok ()
 
-        Ok Nothing ->
-            Ok ()
-
-        Ok (Just note) ->
-            let
-                changed = { note | title = title, content = content }
-                cond =
-                    Store.and_
-                        [ Store.eq "id" (SqlInt note.id)
-                        , Store.eq "userId" (SqlInt userId)
-                        ]
-            in
-                case Task.run
-                         (Store.updateWhere Db.conn Db.noteStore cond changed) of
-
-                    Ok _ ->
-                        Ok ()
-
-                    Err e ->
-                        Err e
+            Just note ->
+                let
+                    changed = { note | title = title, content = content }
+                    cond =
+                        Store.and_
+                            [ Store.eq "id" (SqlInt note.id)
+                            , Store.eq "userId" (SqlInt userId)
+                            ]
+                    _ <-
+                        Task.run
+                            (Store.updateWhere Db.conn Db.noteStore cond changed)
+                in
+                    Ok ()
 
 
 deleteNote : String -> Int -> Result Error ()
@@ -72,14 +63,9 @@ deleteNote noteId userId =
                 [ Store.eq "id" (SqlString noteId)
                 , Store.eq "userId" (SqlInt userId)
                 ]
+        _ <- Task.run (Store.deleteWhere Db.conn Db.noteStore cond)
     in
-        case Task.run (Store.deleteWhere Db.conn Db.noteStore cond) of
-
-            Ok _ ->
-                Ok ()
-
-            Err e ->
-                Err e
+        Ok ()
 
 
 -- getNotes : Result Error (List Note) — this user's notes, newest edit first.

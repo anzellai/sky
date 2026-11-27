@@ -586,42 +586,30 @@ lsVerb json opts =
 -- ─── prices ─────────────────────────────────────────────────────────────
 pricesVerb : Bool -> List String -> Task Error ()
 pricesVerb json opts =
-    Task.map2
-        (\service region -> ( service, region ))
-        (need "--service" (text "--service" opts))
-        (need "--region" (text "--region" opts))
-        |> Task.andThen
-               (\( service, region ) ->
-                   Google.skus service region (flags "--match" opts)
-                       |> Task.andThen
-                              (\found ->
-                                  emit
-                                      json
-                                      (JsonE.list
-                                          (\s ->
-                                              JsonE.object
-                                                  [ ( "service"
-                                                    , JsonE.string s.service
-                                                    )
-                                                  , ( "description"
-                                                    , JsonE.string s.description
-                                                    )
-                                                  , ( "unit"
-                                                    , JsonE.string s.unit
-                                                    )
-                                                  , ( "usd"
-                                                    , JsonE.string s.usd
-                                                    )
-                                                  ])
-                                          found)
-                                      (String.join
-                                          "\n"
-                                          (List.map
-                                              (\s ->
-                                                  s.usd ++ " USD / " ++ s.unit
-                                                      ++ "  "
-                                                      ++ s.description)
-                                              found))))
+    let
+        ( service, region ) <-
+            Task.map2
+                (\s r -> ( s, r ))
+                (need "--service" (text "--service" opts))
+                (need "--region" (text "--region" opts))
+        found <- Google.skus service region (flags "--match" opts)
+    in
+        emit
+            json
+            (JsonE.list
+                (\s ->
+                    JsonE.object
+                        [ ( "service", JsonE.string s.service )
+                        , ( "description", JsonE.string s.description )
+                        , ( "unit", JsonE.string s.unit )
+                        , ( "usd", JsonE.string s.usd )
+                        ])
+                found)
+            (String.join
+                "\n"
+                (List.map
+                    (\s -> s.usd ++ " USD / " ++ s.unit ++ "  " ++ s.description)
+                    found))
 
 
 -- ─── image build ────────────────────────────────────────────────────────

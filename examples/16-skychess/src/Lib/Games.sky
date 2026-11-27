@@ -135,14 +135,9 @@ createGame playerName =
             , createdAt = ""
             , updatedAt = ""
             }
+        _ <- Task.run (Store.insert dbConn gamesStore newGame)
     in
-        case Task.run (Store.insert dbConn gamesStore newGame) of
-
-            Ok _ ->
-                Ok gameId
-
-            Err e ->
-                Err e
+        Ok gameId
 
 
 -- saveMove : Result Error () — inserts the move row, then bumps the
@@ -161,14 +156,9 @@ saveMove gameId moveNum from to algebraic colour =
             , colour = colour
             , createdAt = ""
             }
+        _ <- Task.run (Store.insert dbConn movesStore newMove)
     in
-        case Task.run (Store.insert dbConn movesStore newMove) of
-
-            Err e ->
-                Err e
-
-            Ok _ ->
-                bumpGame gameId (\g -> { g | moveCount = moveNum })
+        bumpGame gameId (\g -> { g | moveCount = moveNum })
 
 
 updateGameStatus : String -> String -> String -> Result Error ()
@@ -180,21 +170,19 @@ updateGameStatus gameId status result =
 -- Store.update bumps updated_at automatically (touchOnUpdate).
 bumpGame : String -> (Game -> Game) -> Result Error ()
 bumpGame gameId change =
-    case Task.run (Store.findBy dbConn gamesStore "id" gameId) of
+    let
+        found <- Task.run (Store.findBy dbConn gamesStore "id" gameId)
+    in
+        case found of
 
-        Err e ->
-            Err e
+            Nothing ->
+                Ok ()
 
-        Ok Nothing ->
-            Ok ()
-
-        Ok (Just g) ->
-            case Task.run (Store.update dbConn gamesStore (change g)) of
-
-                Err e ->
-                    Err e
-
-                Ok _ ->
+            Just g ->
+                let
+                    _ <-
+                        Task.run (Store.update dbConn gamesStore (change g))
+                in
                     Ok ()
 
 
@@ -225,16 +213,8 @@ getGame gameId =
 
 deleteGame : String -> Result Error ()
 deleteGame gameId =
-    case Task.run (Store.delete dbConn movesStore "game_id" gameId) of
-
-        Err e ->
-            Err e
-
-        Ok _ ->
-            case Task.run (Store.delete dbConn gamesStore "id" gameId) of
-
-                Err e ->
-                    Err e
-
-                Ok _ ->
-                    Ok ()
+    let
+        _ <- Task.run (Store.delete dbConn movesStore "game_id" gameId)
+        _ <- Task.run (Store.delete dbConn gamesStore "id" gameId)
+    in
+        Ok ()

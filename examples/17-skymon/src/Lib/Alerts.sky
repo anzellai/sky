@@ -286,14 +286,9 @@ fireWebhook url message =
     else
         let
             body = "{\"text\":\"" ++ escapeJson message ++ "\"}"
+            _ <- Task.run (Http.post url body)
         in
-            case Task.run (Http.post url body) of
-
-                Ok _ ->
-                    Ok ()
-
-                Err e ->
-                    Err e
+            Ok ()
 
 
 fireSlack : String -> String -> Result Error ()
@@ -304,14 +299,9 @@ fireSlack webhookUrl message =
     else
         let
             body = "{\"text\":\"" ++ escapeJson message ++ "\"}"
+            _ <- Task.run (Http.post webhookUrl body)
         in
-            case Task.run (Http.post webhookUrl body) of
-
-                Ok _ ->
-                    Ok ()
-
-                Err e ->
-                    Err e
+            Ok ()
 
 
 findMetricById : String -> List Metric -> Maybe Metric

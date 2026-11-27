@@ -36,19 +36,10 @@ createIdea title description category authorId =
             , createdAt = ""
             , updatedAt = ""
             }
+        _ <- Task.run (Store.insert Db.conn Db.ideaStore idea)
+        _ = println ("[IDEA] Created: " ++ title ++ " by " ++ authorId)
     in
-        case Task.run (Store.insert Db.conn Db.ideaStore idea) of
-
-            Ok _ ->
-                let
-                    _ =
-                        println
-                            ("[IDEA] Created: " ++ title ++ " by " ++ authorId)
-                in
-                    Ok id
-
-            Err e ->
-                Err e
+        Ok id
 
 
 -- The board query: idea + author name (LEFT JOIN) + vote/comment counts
@@ -102,18 +93,13 @@ getIdeas sortBy filterCategory searchQuery =
 
 getIdea : String -> Result Error (Maybe IdeaRow)
 getIdea ideaId =
-    case Task.run
-             (Store.selectRaw
-                 Db.conn
-                 Db.ideaRowCodec
-                 (ideaSelect ++ " WHERE i.id = ? LIMIT 1")
-                 [ SqlString ideaId ]) of
-
-        Err e ->
-            Err e
-
-        Ok rows ->
-            Ok (List.head rows)
+    Task.run
+        (Store.selectRaw
+            Db.conn
+            Db.ideaRowCodec
+            (ideaSelect ++ " WHERE i.id = ? LIMIT 1")
+            [ SqlString ideaId ])
+        |> Result.map List.head
 
 
 getIdeasByStatus : String -> Result Error (List IdeaRow)
@@ -129,45 +115,39 @@ getIdeasByStatus status =
 -- toggleVote : existence check via the query builder, then insert/delete.
 toggleVote : String -> String -> Result Error ()
 toggleVote ideaId userId =
-    case Task.run (voteOf ideaId userId) of
+    let
+        existing <- Task.run (voteOf ideaId userId)
+    in
+        case existing of
 
-        Err e ->
-            Err e
+            Just _ ->
+                let
+                    cond =
+                        Store.and_
+                            [ Store.eq "ideaId" (SqlString ideaId)
+                            , Store.eq "userId" (SqlString userId)
+                            ]
+                    _ <-
+                        Task.run (Store.deleteWhere Db.conn Db.voteStore cond)
+                in
+                    Ok ()
 
-        Ok (Just _) ->
-            let
-                cond =
-                    Store.and_
-                        [ Store.eq "ideaId" (SqlString ideaId)
-                        , Store.eq "userId" (SqlString userId)
-                        ]
-            in
-                case Task.run (Store.deleteWhere Db.conn Db.voteStore cond) of
-
-                    Err e ->
-                        Err e
-
-                    Ok _ ->
-                        Ok ()
-
-        Ok Nothing ->
-            let
-                voteId =
-                    String.slice 0 12 (Crypto.sha256 (ideaId ++ ":" ++ userId))
-                vote =
-                    { id = voteId
-                    , ideaId = ideaId
-                    , userId = userId
-                    , createdAt = ""
-                    }
-            in
-                case Task.run (Store.insert Db.conn Db.voteStore vote) of
-
-                    Err e ->
-                        Err e
-
-                    Ok _ ->
-                        Ok ()
+            Nothing ->
+                let
+                    voteId =
+                        String.slice
+                            0
+                            12
+                            (Crypto.sha256 (ideaId ++ ":" ++ userId))
+                    vote =
+                        { id = voteId
+                        , ideaId = ideaId
+                        , userId = userId
+                        , createdAt = ""
+                        }
+                    _ <- Task.run (Store.insert Db.conn Db.voteStore vote)
+                in
+                    Ok ()
 
 
 voteOf : String -> String -> Task Error (Maybe Db.Vote)
@@ -221,29 +201,25 @@ getVoteCount ideaId =
 -- updateStatus : typed read-modify-write; touchOnUpdate bumps updated_at.
 updateStatus : String -> String -> Result Error ()
 updateStatus ideaId newStatus =
-    case Task.run (Store.findBy Db.conn Db.ideaStore "id" ideaId) of
+    let
+        found <- Task.run (Store.findBy Db.conn Db.ideaStore "id" ideaId)
+    in
+        case found of
 
-        Err e ->
-            Err e
+            Nothing ->
+                Ok ()
 
-        Ok Nothing ->
-            Ok ()
-
-        Ok (Just idea) ->
-            case Task.run
-                     (Store.update
-                         Db.conn
-                         Db.ideaStore
-                         { idea | status = newStatus }) of
-
-                Err e ->
-                    Err e
-
-                Ok _ ->
-                    let
-                        _ =
-                            println
-                                ("[IDEA] Status changed: " ++ ideaId ++ " -> "
-                                    ++ newStatus)
-                    in
-                        Ok ()
+            Just idea ->
+                let
+                    _ <-
+                        Task.run
+                            (Store.update
+                                Db.conn
+                                Db.ideaStore
+                                { idea | status = newStatus })
+                    _ =
+                        println
+                            ("[IDEA] Status changed: " ++ ideaId ++ " -> "
+                                ++ newStatus)
+                in
+                    Ok ()

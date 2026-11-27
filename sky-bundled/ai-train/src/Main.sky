@@ -464,12 +464,11 @@ trainJob opts =
                     "sky ai train: name the dataset with --data <dir>/<name>[@<digest>]")
 
         Just text ->
-            Task.fromResult (dataRef text)
-                |> Task.andThen
-                       (\ref ->
-                           newestDigest ref
-                               |> Task.andThen
-                                      (\digest -> jobOn ref digest opts))
+            let
+                ref <- Task.fromResult (dataRef text)
+                digest <- newestDigest ref
+            in
+                jobOn ref digest opts
 
 
 jobOn : DataRef -> String -> List String -> Task Error Train.Job
@@ -531,39 +530,19 @@ jobOn ref digest opts =
                                 (flag "--backend" opts /= Just "fake")
                                 (Local.fromReference serving)
                                 opts
-    in
-        base
-            |> Task.andThen
-                   (\b ->
-                       Dataset.loadJson folder digest
-                           |> Task.andThen
-                                  (\raw ->
-                                      Dataset.versionPart Dataset.Train raw
-                                          |> Task.map List.head)
-                           |> Task.andThen
-                                  (\first ->
-                                      if String.contains
-                                          "\"messages\""
-                                          (Maybe.withDefault "" first) then
-                                          Dataset.load
-                                              folder
-                                              digest
-                                              Dataset.chatCodec
-                                              |> Task.map
-                                                     (\v -> tune (Train.lora b v))
+        b <- base
+        raw <- Dataset.loadJson folder digest
+        first <- Dataset.versionPart Dataset.Train raw |> Task.map List.head
+        job <-
+            if String.contains "\"messages\"" (Maybe.withDefault "" first) then
+                Dataset.load folder digest Dataset.chatCodec
+                    |> Task.map (\v -> tune (Train.lora b v))
 
-                                      else
-                                          Dataset.load
-                                              folder
-                                              digest
-                                              Dataset.instructionCodec
-                                              |> Task.map
-                                                     (\v ->
-                                                         tune
-                                                             (Train.loraOnInstructions
-                                                                 b
-                                                                 v))))
-            |> Task.andThen withBackend
+            else
+                Dataset.load folder digest Dataset.instructionCodec
+                    |> Task.map (\v -> tune (Train.loraOnInstructions b v))
+    in
+        withBackend job
 
 
 -- The Vertex flags: where the job runs (each falls back to its
@@ -757,21 +736,19 @@ detach json db job =
 
 trainResume : Bool -> String -> List String -> Task Error ()
 trainResume json dir opts =
-    File.readFile (dir ++ "/cli.json")
-        |> Task.mapError
-               (\_ ->
-                   Error.invalidInput
-                       ("sky ai train resume: " ++ dir
-                           ++ " has no cli.json (it was not started by `sky ai train`); resume it from the program that started it with Train.resume"))
-        |> Task.andThen
-               (\text ->
-                   Task.fromResult
-                       (JsonD.decodeString (JsonD.list JsonD.string) text))
-        |> Task.andThen
-               (\args ->
-                   Train.resumeAt dir
-                       |> Task.andThen
-                              (\_ -> trainRun json (args ++ keepFormat opts)))
+    let
+        text <-
+            File.readFile (dir ++ "/cli.json")
+                |> Task.mapError
+                       (\_ ->
+                           Error.invalidInput
+                               ("sky ai train resume: " ++ dir
+                                   ++ " has no cli.json (it was not started by `sky ai train`); resume it from the program that started it with Train.resume"))
+        args <-
+            Task.fromResult (JsonD.decodeString (JsonD.list JsonD.string) text)
+        _ <- Train.resumeAt dir
+    in
+        trainRun json (args ++ keepFormat opts)
 
 
 keepFormat : List String -> List String
@@ -851,25 +828,22 @@ adapterText a =
 
 export : Bool -> String -> List String -> Task Error ()
 export json run opts =
-    Train.exportAt (runDirOf opts run) (List.member "--merged" opts)
-        |> Task.andThen
-               (\art ->
-                   (case flag "--out" opts of
+    let
+        art <-
+            Train.exportAt (runDirOf opts run) (List.member "--merged" opts)
+        path <-
+            case flag "--out" opts of
 
-                       Just out ->
-                           File.copy art.path out |> Task.map (\_ -> out)
+                Just out ->
+                    File.copy art.path out |> Task.map (\_ -> out)
 
-                       Nothing ->
-                           Task.succeed art.path)
-                       |> Task.andThen
-                              (\path ->
-                                  emit
-                                      json
-                                      (JsonE.object
-                                          [ ( "path", JsonE.string path )
-                                          , ( "sha256"
-                                            , JsonE.string art.sha256
-                                            )
-                                          ])
-                                      ("exported " ++ path ++ "  sha256:"
-                                          ++ art.sha256)))
+                Nothing ->
+                    Task.succeed art.path
+    in
+        emit
+            json
+            (JsonE.object
+                [ ( "path", JsonE.string path )
+                , ( "sha256", JsonE.string art.sha256 )
+                ])
+            ("exported " ++ path ++ "  sha256:" ++ art.sha256)

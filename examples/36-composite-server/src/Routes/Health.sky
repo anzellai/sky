@@ -102,37 +102,25 @@ handleExport cfg db req =
 
 streamCsv : Db -> AuthClaims -> Task Error Response
 streamCsv db claims =
-    Store.query todosStore
-        |> Store.where_ (Store.eq "user_id" (SqlInt claims.userId))
-        |> Store.orderDesc "created_at"
-        |> Store.toList db
-        |> Task.andThen
-               (\todos ->
-                   let
-                       header =
-                           Csv.encode
-                               { header =
-                                   [ "id"
-                                   , "user_id"
-                                   , "text"
-                                   , "done"
-                                   , "created_at"
-                                   ]
-                               , rows = []
-                               }
-                       body =
-                           Csv.encode
-                               { header = []
-                               , rows = List.map todoToCells todos
-                               }
-                   in
-                       Stream.stream
-                           "text/csv; charset=utf-8"
-                           (\writer ->
-                               Stream.emit header writer
-                                   |> Task.andThen
-                                          (\_ -> Stream.emit body writer)
-                                   |> Task.andThen (\_ -> Stream.finish writer)))
+    let
+        todos <-
+            Store.query todosStore
+                |> Store.where_ (Store.eq "user_id" (SqlInt claims.userId))
+                |> Store.orderDesc "created_at"
+                |> Store.toList db
+        header =
+            Csv.encode
+                { header = [ "id", "user_id", "text", "done", "created_at" ]
+                , rows = []
+                }
+        body = Csv.encode { header = [], rows = List.map todoToCells todos }
+    in
+        Stream.stream
+            "text/csv; charset=utf-8"
+            (\writer ->
+                Stream.emit header writer
+                    |> Task.andThen (\_ -> Stream.emit body writer)
+                    |> Task.andThen (\_ -> Stream.finish writer))
 
 
 -- Typed row → CSV cells. `done` renders as the DB's 0/1 form so the export

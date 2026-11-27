@@ -51,26 +51,22 @@ findOrgByName name =
 -- rely on.
 insertOrg : String -> Result Error Int
 insertOrg name =
-    case Task.run
-             (Store.insert
-                 Books.conn
-                 Books.orgs
-                 { id = 0, name = name, createdAt = "" }) of
+    let
+        _ <-
+            Task.run
+                (Store.insert
+                    Books.conn
+                    Books.orgs
+                    { id = 0, name = name, createdAt = "" })
+        found <- findOrgByName name
+    in
+        case found of
 
-        Err e ->
-            Err e
+            Just org ->
+                Ok org.id
 
-        Ok _ ->
-            case findOrgByName name of
-
-                Err e ->
-                    Err e
-
-                Ok (Just org) ->
-                    Ok org.id
-
-                Ok Nothing ->
-                    Err (Error.invalidInput "org insert did not persist")
+            Nothing ->
+                Err (Error.invalidInput "org insert did not persist")
 
 
 insertUser : Int -> String -> String -> Result Error Int

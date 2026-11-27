@@ -35,21 +35,19 @@ import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 getOrCreateCart userId =
     let
         cartId = userId ++ "-cart"
+        found <- Db.getDoc "carts" cartId
     in
-        case Db.getDoc "carts" cartId of
+        case found of
 
-            Ok (Just cart) ->
+            Just cart ->
                 if Db.getField "state" cart == "ongoing" then
                     Ok cart
 
                 else
                     createCart userId
 
-            Ok Nothing ->
+            Nothing ->
                 createCart userId
-
-            Err e ->
-                Err e
 
 
 createCart userId =
@@ -309,84 +307,62 @@ findDocAndCollection docId =
 
 
 setCartState docId newState =
-    case findDocAndCollection docId of
-
-        Ok ( collection, doc ) ->
-            let
-                updatedDoc = Dict.insert "state" newState doc
-                result = Db.setDoc collection docId updatedDoc
-                _ =
-                    println
-                        ("[ORDER] State changed: " ++ docId ++ " -> " ++ newState)
-            in
-                case result of
-
-                    Ok v ->
-                        Ok v
-
-                    Err e ->
-                        Err e
-
-        Err e ->
-            Err e
+    let
+        ( collection, doc ) <- findDocAndCollection docId
+        updatedDoc = Dict.insert "state" newState doc
+        result = Db.setDoc collection docId updatedDoc
+        _ =
+            println ("[ORDER] State changed: " ++ docId ++ " -> " ++ newState)
+    in
+        result
 
 
 setCheckout docId link reference remarks =
-    case findDocAndCollection docId of
-
-        Ok ( collection, doc ) ->
-            let
-                updatedDoc =
-                    Dict.insert
-                        "checkout_link"
-                        link
-                        (Dict.insert
-                            "checkout_reference"
-                            reference
-                            (Dict.insert "checkout_remarks" remarks doc))
-            in
-                Db.setDoc collection docId updatedDoc
-
-        Err e ->
-            Err e
+    let
+        ( collection, doc ) <- findDocAndCollection docId
+        updatedDoc =
+            Dict.insert
+                "checkout_link"
+                link
+                (Dict.insert
+                    "checkout_reference"
+                    reference
+                    (Dict.insert "checkout_remarks" remarks doc))
+    in
+        Db.setDoc collection docId updatedDoc
 
 
 setShipping docId name email phone line1 line2 city country postcode =
-    case findDocAndCollection docId of
-
-        Ok ( collection, doc ) ->
-            let
-                updatedDoc =
-                    Dict.insert
-                        "shipping_name"
-                        name
+    let
+        ( collection, doc ) <- findDocAndCollection docId
+        updatedDoc =
+            Dict.insert
+                "shipping_name"
+                name
+                (Dict.insert
+                    "shipping_email"
+                    email
+                    (Dict.insert
+                        "shipping_phone"
+                        phone
                         (Dict.insert
-                            "shipping_email"
-                            email
+                            "shipping_line1"
+                            line1
                             (Dict.insert
-                                "shipping_phone"
-                                phone
+                                "shipping_line2"
+                                line2
                                 (Dict.insert
-                                    "shipping_line1"
-                                    line1
+                                    "shipping_city"
+                                    city
                                     (Dict.insert
-                                        "shipping_line2"
-                                        line2
+                                        "shipping_country"
+                                        country
                                         (Dict.insert
-                                            "shipping_city"
-                                            city
-                                            (Dict.insert
-                                                "shipping_country"
-                                                country
-                                                (Dict.insert
-                                                    "shipping_postcode"
-                                                    postcode
-                                                    doc)))))))
-            in
-                Db.setDoc collection docId updatedDoc
-
-        Err e ->
-            Err e
+                                            "shipping_postcode"
+                                            postcode
+                                            doc)))))))
+    in
+        Db.setDoc collection docId updatedDoc
 
 
 checkoutToOrder cartId =

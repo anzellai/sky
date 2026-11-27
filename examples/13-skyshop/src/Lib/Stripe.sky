@@ -245,137 +245,120 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                 "Stripe API key not configured. Set STRIPE_API_KEY environment variable.")
 
     else
-        case getOrCreateCustomer userId userName userEmail of
+        let
+            customerId <- getOrCreateCustomer userId userName userEmail
+            successUrl = domainUrl () ++ "/order/" ++ cartId ++ "/success"
+            cancelUrl = domainUrl () ++ "/cart"
+            -- buildLineItem returns a Result of Stripe line-item params; collect the
+            -- Oks so the SetLineItems setter sees an unwrapped list.
+            lineItems =
+                List.foldr
+                    (\itemR acc ->
+                        case itemR of
 
-            Err e ->
-                Err e
+                            Ok v ->
+                                v :: acc
 
-            Ok customerId ->
+                            Err _ ->
+                                acc)
+                    []
+                    (List.map buildLineItem items)
+            shippingCollectionR =
+                Stripe.newCheckoutSessionShippingAddressCollectionParams ()
+            phoneCollectionR =
+                Stripe.newCheckoutSessionPhoneNumberCollectionParams ()
+                    |> Result.andThen
+                           (\p ->
+                               Stripe.checkoutSessionPhoneNumberCollectionParamsSetEnabled
+                                   (Just True)
+                                   p)
+            paramsR =
                 let
-                    successUrl =
-                        domainUrl () ++ "/order/" ++ cartId ++ "/success"
-                    cancelUrl = domainUrl () ++ "/cart"
-                    -- buildLineItem returns a Result of Stripe line-item params; collect the
-                    -- Oks so the SetLineItems setter sees an unwrapped list.
-                    lineItems =
-                        List.foldr
-                            (\itemR acc ->
-                                case itemR of
-
-                                    Ok v ->
-                                        v :: acc
-
-                                    Err _ ->
-                                        acc)
-                            []
-                            (List.map buildLineItem items)
-                    shippingCollectionR =
-                        Stripe.newCheckoutSessionShippingAddressCollectionParams
-                            ()
-                    phoneCollectionR =
-                        Stripe.newCheckoutSessionPhoneNumberCollectionParams ()
-                            |> Result.andThen
-                                   (\p ->
-                                       Stripe.checkoutSessionPhoneNumberCollectionParamsSetEnabled
-                                           (Just True)
-                                           p)
-                    paramsR =
-                        case shippingCollectionR of
-
-                            Err e ->
-                                Err e
-
-                            Ok shippingCollection ->
-                                case phoneCollectionR of
-
-                                    Err e ->
-                                        Err e
-
-                                    Ok phoneCollection ->
-                                        Stripe.newCheckoutSessionParams ()
-                                            |> Result.andThen
-                                                   (\p ->
-                                                       Stripe.checkoutSessionParamsSetMode
-                                                           (Just "payment")
-                                                           p)
-                                            |> Result.andThen
-                                                   (\p ->
-                                                       Stripe.checkoutSessionParamsSetSuccessURL
-                                                           (Just successUrl)
-                                                           p)
-                                            |> Result.andThen
-                                                   (\p ->
-                                                       Stripe.checkoutSessionParamsSetCancelURL
-                                                           (Just cancelUrl)
-                                                           p)
-                                            |> Result.andThen
-                                                   (\p ->
-                                                       Stripe.checkoutSessionParamsSetCustomer
-                                                           (Just customerId)
-                                                           p)
-                                            |> Result.andThen
-                                                   (\p ->
-                                                       Stripe.checkoutSessionParamsSetLineItems
-                                                           lineItems
-                                                           p)
-                                            |> Result.andThen
-                                                   (\p ->
-                                                       Stripe.checkoutSessionParamsSetShippingAddressCollection
-                                                           shippingCollection
-                                                           p)
-                                            |> Result.andThen
-                                                   (\p ->
-                                                       Stripe.checkoutSessionParamsSetPhoneNumberCollection
-                                                           phoneCollection
-                                                           p)
-                    _ =
-                        println
-                            ("[STRIPE] Creating checkout session for cart: "
-                                ++ cartId)
+                    shippingCollection <- shippingCollectionR
+                    phoneCollection <- phoneCollectionR
                 in
-                    case paramsR of
+                    Stripe.newCheckoutSessionParams ()
+                        |> Result.andThen
+                               (\p ->
+                                   Stripe.checkoutSessionParamsSetMode
+                                       (Just "payment")
+                                       p)
+                        |> Result.andThen
+                               (\p ->
+                                   Stripe.checkoutSessionParamsSetSuccessURL
+                                       (Just successUrl)
+                                       p)
+                        |> Result.andThen
+                               (\p ->
+                                   Stripe.checkoutSessionParamsSetCancelURL
+                                       (Just cancelUrl)
+                                       p)
+                        |> Result.andThen
+                               (\p ->
+                                   Stripe.checkoutSessionParamsSetCustomer
+                                       (Just customerId)
+                                       p)
+                        |> Result.andThen
+                               (\p ->
+                                   Stripe.checkoutSessionParamsSetLineItems
+                                       lineItems
+                                       p)
+                        |> Result.andThen
+                               (\p ->
+                                   Stripe.checkoutSessionParamsSetShippingAddressCollection
+                                       shippingCollection
+                                       p)
+                        |> Result.andThen
+                               (\p ->
+                                   Stripe.checkoutSessionParamsSetPhoneNumberCollection
+                                       phoneCollection
+                                       p)
+            _ =
+                println
+                    ("[STRIPE] Creating checkout session for cart: " ++ cartId)
+        in
+            case paramsR of
 
-                        Ok params ->
-                            case Session.new params of
+                Ok params ->
+                    case Session.new params of
 
-                                Ok sess ->
-                                    let
-                                        sessionId =
-                                            case Stripe.checkoutSessionID sess of
+                        Ok sess ->
+                            let
+                                sessionId =
+                                    case Stripe.checkoutSessionID sess of
 
-                                                Ok sid ->
-                                                    sid
+                                        Ok sid ->
+                                            sid
 
-                                                Err _ ->
-                                                    ""
-                                        sessionUrl =
-                                            case Stripe.checkoutSessionURL sess of
+                                        Err _ ->
+                                            ""
+                                sessionUrl =
+                                    case Stripe.checkoutSessionURL sess of
 
-                                                Ok url ->
-                                                    url
+                                        Ok url ->
+                                            url
 
-                                                Err _ ->
-                                                    ""
-                                    in
-                                        Ok { id = sessionId, url = sessionUrl }
-
-                                Err e ->
-                                    let
-                                        _ =
-                                            println
-                                                ("[STRIPE] API error: "
-                                                    ++ errorToString e)
-                                    in
-                                        Err
-                                            (Error.network
-                                                ("Stripe API error: "
-                                                    ++ errorToString e))
+                                        Err _ ->
+                                            ""
+                            in
+                                Ok { id = sessionId, url = sessionUrl }
 
                         Err e ->
-                            Err
-                                (Error.network
-                                    ("Failed to build Stripe checkout params: "
-                                        ++ errorToString e))
+                            let
+                                _ =
+                                    println
+                                        ("[STRIPE] API error: "
+                                            ++ errorToString e)
+                            in
+                                Err
+                                    (Error.network
+                                        ("Stripe API error: " ++ errorToString e))
+
+                Err e ->
+                    Err
+                        (Error.network
+                            ("Failed to build Stripe checkout params: "
+                                ++ errorToString e))
 
 
 verifyPayment orderId =
