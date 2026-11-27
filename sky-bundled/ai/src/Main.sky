@@ -166,12 +166,11 @@ provision json opts =
 
                    else
                        [])
+        provisioned <- Local.provision ()
+        p <- checkVariant (flag "--variant" opts) provisioned
+        paths <- fetchModels models
     in
-        Local.provision ()
-            |> Task.andThen (checkVariant (flag "--variant" opts))
-            |> Task.andThen
-                   (\p -> fetchModels models |> Task.map (\paths -> ( p, paths )))
-            |> Task.andThen (\( p, paths ) -> reportProvision json p paths)
+        reportProvision json p paths
 
 
 checkVariant : Maybe String -> Local.Provisioned -> Task Error Local.Provisioned

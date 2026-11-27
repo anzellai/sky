@@ -124,46 +124,38 @@ decideAndRun command =
     let
         act = Firewall.propose command
         effect = Shell.runHere 30000 "." command
+        _ <- println ("Command: " ++ command)
     in
-        println ("Command: " ++ command)
-            |> Task.andThen
-                   (\_ ->
-                       case Firewall.firewall act of
+        case Firewall.firewall act of
 
-                           Allow ->
-                               println "Firewall: allow (read-only)"
-                                   |> Task.andThen
-                                          (\_ ->
-                                              Policy.gate
-                                                  Firewall.firewall
-                                                  act
-                                                  effect)
-                                   |> Task.andThen showOutcome
+            Allow ->
+                let
+                    _ <- println "Firewall: allow (read-only)"
+                    outcome <- Policy.gate Firewall.firewall act effect
+                in
+                    showOutcome outcome
 
-                           NeedsApproval reason ->
-                               println
-                                   ("Firewall: needs approval (" ++ reason ++ ")")
-                                   |> Task.andThen
-                                          (\_ -> Io.writeStdout "Run it? [y/N] ")
-                                   |> Task.andThen (\_ -> Io.readLine ())
-                                   |> Task.andThen
-                                          (\answer ->
-                                              if String.toLower
-                                                  (String.trim answer)
-                                                  == "y" then
-                                                  Policy.gate
-                                                      (approved Firewall.firewall)
-                                                      act
-                                                      effect
-                                                      |> Task.andThen
-                                                             showOutcome
+            NeedsApproval reason ->
+                askThenRun reason act effect
 
-                                              else
-                                                  println "Not run.")
+            Deny reason ->
+                println ("Firewall: deny (" ++ reason ++ "). Not run.")
 
-                           Deny reason ->
-                               println
-                                   ("Firewall: deny (" ++ reason ++ "). Not run."))
+
+-- | The firewall asks for a person: run the command only on a `y`.
+askThenRun : String -> Policy.Action -> Task Error Shell.Ran -> Task Error ()
+askThenRun reason act effect =
+    let
+        _ <- println ("Firewall: needs approval (" ++ reason ++ ")")
+        _ <- Io.writeStdout "Run it? [y/N] "
+        answer <- Io.readLine ()
+    in
+        if String.toLower (String.trim answer) == "y" then
+            Policy.gate (approved Firewall.firewall) act effect
+                |> Task.andThen showOutcome
+
+        else
+            println "Not run."
 
 
 -- | A person approved the action: a `NeedsApproval` decision becomes
