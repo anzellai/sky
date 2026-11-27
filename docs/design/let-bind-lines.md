@@ -101,7 +101,11 @@ pattern is `[E3001]` with "use `case`". Find the union through
   `lam -> e -> result`. Also check the scheme unifies with the template
   `(a -> T b) -> T a -> T b`, else `[E2016]`.
 - Still unresolved after the loop: `[E2015]` (needs an annotation). A head of
-  `Ty::Error` suppresses the error.
+  `Ty::Error` suppresses the error. So does an error inside `e`: a type error, or a
+  name the resolver could not bind (`[E1001]`, typed as a fresh variable). The
+  first error is the one reported, never an `[E2015]` / `[E2016]` for the same
+  line. A function after `<-` whose result has a named head is `[E2016]`
+  naming the missing arguments (`Task.succeed` needs 1 more).
 - Results go in a `BindElaboration: HashMap<ExprId, Res>` built on the CHECK
   path (`numeric_elaboration_of` pattern, ty/src/db.rs:67). The lowering path
   never chooses again: it reads the table and instantiates the chosen DefId with

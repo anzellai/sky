@@ -39,6 +39,10 @@ where `T` is the type with its other arguments (`Task e`, `Result e`,
 | The exposed `andThen` has another shape | `andThen : Box a -> (a -> Box b) -> Box b` |
 | The bind line is inside that `andThen` itself | a bind line on `Box` in `Box`'s own `andThen` |
 
+A function after `<-` is usually a missing argument (`a <- Task.succeed`).
+The message then names the function, its type and how many arguments it
+still needs before `<-` can run it.
+
 In the module that declares the type, a bind line uses the module's own
 `andThen`, exposed or not, the same one a bare `andThen` names there.
 

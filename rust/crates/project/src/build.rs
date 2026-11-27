@@ -877,10 +877,20 @@ fn assemble_and_emit_loaded(
         // producer of `CheckOutput::type_errors` codes in the `E2…` band
         // (`ty::check`), so band membership is the honest predicate, and a
         // future `[E2009]` cannot reintroduce the hole.
+        //
+        // The name-error band (`E1…`) goes with it. A name the resolver could
+        // not bind is a CAUSE: the type checker gives it a fresh type, and the
+        // type error that follows (an `[E2015]` bind line that cannot choose
+        // its `andThen`, a mismatch elsewhere in the module) is never a reason
+        // to drop it. Before this, one unrelated `[E2001]` hid every
+        // `[E1001] Undefined name` of the build (#342).
         let ds: Vec<diagnostics::Diagnostic> = checked
             .diagnostics
             .iter()
-            .filter(|d| d.severity == diagnostics::Severity::Error && d.code.0.starts_with("E2"))
+            .filter(|d| {
+                d.severity == diagnostics::Severity::Error
+                    && (d.code.0.starts_with("E1") || d.code.0.starts_with("E2"))
+            })
             .cloned()
             .collect();
         return Err(render_diags(&ds, &sources));

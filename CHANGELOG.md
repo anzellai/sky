@@ -112,6 +112,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   binder position is now refused at compile time (see Breaking).
 - `docs/tooling/lsp.md` said the server has no inlay hints. It has them, and
   the page now lists them.
+- One type error anywhere in a build hid every `[E1001] Undefined name` of
+  that build, in text and in `--format json`: the type gate reported the
+  `E2…` codes alone. It now reports the name errors with them. A misspelt name
+  after `<-` (`b <- fetchh a`) is `[E1001]`, with no `[E2015]` "annotate it"
+  for the same line.
+- `a <- Task.succeed` (an argument missing) is `[E2016]` that names the
+  function, its type and how many arguments it still needs.
 
 ## v0.31.2 — the app icon reaches Std.App mobile releases (2026-11-24)
 

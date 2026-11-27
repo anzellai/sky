@@ -172,6 +172,10 @@ pub struct Infer<'a> {
     /// `Codec.auto`. Read by `World::infer_annotated_bounds`, which adds them
     /// to the scheme callers see.
     pub inferred_bounds: Vec<(Name, SuperType)>,
+    /// How many unresolved references (`Res::Error`, `Expr::Error`) inference
+    /// has met. The resolver reported each one (`[E1001]`, L7), so a bind line
+    /// whose `e` holds one gives no `[E2015]` / `[E2016]` of its own.
+    pub(crate) unresolved_seen: usize,
     /// Bind lines whose `andThen` is not chosen yet (`crate::bind`).
     pub(crate) pending_binds: Vec<crate::bind::PendingBind>,
     /// The `andThen` chosen for each bind line, by its `Call` (`crate::bind`).
@@ -253,6 +257,7 @@ impl<'a> Infer<'a> {
             page_ties: Vec::new(),
             bound_seen: std::collections::HashSet::new(),
             inferred_bounds: Vec::new(),
+            unresolved_seen: 0,
             pending_binds: Vec::new(),
             bind_choices: Vec::new(),
             bind_expects: HashMap::new(),
@@ -1740,10 +1745,14 @@ impl<'a> Infer<'a> {
             {
                 let (lam, ex) = (args[0], args[1]);
                 let errors_in_e = self.errors.len();
+                let unresolved_in_e = self.unresolved_seen;
                 let te = self.infer_expr(body, ex);
-                // A type error inside `e` already reported this line: a head
-                // left unknown by it is no second report (like `Ty::Error`).
-                let e_errored = self.errors.len() > errors_in_e;
+                // A type error inside `e`, or a name in it the resolver could
+                // not bind (`[E1001]`, typed as a fresh variable), already
+                // reported this line: a head left unknown or wrong by it is
+                // no second report (like `Ty::Error`).
+                let e_errored =
+                    self.errors.len() > errors_in_e || self.unresolved_seen > unresolved_in_e;
                 let tlam = self.uf.fresh_flex();
                 let result = self.uf.fresh_flex();
                 let rest = self.fun(te, result);
@@ -1771,6 +1780,7 @@ impl<'a> Infer<'a> {
                     callee_ty,
                     e_ty: te,
                     e_errored,
+                    e_span: body.expr_span(ex),
                     span,
                     module: self
                         .self_def
@@ -1962,7 +1972,10 @@ impl<'a> Infer<'a> {
                 self.unify_record_constraint(tb, rec, row, &map, true);
                 fv
             }
-            Expr::Error => self.uf.fresh_flex(),
+            Expr::Error => {
+                self.unresolved_seen += 1;
+                self.uf.fresh_flex()
+            }
         }
     }
 
@@ -2724,7 +2737,10 @@ impl<'a> Infer<'a> {
                 });
                 self.uf.fresh_flex()
             }
-            Res::Error => self.uf.fresh_flex(),
+            Res::Error => {
+                self.unresolved_seen += 1;
+                self.uf.fresh_flex()
+            }
         }
     }
 

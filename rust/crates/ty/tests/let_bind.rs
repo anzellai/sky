@@ -525,3 +525,73 @@ fn a_clash_inside_one_head_gets_no_conversion_note() {
     let msgs = |v: &[(String, String)]| v.iter().map(|(c, _)| c.clone()).collect::<Vec<_>>();
     assert_eq!(msgs(&bind), msgs(&chain), "{bind:#?}\n{chain:#?}");
 }
+
+/// An unknown or misspelt name in the expression after `<-` is the error:
+/// `[E1001]` names it, and the bind line adds no `[E2015]` / `[E2016]` of its
+/// own (Judge 6, u1). Before, the name was typed as a fresh variable, the
+/// head stayed unknown, and `[E2015]` "annotate it" was the only report.
+#[test]
+fn an_unknown_name_in_e_is_e1001_without_e2015_or_e2016() {
+    for line in [
+        "b <- fetchh a",
+        "b <- Sync.new 0",
+        "b <- nosuch 0",
+        "b <- Task.nosuch 0",
+        // A head known from a correct function, an unknown argument: still
+        // the name error alone, no `[E2016]` for an `Int`.
+        "b <- String.length (nosuch 0)",
+    ] {
+        let body = format!(
+            "import Std.Sync as Sync\ngo : Int -> Task Error Int\ngo n =\n    let\n        a <- Task.succeed n\n        {line}\n    in\n    Task.succeed a"
+        );
+        let got = errors_with_import(&body);
+        assert!(
+            got.iter().any(|(c, m)| c == "E1001" && m.contains("nosuch")
+                || c == "E1001" && m.contains("fetchh")
+                || c == "E1001" && m.contains("Sync.new")),
+            "{line}: {got:#?}"
+        );
+        assert!(
+            got.iter().all(|(c, _)| c != "E2015" && c != "E2016"),
+            "{line}: {got:#?}"
+        );
+    }
+}
+
+/// A head known from `e` with an unknown name in an argument still gets the
+/// mixed-types `[E2001]` (the mismatch is real), and the `[E1001]` is kept.
+#[test]
+fn an_unknown_argument_in_a_mixed_block_keeps_e1001_and_the_note() {
+    let got = errors("go : Task Error Int\ngo =\n    let\n        a <- Task.succeed 1\n        b <- String.toInt (nosuch 2)\n    in\n    Task.succeed (a + b)");
+    assert!(
+        got.iter()
+            .any(|(c, m)| c == "E1001" && m.contains("nosuch")),
+        "{got:#?}"
+    );
+    assert!(
+        got.iter().all(|(c, _)| c != "E2015" && c != "E2016"),
+        "{got:#?}"
+    );
+}
+
+/// A function after `<-` (an argument missing): `[E2016]` names the
+/// function and how many arguments it still needs.
+#[test]
+fn a_function_after_the_arrow_is_e2016_naming_the_missing_arguments() {
+    let got = errors(
+        "go : Task Error Int\ngo =\n    let\n        a <- Task.succeed\n    in\n    Task.succeed 1",
+    );
+    assert!(
+        got.iter().any(|(c, m)| c == "E2016"
+            && m.contains("`Task.succeed` is a function (`")
+            && m.contains("it needs 1 more argument(s) before `<-` can run it")),
+        "{got:#?}"
+    );
+    let got = errors("pair : Int -> Int -> Maybe Int\npair x y =\n    Just (x + y)\n\n\ngo : Maybe Int\ngo =\n    let\n        a <- pair\n    in\n    Just a");
+    assert!(
+        got.iter().any(|(c, m)| c == "E2016"
+            && m.contains("`pair` is a function (`Int -> Int -> Maybe Int`)")
+            && m.contains("it needs 2 more argument(s)")),
+        "{got:#?}"
+    );
+}

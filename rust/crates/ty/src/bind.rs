@@ -56,6 +56,8 @@ pub(crate) struct PendingBind {
     pub module: Option<ModuleId>,
     /// `p <- …` as written, for the message (a simple pattern only).
     pub pat_text: String,
+    /// The span of the expression after `<-`, to quote it in a message.
+    pub e_span: Option<Span>,
 }
 
 /// Fixed homes of the kernel-implicit heads (§4): the bare builtin names have
@@ -164,6 +166,8 @@ pub(crate) fn pat_text(
 enum NoAndThen {
     /// The head is not a named type (a function, record, tuple or unit).
     NotNamed(String),
+    /// A function whose result has a named head: an argument is missing.
+    NeedsArgs { ty: String, args: usize },
     /// A named type whose declaring module is unknown.
     NoHome(String),
     /// The home module declares no `andThen`, or does not expose it.
@@ -226,8 +230,15 @@ fn no_fitting_and_then(
 }
 
 impl NoAndThen {
-    fn message(&self, pat: &str) -> String {
+    /// `e` is how the message names the expression after `<-`: its source
+    /// text in backticks, else "The expression after `<-`".
+    fn message(&self, pat: &str, e: &str) -> String {
         match self {
+            NoAndThen::NeedsArgs { ty, args } => format!(
+                "{e} is a function (`{ty}`): it needs {args} more argument(s) before `<-` can \
+                 run it. The bind line `{pat} <- …` needs a value whose type has an \
+                 `andThen`. See docs/errors/E2016-no-andthen.md"
+            ),
             NoAndThen::NotNamed(t) => format!(
                 "The bind line `{pat} <- …` needs a type with an `andThen`, but the expression \
                  after `<-` is `{t}`, which has none. Use `case` or a plain `let` line. \
@@ -291,6 +302,22 @@ impl<'a> Infer<'a> {
             Ty::Var(_) => return Attempt::Unknown,
             Ty::Error => return Attempt::Done,
             Ty::App(n, args) => (n.as_str().to_string(), args.len()),
+            Ty::Fun(..) if matches!(final_result(&raw), Ty::App(..)) => {
+                let mut args = 0;
+                let mut t = &raw;
+                while let Ty::Fun(_, r) = t {
+                    args += 1;
+                    t = r;
+                }
+                self.bind_error(
+                    pb,
+                    NoAndThen::NeedsArgs {
+                        ty: raw.render_pretty(),
+                        args,
+                    },
+                );
+                return Attempt::Done;
+            }
             other => {
                 self.bind_error(pb, NoAndThen::NotNamed(other.render_pretty()));
                 return Attempt::Done;
@@ -409,9 +436,31 @@ impl<'a> Infer<'a> {
         Attempt::Done
     }
 
+    /// The source text at `span` in `module`, when it is short and on one
+    /// line (for a message).
+    fn span_text(&self, module: Option<ModuleId>, span: Option<Span>) -> Option<String> {
+        let (module, span) = (module?, span?);
+        let src = self.db.module_parse(module).syntax().text().to_string();
+        let t = src
+            .get(span.range.0 as usize..span.range.1 as usize)?
+            .trim();
+        (!t.is_empty() && t.len() <= 40 && !t.contains('\n')).then(|| t.to_string())
+    }
+
     fn bind_error(&mut self, pb: &PendingBind, why: NoAndThen) {
+        // A name or type error inside `e` is already reported, and it is why
+        // no `andThen` fits: no second report for the same line.
+        if pb.e_errored {
+            return;
+        }
         self.errors.push(crate::infer::TypeError {
-            message: why.message(&pb.pat_text),
+            message: why.message(
+                &pb.pat_text,
+                &self
+                    .span_text(pb.module, pb.e_span)
+                    .map(|t| format!("`{t}`"))
+                    .unwrap_or_else(|| "The expression after `<-`".to_string()),
+            ),
             span: pb.span,
             code: "E2016",
         });

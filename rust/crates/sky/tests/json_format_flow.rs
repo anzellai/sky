@@ -1087,3 +1087,64 @@ fn diagnostics_name_their_own_file_for_every_module_kind() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// An unknown name after `<-` is reported as `[E1001]` by `sky check
+/// --format json`, and no `[E2015]` / `[E2016]` takes its place (Judge 6,
+/// u1). A name error with an unrelated type error in the same build keeps
+/// both: the type gate used to report the `E2…` band alone, so one `[E2001]`
+/// anywhere hid every `[E1001]` of the build.
+#[test]
+fn an_unknown_name_after_a_bind_arrow_is_e1001_in_json() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    for (tag, line, name) in [
+        ("fetchh", "b <- fetchh a", "fetchh"),
+        ("syncnew", "b <- Sync.new 0", "Sync.new"),
+        ("nosuch", "b <- nosuch 0", "nosuch"),
+        ("tasknosuch", "b <- Task.nosuch 0", "nosuch"),
+    ] {
+        let src = format!(
+            "module Main exposing (main)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Sky.Core.Error exposing (Error)\n\
+             import Sky.Core.Task as Task\n\
+             import Std.Log exposing (println)\n\
+             import Std.Sync as Sync\n\n\n\
+             step : Int -> Task Error Int\n\
+             step n =\n    let\n        a <- Task.succeed n\n        {line}\n    in\n    Task.succeed (a + b)\n\n\n\
+             main =\n    Task.run (step 1 |> Task.map (\\n -> println (String.fromInt n)))\n"
+        );
+        let dir = project(&format!("bind-{tag}"), &src, "");
+        let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+        assert_eq!(o.code, 1, "{tag}: {}", o.stderr);
+        check_stream(&o);
+        let ds = diags(&o);
+        assert!(
+            ds.iter().any(|d| d["code"] == "E1001"
+                && d["message"].as_str().unwrap_or("").contains(name)),
+            "{tag}: {ds:#?}"
+        );
+        assert!(
+            ds.iter()
+                .all(|d| d["code"] != "E2015" && d["code"] != "E2016"),
+            "{tag}: {ds:#?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    // A name error and an unrelated type error: both are reported.
+    let src = "module Main exposing (main)\n\n\
+               import Sky.Core.Prelude exposing (..)\n\
+               import Std.Log exposing (println)\n\n\n\
+               bad : Int\nbad =\n    \"x\"\n\n\n\
+               other : Int -> Int\nother n =\n    fetchh n\n\n\n\
+               main =\n    println \"hi\"\n";
+    let dir = project("bind-both", src, "");
+    let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    check_stream(&o);
+    let ds = diags(&o);
+    assert!(ds.iter().any(|d| d["code"] == "E1001"), "{ds:#?}");
+    assert!(ds.iter().any(|d| d["code"] == "E2001"), "{ds:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

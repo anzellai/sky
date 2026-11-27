@@ -40,6 +40,9 @@ meets the line, and again at the end of the definition, so a later use can fix
 the type. When the type is still a variable at the end, the checker cannot
 choose, and the line is refused. It never guesses.
 
+A name in `e` that does not exist (`b <- fetchh a`, a misspelling) is
+`[E1001]` Undefined name, and the line gives no `[E2015]`: fix the name first.
+
 ## How to fix it
 
 Give `e` a type. The usual place is the annotation of the definition:
