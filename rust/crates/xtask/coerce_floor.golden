@@ -647,6 +647,15 @@
 #   R12, lever §5.3, `lower.rs` `map_error_plan`), so the slot no longer
 #   narrows the erased result back. apps/ledger stays at 301 with `signUp`
 #   rewritten as bind lines with a `mapError` per step.
+#
+# stdlib bind-line migration (v0.32.x): 9 rows FALL by 25 narrow (15439 ->
+#   15414), none rose, adapter and dispatch 0; full run, 86 of 86 rows. Std.Ai
+#   and Std.Durable Task chains became bind lines and two swallowed errors use
+#   Task.bestEffort. Seven Std.Db.Store Result ladders (clauseTail, condValues,
+#   latestRendered, renderCond, selectList, checkedComputedRows,
+#   encodeCheckedRows) stayed as `case`: as bind lines they raised every Store
+#   project by 7 (a nested Result bind lowers through the erased
+#   `Sky.Core.Result.andThen`), so they were not migrated.
 00-standard-libs	adapter=0	dispatch=0	narrow=103
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=5
@@ -706,16 +715,16 @@
 63-app-chat	adapter=0	dispatch=0	narrow=250
 64-app-native	adapter=0	dispatch=0	narrow=176
 65-metadata-service	adapter=0	dispatch=0	narrow=15
-66-slack-agent	adapter=0	dispatch=0	narrow=122
-67-durable-counter	adapter=0	dispatch=0	narrow=63
+66-slack-agent	adapter=0	dispatch=0	narrow=121
+67-durable-counter	adapter=0	dispatch=0	narrow=62
 68-ai-dataset	adapter=0	dispatch=0	narrow=373
 69-ai-scrub	adapter=0	dispatch=0	narrow=48
-70-ai-synthetic	adapter=0	dispatch=0	narrow=369
-71-ai-registry	adapter=0	dispatch=0	narrow=796
-72-ai-support-desk	adapter=0	dispatch=0	narrow=596
-73-ai-train	adapter=0	dispatch=0	narrow=1231
-74-ai-cloud	adapter=0	dispatch=0	narrow=1322
-75-ai-everywhere	adapter=0	dispatch=0	narrow=797
+70-ai-synthetic	adapter=0	dispatch=0	narrow=368
+71-ai-registry	adapter=0	dispatch=0	narrow=794
+72-ai-support-desk	adapter=0	dispatch=0	narrow=593
+73-ai-train	adapter=0	dispatch=0	narrow=1226
+74-ai-cloud	adapter=0	dispatch=0	narrow=1317
+75-ai-everywhere	adapter=0	dispatch=0	narrow=793
 77-demo-expenses	adapter=0	dispatch=0	narrow=247
 78-i18n-booking	adapter=0	dispatch=0	narrow=87
 apps/dispatch	adapter=0	dispatch=0	narrow=166
@@ -730,6 +739,6 @@ examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=1
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=103
 sky-bundled/ai	adapter=0	dispatch=0	narrow=599
 sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=482
-sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1148
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1145
 sky-bundled/console	adapter=0	dispatch=0	narrow=145
 sky-bundled/doc	adapter=0	dispatch=0	narrow=42
