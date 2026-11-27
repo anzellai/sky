@@ -1136,36 +1136,18 @@ const ANNOTATION_ON_BIND_LINE: &str = "An annotation cannot go on a bind line. \
 /// A `<-` in a case-arm pattern (`v <- x -> 1`).
 const BIND_IN_CASE_ARM: &str = "a case arm uses `->`; a bind line `p <- e` goes in a `let` block";
 
-/// A `<-` after a function head on a `let` line (`g x <- m`).
-fn bind_after_function_head(name: &str) -> std::string::String {
-    format!(
-        "a bind line binds a pattern, not a function: write `x <- m`, or define `{name}` with `=`"
-    )
-}
+/// A `let` line with a `<-` whose left side is not a bind-line pattern
+/// (design §1). One rule for every such left side.
+pub(crate) const BIND_LINE_FORM: &str = "a bind line is `pattern <- expression`. \
+     The pattern is a name, `_`, `()`, or a pattern in parentheses, \
+     e.g. `( a, b ) <- e`, `(x as y) <- e`. A function goes on an `=` line.";
 
-/// An unparenthesised tuple pattern on a `let` line (`a, b <- e`).
-fn bare_tuple_pattern(bind: bool) -> std::string::String {
-    let op = if bind { "<-" } else { "=" };
-    format!("put the pattern in parentheses: `( a, b ) {op} e`")
-}
+/// A `let` line that starts with `<-`.
+pub(crate) const BIND_LINE_NEEDS_PATTERN: &str =
+    "a bind line needs a pattern: write `_ <- e` to run `e` and drop its result";
 
-/// An unparenthesised `::` pattern on a bind line (`x :: xs <- e`).
-const BARE_CONS_ON_BIND_LINE: &str = "put the pattern in parentheses: `(x :: xs) <- e`. \
-     A `::` pattern does not match an empty list, so a bind line refuses it anyway: \
-     use `case` to handle both shapes.";
-
-/// After the first pattern of a `let` line: does a `<-` come before any `=`?
-/// A bounded look-ahead, used only to word the hint.
-fn bind_arrow_ahead(p: &Parser) -> bool {
-    for n in 0..256 {
-        match p.nth(n) {
-            LArrow => return true,
-            Eq | Eof => return false,
-            _ => {}
-        }
-    }
-    false
-}
+/// An unparenthesised tuple pattern on an `=` line (`a, b = e`).
+const BARE_TUPLE_PATTERN: &str = "put the pattern in parentheses: `( a, b ) = e`";
 
 /// What kind of line `let_binding` parsed.
 #[derive(PartialEq, Eq)]
@@ -1215,7 +1197,48 @@ fn bind_line_rest(p: &mut Parser, m: crate::parser::Marker, anchor: u32) {
     m.complete(p, BindBinding);
 }
 
+/// A `let` line with a `<-` at `off` tokens from the cursor, before any
+/// `=` of its own. Its left side is a bind-line pattern when it parses as a
+/// pattern that ends at the `<-`, and, when it starts with a lowercase name,
+/// is that name alone (as on an `=` line, `x as y` and `x :: xs` need
+/// parentheses, and `g x` is a function head). Any other left side is one
+/// `[E0001]` with the bind-line form, and the expression after `<-` still
+/// parses.
+fn bind_line(p: &mut Parser, anchor: u32, after_anno: bool, off: usize) -> LetLine {
+    let m = p.start();
+    if off == 0 {
+        p.error(BIND_LINE_NEEDS_PATTERN);
+        bind_line_rest(p, m, anchor);
+        return LetLine::Bind;
+    }
+    let lower_head = p.at(LowerIdent);
+    let cp = p.checkpoint();
+    pattern(p);
+    let is_pattern = !p.errored_since(&cp)
+        && p.at(LArrow)
+        && p.consumed_since(&cp) == off
+        && (!lower_head || off == 1);
+    if is_pattern {
+        if after_anno {
+            p.error(ANNOTATION_ON_BIND_LINE);
+        }
+    } else {
+        p.rewind(cp);
+        let e = p.start();
+        for _ in 0..off {
+            p.bump();
+        }
+        p.error(BIND_LINE_FORM);
+        e.complete(p, Error);
+    }
+    bind_line_rest(p, m, anchor);
+    LetLine::Bind
+}
+
 fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
+    if let Some(off) = p.let_line_arrow(anchor) {
+        return bind_line(p, anchor, after_anno, off);
+    }
     if p.at(LowerIdent) && p.nth(1) == Colon {
         // `name : Type` annotation binding
         let m = p.start();
@@ -1226,75 +1249,43 @@ fn let_binding(p: &mut Parser, anchor: u32, after_anno: bool) -> LetLine {
         });
         m.complete(p, LetBinding);
         LetLine::Annotation
-    } else if p.at(LowerIdent) && p.nth(1) == LArrow {
-        // `name <- expr` bind line
-        if after_anno {
-            p.error(ANNOTATION_ON_BIND_LINE);
-        }
-        let m = p.start();
-        pattern(p);
-        bind_line_rest(p, m, anchor);
-        LetLine::Bind
     } else if p.at(LowerIdent) && !matches!(p.nth(1), Colon2 | Comma) {
         // `name pat* = expr`
         let m = p.start();
-        let name = p.cur_text();
         p.bump(); // name
-        let mut params = 0;
         let pl = p.start();
         while p.at_any(PAT_ATOM_START) && !p.at(Eq) {
             // `pattern_app` so a constructor param consumes its args,
             // matching the oracle's greedy `pattern_` in let bindings.
             pattern_app(p);
-            params += 1;
         }
         pl.complete(p, ParamList);
-        if params > 0 && p.at(LArrow) {
-            p.err_and_bump(bind_after_function_head(name));
-        } else {
-            expect_eq(p);
-        }
+        expect_eq(p);
         p.with_indent(anchor, |p| {
             expr(p);
         });
         m.complete(p, LetBinding);
         LetLine::Equals
     } else {
-        // destructure: `(a, b) = e`, `{ x } = r`, `Just x = m`, `_ = e`,
-        // or a bind line with a pattern: `(a, b) <- e`, `_ <- e`.
+        // destructure: `(a, b) = e`, `{ x } = r`, `Just x = m`, `_ = e`.
         let m = p.start();
-        let pat = pattern(p);
+        pattern(p);
         if p.at(Comma) {
-            // `a, b <- e`: a tuple pattern without its parentheses. One
+            // `a, b = e`: a tuple pattern without its parentheses. One
             // diagnostic, and the rest of the line goes into one ERROR node.
             let e = p.start();
-            p.error(bare_tuple_pattern(bind_arrow_ahead(p)));
+            p.error(BARE_TUPLE_PATTERN);
             while p.eat(Comma) {
                 pattern(p);
             }
-            let bind = p.at(LArrow);
-            if bind || p.at(Eq) {
-                p.bump();
+            if p.eat(Eq) {
                 p.with_indent(anchor, |p| {
                     expr(p);
                 });
             }
             e.complete(p, Error);
-            if bind {
-                m.complete(p, BindBinding);
-                return LetLine::Bind;
-            }
             m.complete(p, DestructureBinding);
             return LetLine::Equals;
-        }
-        if p.at(LArrow) {
-            if after_anno {
-                p.error(ANNOTATION_ON_BIND_LINE);
-            } else if pat.kind(p) == PatCons {
-                p.error(BARE_CONS_ON_BIND_LINE);
-            }
-            bind_line_rest(p, m, anchor);
-            return LetLine::Bind;
         }
         p.expect(Eq);
         p.with_indent(anchor, |p| {

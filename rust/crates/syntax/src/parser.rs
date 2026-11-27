@@ -72,6 +72,22 @@ pub(crate) struct Parser<'a> {
     unit_errored: bool,
     /// Where each reported diagnostic was raised.
     sites: Vec<ErrorSite>,
+    /// How many times [`Parser::error`] was called, including the calls the
+    /// one-error-per-unit budget dropped. A speculative parse reads it to
+    /// know whether its construct parsed cleanly.
+    error_calls: u32,
+}
+
+/// A saved parser state for a speculative parse ([`Parser::checkpoint`],
+/// [`Parser::rewind`]).
+pub(crate) struct Checkpoint {
+    pos: usize,
+    events: usize,
+    diags: usize,
+    sites: usize,
+    unit_errored: bool,
+    depth: u32,
+    error_calls: u32,
 }
 
 /// Split a token stream into its lexical top-level units: a unit starts at
@@ -212,14 +228,6 @@ impl Drop for Marker {
 }
 
 impl CompletedMarker {
-    /// The kind this node was completed with.
-    pub(crate) fn kind(&self, p: &Parser) -> SyntaxKind {
-        match &p.events[self.pos] {
-            Event::Start { kind, .. } => *kind,
-            _ => SyntaxKind::Error,
-        }
-    }
-
     pub(crate) fn precede(self, p: &mut Parser) -> Marker {
         let m = p.start();
         if let Event::Start { forward_parent, .. } = &mut p.events[self.pos] {
@@ -257,6 +265,7 @@ impl<'a> Parser<'a> {
             limit,
             unit_errored: false,
             sites: Vec::new(),
+            error_calls: 0,
         }
     }
 
@@ -341,6 +350,67 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // ---- speculative parse ----
+
+    /// Save the parser state, to try a construct and undo it.
+    pub(crate) fn checkpoint(&self) -> Checkpoint {
+        Checkpoint {
+            pos: self.pos,
+            events: self.events.len(),
+            diags: self.diags.len(),
+            sites: self.sites.len(),
+            unit_errored: self.unit_errored,
+            depth: self.depth,
+            error_calls: self.error_calls,
+        }
+    }
+
+    /// Whether any error was raised since `c` (also one the budget dropped).
+    pub(crate) fn errored_since(&self, c: &Checkpoint) -> bool {
+        self.error_calls != c.error_calls
+    }
+
+    /// The number of tokens consumed since `c`.
+    pub(crate) fn consumed_since(&self, c: &Checkpoint) -> usize {
+        self.pos - c.pos
+    }
+
+    /// Undo everything parsed since `c`. Every marker started since `c`
+    /// must be complete.
+    pub(crate) fn rewind(&mut self, c: Checkpoint) {
+        self.pos = c.pos;
+        self.events.truncate(c.events);
+        self.diags.truncate(c.diags);
+        self.sites.truncate(c.sites);
+        self.unit_errored = c.unit_errored;
+        self.depth = c.depth;
+        self.error_calls = c.error_calls;
+    }
+
+    /// On the `let` line that starts at the cursor (the tokens up to the
+    /// next line at or left of `anchor`): the offset of its first `<-`,
+    /// when it comes before the line's own `=` (one outside brackets).
+    /// A `<-` after the `=` is in the line's expression.
+    pub(crate) fn let_line_arrow(&self, anchor: u32) -> Option<usize> {
+        let end = self.limit.min(self.toks.len());
+        let mut depth = 0i32;
+        for i in self.pos..end {
+            let t = &self.toks[i];
+            if i > self.pos && t.newline_before && t.col <= anchor {
+                return None;
+            }
+            match t.kind {
+                SyntaxKind::LArrow => return Some(i - self.pos),
+                SyntaxKind::Eq if depth <= 0 => return None,
+                SyntaxKind::InKw => return None,
+                SyntaxKind::LParen | SyntaxKind::LBrack | SyntaxKind::LBrace => depth += 1,
+                SyntaxKind::RParen | SyntaxKind::RBrack | SyntaxKind::RBrace => depth -= 1,
+                _ => {}
+            }
+        }
+        None
+    }
+
     // ---- marker API ----
 
     pub(crate) fn start(&mut self) -> Marker {
@@ -397,6 +467,7 @@ impl<'a> Parser<'a> {
     /// the recovery are unchanged, so the tree the LSP and `fmt` read is the
     /// same.
     pub(crate) fn error(&mut self, msg: impl Into<std::string::String>) {
+        self.error_calls += 1;
         if self.unit_errored {
             return;
         }

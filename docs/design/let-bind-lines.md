@@ -28,12 +28,18 @@ Task.succeed ctx
   `[E3001]`.
 - `<-` anywhere else is a parse error `[E0001]` with the hint "`<-` is a bind
   line; write it as a line of a `let` block". (Before: `[E1014]` unknown
-  operator. Never valid, so not breaking.) Three positions get a hint of
-  their own, still one `[E0001]`: a function head on a `let` line (`g x <- m`:
-  "a bind line binds a pattern, not a function"), an unparenthesised tuple or
-  `::` pattern on a `let` line (`a, b <- e`, `x :: xs <- e`: "put the pattern
-  in parentheses", and for `::` "use `case`"), and a case-arm pattern
-  (`v <- x -> 1`: "a case arm uses `->`").
+  operator. Never valid, so not breaking.) A case-arm pattern (`v <- x -> 1`)
+  gets "a case arm uses `->`".
+- A `let` line with a `<-` (before its own `=`) whose left side is not a
+  pattern is ONE rule, whatever the left side is: one `[E0001]` on the `<-`,
+  "a bind line is `pattern <- expression`. The pattern is a name, `_`, `()`,
+  or a pattern in parentheses, e.g. `( a, b ) <- e`, `(x as y) <- e`. A
+  function goes on an `=` line." The left side is a pattern when it parses as
+  one that ends at the `<-` and, when it starts with a lowercase name, is
+  that name alone (as on an `=` line: `x as y`, `x :: xs` and `g x` are
+  refused). An empty left side says "a bind line needs a pattern: write
+  `_ <- e` to run `e` and drop its result". A refutable pattern still parses
+  and is `[E3001]` later.
 - No custom operators. Nothing else in the syntax changes.
 
 ## 2. Scoping

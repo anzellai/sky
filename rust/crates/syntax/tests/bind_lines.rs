@@ -171,7 +171,7 @@ fn larrow_in_an_expression_is_a_parse_error() {
 fn larrow_after_a_function_binding_head_is_a_parse_error() {
     assert_one_error(
         "x =\n    let\n        f a <- t\n    in\n    f\n",
-        FUNCTION_HEAD_HINT,
+        BIND_LINE_FORM,
     );
 }
 
@@ -220,7 +220,7 @@ fn larrow_in_a_function_parameter_is_a_parse_error() {
     assert_one_error("f (x <- m) = x\n", BIND_HINT);
     assert_one_error(
         "x =\n    let\n        f (y <- m) = y\n    in\n    f\n",
-        BIND_HINT,
+        BIND_LINE_FORM,
     );
 }
 
@@ -230,7 +230,7 @@ fn larrow_in_a_type_annotation_is_a_parse_error() {
     assert_one_error("f : Int -> Int <- Int\nf x =\n    x\n", BIND_HINT);
     assert_one_error(
         "x =\n    let\n        g : Int <- Int\n        g = 1\n    in\n    g\n",
-        BIND_HINT,
+        BIND_LINE_FORM,
     );
 }
 
@@ -339,51 +339,218 @@ fn larrow_inserted_anywhere_carries_the_bind_line_hint() {
     );
 }
 
-/// A `<-` that is already a line of a `let` block, written with a shape a
-/// bind line cannot take, gets a hint that names the shape (not the
-/// "write it as a line of a `let` block" hint, which it already is).
-const FUNCTION_HEAD_HINT: &str = "a bind line binds a pattern, not a function";
-const PARENS_HINT: &str = "put the pattern in parentheses";
+/// The one diagnostic for a `let` line with a `<-` whose left side is not a
+/// bind-line pattern (design §1), and its variant for an empty left side.
+const BIND_LINE_FORM: &str = "a bind line is `pattern <- expression`. The pattern is a name, `_`, `()`, or a pattern in parentheses, e.g. `( a, b ) <- e`, `(x as y) <- e`. A function goes on an `=` line.";
+const NEEDS_PATTERN: &str =
+    "a bind line needs a pattern: write `_ <- e` to run `e` and drop its result";
 const CASE_ARM_HINT: &str = "a case arm uses `->`";
 
-#[test]
-fn larrow_after_a_function_head_in_a_let_names_the_function() {
-    let src = "x =\n    let\n        g x <- m\n    in\n    g\n";
-    assert_one_error(src, FUNCTION_HEAD_HINT);
-    let msg = p(src).errors()[0].message.clone();
-    assert!(
-        msg.contains("`x <- m`") && msg.contains("define `g` with `=`"),
-        "{msg}"
-    );
-    assert_one_error(
-        "x =\n    let\n        go a b <- step a\n        y = 1\n    in\n    y\n",
-        FUNCTION_HEAD_HINT,
-    );
+const RESERVED: [&str; 13] = [
+    "module", "exposing", "import", "as", "type", "alias", "if", "then", "else", "case", "of",
+    "let", "in",
+];
+
+fn let_line(lhs: &str, op: &str) -> String {
+    format!("x =\n    let\n        {lhs} {op} e\n        y = 1\n    in\n    y\n")
 }
 
+fn is_clean(src: &str) -> bool {
+    let parsed = p(src);
+    parsed.errors().is_empty() && parsed.error_node_count() == 0 && parsed.reprint() == src
+}
+
+/// `lhs` is a pattern in a position that takes any pattern (a case arm).
+fn parses_as_pattern(lhs: &str) -> bool {
+    is_clean(&format!(
+        "x =\n    case m of\n        {lhs} ->\n            1\n"
+    ))
+}
+
+/// Property, exhaustive over left sides: a `let` line `L <- e` is either a
+/// clean bind line (L is a pattern, and a lowercase start is a name alone, as
+/// on an `=` line), or exactly one `[E0001]` with the bind-line form whose
+/// fix, applied, parses: `( L ) <- e` when L is a pattern, `L = e` when it is
+/// a function head, else a pattern such as `_` in its place.
 #[test]
-fn unparenthesised_cons_or_comma_pattern_on_a_bind_line_asks_for_parentheses() {
-    for src in [
-        "x =\n    let\n        a, b <- e\n    in\n    a\n",
-        "x =\n    let\n        a, b, c <- e\n        y = 1\n    in\n    a\n",
-        "x =\n    let\n        _, b <- e\n    in\n    b\n",
-        "x =\n    let\n        ( a, b ), c <- e\n    in\n    a\n",
+fn every_let_line_left_side_gets_one_error_with_a_fix_that_parses() {
+    let mut sides: Vec<String> = vec![
+        "",
+        "x",
+        "_",
+        "()",
+        "(a)",
+        "( a, b )",
+        "{ a, b }",
+        "[ a, b ]",
+        "(x as y)",
+        "x as y",
+        "_ as y",
+        "( a, b ) as p",
+        "x :: xs",
+        "(x :: xs)",
+        "a, b",
+        "a, b, c",
+        "_, b",
+        "( a, b ), c",
+        "g x",
+        "go a b",
+        "g (Just x)",
+        "g _",
+        "x y z",
+        "_ x",
+        "x.y",
+        ".y",
+        "M.x",
+        "a + b",
+        "a - b",
+        "-1",
+        "1",
+        "1.5",
+        "\"s\"",
+        "'c'",
+        "True",
+        "\"\"\"m\"\"\"",
+        "Just x",
+        "(Just x)",
+        "Just (x)",
+        "Wrap a b",
+        "(Wrap a b)",
+        "M.Wrap a",
+        "(M.Wrap a)",
+        "Nothing",
+        "Wrap",
+        "M.Wrap",
+        "{ r | a }",
+        "{ a = 1 }",
+        "(",
+        ")",
+        "[",
+        "]",
+        "{",
+        "}",
+        "( a",
+        "a )",
+        "\\x",
+        "\\x -> x",
+        "x -> y",
+        "x : Int",
+        "f x : Int",
+        "(x <- y)",
+        "[ x <- y ]",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    for op in [
+        "+", "-", "*", "/", "//", "%", "++", "::", "==", "/=", "<", ">", "<=", ">=", "&&", "||",
+        "|>", "<|", ">>", "<<", "^", ".", ",", ":", "->", "\\", "|", "..",
     ] {
-        assert_one_error(src, PARENS_HINT);
-        let msg = p(src).errors()[0].message.clone();
-        assert!(msg.contains("`( a, b ) <- e`"), "{msg}");
+        sides.push(op.to_string());
+        sides.push(format!("a {op}"));
+        sides.push(format!("{op} a"));
+        sides.push(format!("a {op} b"));
+        sides.push(format!("({op})"));
     }
-    for src in [
-        "x =\n    let\n        x :: xs <- e\n    in\n    x\n",
-        "x =\n    let\n        Just h :: t <- e\n        y = 1\n    in\n    h\n",
+    for kw in [
+        "if", "then", "else", "case", "of", "let", "type", "alias", "module", "import", "exposing",
+        "as", "foreign", "where", "port",
     ] {
-        assert_one_error(src, PARENS_HINT);
-        let msg = p(src).errors()[0].message.clone();
-        assert!(msg.contains("use `case`"), "{msg}");
+        sides.push(kw.to_string());
+        sides.push(format!("x {kw}"));
+        sides.push(format!("({kw})"));
     }
-    // The parenthesised forms still parse as bind lines.
-    assert_clean("x =\n    let\n        ( a, b ) <- e\n    in\n    a\n");
-    assert_clean("x =\n    let\n        (h :: t) <- e\n    in\n    h\n");
+    let mut errors = 0;
+    for lhs in &sides {
+        let src = let_line(lhs, "<-");
+        let parsed = p(&src);
+        assert_eq!(parsed.reprint(), src, "round-trip for {src:?}");
+        let lower_compound =
+            lhs.starts_with(|c: char| c.is_ascii_lowercase()) && lhs.split_whitespace().count() > 1;
+        let lower_kw = ["foreign", "where", "port"].contains(&lhs.as_str());
+        if !lhs.is_empty() && parses_as_pattern(lhs) && !lower_compound && !lower_kw {
+            assert!(
+                is_clean(&src),
+                "{lhs:?} is a pattern, so a bind line: {src:?}"
+            );
+            continue;
+        }
+        if lower_kw && is_clean(&src) {
+            continue; // `foreign` / `where` / `port` are ordinary names
+        }
+        errors += 1;
+        let msgs: Vec<_> = parsed
+            .errors()
+            .iter()
+            .map(|d| (d.code.0.clone(), d.message.clone()))
+            .collect();
+        let want = if lhs.is_empty() {
+            NEEDS_PATTERN
+        } else {
+            BIND_LINE_FORM
+        };
+        // A reserved word used as the name is named as such (its fix is
+        // another name), by the reserved-word pass over the same one error.
+        let reserved = lhs
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .find(|w| RESERVED.contains(w));
+        let named_reserved =
+            |m: &str| reserved.is_some_and(|w| m.starts_with(&format!("`{w}` is a reserved word")));
+        assert!(
+            msgs.len() == 1
+                && msgs[0].0 == "E0001"
+                && (msgs[0].1 == want || named_reserved(&msgs[0].1)),
+            "{lhs:?}: expected one [E0001] {want:?}, got {msgs:?}"
+        );
+        // The fix the message names, applied, parses.
+        let fixed = [
+            let_line(&format!("({lhs})"), "<-"),
+            let_line(lhs, "="),
+            let_line("_", "<-"),
+        ];
+        let fix = fixed.iter().position(|f| is_clean(f));
+        assert!(fix.is_some(), "no named fix for {lhs:?} parses");
+        if parses_as_pattern(&format!("({lhs})")) {
+            assert!(is_clean(&fixed[0]), "`( {lhs} ) <- e` must parse");
+        }
+    }
+    assert!(
+        sides.len() > 200 && errors > 150,
+        "{} sides, {errors} errors",
+        sides.len()
+    );
+    // The named shapes take the fix the message gives them.
+    for (lhs, fix) in [
+        ("a, b", "( a, b )"),
+        ("x as y", "(x as y)"),
+        ("x :: xs", "(x :: xs)"),
+    ] {
+        assert!(!is_clean(&let_line(lhs, "<-")), "{lhs}");
+        assert!(is_clean(&let_line(fix, "<-")), "{fix}");
+    }
+    for head in ["g x", "go a b", "g (Just x)"] {
+        assert!(is_clean(&let_line(head, "=")), "{head}");
+    }
+}
+
+/// The error sits on the `<-`, the line before and after still parse, and a
+/// whole program around it gives that one diagnostic.
+#[test]
+fn a_bind_line_with_a_wrong_left_side_reports_on_its_arrow_only() {
+    let src =
+        "x =\n    let\n        a = 1\n        g a <- step a\n        b <- Just a\n    in\n    b\n";
+    let parsed = p(src);
+    assert_eq!(parsed.errors().len(), 1);
+    let arrow = src.find("<-").unwrap() as u32;
+    assert!(parsed.errors()[0]
+        .labels
+        .iter()
+        .any(|l| l.span.range == (arrow, arrow + 2)));
+    assert_eq!(binds(&parsed).len(), 2);
+    assert_one_error(
+        "x =\n    let\n        <- println \"x\"\n    in\n    1\n",
+        NEEDS_PATTERN,
+    );
 }
 
 #[test]
@@ -398,8 +565,5 @@ fn larrow_in_a_case_arm_pattern_says_case_arms_use_arrow() {
 /// The bind-line hint, or one of the hints for a position that is already a
 /// `let` line or a case arm.
 fn is_bind_hint(m: &str) -> bool {
-    m == BIND_HINT
-        || m.starts_with(FUNCTION_HEAD_HINT)
-        || m.starts_with(PARENS_HINT)
-        || m.starts_with(CASE_ARM_HINT)
+    m == BIND_HINT || m == BIND_LINE_FORM || m == NEEDS_PATTERN || m.starts_with(CASE_ARM_HINT)
 }
