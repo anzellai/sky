@@ -1331,11 +1331,19 @@ fn check_modules_with_world_reporting(
                 }
                 None => infer.infer_def(body),
             };
-            for err in infer
-                .errors
-                .iter()
-                .chain(world.app_group_errors.get(def).into_iter().flatten())
-            {
+            // A recursive group's error that the def's own run also found
+            // (the same code, place and text) is reported once.
+            let own = &infer.errors;
+            let group_only = world
+                .app_group_errors
+                .get(def)
+                .into_iter()
+                .flatten()
+                .filter(|g| {
+                    !own.iter()
+                        .any(|e| e.code == g.code && e.span == g.span && e.message == g.message)
+                });
+            for err in own.iter().chain(group_only) {
                 out.type_errors += 1;
                 out.diagnostics.push(Diagnostic {
                     severity: Severity::Error,
@@ -1433,7 +1441,14 @@ fn check_modules_with_world_reporting(
             );
 
             // exhaustiveness (warnings, not type errors)
-            let warns = exhaustive::check_body(body, &world);
+            let mut warns = exhaustive::check_body(body, &world, &module_src);
+            // A pattern span starts at the trivia before it: point at the
+            // pattern itself, as the type errors above do.
+            for w in &mut warns {
+                for l in &mut w.labels {
+                    l.span = trim_leading_ws(&module_src, l.span);
+                }
+            }
             out.exhaustiveness_warnings += warns.len();
             out.diagnostics.extend(warns);
 

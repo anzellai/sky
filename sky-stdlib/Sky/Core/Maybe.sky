@@ -60,6 +60,7 @@ map fn m =
             Nothing
 
 
+andThen : (a -> Maybe b) -> Maybe a -> Maybe b
 andThen fn m =
     case m of
 

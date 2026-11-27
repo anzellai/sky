@@ -13,6 +13,7 @@
 
 use base::Name;
 
+mod bind;
 mod check;
 pub mod codec_elem;
 pub mod counters;
@@ -38,11 +39,15 @@ pub mod tytable;
 mod unify;
 pub mod variance;
 
+pub use bind::{
+    bind_calls, body_has_bind, candidate_and_thens, compute_bind_elaboration, elaborate_body,
+    BindElaboration,
+};
 pub use check::{
     check_modules, check_modules_with_world, check_modules_with_world_without_report_types,
     undefined_types, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
 };
-pub use db::{compute_body_types, compute_body_types_with, TyDb};
+pub use db::{compute_body_types, compute_body_types_elaborated, compute_body_types_with, TyDb};
 pub use infer::RecordOverlay;
 pub use sig::{
     body_updates_a_param, caller_param_records, callsite_param_records_for, declared_param_record,

@@ -91,7 +91,7 @@ fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
 pub struct Infer<'a> {
     numeric: Option<numeric::RawNumeric>,
     recursive_type: Option<TyVarId>,
-    provisional_defs: std::rc::Rc<HashMap<DefId, TyVarId>>,
+    pub(crate) provisional_defs: std::rc::Rc<HashMap<DefId, TyVarId>>,
     pub(crate) world: &'a World,
     pub(crate) db: &'a dyn SkyDb,
     pub uf: UnionFind,
@@ -172,6 +172,10 @@ pub struct Infer<'a> {
     /// `Codec.auto`. Read by `World::infer_annotated_bounds`, which adds them
     /// to the scheme callers see.
     pub inferred_bounds: Vec<(Name, SuperType)>,
+    /// Bind lines whose `andThen` is not chosen yet (`crate::bind`).
+    pub(crate) pending_binds: Vec<crate::bind::PendingBind>,
+    /// The `andThen` chosen for each bind line, by its `Call` (`crate::bind`).
+    pub(crate) bind_choices: Vec<(ExprId, Res)>,
     /// Per-def entries that take the place of the world's own in its two
     /// lowering-only record channels (see [`RecordOverlay`]).
     overlay: Option<&'a RecordOverlay>,
@@ -244,6 +248,8 @@ impl<'a> Infer<'a> {
             page_ties: Vec::new(),
             bound_seen: std::collections::HashSet::new(),
             inferred_bounds: Vec::new(),
+            pending_binds: Vec::new(),
+            bind_choices: Vec::new(),
             overlay: None,
             #[cfg(test)]
             no_fast_paths: FORCE_GENERAL_PATHS.with(|f| f.get()),
@@ -421,6 +427,11 @@ impl<'a> Infer<'a> {
             self.check_value_restriction(body, &exported, false);
         }
         Some(self.read_back(v))
+    }
+
+    /// The `andThen` chosen for each bind line of this run (`crate::bind`).
+    pub(crate) fn take_bind_choices(&mut self) -> Vec<(ExprId, Res)> {
+        std::mem::take(&mut self.bind_choices)
     }
 
     /// Infer a body while recording a per-expression + per-local type table —
@@ -944,16 +955,19 @@ impl<'a> Infer<'a> {
         );
         let mut pending = Vec::new();
         let mut page_ties = Vec::new();
+        let mut pending_binds = Vec::new();
         let mut errors = HashMap::new();
         for &(def, body) in members {
             let mut infer = Infer::new(world, db).with_self_def(Some(def));
             std::mem::swap(&mut infer.uf, &mut solver);
             infer.provisional_defs = provisional.clone();
             infer.obligations = std::mem::take(&mut pending);
+            infer.pending_binds = std::mem::take(&mut pending_binds);
             infer.page_ties = std::mem::take(&mut page_ties);
             infer.cur_span = body.root.and_then(|r| body.expr_span(r));
             infer.infer_def_vars(body);
             pending = std::mem::take(&mut infer.obligations);
+            pending_binds = std::mem::take(&mut infer.pending_binds);
             page_ties = std::mem::take(&mut infer.page_ties);
             errors.insert(def, std::mem::take(&mut infer.errors));
             std::mem::swap(&mut infer.uf, &mut solver);
@@ -961,6 +975,8 @@ impl<'a> Infer<'a> {
         let mut finish = Infer::new(world, db);
         std::mem::swap(&mut finish.uf, &mut solver);
         finish.obligations = pending;
+        finish.pending_binds = pending_binds;
+        finish.provisional_defs = provisional.clone();
         finish.page_ties = page_ties;
         finish.discharge_bounds(true);
         for error in finish.errors.drain(..) {
@@ -1398,7 +1414,7 @@ impl<'a> Infer<'a> {
 
     /// Append `note` to every error recorded since `from` that does not carry
     /// it yet.
-    fn append_note(&mut self, from: usize, note: Option<String>) {
+    pub(crate) fn append_note(&mut self, from: usize, note: Option<String>) {
         let Some(note) = note else { return };
         for err in &mut self.errors[from..] {
             if !err.message.contains("#any-in-annotations") {
@@ -1407,7 +1423,7 @@ impl<'a> Infer<'a> {
         }
     }
 
-    fn unify(&mut self, a: TyVarId, b: TyVarId) {
+    pub(crate) fn unify(&mut self, a: TyVarId, b: TyVarId) {
         let res = self.uf.unify(a, b);
         self.finish_unify(res);
     }
@@ -1708,6 +1724,61 @@ impl<'a> Infer<'a> {
                     .into_iter()
                     .rev()
                     .fold(rb, |acc, pv| self.fun(pv, acc))
+            }
+            // A bind line `p <- e` (docs/design/let-bind-lines.md §4): the
+            // `andThen` is chosen from the type of `e`, at once when its head
+            // is known, else at the end of the def (`crate::bind`).
+            Expr::Call(callee, args)
+                if args.len() == 2
+                    && matches!(body.exprs[*callee], Expr::Var(Res::BindAndThen)) =>
+            {
+                let (lam, ex) = (args[0], args[1]);
+                let te = self.infer_expr(body, ex);
+                let tlam = self.uf.fresh_flex();
+                let result = self.uf.fresh_flex();
+                let rest = self.fun(te, result);
+                let callee_ty = self.fun(tlam, rest);
+                if self.record_exprs {
+                    self.expr_vars.push((*callee, callee_ty));
+                }
+                let pat_text = match &body.exprs[lam] {
+                    Expr::Lambda { params, .. } if params.len() == 1 => {
+                        crate::bind::pat_text(self.db, self.self_def, body, params[0])
+                    }
+                    _ => "…".to_string(),
+                };
+                let span = body.expr_span(*callee).or(self.cur_span);
+                let chosen_before = self.bind_choices.len();
+                self.start_bind(crate::bind::PendingBind {
+                    call: e,
+                    callee_ty,
+                    e_ty: te,
+                    span,
+                    module: self
+                        .self_def
+                        .and_then(|d| self.db.def_loc(d))
+                        .map(|l| l.module),
+                    pat_text,
+                });
+                let head = (self.bind_choices.len() > chosen_before)
+                    .then(|| self.read_back(te))
+                    .and_then(|t| match &t {
+                        Ty::App(n, _) => Some(crate::nominal::strip(n.as_str()).to_string()),
+                        _ => None,
+                    });
+                let tl = self.infer_expr(body, lam);
+                let before = self.errors.len();
+                // A clash here is the rest of the block against this line.s
+                // type: report it at the `<-`.
+                let saved = self.cur_span;
+                self.cur_span = span;
+                self.unify(tl, tlam);
+                self.cur_span = saved;
+                if let Some(head) = head {
+                    let note = crate::bind::mixed_note(&head);
+                    self.append_note(before, Some(note));
+                }
+                result
             }
             Expr::Call(callee, args) => {
                 let mut tf = self.infer_expr(body, *callee);
@@ -2449,7 +2520,7 @@ impl<'a> Infer<'a> {
 
     /// [`Self::infer_res_plain`], then (v0.30.0, CHECK-ONLY) the routed page
     /// ties of a use of a routing def (`crate::obligations::PageTie`).
-    fn infer_res(&mut self, res: Res) -> TyVarId {
+    pub(crate) fn infer_res(&mut self, res: Res) -> TyVarId {
         let def = match &res {
             Res::Def(d) if !self.use_inferred && self.self_def != Some(*d) => Some(*d),
             _ => None,
@@ -2608,15 +2679,12 @@ impl<'a> Infer<'a> {
                 }
             }
             Res::Foreign { package, name } => self.foreign_ref(&package, &name),
-            // The `andThen` of a bind line `p <- e`. Choosing it from the
-            // type of `e` is not built yet (docs/design/let-bind-lines.md §4),
-            // so a bind line is a hard error here: never a fresh type that a
-            // build would lower to wrong code.
+            // The placeholder of a bind line is typed by its `Call` (the bind
+            // arm of `infer_expr_inner`). Anywhere else it is a resolver bug.
             Res::BindAndThen => {
                 self.errors.push(TypeError {
-                    message: "internal compiler error: this build of Sky parses bind lines \
-                              (`p <- e` in a `let` block) but cannot type them yet. Write the \
-                              line with `andThen` instead: `e |> andThen (\\p -> …)`."
+                    message: "internal compiler error: a bind line placeholder outside its \
+                              bind line (docs/design/let-bind-lines.md §2)"
                         .to_string(),
                     span: self.cur_span,
                     code: "E2001",
@@ -3128,7 +3196,7 @@ impl<'a> Infer<'a> {
     /// emitted Go stays byte-identical. Only `Number` has an unambiguous
     /// single concrete default; `Comparable`/`Appendable`/`CompAppend` keep the
     /// drop-to-quantifier behaviour even under `concretize_super`.
-    fn read_back_scheme(&mut self, v: TyVarId, concretize_super: bool) -> Ty {
+    pub(crate) fn read_back_scheme(&mut self, v: TyVarId, concretize_super: bool) -> Ty {
         let mut seen = std::collections::HashSet::new();
         self.read_back_seen(v, &mut seen, true, concretize_super)
     }

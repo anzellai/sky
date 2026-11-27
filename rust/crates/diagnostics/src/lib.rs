@@ -312,6 +312,8 @@ fn code_title(code: &str) -> &'static str {
         "E2012" => "VALUE RESTRICTION",
         "E2013" => "GO INTERFACE ARGUMENT",
         "E2014" => "INVALID REGEX",
+        "E2015" => "BIND NEEDS A TYPE",
+        "E2016" => "NO ANDTHEN",
         "E3001" => "MISSING PATTERNS",
         "E4005" => "CODEGEN ERROR",
         // E5xxx: the Std.I18n catalogue check (docs/errors/i18n-catalogues.md).

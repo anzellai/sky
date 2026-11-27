@@ -455,6 +455,9 @@ impl Infer<'_> {
     /// open record is kept for later. The lowering path never raises bounds
     /// (`Infer::fresh_for_name`), so it has nothing to decide.
     pub(crate) fn discharge_bounds(&mut self, fin: bool) {
+        // Bind lines first: a chosen `andThen` adds the constraints the
+        // bounds below are decided on (docs/design/let-bind-lines.md §4).
+        self.solve_pending_binds(fin);
         if self.use_inferred_path() {
             self.uf.pending.clear();
             self.obligations.clear();

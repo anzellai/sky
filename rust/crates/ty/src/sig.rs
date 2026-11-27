@@ -1084,6 +1084,17 @@ impl World {
                             }
                         })
                         .collect();
+                    // A bind line chooses its `andThen` from a type, not a
+                    // name, so it has no `Res::Def` edge. Order every
+                    // candidate first, conservatively
+                    // (docs/design/let-bind-lines.md §4).
+                    if crate::bind::body_has_bind(&resolved.bodies[d]) {
+                        deps.extend(
+                            crate::bind::candidate_and_thens(db, m)
+                                .iter()
+                                .filter_map(|c| indices.get(c).copied()),
+                        );
+                    }
                     deps.sort_unstable();
                     deps.dedup();
                     deps
