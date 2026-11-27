@@ -9,7 +9,9 @@
 //
 //   seal   a client arm that spends a single-use Noise state while a server
 //          RPC is in flight runs once: STATUS=rpc done SEALS=1 (the old client
-//          re-ran it on a spent state: "this state value was already used")
+//          re-ran it on a spent state: "this state value was already used");
+//          on Sky.Live the reply to the click is held 400 ms, and the seal
+//          still shows before the call ends, with no resync
 //   timer  ticks during a call see busy = True; the calls keep coming (the old
 //          client stalled at STARTED=2 DONE=1)
 //   basket an add holds for a server price and records a follow-up
@@ -42,6 +44,8 @@ const PORT = Number(arg("--port", "9361"));
 const BROWSERS = (process.env.SKY_E2E_BROWSERS || "chromium").split(",").map((s) => s.trim()).filter(Boolean);
 const HEADED = process.env.SKY_E2E_HEADED === "1";
 const CHANNEL = process.env.SKY_E2E_CHANNEL || undefined;
+// How long the reply to the Seal click is held on Sky.Live (see the seal step).
+const SEAL_REPLY_DELAY_MS = 400;
 
 const failures = [];
 function check(step, ok, detail) {
@@ -103,10 +107,38 @@ async function scenario(browserName, target, url) {
     check(`${tag} seal: transport built`, ready.includes("STATUS=ready SEALS=0"), ready);
     await page.click("#go");
     await page.waitForTimeout(300);
+    // The seal must apply while the 2 s server call still runs. That is a
+    // question of ORDER (the Seal view before the SlowDone view), not of how
+    // fast the Seal reply comes back: the check waits until the row shows the
+    // seal or the call's end, and passes only on "in flight SEALS=1". It used
+    // to read the row a fixed 200 ms after the click, and one CI run read it
+    // before Sky.Live's reply to the click had arrived (SEALS=0, the reply
+    // applied a moment later, still before SlowDone). On Sky.Live the reply
+    // to the Seal click is held SEAL_REPLY_DELAY_MS here on every run, so a
+    // slow reply is the case this step always measures, and the reply must
+    // apply as it is: a resync request would mean the client held it.
+    const sealed = { sentAt: 0, answeredMs: -1, resyncs: 0 };
+    await page.route("**/_sky/event", async (route) => {
+      let body = {};
+      try { body = JSON.parse(route.request().postData() || "{}"); } catch (_) {}
+      if (body.msg === "__skyResync") sealed.resyncs++;
+      if (body.msg === "Seal") {
+        sealed.sentAt = Date.now();
+        await new Promise((r) => setTimeout(r, SEAL_REPLY_DELAY_MS));
+        const resp = await route.fetch();
+        sealed.answeredMs = Date.now() - sealed.sentAt;
+        return route.fulfill({ response: resp });
+      }
+      return route.continue();
+    });
     await page.click("#sealbtn");
-    await page.waitForTimeout(200);
-    const during = await text(page, "seal");
-    check(`${tag} seal: runs during the RPC`, during === "STATUS=rpc in flight SEALS=1", during);
+    const during = await waitFor(page, "seal", (v) => v.includes("SEALS=1") || !v.includes("in flight"), 15000);
+    const reply = target === "live" ? ` (reply after ${sealed.answeredMs} ms, ${sealed.resyncs} resyncs)` : "";
+    check(`${tag} seal: runs during the RPC`, during === "STATUS=rpc in flight SEALS=1", during + reply);
+    if (target === "live") {
+      check(`${tag} seal: the reply to the click applies, no resync`, sealed.answeredMs >= SEAL_REPLY_DELAY_MS && sealed.resyncs === 0, reply);
+    }
+    await page.unroute("**/_sky/event");
     const after = await waitFor(page, "seal", (v) => !v.includes("in flight"), 15000);
     check(`${tag} seal: after the RPC`, after === "STATUS=rpc done SEALS=1", after);
 
