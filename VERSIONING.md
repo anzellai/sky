@@ -17,9 +17,9 @@ The single source of truth for "what version is this" is **`[workspace.package]
 version` in [`rust/Cargo.toml`](rust/Cargo.toml)**. A release bumps it in the
 same commit as the newest `## vX.Y.Z` heading in [`CHANGELOG.md`](CHANGELOG.md).
 The release workflow checks that the tag, workspace version and heading agree.
-The README status banner and `AGENTS.md`'s "Current line" are checked against
-the changelog by `rust/crates/xtask/tests/docs_state_the_current_version.rs`.
-Current line: **v0.30.x**.
+The README status banner, `AGENTS.md`'s and this file's "Current line" and the
+`SECURITY.md` supported line are checked against the workspace version by `rust/crates/xtask/tests/docs_state_the_current_version.rs`.
+Current line: **v0.32.x**.
 
 ## Pre-1.0 (0.x) — the reality today
 
