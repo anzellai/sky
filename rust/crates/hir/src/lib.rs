@@ -31,9 +31,10 @@ pub use hir::{
 };
 pub use ids::{CtorRef, DefKind, DefLoc, DefTable, LocalId, Res, TypeRes};
 pub use kernel::{
-    is_reserved_sky_namespace, kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS,
-    DEFAULT_QUALIFIED_IMPORTS, KERNEL_FUNCTIONS, KERNEL_IMPLICIT_TYPES, KERNEL_MODULES,
-    PRELUDE_PROTECTED, PRELUDE_QUALIFIERS,
+    is_reserved_sky_namespace, kernel_functions, kernel_implicit_home, BUILTIN_CTORS,
+    BUILTIN_TYPES, BUILTIN_VARS, DEFAULT_QUALIFIED_IMPORTS, KERNEL_FUNCTIONS,
+    KERNEL_IMPLICIT_HOMES, KERNEL_IMPLICIT_TYPES, KERNEL_MODULES, PRELUDE_PROTECTED,
+    PRELUDE_QUALIFIERS,
 };
 pub use resolve::{
     resolve, BinderDef, ClassA, ClassB, FieldDecl, FieldOcc, FieldRecv, RefKind, RefOcc,

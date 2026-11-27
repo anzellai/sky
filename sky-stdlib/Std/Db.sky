@@ -51,6 +51,7 @@ module Std.Db exposing
     )
 
 import Sky.Ffi as Ffi
+import Std.Db.Decode as DbDecode
 import Sky.Core.List as List
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Maybe as Maybe
@@ -212,7 +213,7 @@ unsafeFindWhere =
 -- each row's columns into a typed `b`.  Returns a `List b` on
 -- success; the first row-decoder failure short-circuits the entire
 -- task with `Err`.
-queryDecode : Db -> String -> List a -> Decoder b -> Task Error (List b)
+queryDecode : Db -> String -> List a -> DbDecode.Decoder b -> Task Error (List b)
 queryDecode =
     Ffi.kernel "Db_queryDecode"
 
@@ -222,7 +223,7 @@ queryDecode =
 -- the decoded value otherwise.  Decoder failure surfaces as
 -- `Err Error` (not `Ok Nothing`) — the row exists but didn't match
 -- the expected shape.
-getByIdDecode : Db -> String -> Int -> Decoder a -> Task Error (Maybe a)
+getByIdDecode : Db -> String -> Int -> DbDecode.Decoder a -> Task Error (Maybe a)
 getByIdDecode =
     Ffi.kernel "Db_getByIdDecode"
 
@@ -587,6 +588,6 @@ insertFields =
 --
 -- Requires SQLite ≥ 3.35 (Mar 2021) or PostgreSQL — same as every
 -- other `RETURNING` use already in `Std.Db`.  (#586)
-insertFieldsReturning : Db -> String -> List ( String, SqlField ) -> String -> Decoder a -> Task Error (List a)
+insertFieldsReturning : Db -> String -> List ( String, SqlField ) -> String -> DbDecode.Decoder a -> Task Error (List a)
 insertFieldsReturning =
     Ffi.kernel "Db_insertFieldsReturning"

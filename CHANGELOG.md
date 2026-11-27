@@ -11,6 +11,27 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.32.0 — bind lines in let blocks (unreleased)
+
+### ⚠ Breaking changes
+
+- **`Std.Db.Decode` has its own `Decoder` type.** A row decoder was the same
+  type as a JSON decoder, so `Decode.decodeString (DbDecode.int "age") text`
+  passed `sky check` and panicked at run time. Now `Std.Db.Decode.Decoder` is
+  its own opaque type, and the bare `Decoder` (written with no import) is the
+  JSON decoder of `Sky.Core.Json.Decode`. Mixing the two is `[E2001]`. Code
+  that wrote a row decoder's type as `Decoder User` writes `DbDecode.Decoder
+  User` (`import Std.Db.Decode as DbDecode`). See `docs/migration/v0.32.md`.
+- **The bare `Decoder` is never a `Std.Config` or `Std.Xml.Decode` decoder.**
+  The audit of the kernel-implicit type names found the same hole there: the
+  bare name unified with every module's own `Decoder`, so a TOML or XML
+  decoder passed to `Json.Decode.decodeString` was accepted. Write
+  `Config.Decoder` / `XmlDecode.Decoder`, or import the type by name.
+- **`Decoder` under two `exposing (..)` imports is `[E1012]`.**
+  `Sky.Core.Json.Decode`, `Std.Db.Decode` and `Std.Config` each export a
+  `Decoder`. A module that exposes two of them with `(..)` and writes the bare
+  name gets `[E1012]`. Qualify it.
+
 ## v0.31.2 — the app icon reaches Std.App mobile releases (2026-11-24)
 
 ### Fixed

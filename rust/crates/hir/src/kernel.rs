@@ -986,6 +986,28 @@ pub const KERNEL_IMPLICIT_TYPES: &[&str] = &[
     "Error",
 ];
 
+/// The HOME of a kernel-implicit type: the stdlib module whose own `type`
+/// declaration the bare name denotes. A kernel-implicit name with a home is
+/// not a "module unknown" wildcard (`ty::nominal::same`): `ty::sig` writes
+/// every reference to it as the home declaration's qualified key, so it never
+/// unifies with a same-named type another module declares.
+///
+/// `Decoder` (v0.32.0): `Std.Config`, `Std.Db.Decode` and `Std.Xml.Decode`
+/// each declare their own `Decoder`, with a runtime form different from the
+/// JSON decoder handle. While the bare name was a wildcard, a row decoder
+/// passed to `Json.Decode.decodeString` passed `sky check` and panicked.
+/// A name with no same-named stdlib declaration of a different runtime form
+/// needs no home (`ty/tests/kernel_implicit_homes.rs` audits the list).
+pub const KERNEL_IMPLICIT_HOMES: &[(&str, &str)] = &[("Decoder", "Sky.Core.Json.Decode")];
+
+/// The home module of the kernel-implicit type `name`, if it has one.
+pub fn kernel_implicit_home(name: &str) -> Option<&'static str> {
+    KERNEL_IMPLICIT_HOMES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, m)| *m)
+}
+
 /// Prelude-protected names (Module.hs:872): a user union whose type or ctor name
 /// collides with one of these is a hard error (C14), except at the name's own
 /// canonical home.

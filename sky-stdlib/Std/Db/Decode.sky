@@ -6,11 +6,12 @@
 -- `Db.queryDecode` (for SELECT-many) or `Db.getByIdDecode` (for
 -- SELECT-one-by-id).
 --
--- `Decoder` is a kernel-implicit Prelude type — it's available in
--- every Sky module without explicit import (alongside `Db`, `Value`,
--- `Attribute`, `Handler`, `Cmd`, `Sub`, `Request`, `Response`,
--- `Error`, `VNode`).  `import Std.Db.Decode exposing (Decoder, ...)`
--- is therefore redundant but still accepted as a no-op (#576).
+-- `Decoder` is this module's own opaque type (since v0.32.0). It is
+-- not the `Decoder` of `Sky.Core.Json.Decode`: a row decoder reads SQL
+-- columns, a JSON decoder reads JSON, and the checker refuses to mix
+-- them ([E2001]). Write the type as `DbDecode.Decoder User` (with
+-- `import Std.Db.Decode as DbDecode`), or import it with
+-- `import Std.Db.Decode exposing (Decoder)`.
 --
 -- The combinator shape mirrors `Sky.Core.Json.Decode` / `.Pipeline`,
 -- intentionally — code that already does JSON decoding gets a
@@ -26,7 +27,7 @@
 --         , age   : Maybe Int
 --         }
 --
---     userDecoder : Decoder User
+--     userDecoder : Db.Decode.Decoder User
 --     userDecoder =
 --         Db.Decode.succeed (\i e a -> { id = i, email = e, age = a })
 --             |> Db.Decode.andMap (Db.Decode.int "id")
@@ -37,7 +38,8 @@
 --     users db =
 --         Db.queryDecode db "SELECT id, email, age FROM users" [] userDecoder
 module Std.Db.Decode exposing
-    ( string
+    ( Decoder
+    , string
     , int
     , float
     , bool
@@ -58,6 +60,13 @@ module Std.Db.Decode exposing
 
 import Std.Money exposing (Money)
 import Sky.Ffi as Ffi
+
+-- | A way to read an `a` from one SQL row. Opaque: build one with the
+-- combinators below and run it with `Db.queryDecode`, `Db.getByIdDecode`
+-- or `Db.insertFieldsReturning`. It is a different type from
+-- `Sky.Core.Json.Decode.Decoder`.
+type Decoder a
+    = Decoder_OPAQUE
 
 
 -- ─── Primitive column decoders ─────────────────────────────────────

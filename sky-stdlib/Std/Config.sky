@@ -14,7 +14,7 @@
 --
 --     type alias DbCfg = { host : String, port : Int, name : String }
 --
---     dbDecoder : Decoder DbCfg
+--     dbDecoder : Config.Decoder DbCfg
 --     dbDecoder =
 --         Config.succeed (\h p n -> { host = h, port = p, name = n })
 --             |> Config.andThen

@@ -2266,6 +2266,15 @@ fn resolve_type_names(db: &dyn SkyDb, m: ModuleId, t: &ast::Type, keys: TypeKeys
     )
 }
 
+/// The qualified key of a kernel-implicit type's HOME declaration
+/// (`hir::KERNEL_IMPLICIT_HOMES`), when the home module declares it. `None`
+/// keeps the bare "module unknown" name.
+fn kernel_home_key(keys: TypeKeys<'_>, base: &str) -> Option<String> {
+    let home = hir::kernel_implicit_home(base)?;
+    let key = crate::nominal::qualify(home, base);
+    keys.union.contains(&key).then_some(key)
+}
+
 /// Walk a `Ty` (whose `App` names may be qualified — `"Q.Name"`) and rewrite any
 /// name HIR resolves to a declared alias OR union into its module-qualified key;
 /// every other name collapses to its bare final segment (the pre-#164 form). See
@@ -2363,7 +2372,23 @@ fn rewrite_alias_refs(
                             if known {
                                 return Ty::App(Name::new(&key), args);
                             }
+                        } else if loc.kind == DefKind::TypeCon {
+                            // A kernel-implicit type with a HOME
+                            // (`hir::KERNEL_IMPLICIT_HOMES`) is the home's own
+                            // declaration, not a "module unknown" wildcard: the
+                            // bare `Decoder` is the JSON decoder, and it must not
+                            // unify with `Std.Db.Decode.Decoder` (v0.32.0).
+                            if let Some(key) = kernel_home_key(keys, base) {
+                                return Ty::App(Name::new(&key), args);
+                            }
                         }
+                    }
+                } else if full == base {
+                    // The same name written bare with no import: HIR leaves a
+                    // kernel-implicit type unbound (`type_con_at`), and it means
+                    // the same home declaration.
+                    if let Some(key) = kernel_home_key(keys, base) {
+                        return Ty::App(Name::new(&key), args);
                     }
                 }
                 Ty::App(Name::new(base), args)

@@ -166,6 +166,12 @@ signature, result included; an integer out of range across the boundary is an
 `Err`; and a Sky value where Go wants an interface is `[E2013]`. See
 `docs/ffi/boundary-philosophy.md`.
 
+**Upgrading a v0.31 project?** `docs/migration/v0.32.md` lists every change.
+Among them: `Std.Db.Decode` has its own `Decoder` type, and the bare `Decoder`
+(written with no import) is the JSON decoder, so a row, TOML or XML decoder
+written as the bare `Decoder` is `[E2001]` (write `DbDecode.Decoder`,
+`Config.Decoder`, `XmlDecode.Decoder`).
+
 **Upgrading a v0.30 project?** `docs/migration/v0.31.md` lists every change,
 split into loud, loud at run time and silent. Among them: `Codec.dict` with a
 scalar key writes a JSON object (it still reads the old pairs array), a JSON
@@ -1015,7 +1021,7 @@ before assuming a limitation still holds.
 | Internationalisation — `Std.I18n`, `Std.I18n.Format`, catalogues, CLDR data | `docs/i18n.md`, `docs/errors/i18n-catalogues.md` (`sky doc Std.I18n`); example `examples/78-i18n-booking` |
 | Observability / console | `docs/observability.md` |
 | Getting started | `docs/getting-started.md`, `README.md` |
-| Upgrading between minors | `docs/migration/v0.27.md`, `v0.28.md`, `v0.29.md`, `v0.30.md`, `v0.31.md` (loud / loud at run time / silent) |
+| Upgrading between minors | `docs/migration/v0.27.md`, `v0.28.md`, `v0.29.md`, `v0.30.md`, `v0.31.md`, `v0.32.md` (loud / loud at run time / silent) |
 | Sizing: memory, CPU, sessions | `docs/perf/sizing.md` |
 
 ## The test corpus — two layers, and where `examples/` now sits

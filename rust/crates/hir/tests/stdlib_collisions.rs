@@ -37,6 +37,12 @@ use std::path::{Path, PathBuf};
 /// A new entry here is a decision, not a formality: prefer a name that does not
 /// collide. The failure message lists the module pairs for each name.
 const EXPECTED_COLLISIONS: &[&str] = &[
+    // v0.32.0: Sky.Core.Json.Decode and Std.Db.Decode declare their own
+    // `Decoder` (a row decoder is not a JSON decoder), beside Std.Config's.
+    // A program that exposes two of them with `(..)` and writes the bare
+    // `Decoder` gets `[E1012]`: qualify it (`DbDecode.Decoder`). Breaking
+    // line in the v0.32.0 CHANGELOG.
+    "type Decoder",
     // v0.31.0: Json.Decode.dict / Json.Encode.dict (Elm's names) and
     // Std.Codec.dict, which already existed. A program that exposes two of
     // Json.Decode, Json.Encode and Std.Codec with `(..)` and uses the bare

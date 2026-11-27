@@ -1696,7 +1696,7 @@ import Std.Db.Decode as DbDecode
 type alias User =
     { id : Int, name : String, email : String, age : Maybe Int }
 
-userDecoder : Decoder User
+userDecoder : DbDecode.Decoder User
 userDecoder =
     DbDecode.succeed (\i n e a -> { id = i, name = n, email = e, age = a })
         |> DbDecode.andMap (DbDecode.int "id")
@@ -2272,7 +2272,7 @@ decodes JSON gets a consistent vocabulary for TOML and YAML:
 ```elm
 import Std.Config as Config
 
-dbDecoder : Decoder DbCfg
+dbDecoder : Config.Decoder DbCfg
 dbDecoder =
     Config.field "host" Config.string
         |> Config.andThen (\h ->

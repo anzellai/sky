@@ -37,7 +37,7 @@ type alias User =
 -- `Decode.succeed` carries the curried record-builder lambda, every
 -- subsequent `andMap` peels off one decoder + applies it.  The whole
 -- chain types as `Decoder User`.
-userDecoder : Decoder User
+userDecoder : Decode.Decoder User
 userDecoder =
     Decode.succeed (\i n e a -> { id = i, name = n, email = e, age = a })
         |> Decode.andMap (Decode.int "id")
@@ -51,7 +51,7 @@ type alias TitledRow =
     { title : String, rank : Int }
 
 
-titledDecoder : Decoder TitledRow
+titledDecoder : Decode.Decoder TitledRow
 titledDecoder =
     Decode.map2
         (\title rank -> { title = title, rank = rank })
@@ -65,7 +65,7 @@ type alias CountedRow =
     { name : String, count : Int }
 
 
-countedDecoder : Decoder CountedRow
+countedDecoder : Decode.Decoder CountedRow
 countedDecoder =
     Decode.succeed (\n c -> { name = n, count = c })
         |> Decode.andMap (Decode.string "name")
