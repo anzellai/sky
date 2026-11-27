@@ -19,3 +19,12 @@ Branch `feat/let-bind-lines`, from `main` at 9d7cb1958. The previous mandate (v0
 - Update README, docs, AGENTS.md, templates and every place that states the syntax (incl. "no do-notation" text), the docs site and sky-lang.org.
 - Tests that prove the additions work and improve readability and maintainability.
 - Full release cycle: release suite green, merge, tag v0.32.0, roll out to the apps (faceplan QA only).
+
+## Follow-up mandate (verbatim, 2026-11-27, after the v0.32.0 tag)
+
+> change them. also remember to "migrate" in the same fashion for ALL the stdlib/modules we've in sky itself, and also ALL my private apps
+
+"Them" = the five-step `emitTick` chains in examples/30-sse-server-demo and examples/32-sse-relay.
+"In the same fashion" = bind lines where they improve readability; flat one-step pipelines may stay.
+Behaviour must not change (generated Go compared before and after). Private apps: the maintained list in
+the private companion; faceplan stays QA only (no v* tag).

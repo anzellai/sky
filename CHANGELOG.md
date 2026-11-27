@@ -11,6 +11,38 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.32.1 — the standard library uses bind lines (2026-11-28)
+
+### Changed
+
+- **The standard library and two examples use bind lines.** Effect and
+  `Result` / `Maybe` chains in `Std.Ai`, `Std.Durable`, `Std.Codec`,
+  `Std.Db.Store`, the `Sky.Core` / `Http` stream doc examples and the SSE tick
+  chains of `examples/30-sse-server-demo` and `examples/32-sse-relay` are now
+  bind lines. There is no change of behaviour: the generated Go of each
+  changed function was compared before and after.
+
+### Fixed
+
+- **A nested bind line stays typed.** In a `Result` or `Maybe` bind block, the
+  second and later lines lowered to the untyped `Sky.Core.Result.andThen` /
+  `Maybe.andThen` (with a runtime narrowing of the result) when the
+  continuation took a list (`more <- walk rest`) or a value whose Go type is
+  `any` (`Json.Encode.Value`). They now lower to the typed `rt.Result_andThenT`
+  / `rt.Maybe_andThenT`, the same as the first line, and so does a
+  hand-written nested `andThen` of the same shape.
+  The seven `Std.Db.Store` `Result` ladders that stayed as `case` in the
+  migration are bind lines too, and the runtime-narrowing count of every
+  project is equal or lower (two fall by one).
+
+### Migration
+
+- After upgrading to v0.32.x, run `sky fmt` once on a project whose CI runs
+  `sky fmt --check`: v0.32.0's formatter formats every declaration it can and
+  keeps only a declaration whose comment it cannot place, where v0.31 left the
+  whole file unformatted, so `--check` reports files that used to pass. See
+  `docs/migration/v0.32.md`.
+
 ## v0.32.0 — bind lines in let blocks (2026-11-27)
 
 ### Added
