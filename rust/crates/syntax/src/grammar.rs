@@ -103,10 +103,12 @@ pub(crate) fn source_file(p: &mut Parser) {
     p.begin_unit();
     if p.at(ModuleKw) {
         module_header(p);
+        rest_of_unit(p);
     }
     p.begin_unit();
     while p.at(ImportKw) {
         import_decl(p);
+        rest_of_unit(p);
         p.begin_unit();
     }
     // top-level anchor is column 1: a decl body continues while col > 1.
@@ -141,6 +143,23 @@ pub(crate) fn source_file(p: &mut Parser) {
 }
 
 // ---- module header + imports --------------------------------------------
+
+/// Tokens left in the header's or an import's unit after it parsed (`module
+/// Main exposing (main) <- x`). They go into one ERROR node with one
+/// diagnostic, so the imports after it still parse as imports: leaving them
+/// to the declaration loop would read each later `import` as a broken
+/// declaration, a cascade of follow-on errors.
+fn rest_of_unit(p: &mut Parser) {
+    if p.at_end() {
+        return;
+    }
+    let m = p.start();
+    p.error("expected a new line: the module header and each import end at the end of their line");
+    while !p.at_end() {
+        p.bump();
+    }
+    m.complete(p, Error);
+}
 
 fn module_name(p: &mut Parser) {
     let m = p.start();

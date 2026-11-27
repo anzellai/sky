@@ -398,7 +398,14 @@ impl<'a> Parser<'a> {
             at: self.pos,
             unit: self.unit,
         });
-        let msg = msg.into();
+        let mut msg = msg.into();
+        // One rule for every position (design §1): a construct that cannot
+        // continue because the next token is `<-` met a bind line written
+        // outside a `let` block. Whatever it expected instead, the useful
+        // diagnostic is the bind-line hint.
+        if self.at(SyntaxKind::LArrow) && msg.starts_with("expected") {
+            msg = crate::grammar::BIND_OUTSIDE_LET.to_string();
+        }
         let span = self.cur_span();
         self.diags
             .push(Diagnostic::error("E0001", msg.clone()).with_label(span, msg));

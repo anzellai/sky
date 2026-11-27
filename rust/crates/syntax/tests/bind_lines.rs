@@ -217,3 +217,118 @@ fn larrow_in_a_function_parameter_is_a_parse_error() {
         BIND_HINT,
     );
 }
+
+#[test]
+fn larrow_in_a_type_annotation_is_a_parse_error() {
+    assert_one_error("f : Int <- Int\nf x =\n    x\n", BIND_HINT);
+    assert_one_error("f : Int -> Int <- Int\nf x =\n    x\n", BIND_HINT);
+    assert_one_error(
+        "x =\n    let\n        g : Int <- Int\n        g = 1\n    in\n    g\n",
+        BIND_HINT,
+    );
+}
+
+#[test]
+fn larrow_in_an_import_is_a_parse_error() {
+    assert_one_error(
+        "module Main exposing (main)\n\nimport Sky.Core.Task as Task <- x\n\nmain =\n    ()\n",
+        BIND_HINT,
+    );
+    assert_one_error(
+        "module Main exposing (main)\n\nimport Sky.Core.Task as Task exposing (andThen <- x)\n\nmain =\n    ()\n",
+        BIND_HINT,
+    );
+    assert_one_error(
+        "module Main exposing (main)\n\nimport Sky.Core.Task <- x\n\nmain =\n    ()\n",
+        BIND_HINT,
+    );
+}
+
+#[test]
+fn larrow_in_the_module_header_is_a_parse_error() {
+    assert_one_error(
+        "module Main exposing (main) <- x\n\nmain =\n    ()\n",
+        BIND_HINT,
+    );
+    assert_one_error(
+        "module Main exposing (main <- x)\n\nmain =\n    ()\n",
+        BIND_HINT,
+    );
+}
+
+#[test]
+fn larrow_in_a_type_declaration_is_a_parse_error() {
+    assert_one_error("type alias R = { a <- Int }\n\nmain =\n    ()\n", BIND_HINT);
+    assert_one_error("type alias R = Int <- Int\n\nmain =\n    ()\n", BIND_HINT);
+    assert_one_error("type T = A <- Int\n\nmain =\n    ()\n", BIND_HINT);
+    assert_one_error("type T = A Int | B <- Int\n\nmain =\n    ()\n", BIND_HINT);
+}
+
+/// Property: `<- x` inserted after any token of a sample program gives
+/// diagnostics where every `[E0001]` that sits on the `<-` carries the
+/// bind-line hint, and the tree still reprints byte for byte.
+#[test]
+fn larrow_inserted_anywhere_carries_the_bind_line_hint() {
+    let samples = [
+        "module Main exposing (main, R, T(..))\n\nimport Sky.Core.Prelude exposing (..)\nimport Sky.Core.Task as Task exposing (andThen)\n\ntype alias R =\n    { a : Int, b : List String }\n\ntype T\n    = A Int\n    | B (Maybe R)\n\nf : Int -> Maybe Int\nf n =\n    let\n        y = n + 1\n        z <- Just y\n    in\n    Just (z * 2)\n\nmain =\n    case f 1 of\n        Just v ->\n            v\n\n        Nothing ->\n            0\n",
+        "module Main exposing (main)\n\nimport Std.Log exposing (println)\n\ng : { x : Int } -> ( Int, String )\ng { x } =\n    ( x, \"s\" )\n\nmain =\n    println (String.fromInt (Tuple.first (g { x = 1 })) ++ \"!\")\n        |> (\\t -> t)\n",
+    ];
+    fn texts(src: &str) -> Vec<(String, usize)> {
+        p(src)
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|t| !t.kind().is_trivia())
+            .map(|t| (t.text().to_string(), usize::from(t.text_range().end())))
+            .collect()
+    }
+    let mut checked = 0;
+    let mut hits = 0;
+    for src in samples {
+        let tokens = texts(src);
+        for (i, (_, end)) in tokens.iter().enumerate() {
+            let end = *end;
+            let mutated = format!("{} <- x{}", &src[..end], &src[end..]);
+            // Only an insertion that keeps every original token whole (not
+            // one inside a dotted name or a string).
+            let mut want: Vec<String> = tokens.iter().map(|t| t.0.clone()).collect();
+            want.insert(i + 1, "x".into());
+            want.insert(i + 1, "<-".into());
+            let got: Vec<String> = texts(&mutated).into_iter().map(|t| t.0).collect();
+            if got != want {
+                continue;
+            }
+            checked += 1;
+            let arrow_at = (end + 1) as u32;
+            let parsed = p(&mutated);
+            assert_eq!(parsed.reprint(), mutated, "round-trip for {mutated:?}");
+            let msgs: Vec<_> = parsed.errors().iter().map(|d| &d.message).collect();
+            let hinted = msgs.iter().filter(|m| m.as_str() == BIND_HINT).count();
+            assert!(!msgs.is_empty(), "no diagnostic for {mutated:?}");
+            assert!(hinted <= 1, "a cascade of hints in {mutated:?}: {msgs:?}");
+            for d in parsed.errors() {
+                let on_arrow = d
+                    .labels
+                    .iter()
+                    .any(|l| l.span.range == (arrow_at, arrow_at + 2));
+                if d.code.0 == "E0001" && on_arrow {
+                    assert_eq!(
+                        d.message, BIND_HINT,
+                        "an [E0001] on the `<-` without the hint in {mutated:?}"
+                    );
+                    hits += 1;
+                    assert_eq!(
+                        msgs.len(),
+                        1,
+                        "a cascade after the hint in {mutated:?}: {msgs:?}"
+                    );
+                }
+            }
+        }
+    }
+    assert!(checked > 100, "only {checked} insertions checked");
+    assert!(
+        hits * 2 > checked,
+        "only {hits} of {checked} errors sit on the `<-`"
+    );
+}
