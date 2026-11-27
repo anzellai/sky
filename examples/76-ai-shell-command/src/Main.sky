@@ -89,49 +89,34 @@ usage =
 -- ── ask ─────────────────────────────────────────────────────────────
 ask : String -> Task Error ()
 ask request =
-    Shell.detect ()
-        |> Task.andThen
-               (\p ->
-                   Model.loadAdapter
-                       |> Task.andThen
-                              (\found ->
-                                  let
-                                      ( spec, fewShot, label ) =
-                                          case found of
+    let
+        p <- Shell.detect ()
+        found <- Model.loadAdapter
+        ( spec, fewShot, label ) =
+            case found of
 
-                                              Just a ->
-                                                  ( Model.tunedSpec a
-                                                  , False
-                                                  , "fine-tuned adapter"
-                                                  )
+                Just a ->
+                    ( Model.tunedSpec a, False, "fine-tuned adapter" )
 
-                                              Nothing ->
-                                                  ( Model.baselineSpec
-                                                  , True
-                                                  , "base model with examples (run `train` for the adapter)"
-                                                  )
-                                  in
-                                      println
-                                          (Prompt.describe p ++ "\nModel: "
-                                              ++ label)
-                                          |> Task.andThen
-                                                 (\_ ->
-                                                     propose
-                                                         spec
-                                                         fewShot
-                                                         p
-                                                         request)
-                                          |> Task.andThen decideAndRun))
+                Nothing ->
+                    ( Model.baselineSpec
+                    , True
+                    , "base model with examples (run `train` for the adapter)"
+                    )
+        _ <- println (Prompt.describe p ++ "\nModel: " ++ label)
+        command <- propose spec fewShot p request
+    in
+        decideAndRun command
 
 
 propose : Local.Spec -> Bool -> Platform -> String -> Task Error String
 propose spec fewShot p request =
-    Local.start spec
-        |> Task.andThen
-               (\engine ->
-                   Model.ask (Local.provider engine) fewShot p request
-                       |> Task.andThen
-                              (\cmd -> Local.stop engine |> Task.map (\_ -> cmd)))
+    let
+        engine <- Local.start spec
+        cmd <- Model.ask (Local.provider engine) fewShot p request
+        _ <- Local.stop engine
+    in
+        Task.succeed cmd
 
 
 decideAndRun : String -> Task Error ()
@@ -217,44 +202,31 @@ showOutcome outcome =
 -- ── train ───────────────────────────────────────────────────────────
 train : Task Error ()
 train =
-    Model.trainingRows
-        |> Task.andThen
-               (\rows ->
-                   println ("rows: " ++ String.fromInt (List.length rows))
-                       |> Task.andThen (\_ -> Model.freeze rows))
-        |> Task.andThen
-               (\version ->
-                   let
-                       m = Dataset.manifest version
-                       j = Model.job version
-                   in
-                       println
-                           ("dataset " ++ m.name ++ "@"
-                               ++ String.left 12 m.digest
-                               ++ ": "
-                               ++ String.fromInt m.train
-                               ++ " train rows, "
-                               ++ String.fromInt m.eval
-                               ++ " eval rows\nrun "
-                               ++ Train.runId j)
-                           |> Task.andThen (\_ -> Model.train j))
-        |> Task.andThen
-               (\a ->
-                   Model.saveAdapter a
-                       |> Task.andThen
-                              (\f ->
-                                  println
-                                      ("trained " ++ String.fromInt a.steps
-                                          ++ " steps on "
-                                          ++ a.backend
-                                          ++ ", eval loss "
-                                          ++ String.left
-                                                 6
-                                                 (String.fromFloat a.valLoss)
-                                          ++ "\nadapter "
-                                          ++ f.path
-                                          ++ " sha256:"
-                                          ++ String.left 16 f.sha256)))
+    let
+        rows <- Model.trainingRows
+        _ <- println ("rows: " ++ String.fromInt (List.length rows))
+        version <- Model.freeze rows
+        m = Dataset.manifest version
+        j = Model.job version
+        _ <-
+            println
+                ("dataset " ++ m.name ++ "@" ++ String.left 12 m.digest ++ ": "
+                    ++ String.fromInt m.train
+                    ++ " train rows, "
+                    ++ String.fromInt m.eval
+                    ++ " eval rows\nrun "
+                    ++ Train.runId j)
+        a <- Model.train j
+        f <- Model.saveAdapter a
+    in
+        println
+            ("trained " ++ String.fromInt a.steps ++ " steps on " ++ a.backend
+                ++ ", eval loss "
+                ++ String.left 6 (String.fromFloat a.valLoss)
+                ++ "\nadapter "
+                ++ f.path
+                ++ " sha256:"
+                ++ String.left 16 f.sha256)
 
 
 -- ── data ────────────────────────────────────────────────────────────
@@ -293,113 +265,102 @@ type alias Scored =
 
 evaluate : Bool -> Bool -> Task Error ()
 evaluate doBaseline doTuned =
-    Shell.detect ()
-        |> Task.andThen
-               (\p ->
-                   println
-                       (Prompt.describe p ++ "\n"
-                           ++ String.fromInt (List.length (Cases.cases p))
-                           ++ " cases")
-                       |> Task.andThen
-                              (\_ ->
-                                  (if doBaseline then
-                                      score
-                                          "baseline (base model, few-shot)"
-                                          Model.baselineSpec
-                                          True
-                                          p
-                                          |> Task.map
-                                                 (\s -> [ ( "baseline", s ) ])
+    let
+        p <- Shell.detect ()
+        _ <-
+            println
+                (Prompt.describe p ++ "\n"
+                    ++ String.fromInt (List.length (Cases.cases p))
+                    ++ " cases")
+        base <-
+            if doBaseline then
+                score
+                    "baseline (base model, few-shot)"
+                    Model.baselineSpec
+                    True
+                    p
+                    |> Task.map (\s -> [ ( "baseline", s ) ])
 
-                                  else
-                                      Task.succeed [])
-                                      |> Task.andThen
-                                             (\base ->
-                                                 (if doTuned then
-                                                     Model.loadAdapter
-                                                         |> Task.andThen
-                                                                (\found ->
-                                                                    case found of
+            else
+                Task.succeed []
+        tuned <-
+            if doTuned then
+                scoreTuned p
 
-                                                                        Just a ->
-                                                                            score
-                                                                                "fine-tuned (adapter, zero-shot)"
-                                                                                (Model.tunedSpec
-                                                                                    a)
-                                                                                False
-                                                                                p
-                                                                                |> Task.map
-                                                                                       (\s ->
-                                                                                           [ ( "fine-tuned"
-                                                                                             , s
-                                                                                             )
-                                                                                           ])
-
-                                                                        Nothing ->
-                                                                            Task.fail
-                                                                                (Error.invalidInput
-                                                                                    "no adapter yet: run `train` first"))
-
-                                                 else
-                                                     Task.succeed [])
-                                                     |> Task.map
-                                                            (\tuned ->
-                                                                base ++ tuned)))
-                       |> Task.andThen (report p))
+            else
+                Task.succeed []
+    in
+        report p (base ++ tuned)
 
 
+scoreTuned : Platform -> Task Error (List ( String, List Scored ))
+scoreTuned p =
+    let
+        found <- Model.loadAdapter
+    in
+        case found of
+
+            Just a ->
+                score
+                    "fine-tuned (adapter, zero-shot)"
+                    (Model.tunedSpec a)
+                    False
+                    p
+                    |> Task.map (\s -> [ ( "fine-tuned", s ) ])
+
+            Nothing ->
+                Task.fail
+                    (Error.invalidInput "no adapter yet: run `train` first")
+
+
+-- The engine stops once, whether the cases pass or fail. `Task.toResult`
+-- holds the outcome of the cases, so a failure to stop the engine is its
+-- own error and does not stop the engine a second time.
 score : String -> Local.Spec -> Bool -> Platform -> Task Error (List Scored)
 score label spec fewShot p =
-    println ("\n" ++ label) |> Task.andThen (\_ -> Local.start spec)
-        |> Task.andThen
-               (\engine ->
-                   Task.sequence
-                       (List.map
-                           (scoreCase (Local.provider engine) fewShot p)
-                           (Cases.cases p))
-                       |> Task.andThen
-                              (\results ->
-                                  Local.stop engine |> Task.map (\_ -> results))
-                       |> Task.onError
-                              (\e ->
-                                  Local.stop engine
-                                      |> Task.andThen (\_ -> Task.fail e)))
-        |> Task.andThen
-               (\results ->
-                   println ("  score " ++ fraction results)
-                       |> Task.map (\_ -> results))
+    let
+        _ <- println ("\n" ++ label)
+        engine <- Local.start spec
+        outcome <-
+            Task.toResult
+                (Task.sequence
+                    (List.map
+                        (scoreCase (Local.provider engine) fewShot p)
+                        (Cases.cases p)))
+        _ <- Local.stop engine
+        results <- Task.fromResult outcome
+        _ <- println ("  score " ++ fraction results)
+    in
+        Task.succeed results
 
 
 scoreCase : Provider -> Bool -> Platform -> Case -> Task Error Scored
 scoreCase provider fewShot p c =
-    Model.ask provider fewShot p c.request
-        |> Task.andThen
-               (\command ->
-                   Judge.judge c command
-                       |> Task.map
-                              (\( decision, pass ) ->
-                                  { request = c.request
-                                  , command = command
-                                  , decision = decision
-                                  , pass = pass
-                                  }))
-        |> Task.andThen
-               (\s ->
-                   println
-                       ("  "
-                           ++ (if s.pass then
-                                  "PASS"
+    let
+        command <- Model.ask provider fewShot p c.request
+        ( decision, pass ) <- Judge.judge c command
+        _ <-
+            println
+                ("  "
+                    ++ (if pass then
+                           "PASS"
 
-                              else
-                                  "fail")
-                           ++ "  "
-                           ++ String.padRight 48 ' ' s.request
-                           ++ "  "
-                           ++ s.command
-                           ++ "  ["
-                           ++ s.decision
-                           ++ "]")
-                       |> Task.map (\_ -> s))
+                       else
+                           "fail")
+                    ++ "  "
+                    ++ String.padRight 48 ' ' c.request
+                    ++ "  "
+                    ++ command
+                    ++ "  ["
+                    ++ decision
+                    ++ "]")
+    in
+        Task.succeed
+            { request = c.request
+            , command = command
+            , decision = decision
+            , pass = pass
+            }
 
 
 fraction : List Scored -> String

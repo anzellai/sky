@@ -50,25 +50,16 @@ percent r =
 -- | Score a device's recording and the server slot with the same suite.
 score : Device.Recording -> Task Error String
 score rec =
-    Notes.connect
-        |> Task.andThen
-               (\db ->
-                   Eval.runAs rec.label db (Device.replay rec) summaries
-                       |> Task.andThen
-                              (\onDevice ->
-                                  Eval.runAs
-                                      "server:notes"
-                                      db
-                                      (Device.provider "notes")
-                                      summaries
-                                      |> Task.map
-                                             (\onServer ->
-                                                 rec.label ++ " passed "
-                                                     ++ percent
-                                                            onDevice.passRate
-                                                     ++ ", the server passed "
-                                                     ++ percent
-                                                            onServer.passRate)))
+    let
+        db <- Notes.connect
+        onDevice <- Eval.runAs rec.label db (Device.replay rec) summaries
+        onServer <-
+            Eval.runAs "server:notes" db (Device.provider "notes") summaries
+    in
+        Task.succeed
+            (rec.label ++ " passed " ++ percent onDevice.passRate
+                ++ ", the server passed "
+                ++ percent onServer.passRate)
 
 
 -- | Score a recording the client sent as JSON (`Device.encodeRecording`).

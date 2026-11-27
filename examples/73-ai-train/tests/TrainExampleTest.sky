@@ -44,20 +44,14 @@ crashy w =
 
 trained : Result Error ( Train.Adapter, Train.Progress, String )
 trained =
-    Support.openIn dir
-        |> Task.andThen
-               (\w ->
-                   Train.drive w.db (crashy w)
-                       |> Task.andThen
-                              (\a ->
-                                  Train.progress (crashy w)
-                                      |> Task.andThen
-                                             (\p ->
-                                                 Support.promoteDev w a
-                                                     |> Task.map
-                                                            (\label ->
-                                                                ( a, p, label )))))
-        |> Task.run
+    Task.run
+        (let
+            w <- Support.openIn dir
+            a <- Train.drive w.db (crashy w)
+            p <- Train.progress (crashy w)
+            label <- Support.promoteDev w a
+        in
+            Task.succeed ( a, p, label ))
 
 
 served : Result Error String
@@ -78,23 +72,18 @@ served =
 -- zero. Driving the finished run again adds no row.
 traced : Result Error ( List Trace.TrainingStep, List Trace.Row )
 traced =
-    trained
-        |> Result.andThen
-               (\( a, _, _ ) ->
-                   Support.openIn dir
-                       |> Task.andThen
-                              (\w ->
-                                  Train.drive w.db (crashy w)
-                                      |> Task.andThen
-                                             (\_ ->
-                                                 Task.map2
-                                                     (\steps found ->
-                                                         ( steps, found ))
-                                                     (Trace.trainingSteps
-                                                         w.db
-                                                         a.runId)
-                                                     (Trace.runRows w.db a.runId)))
-                       |> Task.run)
+    let
+        ( a, _, _ ) <- trained
+    in
+        Task.run
+            (let
+                w <- Support.openIn dir
+                _ <- Train.drive w.db (crashy w)
+            in
+                Task.map2
+                    (\steps found -> ( steps, found ))
+                    (Trace.trainingSteps w.db a.runId)
+                    (Trace.runRows w.db a.runId))
 
 
 tests : List Test

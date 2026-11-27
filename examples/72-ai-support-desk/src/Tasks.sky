@@ -32,39 +32,32 @@ import Assist
 -- | Register an adapter file, or a demo adapter.
 importAdapter : Pipeline.Context -> Task Error ()
 importAdapter ctx =
-    ctx.registry
-        |> Task.andThen
-               (\reg ->
-                   Task.map3
-                       (\path base dataset ->
-                           { path = path, base = base, dataset = dataset })
-                       (adapterPath ctx.args)
-                       baseModel
-                       (latestDataset reg)
-                       |> Task.andThen
-                              (\found ->
-                                  Registry.register
-                                      reg
-                                      Assist.adapterModel
-                                      { path = found.path
-                                      , format = Gguf
-                                      , method = Lora
-                                      }
-                                      { base = found.base
-                                      , dataset =
-                                          Registry.datasetLabel found.dataset
-                                      , datasetDigest = found.dataset.digest
-                                      , metadata =
-                                          [ ( "source", "import-adapter" ) ]
-                                      }))
-        |> Task.andThen
-               (\v ->
-                   println
-                       ("registered " ++ Registry.label v ++ " (sha256:"
-                           ++ String.left 12 v.digest
-                           ++ ", trained on "
-                           ++ v.dataset
-                           ++ ")"))
+    let
+        reg <- ctx.registry
+        found <-
+            Task.map3
+                (\path base dataset ->
+                    { path = path, base = base, dataset = dataset })
+                (adapterPath ctx.args)
+                baseModel
+                (latestDataset reg)
+        v <-
+            Registry.register
+                reg
+                Assist.adapterModel
+                { path = found.path, format = Gguf, method = Lora }
+                { base = found.base
+                , dataset = Registry.datasetLabel found.dataset
+                , datasetDigest = found.dataset.digest
+                , metadata = [ ( "source", "import-adapter" ) ]
+                }
+    in
+        println
+            ("registered " ++ Registry.label v ++ " (sha256:"
+                ++ String.left 12 v.digest
+                ++ ", trained on "
+                ++ v.dataset
+                ++ ")")
 
 
 adapterPath : List String -> Task Error String

@@ -59,30 +59,20 @@ showPlan =
 
 generate : Task Error ()
 generate =
-    Synthetic.run Faq.generator
-        |> Task.andThen
-               (\gen ->
-                   showReport gen.report
-                       |> Task.andThen
-                              (\_ ->
-                                  Synthetic.toDataset gen
-                                      |> Dataset.scrub
-                                             (Scrub.forInstruction Scrub.defaults)
-                                      |> Dataset.split
-                                             Dataset.defaultSplit
-                                             .prompt
-                                      |> Dataset.freeze
-                                             Faq.versions
-                                             Dataset.instructionCodec))
-        |> Task.andThen
-               (\v ->
-                   let
-                       m = Dataset.manifest v
-                   in
-                       println
-                           ("froze " ++ m.name ++ " sha256:" ++ m.digest ++ " ("
-                               ++ String.fromInt m.rows
-                               ++ " rows)"))
+    let
+        gen <- Synthetic.run Faq.generator
+        _ <- showReport gen.report
+        v <-
+            Synthetic.toDataset gen
+                |> Dataset.scrub (Scrub.forInstruction Scrub.defaults)
+                |> Dataset.split Dataset.defaultSplit .prompt
+                |> Dataset.freeze Faq.versions Dataset.instructionCodec
+        m = Dataset.manifest v
+    in
+        println
+            ("froze " ++ m.name ++ " sha256:" ++ m.digest ++ " ("
+                ++ String.fromInt m.rows
+                ++ " rows)")
 
 
 showReport : Synthetic.Report -> Task Error ()

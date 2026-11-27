@@ -78,23 +78,19 @@ type alias Observed =
 -- | Run a command in a fresh fixture and observe it.
 inFixture : String -> Task Error Observed
 inFixture command =
-    File.tempDir "sky-shell-eval"
-        |> Task.andThen
-               (\dir ->
-                   Fixture.create dir
-                       |> Task.andThen (\_ -> Shell.run 10000 dir command)
-                       |> Task.andThen
-                              (\r ->
-                                  Fixture.snapshot dir
-                                      |> Task.map
-                                             (\state ->
-                                                 { stdout = r.stdout
-                                                 , exit = r.exit
-                                                 , timedOut = r.timedOut
-                                                 , state = state
-                                                 }))
-                       |> Task.andThen
-                              (\r -> removeDir dir |> Task.map (\_ -> r)))
+    let
+        dir <- File.tempDir "sky-shell-eval"
+        _ <- Fixture.create dir
+        r <- Shell.run 10000 dir command
+        state <- Fixture.snapshot dir
+        _ <- removeDir dir
+    in
+        Task.succeed
+            { stdout = r.stdout
+            , exit = r.exit
+            , timedOut = r.timedOut
+            , state = state
+            }
 
 
 removeDir : String -> Task Error ()

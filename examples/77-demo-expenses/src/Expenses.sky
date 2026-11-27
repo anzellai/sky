@@ -31,8 +31,12 @@ database =
 -- Connect, and create the table when it is not there yet (idempotent).
 open : Task Error Db
 open =
-    Config.apply database |> Task.andThen (\_ -> Db.connect ())
-        |> Task.andThen (\db -> Store.create db store |> Task.map (\_ -> db))
+    let
+        _ <- Config.apply database
+        db <- Db.connect ()
+        _ <- Store.create db store
+    in
+        Task.succeed db
 
 
 -- Every claim, newest first.

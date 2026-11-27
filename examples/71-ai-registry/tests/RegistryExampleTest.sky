@@ -32,34 +32,20 @@ dir =
 -- Register v1, evaluate it, attach the report and promote it to prod.
 setup : Task Error Registry.Version
 setup =
-    Support.openRegistry dir
-        |> Task.andThen
-               (\reg ->
-                   Support.adapterFile dir "support-v1"
-                       |> Task.andThen
-                              (\a ->
-                                  Registry.register
-                                      reg
-                                      "support-lora"
-                                      a
-                                      (Support.lineage "11"))
-                       |> Task.andThen
-                              (\v ->
-                                  Eval.runAs
-                                      (Registry.label v)
-                                      (Registry.database reg)
-                                      (Support.candidateFor 1)
-                                      Support.suite
-                                      |> Task.andThen
-                                             (\r -> Registry.attachReport reg v r)
-                                      |> Task.andThen
-                                             (\_ ->
-                                                 Registry.promoteChecked
-                                                     reg
-                                                     "prod"
-                                                     v
-                                                     Eval.thresholds)
-                                      |> Task.map (\_ -> v)))
+    let
+        reg <- Support.openRegistry dir
+        a <- Support.adapterFile dir "support-v1"
+        v <- Registry.register reg "support-lora" a (Support.lineage "11")
+        r <-
+            Eval.runAs
+                (Registry.label v)
+                (Registry.database reg)
+                (Support.candidateFor 1)
+                Support.suite
+        _ <- Registry.attachReport reg v r
+        _ <- Registry.promoteChecked reg "prod" v Eval.thresholds
+    in
+        Task.succeed v
 
 
 served : Result Error String

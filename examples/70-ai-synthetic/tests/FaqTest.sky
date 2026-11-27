@@ -84,15 +84,12 @@ tests =
           "the frozen dataset is scrubbed and its digest is stable"
           (\_ ->
               case Task.run
-                       (File.tempDir "faq"
-                           |> Task.andThen
-                                  (\dir ->
-                                      freezeOnce dir
-                                          |> Task.andThen
-                                                 (\a ->
-                                                     freezeOnce dir
-                                                         |> Task.map
-                                                                (\b -> ( a, b ))))) of
+                       (let
+                           dir <- File.tempDir "faq"
+                           a <- freezeOnce dir
+                           b <- freezeOnce dir
+                       in
+                           Task.succeed ( a, b )) of
 
                   Ok ( a, b ) ->
                       Test.equal ( True, 64 ) ( a == b, String.length a )

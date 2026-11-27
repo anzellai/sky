@@ -66,39 +66,23 @@ question row =
 -- `SKY_AI_REGISTRY`, else `.sky/ai/registry`), and the data under `.sky/ai`.
 open : Task Error World
 open =
-    Db.connect ()
-        |> Task.andThen
-               (\db ->
-                   Registry.openConfigured db ""
-                       |> Task.andThen
-                              (\reg ->
-                                  freeze ".sky/ai"
-                                      |> Task.map
-                                             (\v ->
-                                                 { db = db
-                                                 , reg = reg
-                                                 , version = v
-                                                 , dir = ".sky/ai"
-                                                 })))
+    let
+        db <- Db.connect ()
+        reg <- Registry.openConfigured db ""
+        v <- freeze ".sky/ai"
+    in
+        Task.succeed { db = db, reg = reg, version = v, dir = ".sky/ai" }
 
 
 -- | A world in its own directory (the tests use a fresh one each run).
 openIn : String -> Task Error World
 openIn dir =
-    Db.open "sqlite" (dir ++ "/train.db")
-        |> Task.andThen
-               (\db ->
-                   Registry.open db (registryStore dir)
-                       |> Task.andThen
-                              (\reg ->
-                                  freeze dir
-                                      |> Task.map
-                                             (\v ->
-                                                 { db = db
-                                                 , reg = reg
-                                                 , version = v
-                                                 , dir = dir
-                                                 })))
+    let
+        db <- Db.open "sqlite" (dir ++ "/train.db")
+        reg <- Registry.open db (registryStore dir)
+        v <- freeze dir
+    in
+        Task.succeed { db = db, reg = reg, version = v, dir = dir }
 
 
 registryStore : String -> Store

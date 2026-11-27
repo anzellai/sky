@@ -62,9 +62,11 @@ topic =
 -- ── Effects ─────────────────────────────────────────────────────────
 load : Task Error (List Expense)
 load =
-    Expenses.open
-        |> Task.andThen
-               (\db -> Expenses.seed db |> Task.andThen (\_ -> Expenses.all db))
+    let
+        db <- Expenses.open
+        _ <- Expenses.seed db
+    in
+        Expenses.all db
 
 
 withDb : (Db -> Task Error ()) -> Task Error ()

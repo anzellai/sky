@@ -64,17 +64,20 @@ type Msg
 -- ── Effects ─────────────────────────────────────────────────────────
 loadTickets : Task Error (List Ticket)
 loadTickets =
-    Tickets.open
-        |> Task.andThen
-               (\db -> Tickets.seed db |> Task.andThen (\_ -> Tickets.all db))
+    let
+        db <- Tickets.open
+        _ <- Tickets.seed db
+    in
+        Tickets.all db
 
 
 sendReply : Ticket -> String -> Task Error (List Ticket)
 sendReply t text =
-    Tickets.open
-        |> Task.andThen
-               (\db ->
-                   Tickets.send db t text |> Task.andThen (\_ -> Tickets.all db))
+    let
+        db <- Tickets.open
+        _ <- Tickets.send db t text
+    in
+        Tickets.all db
 
 
 selectedTicket : Model -> Maybe Ticket

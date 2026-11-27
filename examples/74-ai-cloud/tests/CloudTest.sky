@@ -37,51 +37,40 @@ dir =
 
 trained : Result Error ( Train.Adapter, Train.Progress, Maybe Train.CloudStatus )
 trained =
-    Cloud.openIn dir
-        |> Task.andThen
-               (\w ->
-                   let
-                       job = Cloud.trainJob w |> Train.withWatchWindow 100
-                   in
-                       Train.drive w.db job
-                           |> Task.andThen
-                                  (\a ->
-                                      Task.map2
-                                          (\p c -> ( a, p, c ))
-                                          (Train.progress job)
-                                          (Train.cloudStatus job)))
-        |> Task.run
+    Task.run
+        (let
+            w <- Cloud.openIn dir
+            job = Cloud.trainJob w |> Train.withWatchWindow 100
+            a <- Train.drive w.db job
+        in
+            Task.map2
+                (\p c -> ( a, p, c ))
+                (Train.progress job)
+                (Train.cloudStatus job))
 
 
 promoted : Result Error String
 promoted =
-    trained
-        |> Result.andThen
-               (\( a, _, _ ) ->
-                   Cloud.openIn dir
-                       |> Task.andThen
-                              (\w ->
-                                  Registry.versions w.reg a.name
-                                      |> Task.andThen
-                                             (\vs ->
-                                                 case vs of
+    let
+        ( a, _, _ ) <- trained
+    in
+        Task.run
+            (let
+                w <- Cloud.openIn dir
+                vs <- Registry.versions w.reg a.name
+            in
+                case vs of
 
-                                                     v :: _ ->
-                                                         Registry.forcePromote
-                                                             w.reg
-                                                             "prod"
-                                                             v
-                                                             "the example's test"
-                                                             |> Task.map
-                                                                    (\_ ->
-                                                                        Registry.label
-                                                                            v)
+                    v :: _ ->
+                        Registry.forcePromote
+                            w.reg
+                            "prod"
+                            v
+                            "the example's test"
+                            |> Task.map (\_ -> Registry.label v)
 
-                                                     [] ->
-                                                         Task.fail
-                                                             (Error.invalidInput
-                                                                 "no version")))
-                       |> Task.run)
+                    [] ->
+                        Task.fail (Error.invalidInput "no version"))
 
 
 tests : List Test
