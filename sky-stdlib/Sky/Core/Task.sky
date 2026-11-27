@@ -17,6 +17,9 @@ module Sky.Core.Task exposing
     , map
     , mapError
     , onError
+    , bestEffort
+    , unless
+    , toResult
     , run
     , perform
     , fromResult
@@ -88,6 +91,59 @@ mapError =
 onError : (e -> Task e2 a) -> Task e a -> Task e2 a
 onError =
     Ffi.kernel "Task_onError"
+
+
+-- ─── Small control-flow helpers (v0.32.0) ─────────────────────────
+-- | `bestEffort task` — run `task` and ignore its result and its error.
+-- The returned Task never fails. Use it for work whose failure must not
+-- stop the caller: an audit log line, a cache warm-up, a notification.
+--
+--     let
+--         order <- placeOrder cart
+--         _ <- Task.bestEffort (Email.send (receipt order))
+--     in
+--     Task.succeed order
+bestEffort : Task e a -> Task x ()
+bestEffort task =
+    task |> map (\_ -> ()) |> onError (\_ -> succeed ())
+
+
+-- | `unless cond task` — run `task` only when `cond` is `False`. When
+-- `cond` is `True` the result is `succeed ()` and `task` does not run.
+--
+--     let
+--         cached <- Sync.get cache
+--         _ <- Task.unless (Dict.member key cached) (refresh key)
+--     in
+--     Task.succeed ()
+unless : Bool -> Task e () -> Task e ()
+unless cond task =
+    if cond then
+        succeed ()
+
+    else
+        task
+
+
+-- | `toResult task` — run `task` and give its outcome as a `Result`. The
+-- returned Task never fails: an error of `task` is `Err e` in the value.
+-- Use it to handle the error of ONE step in a bind-line block, where an
+-- `onError` around the whole block would also catch the errors of the
+-- other steps.
+--
+--     let
+--         user <- loadUser id
+--         avatar <- Task.toResult (fetchAvatar user)
+--     in
+--     case avatar of
+--         Ok image ->
+--             Task.succeed { user = user, avatar = Just image }
+--
+--         Err _ ->
+--             Task.succeed { user = user, avatar = Nothing }
+toResult : Task e a -> Task x (Result e a)
+toResult task =
+    task |> map Ok |> onError (\e -> succeed (Err e))
 
 
 -- ─── Runtime entry boundary ────────────────────────────────────────

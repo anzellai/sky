@@ -1,0 +1,131 @@
+module TaskHelpersConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for the v0.32.0 Task helpers in Sky.Core.Task:
+-- `bestEffort`, `unless` and `toResult` (docs/design/let-bind-lines.md §8).
+-- Each case checks the effect (through a Std.Sync ref) as well as the value.
+
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Test as Test exposing (Test)
+import Std.Sync as Sync
+
+
+boom : Task Error Int
+boom =
+    Task.fail (Error.invalidInput "boom")
+
+
+-- The failing task writes to the ref before it fails: bestEffort runs it,
+-- drops the error, and the block goes on.
+bestEffortRuns : Task Error Int
+bestEffortRuns =
+    let
+        ref <- Sync.newRef 0
+        _ <- Task.bestEffort (Sync.set 7 ref |> Task.andThen (\_ -> boom))
+        _ <- Sync.update (\n -> n + 1) ref
+    in
+        Sync.get ref
+
+
+bestEffortOk : Task Error ()
+bestEffortOk =
+    Task.bestEffort (Task.succeed 5)
+
+
+unlessCount : Bool -> Task Error Int
+unlessCount cond =
+    let
+        ref <- Sync.newRef 0
+        _ <- Task.unless cond (Sync.set 1 ref)
+    in
+        Sync.get ref
+
+
+-- The error of `unless`'s task is the error of the block.
+unlessFails : Task Error ()
+unlessFails =
+    Task.unless False (Task.fail (Error.invalidInput "refused"))
+
+
+showResult : Result Error Int -> String
+showResult r =
+    case r of
+
+        Ok n ->
+            "Ok " ++ String.fromInt n
+
+        Err e ->
+            "Err " ++ Error.toString e
+
+
+-- toResult scopes the error handling to one step: the later steps still run.
+toResultScoped : Task Error ( String, Int )
+toResultScoped =
+    let
+        ref <- Sync.newRef 1
+        outcome <- Task.toResult boom
+        _ <- Sync.update (\n -> n * 10) ref
+        n <- Sync.get ref
+    in
+        Task.succeed ( showResult outcome, n )
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "bestEffort runs a failing task and succeeds with ()"
+          (\_ -> Test.equal (Ok 8) (Task.run bestEffortRuns))
+    , Test.test
+          "bestEffort of a succeeding task gives ()"
+          (\_ -> Test.equal (Ok ()) (Task.run bestEffortOk))
+    , Test.test
+          "bestEffort of a failing task never fails"
+          (\_ -> Test.equal (Ok ()) (Task.run (Task.bestEffort boom)))
+    , Test.test
+          "unless True does not run the task"
+          (\_ -> Test.equal (Ok 0) (Task.run (unlessCount True)))
+    , Test.test
+          "unless False runs the task"
+          (\_ -> Test.equal (Ok 1) (Task.run (unlessCount False)))
+    , Test.test
+          "unless False keeps the error of the task"
+          (\_ ->
+              Test.equal
+                  (Just (Error.toString (Error.invalidInput "refused")))
+                  (case Task.run unlessFails of
+
+                      Ok _ ->
+                          Nothing
+
+                      Err e ->
+                          Just (Error.toString e)))
+    , Test.test
+          "toResult of a succeeding task is Ok (Ok value)"
+          (\_ ->
+              Test.equal
+                  (Ok "Ok 3")
+                  (Task.run (Task.toResult (Task.succeed 3))
+                      |> Result.map showResult))
+    , Test.test
+          "toResult of a failing task is Ok (Err e), and the error is kept"
+          (\_ ->
+              Test.equal
+                  (Ok ("Err " ++ Error.toString (Error.invalidInput "boom")))
+                  (Task.run (Task.toResult boom) |> Result.map showResult))
+    , Test.test
+          "toResult scopes the error to one step, and the later steps run"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      ( "Err " ++ Error.toString (Error.invalidInput "boom")
+                      , 10
+                      ))
+                  (Task.run toResultScoped))
+    ]
+
+
+main =
+    Test.runMain tests

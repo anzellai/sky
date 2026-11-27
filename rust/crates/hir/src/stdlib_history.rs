@@ -69,6 +69,22 @@ pub const SNAPSHOTS: &[Snapshot] = &[
         tsv: include_str!("../data/stdlib-exports-v0.29.13.tsv"),
         migration: "docs/migration/v0.30.md#new-stdlib-names",
     },
+    // The last release of the v0.30 line. A name new in v0.31.0
+    // (`Json.Decode.dict`, `Codec.lazy`, `Time.zones`) is new since it and
+    // points at the v0.31 guide.
+    Snapshot {
+        release: "v0.30.0",
+        tsv: include_str!("../data/stdlib-exports-v0.30.0.tsv"),
+        migration: "docs/migration/v0.31.md#new-stdlib-names",
+    },
+    // The last release of the v0.31 line. A name new in v0.32.0
+    // (`Task.toResult`, `Task.bestEffort`, `Task.unless`) is new since it and
+    // points at the v0.32 guide.
+    Snapshot {
+        release: "v0.31.2",
+        tsv: include_str!("../data/stdlib-exports-v0.31.2.tsv"),
+        migration: "docs/migration/v0.32.md#new-stdlib-names",
+    },
 ];
 
 /// One parsed snapshot line.
