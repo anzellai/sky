@@ -73,4 +73,19 @@ doubled =
 `Maybe` has the same `map` / `andThen` / `withDefault`. Between them you rarely
 write a nested `case` — you build a pipeline and handle failure once, at the end.
 
+Bind lines work for `Maybe` and `Result` too. Each `<-` line stops the block at
+the first `Nothing` or `Err`:
+
+```elm
+parsePoint : String -> String -> Maybe ( Int, Int )
+parsePoint a b =
+    let
+        x <- String.toInt a
+        y <- String.toInt b
+    in
+        Just ( x, y )
+```
+
+See [Bind lines](../language/syntax.md#bind-lines).
+
 **[Next → Pipelines & let](08-pipelines-and-let.md)**

@@ -450,42 +450,76 @@ warns). A bare `x = Uuid.v4` (an un-forced `Task` value) is fine.
 Two-level error pattern: log a structured line with a short `errId` server-side,
 return a user-facing `Task.fail (Error.unexpected ("... ref " ++ errId))`.
 
-## Effect and control-flow style — flat and named, not nested
+## Effect and control-flow style — bind lines, flat and named, not nested
 
-`Task` code chains with `andThen` / `map`. There is **no do-notation and no
-`let!` bind**, so `let x = someTask in …` binds the TASK value, not its result —
-you cannot replace an `andThen (\x -> …)` with a `let`. `let … in` still helps,
-but only for the PURE sub-expressions inside a lambda (name a key, a record, a
-string once). Keep an effect chain readable by keeping the pipeline FLAT and
-NAMING its steps. Right-drift — each `andThen (\x -> …)` holding the next
-`andThen` in its body — is the smell to remove.
+A `let` block chains effects with **bind lines** (v0.32.0). `p <- e` runs `e`
+and binds its result to `p` for the rest of the block. The later lines and the
+`in` body are the continuation, so
+
+```elm
+let
+    stats <- Sync.get ref
+    next = stats + 1
+    _ <- Sync.set next ref
+in
+    Task.succeed next
+```
+
+is `Sync.get ref |> Task.andThen (\stats -> …)` with no nesting. The `andThen`
+comes from the type of `e`: `Task.andThen` for a `Task`, `Result.andThen` for
+a `Result`, `Maybe.andThen` for a `Maybe`, the decoder module's `andThen` for
+a `Json.Decode` / `Std.Db.Decode` / `Std.Config` / `Std.Xml.Decode` decoder,
+and for your own type the `andThen : (a -> T b) -> T a -> T b` its module
+exposes. A plain `x = someTask` line names the TASK value, not its result.
+
+The rules a bind line follows:
+
+- `=` lines and `<-` lines mix in any order. A bind line splits the block: a
+  line cannot see a name defined below a bind line (`[E1001]`, and the hint
+  says to move the definition up).
+- All bind lines of one block chain ONE type, and the `in` body has it too. A
+  `Maybe` bind line in a `Task` block is `[E2001]`: bridge the value first
+  (`Task.fromResult`, `Result.fromMaybe`).
+- The pattern must match every value: a name, `_`, a tuple, a record. `(Just x)
+  <- e` is `[E3001]`: bind the `Maybe` and `case` on it.
+- The type of `e` must be known (`[E2015]`: annotate the function `e` calls)
+  and must have an `andThen` (`[E2016]`).
+- No `x : T` line directly above a bind line. `<-` anywhere but a `let` line
+  is `[E0001]`.
+- Recursion through a Task bind line is stack-safe, as through `Task.andThen`.
 
 The levers, in order of reach:
 
-1. **Flat pipeline over nesting.** One value per step, top to bottom:
-   `t |> Task.andThen step1 |> Task.andThen step2 |> Task.map finish`. Nest ONLY
-   when a later step needs a value an earlier step bound.
-2. **Name the continuation.** Replace a long `Task.andThen (\x -> <many lines>)`
-   with `Task.andThen handleX` and a top-level `handleX x = …`. A named step
-   reads as a sentence and unit-tests on its own. Lift a lambda out once it
-   passes ~8 lines or holds another `andThen`.
-3. **`map` for the terminal pure transform** — `|> Task.map (\x -> f x)`, never
+1. **Bind lines for a sequence whose later steps need earlier results.** One
+   step per line, top to bottom, with `=` lines for the pure values between
+   them.
+2. **A flat pipeline when each step only feeds the next.**
+   `t |> Task.andThen step1 |> Task.andThen step2 |> Task.map finish` is as
+   clear as bind lines there.
+3. **Name the step.** Lift a long inline expression into a top-level function
+   (`handleX x = …`). A named step reads as a sentence and unit-tests on its
+   own.
+4. **`map` for the terminal pure transform** — `|> Task.map (\x -> f x)`, never
    `|> Task.andThen (\x -> Task.succeed (f x))`.
-4. **`map2` / `map3` / `andMap` for INDEPENDENT tasks** whose order does not
-   matter and whose results you combine — `Task.map2 mkPair loadA loadB` beats a
-   sequential `andThen` when `loadB` does not need `loadA`.
-5. **`sequence` / `parallel` for a LIST of tasks.** A fixed run of effects that
-   only needs "all done" is `Task.sequence [ t1, t2, t3 ] |> Task.map (\_ -> ())`,
-   not three nested `andThen (\_ -> …)`.
-6. **A tiny local combinator for a repeated shape.** Two recur constantly and the
-   stdlib does not name them, so define them once per module:
-   - `bestEffort t = t |> Task.onError (\_ -> Task.succeed ())` (there is no
-     `Task.ignore`), so a best-effort write reads as `bestEffort (writeX …)`.
-   - `unless cond t = if cond then Task.succeed () else t` (there is no
-     `Task.when`), so a guarded effect reads as `unless liteMemory (embed note)`
-     instead of an inline `if liteMemory then Task.succeed () else …`.
+5. **`map2` / `map3` / `andMap` for INDEPENDENT tasks** whose order does not
+   matter and whose results you combine — `Task.map2 mkPair loadA loadB` beats
+   two bind lines when `loadB` does not need `loadA`.
+6. **`sequence` / `parallel` for a LIST of tasks.** A fixed run of effects that
+   only needs "all done" is `Task.sequence [ t1, t2, t3 ] |> Task.map (\_ -> ())`.
+7. **The three `Sky.Core.Task` helpers** for the shapes that recur:
+   - `Task.bestEffort t` runs `t` and ignores its result and its error (a
+     best-effort log line, a cache warm-up).
+   - `Task.unless cond t` runs `t` only when `cond` is `False`, so a guarded
+     effect is one bind line instead of an inline `if cond then Task.succeed ()
+     else …`.
+   - `Task.toResult t` gives the outcome of `t` as a `Result` and never fails.
+     It handles the error of ONE step: a `case` on the result covers that step,
+     where a `Task.onError` around the whole block would also swallow the
+     errors of the other steps.
+   `Task.toResult` meets `Maybe.toResult`: under two `exposing (..)` imports
+   write the qualified name.
 
-7. **`Task.loop` for a loop that can run many times.** Recursion through
+8. **`Task.loop` for a loop that can run many times.** Recursion through
    `andThen` is stack-safe (v0.27.0: a Task is run by one interpreter that
    pops an `andThen` before it runs the task its continuation returns, so
    two million iterations finish). `Task.loop` is still the clearer form for
@@ -521,27 +555,91 @@ The levers, in order of reach:
                Done (pager.items ++ page.items)
    ```
 
-Before and after — a boot sequence that ran five migrations by nesting:
+Before and after — a visit counter on a `Std.Sync` ref:
 
 ```elm
--- Right-drifting: each step is buried in the previous lambda.
-Store.migrate db a
-    |> Task.andThen (\_ -> Store.migrate db b)
-    |> Task.andThen (\_ -> Store.migrate db c |> Task.onError (\_ -> Task.succeed []))
-    |> Task.andThen (\_ -> …)
+-- Right-drifting: each step is buried in the lambda of the step before it.
+recordVisit : Ref Stats -> Task Error Stats
+recordVisit ref =
+    Sync.get ref
+        |> Task.andThen
+               (\stats ->
+                   Time.now ()
+                       |> Task.andThen
+                              (\now ->
+                                  let
+                                      next =
+                                          { stats | visits = stats.visits + 1, lastSeen = now }
+                                  in
+                                      Sync.set next ref
+                                          |> Task.andThen (\_ -> Task.succeed next)))
 
--- Flat: the run of effects is a list; the best-effort ones are named.
-Task.sequence
-    [ Store.migrate db a
-    , Store.migrate db b
-    , bestEffort (Store.migrate db c)
-    ]
-    |> Task.map (\_ -> ())
+-- Bind lines: one step per line, the pure value named between them.
+recordVisit : Ref Stats -> Task Error Stats
+recordVisit ref =
+    let
+        stats <- Sync.get ref
+        now <- Time.now ()
+        next = { stats | visits = stats.visits + 1, lastSeen = now }
+        _ <- Sync.set next ref
+    in
+        Task.succeed next
+```
+
+A queue flush that skips the send when nothing is pending, retries the send,
+and logs on a best-effort basis:
+
+```elm
+flush : Ref (List String) -> Task Error ()
+flush queue =
+    let
+        pending <- Sync.get queue
+        _ <-
+            Task.unless
+                (List.isEmpty pending)
+                (send pending |> Task.retryWith (Task.exponentialBackoff 3 200))
+        _ <- Sync.set [] queue
+    in
+        Task.bestEffort (println "flushed")
+```
+
+An error handler scoped to one step with `Task.toResult`. A failed
+`fetchUser` still fails the whole Task; only a failed `fetchAvatar` falls back
+to the default:
+
+```elm
+loadProfile : String -> Task Error Profile
+loadProfile id =
+    let
+        user <- fetchUser id
+        avatar <- Task.toResult (fetchAvatar user)
+    in
+        case avatar of
+            Ok url ->
+                Task.succeed { name = user.name, avatar = url }
+
+            Err _ ->
+                Task.succeed { name = user.name, avatar = "/default.png" }
+```
+
+A boot sequence of migrations, one of them best effort. The stores have
+different record types, so the steps cannot go in one `Task.sequence` list:
+
+```elm
+boot : Db -> Task Error ()
+boot db =
+    let
+        _ <- Store.migrate db users
+        _ <- Store.migrate db orders
+        _ <- Task.bestEffort (Store.migrate db auditLog)
+    in
+        Task.succeed ()
 ```
 
 `if … else` in value position is clear inline. A branch that returns a `Task`
-reads better as `unless` / `when`, or as a named `chooseStep : Bool -> Task Error
+reads better as `Task.unless`, or as a named `chooseStep : Bool -> Task Error
 ()`, than as an inline `if … then Task.succeed () else <long task>`.
+
 
 **Persistence follows the same "highest layer that fits" rule (see Database).**
 Model a record table with `Std.Db.Store` + `Std.Codec` by DEFAULT — one codec
@@ -569,6 +667,7 @@ main = println (String.fromInt (update Increment 0))
 ```
 
 `|>` `<|` pipelines · `::` cons · `\x -> x + 1` lambdas · `let…in` ·
+`p <- e` bind lines in a `let` block (see above) ·
 `case…of` (exhaustiveness-checked) · `{ rec | field = value }` update ·
 `import M as Alias exposing (name)`. Triple-quoted multiline strings support
 `{{expr}}` interpolation (escape as `\{{`). A let-bound helper function is
@@ -917,7 +1016,7 @@ sign-in) if you run more than one replica. Key per-session data by
 
 - **Types over strings for errors** — `Result Error a` / `Task Error a`, never `Result String a`.
 - **DB defaults to `Std.Db.Store` + `Std.Codec`** — one codec per record table drives the schema, the writes, and the TYPED reads. Drop to raw `Std.Db` (`query`/`exec`) ONLY for what a `Store` cannot express (a join of three tables, CTEs, window functions, a query no typed `Cond` states); keep those in a clearly separated section. Never hand-write a row mapper for a plain record table.
-- **Effect chains stay flat + named** — top-to-bottom `andThen`/`map` pipelines, named step functions over long inline lambdas, `sequence`/`map2` over nested `andThen`, a local `bestEffort`/`unless` over a repeated `onError`/`if`. A loop that can run many times reads best as `Task.loop`; `andThen` recursion is also stack-safe (v0.27.0). `let … in` names PURE sub-expressions only (it does not bind a `Task` result). See **Effect and control-flow style**.
+- **Effect chains stay flat + named** — bind lines (`user <- fetchUser id` in a `let` block, v0.32.0) for a sequence whose later steps need earlier results, flat `andThen`/`map` pipelines where each step only feeds the next, named step functions over long inline lambdas, `sequence`/`map2` for independent tasks, and `Task.bestEffort` / `Task.unless` / `Task.toResult` over a repeated `onError` / `if`. A loop that can run many times reads best as `Task.loop`; recursion through `andThen` or a bind line is stack-safe. A plain `x = task` line names the `Task`, not its result. See **Effect and control-flow style**.
 - **No raw HTML/JS** — `Std.Ui` escapes everything. `data-sky-eval` is gone (no runtime path evaluates a string); use `data-sky-path` for URL sync.
 - **Secrets are typed** — secret-bearing args are the opaque `Sky.Core.Secret.Secret` (redacts itself in every log/JSON path): `Auth.signToken`/`verifyToken`, `Jwt.hs256`/`rs256`, the `Crypto` AEAD keys, `Http.withBearer`/`withApiKey`; `Cli.readPassword` returns one. The `Std.Crypto` key types (`Sign.SecretKey`, `Kx.SecretKey`) are opaque the same way and export only to a `Secret`. Wrap with `Secret.fromEnv "VAR"`, unwrap only via `Secret.reveal`. Never `fmt.Sprintf("%v", secret)`.
 - **AEAD encrypt is a `Task`** (it draws a random nonce): `Crypto.xchachaSeal key pt |> Task.andThen …`, or `Task.run` where a `Result` is needed. Prefer `xchachaSeal` over `aesGcmEncrypt`.

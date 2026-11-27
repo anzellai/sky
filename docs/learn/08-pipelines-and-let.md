@@ -61,4 +61,7 @@ Pipelines and `let` compose: a common shape is a `let` that names a couple of
 inputs, then a piped expression that transforms them. You'll see this everywhere
 in real Sky code.
 
+A `let` block can also hold **bind lines**, `name <- task`, which run an effect
+and name its result for the lines below. The next chapter shows them.
+
 **[Next → Effects & Task](09-effects-and-task.md)**

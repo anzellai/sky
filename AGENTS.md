@@ -43,7 +43,7 @@ silent corruption* — the property a service actually needs.
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
 Haskell compiler, once its byte-for-byte differential oracle, was removed from
 the tree in v0.29.0 (`docs/history/legacy-compilers.md`; tag `v0.28.1` is the
-last that has it). Current line: **v0.31.x**.
+last that has it). Current line: **v0.32.x**.
 
 Decimal places and computed exponents are bounded to -100000 through 100000.
 Outside this range they fail as `NumericOverflow`. `Money.allocate` requires
@@ -94,6 +94,11 @@ Core syntax you must get right:
   are evaluated too, including in a tail call.
   Unannotated recursive peers share monomorphic types before generalisation.
   Forward references preserve inferred bounds through the full helper chain.
+- **Bind lines** (v0.32.0): inside a `let` block, `user <- fetchUser id` runs the
+  Task (or `Result`, `Maybe`, decoder) and names its result for the lines below;
+  the `andThen` comes from the type of the expression. `name = task` names the
+  Task itself. `<-` is valid only as a `let` line (`[E0001]` elsewhere), and one
+  block chains one type. See "Effect and control-flow style" below.
 - **Field access**: `model.user.name`; `Shape.origin.x` is field `x` of the
   qualified value `Shape.origin`.
 - **Record update**: `{ user | age = 41 }` (keeps every other field).
@@ -172,7 +177,12 @@ Among them: `Std.Db.Decode` has its own `Decoder` type, and the bare `Decoder`
 written as the bare `Decoder` is `[E2001]` (write `DbDecode.Decoder`,
 `Config.Decoder`, `XmlDecode.Decoder`). A pattern in a lambda or
 function parameter or a `let` destructure must match every value: `\(Just x)
--> x` is `[E3001]`, use `case`.
+-> x` is `[E3001]`, use `case`. Bind lines (`p <- e` in a `let` block) are new,
+and `<-` outside a `let` block is now the parse error `[E0001]` (it was
+`[E1014]`). The new `Task.toResult` meets `Maybe.toResult`: under two
+`exposing (..)` imports a bare `toResult` is `[E1012]`, so write
+`Task.toResult` / `Maybe.toResult`. `Task.bestEffort` and `Task.unless` are new
+as well.
 
 **Upgrading a v0.30 project?** `docs/migration/v0.31.md` lists every change,
 split into loud, loud at run time and silent. Among them: `Codec.dict` with a
@@ -231,21 +241,48 @@ forces a fresh-value kernel (Uuid/Random/Time/Crypto.random).
 Full effect surface, bridges (`Task.fromResult`, `Task.onError`, …), and the
 two-level error pattern: `docs/stdlib.md` + `sky doc Sky.Core.Task`.
 
-**Effect and control-flow style — flat and named, not nested.** `Task` code
-chains with `andThen` / `map`. There is no do-notation and no `let!` bind, so
-`let x = someTask in …` binds the TASK value, not its result — `let … in` names
-PURE sub-expressions only (a key, a record, a string). Keep a chain readable by
-keeping the pipeline flat and naming its steps; right-drift (each `andThen (\x ->
-…)` holding the next `andThen` in its body) is the smell. The levers: a flat
-`t |> andThen step1 |> andThen step2 |> map finish`; a NAMED continuation over a
-long inline lambda (lift it out once it passes ~8 lines or holds another
-`andThen`); `map` for the terminal pure transform (never `andThen (\x -> succeed
-(f x))`); `map2` / `andMap` for INDEPENDENT tasks; `sequence` / `parallel` for a
-LIST of effects (`Task.sequence [ t1, t2, t3 ] |> Task.map (\_ -> ())`, not three
-nested `andThen`); and a local `bestEffort t = t |> Task.onError (\_ ->
-Task.succeed ())` / `unless cond t = if cond then Task.succeed () else t` for the
-two shapes the stdlib does not name. `templates/AGENTS.md` carries the worked
-before/after for scaffolded projects.
+**Effect and control-flow style — bind lines, flat and named, not nested.**
+A `let` block chains effects with **bind lines** (v0.32.0): `p <- e` runs `e`
+and binds its result to `p` for the rest of the block, and the later lines and
+the `in` body are the continuation (`e |> M.andThen (\p -> rest)`). The
+`andThen` comes from the type of `e`: `Task`, `Result`, `Maybe`, a decoder
+(`Json.Decode`, `Std.Db.Decode`, `Std.Config`, `Std.Xml.Decode`), or your own
+type whose module exposes `andThen : (a -> T b) -> T a -> T b`. A plain
+`x = someTask` line still binds the TASK value, not its result.
+
+```elm
+recordVisit : Ref Stats -> Task Error Stats
+recordVisit ref =
+    let
+        stats <- Sync.get ref
+        now <- Time.now ()
+        next = { stats | visits = stats.visits + 1, lastSeen = now }
+        _ <- Sync.set next ref
+    in
+        Task.succeed next
+```
+
+The rules: `=` and `<-` lines mix in any order; a bind line splits the block,
+and a line cannot see a name defined below a bind line (`[E1001]`, the hint
+says to move it up); all bind lines of one block chain ONE type, and the `in`
+body has it too (a `Maybe` bind line in a `Task` block is `[E2001]`: bridge with
+`Task.fromResult` / `Result.fromMaybe`); the pattern must match every value
+(`(Just x) <- e` is `[E3001]`); the type of `e` must be known (`[E2015]`,
+annotate the function) and have an `andThen` (`[E2016]`); no `x : T` line on a
+bind line; `<-` outside a `let` block is `[E0001]`. Recursion through a Task
+bind line is stack-safe, like `Task.andThen`. The levers, in order: **bind
+lines** for a sequence whose later steps need earlier results; a flat
+`t |> andThen step1 |> andThen step2 |> map finish` when each step only feeds
+the next; a NAMED step function over a long inline lambda; `map` for the
+terminal pure transform (never `andThen (\x -> succeed (f x))`); `map2` /
+`andMap` for INDEPENDENT tasks; `sequence` / `parallel` for a LIST of effects
+(`Task.sequence [ t1, t2, t3 ] |> Task.map (\_ -> ())`); `Task.bestEffort t`
+(run `t`, ignore its error), `Task.unless cond t` (run `t` only when `cond` is
+`False`) and `Task.toResult t` (the outcome of ONE step as a `Result`, so a
+`case` handles that step's error and an `onError` does not swallow the errors
+of the other steps). `templates/AGENTS.md` carries the worked before/after for
+scaffolded projects.
+
 
 **Recursion through `Task.andThen` is stack-safe; `Task.loop` is the clearer
 form for a long loop.** Since v0.27.0 a Task is data run by one interpreter (the

@@ -137,6 +137,8 @@ and `Std.Ai.Memory.Pg`. Training and evaluation: `Std.Ai.Dataset`,
 ## Language and interop
 
 * [`language/`](language/): syntax, types, pattern matching, modules.
+  [Bind lines](language/syntax.md#bind-lines) (`p <- e` in a `let` block,
+  v0.32.0) chain Tasks, Results, Maybes and decoders with no nesting.
 * [`errors/`](errors/): the error model and one page per diagnostic code.
 * [`ffi/`](ffi/): Go interop and binding generation.
 

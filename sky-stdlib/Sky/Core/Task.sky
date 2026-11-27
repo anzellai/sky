@@ -102,7 +102,7 @@ onError =
 --         order <- placeOrder cart
 --         _ <- Task.bestEffort (Email.send (receipt order))
 --     in
---     Task.succeed order
+--         Task.succeed order
 bestEffort : Task e a -> Task x ()
 bestEffort task =
     task |> map (\_ -> ()) |> onError (\_ -> succeed ())
@@ -115,7 +115,7 @@ bestEffort task =
 --         cached <- Sync.get cache
 --         _ <- Task.unless (Dict.member key cached) (refresh key)
 --     in
---     Task.succeed ()
+--         Task.succeed ()
 unless : Bool -> Task e () -> Task e ()
 unless cond task =
     if cond then
@@ -135,12 +135,12 @@ unless cond task =
 --         user <- loadUser id
 --         avatar <- Task.toResult (fetchAvatar user)
 --     in
---     case avatar of
---         Ok image ->
---             Task.succeed { user = user, avatar = Just image }
+--         case avatar of
+--             Ok image ->
+--                 Task.succeed { user = user, avatar = Just image }
 --
---         Err _ ->
---             Task.succeed { user = user, avatar = Nothing }
+--             Err _ ->
+--                 Task.succeed { user = user, avatar = Nothing }
 toResult : Task e a -> Task x (Result e a)
 toResult task =
     task |> map Ok |> onError (\e -> succeed (Err e))

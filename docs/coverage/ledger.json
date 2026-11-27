@@ -412,7 +412,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 2374,
+      "expected_assertions": 2382,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -435,7 +435,7 @@
       "tier": "T1"
     },
     "corpus-1": {
-      "expected_assertions": 184,
+      "expected_assertions": 208,
       "falsifier_mutation": "corpus-1.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 0 of 4: each case built + run; values compared against the generator's own",
@@ -473,7 +473,7 @@
       "tier": "T2"
     },
     "corpus-2": {
-      "expected_assertions": 184,
+      "expected_assertions": 208,
       "falsifier_mutation": "corpus-2.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 1 of 4: each case built + run; values compared against the generator's own",
@@ -511,7 +511,7 @@
       "tier": "T2"
     },
     "corpus-3": {
-      "expected_assertions": 183,
+      "expected_assertions": 207,
       "falsifier_mutation": "corpus-3.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 2 of 4: each case built + run; values compared against the generator's own",
@@ -549,7 +549,7 @@
       "tier": "T2"
     },
     "corpus-4": {
-      "expected_assertions": 183,
+      "expected_assertions": 207,
       "falsifier_mutation": "corpus-4.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "behavioural corpus shard 3 of 4: each case built + run; values compared against the generator's own",
@@ -609,7 +609,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 898,
+      "expected_assertions": 1048,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -619,7 +619,7 @@
       "tier": "T1"
     },
     "corpus-reject": {
-      "expected_assertions": 306,
+      "expected_assertions": 414,
       "falsifier_mutation": "corpus-reject.repair-the-defect",
       "falsifier_proven": true,
       "summary": "reject matrix: rejection by DIAGNOSTIC CODE, each with an accepted twin",
@@ -1033,7 +1033,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 3366,
+    "stdlib_entries": 3369,
     "stdlib_modules": 140,
     "surfaces_covered": 199,
     "surfaces_covered_pct": 95.2,
@@ -4399,6 +4399,11 @@
           },
           {
             "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "corpus:layer1 (gate `corpus`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -22923,7 +22928,7 @@
         }
       },
       "count": 1015,
-      "pct_of_denominator": 30.2
+      "pct_of_denominator": 30.1
     }
   },
   "units": [
@@ -23050,9 +23055,9 @@
       "db_drivers": [],
       "gate": "corpus",
       "id": "corpus:layer1",
-      "modules_imported": 10,
+      "modules_imported": 11,
       "path": "corpus:layer1",
-      "refs_generous": 62,
+      "refs_generous": 63,
       "refs_qualified": 54,
       "role": "Layer1",
       "sky_files": 12,
@@ -25055,10 +25060,10 @@
       "id": "tests/conformance",
       "modules_imported": 67,
       "path": "tests/conformance",
-      "refs_generous": 1066,
-      "refs_qualified": 1038,
+      "refs_generous": 1071,
+      "refs_qualified": 1044,
       "role": "Conformance",
-      "sky_files": 67,
+      "sky_files": 69,
       "sky_toml_sections": []
     }
   ]

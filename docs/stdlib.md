@@ -833,6 +833,9 @@ main =
 | `Task.andThen` | `(a -> Task e b) -> Task e a -> Task e b` | Sequence effects |
 | `Task.mapError` | `(e -> e2) -> Task e a -> Task e2 a` | Transform failure |
 | `Task.onError` | `(e -> Task e2 a) -> Task e a -> Task e2 a` | Recover from failure |
+| `Task.bestEffort` | `Task e a -> Task x ()` | v0.32.0. Run the task and ignore its result and its error; never fails |
+| `Task.unless` | `Bool -> Task e () -> Task e ()` | v0.32.0. Run the task only when the condition is `False`; `succeed ()` when it is `True` |
+| `Task.toResult` | `Task e a -> Task x (Result e a)` | v0.32.0. Run the task and give its outcome as a `Result`; never fails, an error is `Err e` in the value |
 | `Task.sequence` | `List (Task e a) -> Task e (List a)` | Run sequentially |
 | `Task.parallel` | `List (Task e a) -> Task e (List a)` | Run concurrently (goroutines); first error short-circuits |
 | `Task.lazy` | `(() -> a) -> Task e a` | Defer computation |
@@ -861,6 +864,26 @@ main =
 | `Task.map2` … `Task.map5` | `(a -> b -> c) -> Task e a -> Task e b -> Task e c` (…up to 5) | Combine N tasks with an N-ary function. Forces left to right, each task exactly once; a failure short-circuits the tasks to its right |
 | `Task.andMap` | `Task e a -> Task e (a -> b) -> Task e b` | Applicative application — VALUE first, FUNCTION second, matching `Maybe.andMap` / `Result.andMap`. Forces the function task first |
 
+
+**Bind lines and the three helpers (v0.32.0).** A `let` block chains Tasks with bind lines: `name <- task` runs the task and names its result for the lines below ([syntax](language/syntax.md#bind-lines)). `Task.bestEffort`, `Task.unless` and `Task.toResult` cover the shapes such a block needs. They are pure Sky over `map` / `onError`:
+
+```elm
+loadProfile : String -> Task Error Profile
+loadProfile id =
+    let
+        user <- fetchUser id
+        avatar <- Task.toResult (fetchAvatar user)
+        _ <- Task.unless (String.isEmpty user.name) (Task.bestEffort (audit user))
+    in
+        case avatar of
+            Ok url ->
+                Task.succeed { name = user.name, avatar = url }
+
+            Err _ ->
+                Task.succeed { name = user.name, avatar = "/default.png" }
+```
+
+`Task.toResult` scopes the error handling to the one step: a failure of `fetchUser` still fails the block, where a `Task.onError` around the whole block would catch it too. `Task.toResult` and `Maybe.toResult` have the same name, so a module that imports both modules with `exposing (..)` writes the qualified name (`[E1012]`).
 
 **Loops: `Task.loop`, or plain `andThen` recursion.** A Task is data run by one interpreter (the Task trampoline, v0.27.0). It pops an `andThen` before it runs the task the continuation returns, so recursion through `andThen` or `onError` runs at a constant Go stack: two million iterations of `step n = work |> Task.andThen (\_ -> step (n + 1))` finish. `Task.sequence` over a long list is folded by the same interpreter. `Task.loop` is the clearer form when the loop has explicit state, and `Task.forever` for a loop that only stops on an error. A recursive call that is not behind a continuation (`step (n - 1) |> Task.map f`) is evaluated while the task is built, and grows the stack like any strict recursion (`docs/KNOWN_LIMITATIONS.md`):
 

@@ -11,7 +11,54 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.32.0 — bind lines in let blocks (unreleased)
+## v0.32.0 — bind lines in let blocks (2026-11-27)
+
+### Added
+
+- **Bind lines in `let` blocks (#342).** A line `p <- e` in a `let` block runs
+  `e` and binds its result to `p` for the rest of the block. The later lines
+  and the `in` body are the continuation, so an effect chain reads top to
+  bottom with no nested lambdas:
+
+  ```elm
+  recordVisit : Ref Stats -> Task Error Stats
+  recordVisit ref =
+      let
+          stats <- Sync.get ref
+          now <- Time.now ()
+          next = { stats | visits = stats.visits + 1, lastSeen = now }
+          _ <- Sync.set next ref
+      in
+          Task.succeed next
+  ```
+
+  The `andThen` is chosen from the type of `e` when the program compiles:
+  `Task`, `Result`, `Maybe`, the decoders of `Json.Decode`, `Std.Db.Decode`,
+  `Std.Config` and `Std.Xml.Decode`, and any type whose module exposes
+  `andThen : (a -> T b) -> T a -> T b`. `=` lines and `<-` lines mix in any
+  order, the pattern can be a name, `_`, a tuple or a record, and recursion
+  through a Task bind line is stack-safe. There are no new operators. See
+  `docs/language/syntax.md` ("Bind lines").
+- **The errors name the fix.** `<-` outside a `let` block is `[E0001]` with
+  the hint to write it as a `let` line. A name used above the bind line that
+  defines it is `[E1001]` with the hint to move the definition. A type that
+  is still unknown is `[E2015] BIND NEEDS A TYPE`, a type with no `andThen`
+  is `[E2016] NO ANDTHEN`, a pattern that can fail is `[E3001]`, and two
+  types in one block are `[E2001]`. An annotation line on a bind line is a
+  parse error that says to annotate the expression instead.
+- **`sky fmt` and the language server know bind lines.** `sky fmt` keeps each
+  bind line flat and moves a long expression to the lines below `<-`. Hover
+  on `<-` shows the chosen `andThen`, its type and the bound type,
+  go-to-definition on `<-` opens that `andThen`, `<-` is a keyword token, and
+  each bound name gets an inlay hint.
+- **`Task.bestEffort`, `Task.unless` and `Task.toResult`.** `bestEffort t`
+  runs `t` and ignores its error. `unless cond t` runs `t` only when `cond` is
+  `False`. `toResult t` gives the outcome of `t` as a `Result` and never
+  fails, so a `case` handles the error of one step without an `onError`
+  around the whole block. All three are pure Sky in `Sky.Core.Task`.
+- The README, AGENTS.md, the project templates, the language and learn pages
+  and `docs/stdlib.md` show bind lines, and the corpus has a `let_bind`
+  stratum (96 programs built and run) and six bind-line reject rows.
 
 ### ⚠ Breaking changes
 
@@ -39,6 +86,25 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   constructor of a type with two or more variants) is now `[E3001]` with the
   hint to use `case`. Variables, `_`, `()`, records, tuples, aliases and the
   constructor of a one-variant type stay accepted, also nested.
+- **`toResult` under two `exposing (..)` imports is `[E1012]`.** The new
+  `Task.toResult` has the name of `Maybe.toResult`. A module that exposes
+  `Sky.Core.Task` and `Sky.Core.Maybe` with `(..)` and writes the bare
+  `toResult` gets `[E1012]`, which names both modules. Write `Task.toResult`
+  or `Maybe.toResult`.
+- **`<-` outside a `let` block is `[E0001]`, not `[E1014]`.** It was never
+  valid. Only the code and the message change: the message says that `<-` is
+  a bind line and belongs in a `let` block.
+
+### Fixed
+
+- A row decoder (`Std.Db.Decode`) passed to `Json.Decode.decodeString`, and a
+  TOML or XML decoder where a JSON decoder was expected, passed `sky check`
+  and failed at run time. The decoder types are now separate (see Breaking).
+- `\(Just x) -> x` applied to `Nothing` returned `0` with no error, and
+  `let (Just x) = m in x` on `Nothing` panicked. A pattern that can fail in a
+  binder position is now refused at compile time (see Breaking).
+- `docs/tooling/lsp.md` said the server has no inlay hints. It has them, and
+  the page now lists them.
 
 ## v0.31.2 — the app icon reaches Std.App mobile releases (2026-11-24)
 
