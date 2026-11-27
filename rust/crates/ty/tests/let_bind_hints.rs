@@ -1525,3 +1525,60 @@ fn the_err_example_names_the_error_import_when_it_is_missing() {
     );
     one_e2001_at(&got, "<-", &["(e.g. `Error.invalidInput \"…\"`)"]);
 }
+
+// ---- 10. an unannotated def: one error per block, and the TEA shape -------
+
+/// Judge probes t5 / t6: a `Maybe` block in a `case` arm of an unannotated
+/// def whose `in` body has another type is ONE error, as the hand-written
+/// `String.toInt s |> Maybe.andThen (\n -> n + 1)` is. The block's type is
+/// free for the `case` and for a caller of the def.
+#[test]
+fn a_body_clash_in_an_unannotated_def_is_one_error() {
+    for body in [
+        "f s =\n    case s of\n        \"a\" ->\n            let\n                n <- String.toInt s\n            in\n            n + 1\n\n        _ ->\n            0\n\n\ng : String\ng =\n    String.fromInt (f \"a\")",
+        "f s =\n    case s of\n        \"a\" ->\n            let\n                n <- String.toInt s\n                m <- String.toInt s\n            in\n            n + m\n\n        _ ->\n            0\n\n\ng : String\ng =\n    String.fromInt (f \"a\")",
+    ] {
+        let got = check(body, &[]);
+        let errs: Vec<_> = got.iter().filter(|g| g.code.starts_with('E')).collect();
+        assert_eq!(errs.len(), 1, "{body}\n{got:#?}");
+        assert_eq!(errs[0].code, "E2001", "{got:#?}");
+    }
+}
+
+/// The TEA shape of an unannotated `update` (probe t3 / t14): the note
+/// comes from the `in` body's `( model, Cmd msg )` type, never "this block
+/// needs `Task a b`", and the block is the one error.
+fn unannotated_tea(line: &str, needles: &[&str]) {
+    let src = format!(
+        "{TEA}update msg model =\n    case msg of\n        Bump ->\n            let\n                {line}\n            in\n            ( {{ model | count = model.count + n }}, Cmd.none )\n\n        Saved _ ->\n            ( model, Cmd.none )"
+    );
+    let got = check_with(&src, &[], TEA_IMPORTS);
+    let errs: Vec<_> = got.iter().filter(|g| g.code.starts_with('E')).collect();
+    assert_eq!(errs.len(), 1, "{got:#?}");
+    let m = &errs[0].message;
+    for n in needles {
+        assert!(m.contains(n), "missing {n:?}: {m}");
+    }
+    assert!(!m.contains("this block needs"), "{m}");
+    assert!(!m.contains("Make `"), "{m}");
+}
+
+#[test]
+fn a_task_line_in_an_unannotated_tea_update_names_cmd_perform() {
+    unannotated_tea(
+        "n <- Task.succeed 3",
+        &["so a Task cannot run in it directly", "`Cmd.perform`"],
+    );
+}
+
+#[test]
+fn a_maybe_line_in_an_unannotated_tea_update_gives_the_idiom() {
+    unannotated_tea(
+        "n <- String.toInt model.note",
+        &[
+            "so a `Maybe` cannot be chained here.",
+            "Handle it with `case String.toInt model.note of Just n -> … ; Nothing -> …`, or \
+             `Maybe.withDefault 0 (String.toInt model.note)`.",
+        ],
+    );
+}

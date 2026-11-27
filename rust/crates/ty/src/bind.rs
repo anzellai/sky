@@ -1064,6 +1064,7 @@ impl<'a> Infer<'a> {
     pub(crate) fn body_note(
         &mut self,
         snap: &UnionFind,
+        line: &PendingBind,
         block_head: &str,
         lam: TyVarId,
         want: TyVarId,
@@ -1114,6 +1115,29 @@ impl<'a> Infer<'a> {
         else {
             return Some(None);
         };
+        // The `in` expression has a type its use fixes (the TEA update
+        // shape `( model, Cmd msg )`, a view, a `Sub`), in a def with no
+        // annotation: the block's line cannot be chained there. Give the
+        // note the annotated def gets (`Cmd.perform` for a Task, the
+        // `case` / `withDefault` idiom for a `Maybe` or `Result`), never
+        // a wrap of the body in the line's type.
+        if fixed_by_use(&body_ty) {
+            let shown = self.show(&body_ty);
+            let who = Some("the `in` expression has type");
+            if nominal::strip(block_head) == "Task" {
+                if let Some(note) = self.tea_update_note(&body_ty, &shown, who) {
+                    return Some(Some(note));
+                }
+            }
+            return Some(Some(self.fixed_type_note(
+                line,
+                snap,
+                nominal::strip(block_head),
+                &body_ty,
+                &shown,
+                who,
+            )));
+        }
         let snap = &prepared;
         let b = nominal::strip(block_head).to_string();
         let v = body_text.unwrap_or_else(|| "…".to_string());
@@ -1428,14 +1452,14 @@ impl<'a> Infer<'a> {
         // the Task runs through `Cmd.perform`, never by making `update`
         // return a Task (the app builder takes no such `update`).
         if head == "Task" {
-            if let Some(note) = self.tea_update_note(block_ty, &block_text) {
+            if let Some(note) = self.tea_update_note(block_ty, &block_text, None) {
                 return note;
             }
         }
         // A block of a type its use fixes (`( model, Cmd msg )`, a view, a
         // `Sub`): never advise another return type.
         if fixed_by_use(block_ty) {
-            return self.fixed_type_note(pb, snap, &head, block_ty, &block_text);
+            return self.fixed_type_note(pb, snap, &head, block_ty, &block_text, None);
         }
         // The type the block would need: the line's type with the block's
         // type as its result (`Task Error Int` with `String`: `Task Error
@@ -1497,9 +1521,13 @@ impl<'a> Infer<'a> {
         head: &str,
         block_ty: &Ty,
         block_text: &str,
+        who: Option<&str>,
     ) -> String {
-        let who = match self.def_returning(block_ty) {
-            Some(def) => format!("`{def}` returns"),
+        let who = match who.map(str::to_string).or_else(|| {
+            self.def_returning(block_ty)
+                .map(|d| format!("`{d}` returns"))
+        }) {
+            Some(w) => w,
             None => "this block has type".to_string(),
         };
         let e_ty = self.on_snapshot(snap, |s| s.read_back(pb.e_ty));
@@ -1589,7 +1617,12 @@ impl<'a> Infer<'a> {
     /// The note on a `Task` bind line in a block of the TEA update shape
     /// `( model, Cmd msg )`: the Task runs through `Cmd.perform`, and its
     /// result comes back as a `Msg`. `None` for any other block type.
-    fn tea_update_note(&self, block_ty: &Ty, block_text: &str) -> Option<String> {
+    fn tea_update_note(
+        &self,
+        block_ty: &Ty,
+        block_text: &str,
+        who: Option<&str>,
+    ) -> Option<String> {
         let Ty::Tuple(parts) = block_ty else {
             return None;
         };
@@ -1655,8 +1688,11 @@ impl<'a> Infer<'a> {
                 ),
             ),
         };
-        let who = match self.def_returning(block_ty) {
-            Some(def) => format!("`{def}` returns"),
+        let who = match who.map(str::to_string).or_else(|| {
+            self.def_returning(block_ty)
+                .map(|d| format!("`{d}` returns"))
+        }) {
+            Some(w) => w,
             None => "this block has type".to_string(),
         };
         Some(format!(

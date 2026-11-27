@@ -1148,3 +1148,53 @@ fn an_unknown_name_after_a_bind_arrow_is_e1001_in_json() {
     assert!(ds.iter().any(|d| d["code"] == "E2001"), "{ds:#?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A bind block that reports an error (here the `in` expression has another
+/// type) is ONE diagnostic in `--format json`, as the hand-written `andThen`
+/// chain is: the block's type is free for the `case` around it, a caller and
+/// the `App.app` record (Judge probes t3, t5, t6).
+#[test]
+fn a_bind_block_clash_is_one_diagnostic_in_json() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let plain = "module Main exposing (main)\n\n\
+                 import Sky.Core.Prelude exposing (..)\n\
+                 import Std.Log exposing (println)\n\n\n\
+                 f s =\n    case s of\n        \"a\" ->\n            let\n                n <- String.toInt s\n            in\n            n + 1\n\n        _ ->\n            0\n\n\n\
+                 main =\n    println (String.fromInt (f \"a\"))\n";
+    let tea = "module Main exposing (main)\n\n\
+               import Sky.Core.Prelude exposing (..)\n\
+               import Std.App as App\n\
+               import Std.Ui as Ui exposing (Element)\n\n\n\
+               type alias Model =\n    { count : Int, input : String }\n\n\n\
+               type Msg\n    = Increment\n    | SetInput String\n\n\n\
+               type Page\n    = Home\n    | NotFound\n\n\n\
+               init : a -> ( Model, Cmd Msg )\ninit _ =\n    ( { count = 0, input = \"\" }, Cmd.none )\n\n\n\
+               update msg model =\n    case msg of\n        Increment ->\n            let\n                n <- String.toInt model.input\n            in\n            ( { model | count = model.count + n }, Cmd.none )\n\n        SetInput s ->\n            ( { model | input = s }, Cmd.none )\n\n\n\
+               view : Model -> Element Msg\nview model =\n    Ui.text (\"Count: \" ++ String.fromInt model.count)\n\n\n\
+               app =\n    App.app\n        { init = init\n        , update = update\n        , view = view\n        , subscriptions = \\_ -> Sub.none\n        }\n        |> App.withNotFound NotFound\n\n\n\
+               main =\n    App.run app\n";
+    for (tag, src, needle) in [
+        ("bind-one-plain", plain, "this block needs `Maybe"),
+        (
+            "bind-one-tea",
+            tea,
+            "Maybe.withDefault 0 (String.toInt model.input)",
+        ),
+    ] {
+        let dir = project(tag, src, "");
+        let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+        assert_eq!(o.code, 1, "{tag}: {}", o.stderr);
+        let s = check_stream(&o);
+        let ds = diags(&o);
+        assert_eq!(s["errors"].as_u64(), Some(1), "{tag}: {ds:#?}");
+        assert_eq!(ds.len(), 1, "{tag}: {ds:#?}");
+        assert_eq!(ds[0]["code"], "E2001", "{tag}: {ds:#?}");
+        assert!(
+            ds[0]["message"].as_str().unwrap_or("").contains(needle),
+            "{tag}: {ds:#?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -182,9 +182,10 @@ pub struct Infer<'a> {
     /// unknown gives no `[E2015]`: the def's error is the first one.
     pub(crate) failed_def_seen: usize,
     /// How many bind lines were refused (their type does not fit the block,
-    /// or they have no `andThen`). A block with a refused line has a free
-    /// type, as the hand-written chain with that clash has, so a caller of
-    /// the def reports no second clash on it.
+    /// or they have no `andThen`), or met a clash of the rest of their block
+    /// (the `in` expression of another type). A block with such an error has
+    /// a free type, as the hand-written chain with that clash has, so a
+    /// caller of the def reports no second clash on it.
     pub(crate) bind_lines_refused: usize,
     /// Bind lines whose `andThen` is not chosen yet (`crate::bind`).
     pub(crate) pending_binds: Vec<crate::bind::PendingBind>,
@@ -1857,7 +1858,7 @@ impl<'a> Infer<'a> {
                 }
                 let errors_before = self.errors.len();
                 let chosen_before = self.bind_choices.len();
-                self.start_bind(crate::bind::PendingBind {
+                let pb = crate::bind::PendingBind {
                     call: e,
                     callee_ty,
                     e_ty: te,
@@ -1871,7 +1872,11 @@ impl<'a> Infer<'a> {
                         .and_then(|d| self.db.def_loc(d))
                         .map(|l| l.module),
                     pat_text,
-                });
+                };
+                // Kept for the note on a clash of the `in` expression, which
+                // names this line (`Infer::body_note`).
+                let line = pb.clone();
+                self.start_bind(pb);
                 let head = (self.bind_choices.len() > chosen_before)
                     .then(|| self.read_back(te))
                     .and_then(|t| match &t {
@@ -1943,7 +1948,8 @@ impl<'a> Infer<'a> {
                             .and_then(|d| self.db.def_loc(d))
                             .map(|l| l.module);
                         let text = self.span_text(module, body.expr_span(fb));
-                        let note = self.body_note(snap, h, tl, tlam, expected, fb, text)??;
+                        let note =
+                            self.body_note(snap, &line, h, tl, tlam, expected, fb, text)??;
                         Some((body.expr_span(fb), note))
                     });
                 if refused || rest_errored {
@@ -1959,11 +1965,18 @@ impl<'a> Infer<'a> {
                     let note = crate::bind::mixed_note(crate::nominal::strip(&head));
                     self.append_note(before, Some(note));
                 }
-                // The first line of a block in which a line was refused: that
-                // refusal is the block's one error. The hand-written chain
-                // with the same clash leaves its result free, so the block's
-                // type is free too, and a caller of an unannotated def (or the
-                // rest of the body) reports no second clash on it.
+                // A clash of the rest of the block (the `in` expression, or a
+                // later line of another type) is the block's error, as a
+                // refused line is.
+                if !refused && self.errors.len() > before {
+                    self.bind_lines_refused += 1;
+                }
+                // The first line of a block that reported an error (a refused
+                // line, or a clash of its `in` expression): that error is the
+                // block's one error. The hand-written chain with the same
+                // clash leaves its result free, so the block's type is free
+                // too, and the `case` around it, a caller of an unannotated
+                // def or the rest of the body report no second clash on it.
                 if !continues && self.bind_lines_refused > refused_in_block {
                     return self.uf.fresh_flex();
                 }
