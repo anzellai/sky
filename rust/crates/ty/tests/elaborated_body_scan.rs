@@ -17,8 +17,10 @@ use std::path::{Path, PathBuf};
 const ALLOWED: &[(&str, usize, &str)] = &[
     (
         "ty/src/bind.rs",
-        4,
-        "the accessor itself, and the check-path inference that makes the choice",
+        7,
+        "the accessor itself, the check-path inference that makes the choice, and the \
+         error-path hint re-check, which copies the def's raw body to try a fix and reads \
+         its source text for the note (both run inside inference, before any elaboration)",
     ),
     (
         "ty/src/db.rs",
