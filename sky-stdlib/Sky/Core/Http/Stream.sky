@@ -169,11 +169,11 @@ forEachChunkRaw =
 --   relayHandler : Server.Request -> Task Error Server.Response
 --   relayHandler req =
 --       Server.Stream.stream "text/event-stream" (\writer ->
---           Http.Stream.open upstreamReq
---               |> Task.andThen (\hdl ->
---                   Http.Stream.forEachChunk hdl
---                       (\chunk -> Server.Stream.emit chunk writer))
---               |> Task.andThen (\_ -> Server.Stream.finish writer))
+--           let
+--               hdl <- Http.Stream.open upstreamReq
+--               _ <- Http.Stream.forEachChunk hdl (\chunk -> Server.Stream.emit chunk writer)
+--           in
+--               Server.Stream.finish writer)
 --
 -- See `examples/32-sse-relay` for the runnable canonical example.
 forEachChunk : StreamId -> (String -> Task Error ()) -> Task Error ()

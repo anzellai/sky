@@ -1725,6 +1725,51 @@ jobs:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
         run: CGO_ENABLED=1 bash ../scripts/ci/go-test-shard.sh 2/2 ./rt/... -- -race -timeout 20m -count=1
 
+  # gate-stress — the timing-dependent rt tests, many times, on Linux AND macOS.
+  #
+  # WHY. `Http.Stream.forEachChunk` could return Ok with part of a finished
+  # stream (a `select` picked `done` over queued chunks; fixed in f7fd47176).
+  # Its test had passed every run until one per-commit macOS run, about one in
+  # 40, hit it by chance. gate-race-1/2 run each rt test ONCE, on Linux only,
+  # so a release trusted one green run of a scheduling-dependent test, and the
+  # release ran no Go runtime test on macOS at all. This job runs the stream,
+  # socket, Task deadline / spawn / parallel, Std.Sync and goroutine-context
+  # tests -count times under -race with GOMAXPROCS=2 and then GOMAXPROCS=1
+  # (few OS threads make the unlucky interleavings common), on both platforms.
+  # The selection and its floor live in scripts/ci/go-test-stress.sh. One pass
+  # is about 10 s, so the two legs are about 10 minutes.
+  #
+  # The macOS leg also runs the whole rt suite once (as rust-ci's
+  # macos-determinism does per commit), so a release is gated on the Go
+  # runtime on the second platform too. SKY_LIVE_TESTS=skip there covers only
+  # the embedded-PostgreSQL live tests, which gate-race-1/2 run on Linux.
+  gate-stress:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+      - name: Timing-dependent rt tests x40 under -race, GOMAXPROCS=2
+        run: bash scripts/ci/go-test-stress.sh 40 2
+      - name: Timing-dependent rt tests x15 under -race, GOMAXPROCS=1
+        run: bash scripts/ci/go-test-stress.sh 15 1
+      - name: rt tests on macOS (the release's second-platform Go runtime leg)
+        if: runner.os == 'macOS'
+        working-directory: runtime-go
+        env:
+          SKY_LIVE_TESTS: skip
+        run: CGO_ENABLED=0 go test ./rt/... -count=1 -timeout 20m
+
 
 
   # gate-web-1..4 — the browser tier and the e2e scripts: every Sky.Live /
@@ -2441,6 +2486,7 @@ jobs:
       - gate-ai-device-android
       - gate-race-1
       - gate-race-2
+      - gate-stress
       - gate-web-1
       - gate-web-2
       - gate-web-3

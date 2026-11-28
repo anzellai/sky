@@ -529,74 +529,46 @@ registerWith (Registry r) name adapter lin0 companions =
                 (\n base -> ( n, base ))
                 (validName name)
                 (baseDigestOf lin0.base)
+        ( _, baseDigest ) <- Task.fromResult checked
+        stored <-
+            Task.sequence
+                (List.map
+                    (\c ->
+                        Store.put r.store c.path
+                            |> Task.map (\blob -> ( c.role, blob.sha256 )))
+                    companions)
+        lin =
+            { lin0
+                | metadata =
+                    List.filter
+                        (\( k, _ ) ->
+                            not (List.any (\( role, _ ) -> role == k) stored))
+                        lin0.metadata
+                        ++ stored
+            }
+        _ <-
+            Task.unless
+                (Regex.contains sha256HexRe_ lin.datasetDigest)
+                (Task.fail
+                    (invalidSetting
+                        "datasetDigest"
+                        (quote lin.datasetDigest
+                            ++ " is not a sha256 digest (64 lower-case hex digits)")))
+        info <- adapterInfoRaw adapter.path
+        _ <-
+            Task.unless
+                (info.format == formatText adapter.format)
+                (Task.fail
+                    (invalidSetting
+                        "format"
+                        (adapter.path ++ " is " ++ info.format ++ ", not "
+                            ++ formatText adapter.format)))
+        blob <- Store.put r.store adapter.path
+        v <-
+            insertVersion (Registry r) name adapter lin baseDigest info blob
+        _ <- publishConsole (Registry r) name
     in
-        Task.fromResult checked
-            |> Task.andThen
-                   (\pair ->
-                       Task.sequence
-                           (List.map
-                               (\c ->
-                                   Store.put r.store c.path
-                                       |> Task.map
-                                              (\blob -> ( c.role, blob.sha256 )))
-                               companions)
-                           |> Task.map (\stored -> ( pair, stored )))
-            |> Task.andThen
-                   (\( ( _, baseDigest ), stored ) ->
-                       let
-                           lin =
-                               { lin0
-                                   | metadata =
-                                       List.filter
-                                           (\( k, _ ) ->
-                                               not
-                                                   (List.any
-                                                       (\( role, _ ) -> role == k)
-                                                       stored))
-                                           lin0.metadata
-                                           ++ stored
-                               }
-                       in
-                           if not (Regex.contains sha256HexRe_ lin.datasetDigest) then
-                               Task.fail
-                                   (invalidSetting
-                                       "datasetDigest"
-                                       (quote lin.datasetDigest
-                                           ++ " is not a sha256 digest (64 lower-case hex digits)"))
-
-                           else
-                               adapterInfoRaw adapter.path
-                                   |> Task.andThen
-                                          (\info ->
-                                              if info.format
-                                                  /= formatText adapter.format then
-                                                  Task.fail
-                                                      (invalidSetting
-                                                          "format"
-                                                          (adapter.path ++ " is "
-                                                              ++ info.format
-                                                              ++ ", not "
-                                                              ++ formatText
-                                                                     adapter.format))
-
-                                              else
-                                                  Store.put r.store adapter.path
-                                                      |> Task.andThen
-                                                             (\blob ->
-                                                                 insertVersion
-                                                                     (Registry r)
-                                                                     name
-                                                                     adapter
-                                                                     lin
-                                                                     baseDigest
-                                                                     info
-                                                                     blob)))
-            |> Task.andThen
-                   (\v ->
-                       publishConsole (Registry r) name
-                           |> Task.andThen
-                                  (\_ -> publishAfter (Registry r) name)
-                           |> Task.map (\_ -> v))
+        publishAfter (Registry r) name |> Task.map (\_ -> v)
 
 
 insertVersion : Registry -> String -> Adapter -> Lineage -> String -> AdapterInfo -> Store.Blob -> Task Error Version
@@ -604,126 +576,84 @@ insertVersion (Registry r) name adapter lin baseDigest info blob =
     Db.withTransaction
         r.db
         (\tx ->
-            Db.query
-                tx
-                "SELECT * FROM _sky_ai_registry_versions WHERE name = ? AND digest = ?"
-                [ SqlString name, SqlString blob.sha256 ]
-                |> Task.andThen
-                       (\rows ->
-                           case List.head rows of
+            let
+                rows <-
+                    Db.query
+                        tx
+                        "SELECT * FROM _sky_ai_registry_versions WHERE name = ? AND digest = ?"
+                        [ SqlString name, SqlString blob.sha256 ]
+            in
+                case List.head rows of
 
-                               Just row ->
-                                   let
-                                       existing = versionOf row
-                                   in
-                                       if existing.baseDigest == baseDigest then
-                                           Task.succeed existing
+                    Just row ->
+                        let
+                            existing = versionOf row
+                        in
+                            if existing.baseDigest == baseDigest then
+                                Task.succeed existing
 
-                                       else
-                                           Task.fail
-                                               (invalidSetting
-                                                   "base"
-                                                   (label existing
-                                                       ++ " already holds these bytes with base sha256 "
-                                                       ++ existing.baseDigest))
+                            else
+                                Task.fail
+                                    (invalidSetting
+                                        "base"
+                                        (label existing
+                                            ++ " already holds these bytes with base sha256 "
+                                            ++ existing.baseDigest))
 
-                               Nothing ->
-                                   Db.query
-                                       tx
-                                       "SELECT COALESCE(MAX(number), 0) AS n FROM _sky_ai_registry_versions WHERE name = ?"
-                                       [ SqlString name ]
-                                       |> Task.andThen
-                                              (\nrows ->
-                                                  Time.unixMillis ()
-                                                      |> Task.andThen
-                                                             (\now ->
-                                                                 let
-                                                                     number =
-                                                                         1
-                                                                             + (List.head
-                                                                                   nrows
-                                                                                   |> Maybe.map
-                                                                                          (Db.getInt
-                                                                                              "n")
-                                                                                   |> Maybe.withDefault
-                                                                                          0)
-                                                                     v =
-                                                                         { name =
-                                                                             name
-                                                                         , number =
-                                                                             number
-                                                                         , digest =
-                                                                             blob.sha256
-                                                                         , size =
-                                                                             blob.size
-                                                                         , format =
-                                                                             formatText
-                                                                                 adapter.format
-                                                                         , method =
-                                                                             methodText
-                                                                                 adapter.method
-                                                                         , architecture =
-                                                                             info.architecture
-                                                                         , base =
-                                                                             Local.reference
-                                                                                 lin.base
-                                                                         , baseDigest =
-                                                                             baseDigest
-                                                                         , dataset =
-                                                                             lin.dataset
-                                                                         , datasetDigest =
-                                                                             lin.datasetDigest
-                                                                         , metadata =
-                                                                             lin.metadata
-                                                                         , blocked =
-                                                                             Nothing
-                                                                         , onDevice =
-                                                                             Nothing
-                                                                         , createdAt =
-                                                                             now
-                                                                         }
-                                                                 in
-                                                                     Db.exec
-                                                                         tx
-                                                                         ("INSERT INTO _sky_ai_registry_versions "
-                                                                             ++ "(name, number, digest, size, format, method, architecture, base, base_digest, "
-                                                                             ++ "dataset, dataset_digest, metadata, blocked, created_at) "
-                                                                             ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-                                                                         [ SqlString
-                                                                               v.name
-                                                                         , SqlInt
-                                                                               v.number
-                                                                         , SqlString
-                                                                               v.digest
-                                                                         , SqlInt
-                                                                               v.size
-                                                                         , SqlString
-                                                                               v.format
-                                                                         , SqlString
-                                                                               v.method
-                                                                         , SqlString
-                                                                               v.architecture
-                                                                         , SqlString
-                                                                               v.base
-                                                                         , SqlString
-                                                                               v.baseDigest
-                                                                         , SqlString
-                                                                               v.dataset
-                                                                         , SqlString
-                                                                               v.datasetDigest
-                                                                         , SqlString
-                                                                               (JsonE.encode
-                                                                                   0
-                                                                                   (pairsRows
-                                                                                       v.metadata))
-                                                                         , SqlString
-                                                                               ""
-                                                                         , SqlInt
-                                                                               v.createdAt
-                                                                         ]
-                                                                         |> Task.map
-                                                                                (\_ ->
-                                                                                    v)))))
+                    Nothing ->
+                        let
+                            nrows <-
+                                Db.query
+                                    tx
+                                    "SELECT COALESCE(MAX(number), 0) AS n FROM _sky_ai_registry_versions WHERE name = ?"
+                                    [ SqlString name ]
+                            now <- Time.unixMillis ()
+                            number =
+                                1
+                                    + (List.head nrows
+                                          |> Maybe.map (Db.getInt "n")
+                                          |> Maybe.withDefault 0)
+                            v =
+                                { name = name
+                                , number = number
+                                , digest = blob.sha256
+                                , size = blob.size
+                                , format = formatText adapter.format
+                                , method = methodText adapter.method
+                                , architecture = info.architecture
+                                , base = Local.reference lin.base
+                                , baseDigest = baseDigest
+                                , dataset = lin.dataset
+                                , datasetDigest = lin.datasetDigest
+                                , metadata = lin.metadata
+                                , blocked = Nothing
+                                , onDevice = Nothing
+                                , createdAt = now
+                                }
+                        in
+                            Db.exec
+                                tx
+                                ("INSERT INTO _sky_ai_registry_versions "
+                                    ++ "(name, number, digest, size, format, method, architecture, base, base_digest, "
+                                    ++ "dataset, dataset_digest, metadata, blocked, created_at) "
+                                    ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                                [ SqlString v.name
+                                , SqlInt v.number
+                                , SqlString v.digest
+                                , SqlInt v.size
+                                , SqlString v.format
+                                , SqlString v.method
+                                , SqlString v.architecture
+                                , SqlString v.base
+                                , SqlString v.baseDigest
+                                , SqlString v.dataset
+                                , SqlString v.datasetDigest
+                                , SqlString
+                                      (JsonE.encode 0 (pairsRows v.metadata))
+                                , SqlString ""
+                                , SqlInt v.createdAt
+                                ]
+                                |> Task.map (\_ -> v))
 
 
 -- | Attach an eval report to a version, so `promote` can check the evidence
@@ -741,42 +671,44 @@ attachReport (Registry r) v report =
                     ++ "; run the suite with Eval.runAs (Registry.label version)"))
 
     else
-        Db.query
-            r.db
-            "SELECT digest FROM _sky_ai_registry_reports WHERE name = ? AND number = ? AND digest = ?"
-            [ SqlString v.name, SqlInt v.number, SqlString report.digest ]
-            |> Task.andThen
-                   (\rows ->
-                       if not (List.isEmpty rows) then
-                           Task.succeed ()
+        let
+            rows <-
+                Db.query
+                    r.db
+                    "SELECT digest FROM _sky_ai_registry_reports WHERE name = ? AND number = ? AND digest = ?"
+                    [ SqlString v.name
+                    , SqlInt v.number
+                    , SqlString report.digest
+                    ]
+            _ <-
+                if not (List.isEmpty rows) then
+                    Task.succeed ()
 
-                       else
-                           Time.unixMillis ()
-                               |> Task.andThen
-                                      (\now ->
-                                          Db.exec
-                                              r.db
-                                              ("INSERT INTO _sky_ai_registry_reports "
-                                                  ++ "(name, number, suite, digest, candidate, passed, failed, errors, pass_rate, verdict, report, created_at) "
-                                                  ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-                                              [ SqlString v.name
-                                              , SqlInt v.number
-                                              , SqlString report.suite
-                                              , SqlString report.digest
-                                              , SqlString report.candidate
-                                              , SqlInt report.passed
-                                              , SqlInt report.failed
-                                              , SqlInt report.errors
-                                              , SqlString
-                                                    (String.fromFloat
-                                                        report.passRate)
-                                              , SqlString (verdictOf report)
-                                              , SqlString
-                                                    (Eval.encodeReport report)
-                                              , SqlInt now
-                                              ]
-                                              |> Task.map (\_ -> ())))
-            |> Task.andThen (\_ -> publishConsole (Registry r) v.name)
+                else
+                    let
+                        now <- Time.unixMillis ()
+                    in
+                        Db.exec
+                            r.db
+                            ("INSERT INTO _sky_ai_registry_reports "
+                                ++ "(name, number, suite, digest, candidate, passed, failed, errors, pass_rate, verdict, report, created_at) "
+                                ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                            [ SqlString v.name
+                            , SqlInt v.number
+                            , SqlString report.suite
+                            , SqlString report.digest
+                            , SqlString report.candidate
+                            , SqlInt report.passed
+                            , SqlInt report.failed
+                            , SqlInt report.errors
+                            , SqlString (String.fromFloat report.passRate)
+                            , SqlString (verdictOf report)
+                            , SqlString (Eval.encodeReport report)
+                            , SqlInt now
+                            ]
+                            |> Task.map (\_ -> ())
+        in
+            publishConsole (Registry r) v.name
 
 
 verdictOf : Eval.Report -> String
@@ -918,66 +850,57 @@ promoteChecked reg aliasName v t =
 -- report's reasons.
 evidenceAgainst : Registry -> String -> Version -> (String -> Eval.Thresholds) -> Task Error ( Eval.Passed, Maybe Version )
 evidenceAgainst (Registry r) aliasName v thresholdsFor =
-    Task.fromResult (validAlias aliasName)
-        |> Task.andThen (\_ -> readAlias r.db v.name aliasName)
-        |> Task.andThen
-               (\st ->
-                   case st of
+    let
+        _ <- Task.fromResult (validAlias aliasName)
+        st <- readAlias r.db v.name aliasName
+        current <-
+            case st of
 
-                       Just a ->
-                           version (Registry r) v.name a.number |> Task.map Just
+                Just a ->
+                    version (Registry r) v.name a.number |> Task.map Just
 
-                       Nothing ->
-                           Task.succeed Nothing)
-        |> Task.andThen
-               (\current ->
-                   Task.map2
-                       (\candidates baselines ->
-                           ( current, candidates, baselines ))
-                       (storedReports (Registry r) v)
-                       (case current of
+                Nothing ->
+                    Task.succeed Nothing
+        ( candidates, baselines ) <-
+            Task.map2
+                (\cs bs -> ( cs, bs ))
+                (storedReports (Registry r) v)
+                (case current of
 
-                           Just c ->
-                               if c.number == v.number then
-                                   Task.succeed []
+                    Just c ->
+                        if c.number == v.number then
+                            Task.succeed []
 
-                               else
-                                   storedReports (Registry r) c
+                        else
+                            storedReports (Registry r) c
 
-                           Nothing ->
-                               Task.succeed []))
-        |> Task.andThen
-               (\found ->
-                   case found of
+                    Nothing ->
+                        Task.succeed [])
+        verdicts =
+            List.map
+                (\report ->
+                    Eval.gate
+                        (thresholdsFor report.suite)
+                        (comparedWith baselines report))
+                candidates
+    in
+        case List.filterMap Result.toMaybe verdicts of
 
-                       ( current, candidates, baselines ) ->
-                           let
-                               verdicts =
-                                   List.map
-                                       (\report ->
-                                           Eval.gate
-                                               (thresholdsFor report.suite)
-                                               (comparedWith baselines report))
-                                       candidates
-                           in
-                               case List.filterMap Result.toMaybe verdicts of
+            passed :: _ ->
+                Task.succeed ( passed, current )
 
-                                   passed :: _ ->
-                                       Task.succeed ( passed, current )
+            [] ->
+                case verdicts of
 
-                                   [] ->
-                                       case verdicts of
+                    newest :: _ ->
+                        Task.fromResult newest
+                            |> Task.map (\p -> ( p, current ))
 
-                                           newest :: _ ->
-                                               Task.fromResult newest
-                                                   |> Task.map
-                                                          (\p -> ( p, current ))
-
-                                           [] ->
-                                               Task.fail
-                                                   (notPromotable
-                                                       (label v)
-                                                       "no eval report is attached; run the suite with Eval.runAs (Registry.label version) and Registry.attachReport"))
+                    [] ->
+                        Task.fail
+                            (notPromotable
+                                (label v)
+                                "no eval report is attached; run the suite with Eval.runAs (Registry.label version) and Registry.attachReport")
 
 
 -- The comparison for one candidate report: against the newest baseline
@@ -1000,13 +923,10 @@ comparedWith baselines report =
 -- instead of overwriting it. This is what `sky ai promote` runs.
 promoteCompared : Registry -> String -> Version -> (String -> Eval.Thresholds) -> Task Error AliasEvent
 promoteCompared reg aliasName v thresholdsFor =
-    evidenceAgainst reg aliasName v thresholdsFor
-        |> Task.andThen
-               (\found ->
-                   case found of
-
-                       ( passed, current ) ->
-                           promoteIf reg aliasName current v passed)
+    let
+        ( passed, current ) <- evidenceAgainst reg aliasName v thresholdsFor
+    in
+        promoteIf reg aliasName current v passed
 
 
 -- | Point an alias at a version without eval evidence. The reason is required
@@ -1043,38 +963,35 @@ refuseBlocked v =
 
 checkEvidence : Registry -> Version -> Eval.Passed -> Task Error ()
 checkEvidence (Registry r) v passed =
-    refuseBlocked v
-        |> Task.andThen
-               (\_ ->
-                   if Eval.passedCandidate passed /= label v then
-                       Task.fail
-                           (notPromotable
-                               (label v)
-                               ("the passing evaluation is for "
-                                   ++ quote (Eval.passedCandidate passed)
-                                   ++ "; run the suite with Eval.runAs (Registry.label version)"))
+    let
+        _ <- refuseBlocked v
+        _ <-
+            Task.unless
+                (Eval.passedCandidate passed == label v)
+                (Task.fail
+                    (notPromotable
+                        (label v)
+                        ("the passing evaluation is for "
+                            ++ quote (Eval.passedCandidate passed)
+                            ++ "; run the suite with Eval.runAs (Registry.label version)")))
+        rows <-
+            Db.query
+                r.db
+                "SELECT digest FROM _sky_ai_registry_reports WHERE name = ? AND number = ? AND digest = ?"
+                [ SqlString v.name
+                , SqlInt v.number
+                , SqlString (Eval.passedDigest passed)
+                ]
+    in
+        if List.isEmpty rows then
+            Task.fail
+                (notPromotable
+                    (label v)
+                    ("the passing report " ++ Eval.passedDigest passed
+                        ++ " is not attached; call Registry.attachReport first"))
 
-                   else
-                       Db.query
-                           r.db
-                           "SELECT digest FROM _sky_ai_registry_reports WHERE name = ? AND number = ? AND digest = ?"
-                           [ SqlString v.name
-                           , SqlInt v.number
-                           , SqlString (Eval.passedDigest passed)
-                           ]
-                           |> Task.andThen
-                                  (\rows ->
-                                      if List.isEmpty rows then
-                                          Task.fail
-                                              (notPromotable
-                                                  (label v)
-                                                  ("the passing report "
-                                                      ++ Eval.passedDigest
-                                                             passed
-                                                      ++ " is not attached; call Registry.attachReport first"))
-
-                                      else
-                                          Task.succeed ()))
+        else
+            Task.succeed ()
 
 
 -- The one place an alias moves: in a transaction, read the alias, check the
@@ -1082,59 +999,41 @@ checkEvidence (Registry r) v passed =
 -- append the event.
 move : Registry -> String -> Maybe Int -> Version -> String -> String -> String -> Task Error AliasEvent
 move (Registry r) aliasName expected v action reportDigest reason =
-    Task.fromResult (validAlias aliasName)
-        |> Task.andThen
-               (\_ ->
-                   Db.withTransaction
-                       r.db
-                       (\tx ->
-                           checkStored tx v
-                               |> Task.andThen
-                                      (\_ -> readAlias tx v.name aliasName)
-                               |> Task.andThen
-                                      (\current ->
-                                          let
-                                              from =
-                                                  Maybe.map .number current
-                                                      |> Maybe.withDefault 0
-                                          in
-                                              case expected of
+    let
+        _ <- Task.fromResult (validAlias aliasName)
+        ev <-
+            Db.withTransaction
+                r.db
+                (\tx ->
+                    let
+                        _ <- checkStored tx v
+                        current <- readAlias tx v.name aliasName
+                        from =
+                            Maybe.map .number current |> Maybe.withDefault 0
+                        _ <-
+                            case expected of
 
-                                                  Just want ->
-                                                      if want /= from then
-                                                          Task.fail
-                                                              (conflict
-                                                                  v.name
-                                                                  aliasName
-                                                                  want
-                                                                  from)
+                                Just want ->
+                                    Task.unless
+                                        (want == from)
+                                        (Task.fail
+                                            (conflict v.name aliasName want from))
 
-                                                      else
-                                                          writeAlias
-                                                              tx
-                                                              current
-                                                              v
-                                                              aliasName
-                                                              action
-                                                              from
-                                                              reportDigest
-                                                              reason
-
-                                                  Nothing ->
-                                                      writeAlias
-                                                          tx
-                                                          current
-                                                          v
-                                                          aliasName
-                                                          action
-                                                          from
-                                                          reportDigest
-                                                          reason)))
-        |> Task.andThen
-               (\ev ->
-                   publishConsole (Registry r) v.name
-                       |> Task.andThen (\_ -> publishAfter (Registry r) v.name)
-                       |> Task.map (\_ -> ev))
+                                Nothing ->
+                                    Task.succeed ()
+                    in
+                        writeAlias
+                            tx
+                            current
+                            v
+                            aliasName
+                            action
+                            from
+                            reportDigest
+                            reason)
+        _ <- publishConsole (Registry r) v.name
+    in
+        publishAfter (Registry r) v.name |> Task.map (\_ -> ev)
 
 
 -- The version as stored, inside the move's transaction: it exists, its
@@ -1202,97 +1101,81 @@ readAlias db name aliasName =
 
 writeAlias : Db -> Maybe AliasState -> Version -> String -> String -> Int -> String -> String -> Task Error AliasEvent
 writeAlias tx current v aliasName action from reportDigest reason =
-    Time.unixMillis ()
-        |> Task.andThen
-               (\now ->
-                   (case current of
+    let
+        now <- Time.unixMillis ()
+        _ <-
+            case current of
 
-                       Just st ->
-                           Db.exec
-                               tx
-                               ("UPDATE _sky_ai_registry_aliases SET number = ?, generation = ?, updated_at = ? "
-                                   ++ "WHERE name = ? AND alias = ? AND generation = ?")
-                               [ SqlInt v.number
-                               , SqlInt (st.generation + 1)
-                               , SqlInt now
-                               , SqlString v.name
-                               , SqlString aliasName
-                               , SqlInt st.generation
-                               ]
-                               |> Task.andThen
-                                      (\n ->
-                                          if n == 1 then
-                                              Task.succeed ()
+                Just st ->
+                    Db.exec
+                        tx
+                        ("UPDATE _sky_ai_registry_aliases SET number = ?, generation = ?, updated_at = ? "
+                            ++ "WHERE name = ? AND alias = ? AND generation = ?")
+                        [ SqlInt v.number
+                        , SqlInt (st.generation + 1)
+                        , SqlInt now
+                        , SqlString v.name
+                        , SqlString aliasName
+                        , SqlInt st.generation
+                        ]
+                        |> Task.andThen
+                               (\n ->
+                                   if n == 1 then
+                                       Task.succeed ()
 
-                                          else
-                                              Task.fail
-                                                  (conflict
-                                                      v.name
-                                                      aliasName
-                                                      from
-                                                      from))
+                                   else
+                                       Task.fail
+                                           (conflict v.name aliasName from from))
 
-                       Nothing ->
-                           Db.exec
-                               tx
-                               "INSERT INTO _sky_ai_registry_aliases (name, alias, number, generation, updated_at) VALUES (?, ?, ?, ?, ?)"
-                               [ SqlString v.name
-                               , SqlString aliasName
-                               , SqlInt v.number
-                               , SqlInt 1
-                               , SqlInt now
-                               ]
-                               |> Task.map (\_ -> ())
-                               |> Task.onError
-                                      (\_ ->
-                                          Task.fail
-                                              (conflict v.name aliasName 0 0)))
-                       |> Task.andThen
-                              (\_ ->
-                                  Db.query
-                                      tx
-                                      "SELECT COALESCE(MAX(seq), 0) AS n FROM _sky_ai_registry_events WHERE name = ? AND alias = ?"
-                                      [ SqlString v.name, SqlString aliasName ]
-                                      |> Task.andThen
-                                             (\rows ->
-                                                 let
-                                                     ev =
-                                                         { name = v.name
-                                                         , aliasName = aliasName
-                                                         , seq =
-                                                             1
-                                                                 + (List.head
-                                                                       rows
-                                                                       |> Maybe.map
-                                                                              (Db.getInt
-                                                                                  "n")
-                                                                       |> Maybe.withDefault
-                                                                              0)
-                                                         , action = action
-                                                         , from = from
-                                                         , to = v.number
-                                                         , report = reportDigest
-                                                         , reason = reason
-                                                         , at = now
-                                                         }
-                                                 in
-                                                     Db.exec
-                                                         tx
-                                                         ("INSERT INTO _sky_ai_registry_events "
-                                                             ++ "(name, alias, seq, action, from_number, to_number, report, reason, at) "
-                                                             ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-                                                         [ SqlString ev.name
-                                                         , SqlString
-                                                               ev.aliasName
-                                                         , SqlInt ev.seq
-                                                         , SqlString ev.action
-                                                         , SqlInt ev.from
-                                                         , SqlInt ev.to
-                                                         , SqlString ev.report
-                                                         , SqlString ev.reason
-                                                         , SqlInt ev.at
-                                                         ]
-                                                         |> Task.map (\_ -> ev))))
+                Nothing ->
+                    Db.exec
+                        tx
+                        "INSERT INTO _sky_ai_registry_aliases (name, alias, number, generation, updated_at) VALUES (?, ?, ?, ?, ?)"
+                        [ SqlString v.name
+                        , SqlString aliasName
+                        , SqlInt v.number
+                        , SqlInt 1
+                        , SqlInt now
+                        ]
+                        |> Task.map (\_ -> ())
+                        |> Task.onError
+                               (\_ -> Task.fail (conflict v.name aliasName 0 0))
+        rows <-
+            Db.query
+                tx
+                "SELECT COALESCE(MAX(seq), 0) AS n FROM _sky_ai_registry_events WHERE name = ? AND alias = ?"
+                [ SqlString v.name, SqlString aliasName ]
+        ev =
+            { name = v.name
+            , aliasName = aliasName
+            , seq =
+                1
+                    + (List.head rows |> Maybe.map (Db.getInt "n")
+                          |> Maybe.withDefault 0)
+            , action = action
+            , from = from
+            , to = v.number
+            , report = reportDigest
+            , reason = reason
+            , at = now
+            }
+    in
+        Db.exec
+            tx
+            ("INSERT INTO _sky_ai_registry_events "
+                ++ "(name, alias, seq, action, from_number, to_number, report, reason, at) "
+                ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            [ SqlString ev.name
+            , SqlString ev.aliasName
+            , SqlInt ev.seq
+            , SqlString ev.action
+            , SqlInt ev.from
+            , SqlInt ev.to
+            , SqlString ev.report
+            , SqlString ev.reason
+            , SqlInt ev.at
+            ]
+            |> Task.map (\_ -> ev)
 
 
 -- | Move `<name>@<alias>` back to the version it pointed at before the
@@ -1301,37 +1184,31 @@ writeAlias tx current v aliasName action from reportDigest reason =
 -- version is refused (promote another version with `forcePromote` instead).
 rollback : Registry -> String -> Task Error AliasEvent
 rollback (Registry r) ref =
-    Task.fromResult (splitRef ref)
-        |> Task.andThen
-               (\( name, aliasName ) ->
-                   history (Registry r) name aliasName
-                       |> Task.andThen
-                              (\events ->
-                                  case stackOf events of
+    let
+        ( name, aliasName ) <- Task.fromResult (splitRef ref)
+        events <- history (Registry r) name aliasName
+    in
+        case stackOf events of
 
-                                      current :: previous :: _ ->
-                                          version (Registry r) name previous
-                                              |> Task.andThen
-                                                     (\prev ->
-                                                         refuseBlocked prev
-                                                             |> Task.andThen
-                                                                    (\_ ->
-                                                                        move
-                                                                            (Registry
-                                                                                r)
-                                                                            aliasName
-                                                                            (Just
-                                                                                current)
-                                                                            prev
-                                                                            "rollback"
-                                                                            ""
-                                                                            ""))
+            current :: previous :: _ ->
+                let
+                    prev <- version (Registry r) name previous
+                    _ <- refuseBlocked prev
+                in
+                    move
+                        (Registry r)
+                        aliasName
+                        (Just current)
+                        prev
+                        "rollback"
+                        ""
+                        ""
 
-                                      _ ->
-                                          Task.fail
-                                              (notPromotable
-                                                  ref
-                                                  "there is no earlier version to roll back to")))
+            _ ->
+                Task.fail
+                    (notPromotable
+                        ref
+                        "there is no earlier version to roll back to")
 
 
 -- The alias's versions as a stack, newest first: replay the log oldest
@@ -1353,27 +1230,26 @@ stackOf events =
 -- | The version a reference names: `<name>@<alias>` or `<name>@v<number>`.
 resolve : Registry -> String -> Task Error Version
 resolve (Registry r) ref =
-    Task.fromResult (splitRef ref)
-        |> Task.andThen
-               (\( name, which ) ->
-                   if isVersionWord which then
-                       version
-                           (Registry r)
-                           name
-                           (String.toInt (String.dropLeft 1 which)
-                               |> Maybe.withDefault 0)
+    let
+        ( name, which ) <- Task.fromResult (splitRef ref)
+    in
+        if isVersionWord which then
+            version
+                (Registry r)
+                name
+                (String.toInt (String.dropLeft 1 which) |> Maybe.withDefault 0)
 
-                   else
-                       readAlias r.db name which
-                           |> Task.andThen
-                                  (\st ->
-                                      case st of
+        else
+            let
+                st <- readAlias r.db name which
+            in
+                case st of
 
-                                          Just s ->
-                                              version (Registry r) name s.number
+                    Just s ->
+                        version (Registry r) name s.number
 
-                                          Nothing ->
-                                              Task.fail (notRegistered ref)))
+                    Nothing ->
+                        Task.fail (notRegistered ref)
 
 
 -- | One version by name and number.
@@ -1485,26 +1361,21 @@ trainedOn (Registry r) ref =
 -- is decoded).
 datasetDigestOf : Db -> String -> Task Error String
 datasetDigestOf db ref =
-    Task.fromResult (datasetRefParts ref)
-        |> Task.andThen
-               (\parts ->
-                   case parts of
+    let
+        ( name, number ) <- Task.fromResult (datasetRefParts ref)
+        rows <-
+            Db.query
+                db
+                "SELECT digest FROM _sky_ai_registry_datasets WHERE name = ? AND number = ?"
+                [ SqlString name, SqlInt number ]
+    in
+        case List.head rows of
 
-                       ( name, number ) ->
-                           Db.query
-                               db
-                               "SELECT digest FROM _sky_ai_registry_datasets WHERE name = ? AND number = ?"
-                               [ SqlString name, SqlInt number ]
-                               |> Task.andThen
-                                      (\rows ->
-                                          case List.head rows of
+            Just row ->
+                Task.succeed (Db.getString "digest" row)
 
-                                              Just row ->
-                                                  Task.succeed
-                                                      (Db.getString "digest" row)
-
-                                              Nothing ->
-                                                  Task.fail (notRegistered ref)))
+            Nothing ->
+                Task.fail (notRegistered ref)
 
 
 -- `<name>@<number>` or `<name>@v<number>`.
@@ -1542,18 +1413,18 @@ datasetRefParts ref =
 --         |> Task.andThen (\v -> Registry.registerDataset reg (Dataset.manifest v) (Dataset.blobPath v))
 registerDataset : Registry -> Dataset.Manifest -> String -> Task Error DatasetVersion
 registerDataset (Registry r) m path =
-    Task.fromResult (validName m.name)
-        |> Task.andThen (\_ -> Store.put r.store path)
-        |> Task.andThen
-               (\blob ->
-                   if blob.sha256 /= m.digest then
-                       Task.fail
-                           (Failure.toError
-                               (ChecksumMismatch
-                                   { expected = m.digest, actual = blob.sha256 }))
-
-                   else
-                       insertDataset (Registry r) m)
+    let
+        _ <- Task.fromResult (validName m.name)
+        blob <- Store.put r.store path
+        _ <-
+            Task.unless
+                (blob.sha256 == m.digest)
+                (Task.fail
+                    (Failure.toError
+                        (ChecksumMismatch
+                            { expected = m.digest, actual = blob.sha256 })))
+    in
+        insertDataset (Registry r) m
 
 
 insertDataset : Registry -> Dataset.Manifest -> Task Error DatasetVersion
@@ -1561,103 +1432,78 @@ insertDataset (Registry r) m =
     Db.withTransaction
         r.db
         (\tx ->
-            Db.query
-                tx
-                "SELECT * FROM _sky_ai_registry_datasets WHERE name = ? AND digest = ?"
-                [ SqlString m.name, SqlString m.digest ]
-                |> Task.andThen
-                       (\rows ->
-                           case List.head rows of
+            let
+                rows <-
+                    Db.query
+                        tx
+                        "SELECT * FROM _sky_ai_registry_datasets WHERE name = ? AND digest = ?"
+                        [ SqlString m.name, SqlString m.digest ]
+            in
+                case List.head rows of
 
-                               Just row ->
-                                   Task.fromResult (datasetOf row)
+                    Just row ->
+                        Task.fromResult (datasetOf row)
 
-                               Nothing ->
-                                   Task.map2
-                                       (\nrows now -> ( nrows, now ))
-                                       (Db.query
-                                           tx
-                                           "SELECT COALESCE(MAX(number), 0) AS n FROM _sky_ai_registry_datasets WHERE name = ?"
-                                           [ SqlString m.name ])
-                                       (Time.unixMillis ())
-                                       |> Task.andThen
-                                              (\found ->
-                                                  case found of
-
-                                                      ( nrows, now ) ->
-                                                          let
-                                                              number =
-                                                                  1
-                                                                      + (List.head
-                                                                            nrows
-                                                                            |> Maybe.map
-                                                                                   (Db.getInt
-                                                                                       "n")
-                                                                            |> Maybe.withDefault
-                                                                                   0)
-                                                          in
-                                                              Db.exec
-                                                                  tx
-                                                                  ("INSERT INTO _sky_ai_registry_datasets "
-                                                                      ++ "(name, number, digest, rows, manifest, blocked, created_at) "
-                                                                      ++ "VALUES (?, ?, ?, ?, ?, ?, ?)")
-                                                                  [ SqlString
-                                                                        m.name
-                                                                  , SqlInt
-                                                                        number
-                                                                  , SqlString
-                                                                        m.digest
-                                                                  , SqlInt
-                                                                        m.rows
-                                                                  , SqlString
-                                                                        (Dataset.manifestJson
-                                                                            m)
-                                                                  , SqlString ""
-                                                                  , SqlInt now
-                                                                  ]
-                                                                  |> Task.map
-                                                                         (\_ ->
-                                                                             { name =
-                                                                                 m.name
-                                                                             , number =
-                                                                                 number
-                                                                             , digest =
-                                                                                 m.digest
-                                                                             , rows =
-                                                                                 m.rows
-                                                                             , manifest =
-                                                                                 m
-                                                                             , blocked =
-                                                                                 Nothing
-                                                                             , createdAt =
-                                                                                 now
-                                                                             }))))
+                    Nothing ->
+                        let
+                            ( nrows, now ) <-
+                                Task.map2
+                                    (\nrows now -> ( nrows, now ))
+                                    (Db.query
+                                        tx
+                                        "SELECT COALESCE(MAX(number), 0) AS n FROM _sky_ai_registry_datasets WHERE name = ?"
+                                        [ SqlString m.name ])
+                                    (Time.unixMillis ())
+                            number =
+                                1
+                                    + (List.head nrows
+                                          |> Maybe.map (Db.getInt "n")
+                                          |> Maybe.withDefault 0)
+                        in
+                            Db.exec
+                                tx
+                                ("INSERT INTO _sky_ai_registry_datasets "
+                                    ++ "(name, number, digest, rows, manifest, blocked, created_at) "
+                                    ++ "VALUES (?, ?, ?, ?, ?, ?, ?)")
+                                [ SqlString m.name
+                                , SqlInt number
+                                , SqlString m.digest
+                                , SqlInt m.rows
+                                , SqlString (Dataset.manifestJson m)
+                                , SqlString ""
+                                , SqlInt now
+                                ]
+                                |> Task.map
+                                       (\_ ->
+                                           { name = m.name
+                                           , number = number
+                                           , digest = m.digest
+                                           , rows = m.rows
+                                           , manifest = m
+                                           , blocked = Nothing
+                                           , createdAt = now
+                                           }))
 
 
 -- | A registered dataset version by reference: `<name>@<number>` or
 -- `<name>@v<number>` (`support@3`).
 datasetVersion : Registry -> String -> Task Error DatasetVersion
 datasetVersion (Registry r) ref =
-    Task.fromResult (datasetRefParts ref)
-        |> Task.andThen
-               (\parts ->
-                   case parts of
+    let
+        ( name, number ) <- Task.fromResult (datasetRefParts ref)
+        rows <-
+            Db.query
+                r.db
+                "SELECT * FROM _sky_ai_registry_datasets WHERE name = ? AND number = ?"
+                [ SqlString name, SqlInt number ]
+    in
+        case List.head rows of
 
-                       ( name, number ) ->
-                           Db.query
-                               r.db
-                               "SELECT * FROM _sky_ai_registry_datasets WHERE name = ? AND number = ?"
-                               [ SqlString name, SqlInt number ]
-                               |> Task.andThen
-                                      (\rows ->
-                                          case List.head rows of
+            Just row ->
+                Task.fromResult (datasetOf row)
 
-                                              Just row ->
-                                                  Task.fromResult
-                                                      (datasetOf row)
-
-                                              Nothing ->
-                                                  Task.fail (notRegistered ref)))
+            Nothing ->
+                Task.fail (notRegistered ref)
 
 
 badDatasetRef : String -> Error
@@ -1825,28 +1671,26 @@ clearedDataset v rows =
 
 recordOnDevice : Registry -> Version -> String -> Int -> Task Error ()
 recordOnDevice (Registry r) v reason now =
-    Db.exec
-        r.db
-        "UPDATE _sky_ai_registry_versions SET on_device = ? WHERE name = ? AND number = ?"
-        [ SqlString reason, SqlString v.name, SqlInt v.number ]
-        |> Task.andThen
-               (\n ->
-                   if n == 1 then
-                       Db.exec
-                           r.db
-                           "INSERT INTO _sky_ai_registry_events (name, alias, seq, action, from_number, to_number, report, reason, at) SELECT ?, 'device', COALESCE(MAX(seq), 0) + 1, 'allow-on-device', ?, ?, '', ?, ? FROM _sky_ai_registry_events WHERE name = ? AND alias = 'device'"
-                           [ SqlString v.name
-                           , SqlInt v.number
-                           , SqlInt v.number
-                           , SqlString reason
-                           , SqlInt now
-                           , SqlString v.name
-                           ]
-                           |> Task.andThen
-                                  (\_ -> publishConsole (Registry r) v.name)
-
-                   else
-                       Task.fail (notRegistered (label v)))
+    let
+        n <-
+            Db.exec
+                r.db
+                "UPDATE _sky_ai_registry_versions SET on_device = ? WHERE name = ? AND number = ?"
+                [ SqlString reason, SqlString v.name, SqlInt v.number ]
+        _ <- Task.unless (n == 1) (Task.fail (notRegistered (label v)))
+        _ <-
+            Db.exec
+                r.db
+                "INSERT INTO _sky_ai_registry_events (name, alias, seq, action, from_number, to_number, report, reason, at) SELECT ?, 'device', COALESCE(MAX(seq), 0) + 1, 'allow-on-device', ?, ?, '', ?, ? FROM _sky_ai_registry_events WHERE name = ? AND alias = 'device'"
+                [ SqlString v.name
+                , SqlInt v.number
+                , SqlInt v.number
+                , SqlString reason
+                , SqlInt now
+                , SqlString v.name
+                ]
+    in
+        publishConsole (Registry r) v.name
 
 
 -- | A local path holding the version's adapter, checked against its digest.
@@ -1883,63 +1727,61 @@ stripScheme ref =
 
 adapterFor : Registry -> String -> Bool -> Task Error Endpoint.Adapter
 adapterFor reg ref localEngine =
-    resolve reg ref
-        |> Task.andThen (\v -> publishConsole reg v.name |> Task.map (\_ -> v))
-        |> Task.andThen
-               (\v ->
-                   let
-                       info path =
-                           { ref = ref
-                           , label = label v
-                           , servedName = servedName v
-                           , digest = v.digest
-                           , baseDigest = v.baseDigest
-                           , format = v.format
-                           , path = path
-                           , onDevice = v.onDevice /= Nothing
-                           }
-                   in
-                       if not localEngine then
-                           Task.succeed (info "")
+    let
+        v <- resolve reg ref
+        _ <- publishConsole reg v.name
+        info path =
+            { ref = ref
+            , label = label v
+            , servedName = servedName v
+            , digest = v.digest
+            , baseDigest = v.baseDigest
+            , format = v.format
+            , path = path
+            , onDevice = v.onDevice /= Nothing
+            }
+    in
+        if not localEngine then
+            Task.succeed (info "")
 
-                       else if v.format == "gguf" then
-                           fetch reg v |> Task.map info
+        else if v.format == "gguf" then
+            fetch reg v |> Task.map info
 
-                       else
-                           case companion "gguf" v of
+        else
+            case companion "gguf" v of
 
-                               Just gguf ->
-                                   -- A safetensors version that carries its
-                                   -- GGUF export: the local engine loads that.
-                                   Store.fetch (store reg) gguf
-                                       |> Task.map
-                                              (\path ->
-                                                  { ref = ref
-                                                  , label = label v
-                                                  , servedName = servedName v
-                                                  , digest = gguf
-                                                  , baseDigest = v.baseDigest
-                                                  , format = "gguf"
-                                                  , path = path
-                                                  , onDevice =
-                                                      -- A `case`, not `/= Nothing`: the
-                                                      -- erased `!=` kernel's result is
-                                                      -- narrowed at every call site.
-                                                      case v.onDevice of
+                Just gguf ->
+                    -- A safetensors version that carries its
+                    -- GGUF export: the local engine loads that.
+                    Store.fetch (store reg) gguf
+                        |> Task.map
+                               (\path ->
+                                   { ref = ref
+                                   , label = label v
+                                   , servedName = servedName v
+                                   , digest = gguf
+                                   , baseDigest = v.baseDigest
+                                   , format = "gguf"
+                                   , path = path
+                                   , onDevice =
+                                       -- A `case`, not `/= Nothing`: the
+                                       -- erased `!=` kernel's result is
+                                       -- narrowed at every call site.
+                                       case v.onDevice of
 
-                                                          Just _ ->
-                                                              True
+                                           Just _ ->
+                                               True
 
-                                                          Nothing ->
-                                                              False
-                                                  })
+                                           Nothing ->
+                                               False
+                                   })
 
-                               Nothing ->
-                                   Task.fail
-                                       (invalidSetting
-                                           "adapter"
-                                           (label v ++ " is " ++ v.format
-                                               ++ " with no GGUF export; a local engine (llama.cpp) loads GGUF adapters only (train with Train.withGgufExport)")))
+                Nothing ->
+                    Task.fail
+                        (invalidSetting
+                            "adapter"
+                            (label v ++ " is " ++ v.format
+                                ++ " with no GGUF export; a local engine (llama.cpp) loads GGUF adapters only (train with Train.withGgufExport)"))
 
 
 -- ── The console ─────────────────────────────────────────────────────
@@ -1963,7 +1805,7 @@ publishConsole (Registry r) name =
         (allEvents (Registry r) name)
         (evalHistory (Registry r) name)
         |> Task.andThen (\value -> recordConsoleRaw (JsonE.encode 0 value))
-        |> Task.onError (\_ -> Task.succeed ())
+        |> Task.bestEffort
 
 
 -- ── Rows and JSON ───────────────────────────────────────────────────
@@ -2414,48 +2256,37 @@ readManifest st name number =
 -- many objects were written.
 publishPointers : Registry -> String -> Task Error Int
 publishPointers (Registry r) name =
-    Task.map2
-        (\vs als -> ( vs, als ))
-        (versions (Registry r) name)
-        (aliases (Registry r) name)
-        |> Task.andThen
-               (\( vs, als ) ->
-                   Task.sequence (List.map (writeManifest r.store) vs)
-                       |> Task.andThen
-                              (\written ->
-                                  Task.sequence
-                                      (List.map
-                                          (\a ->
-                                              case List.filter
-                                                       (\v ->
-                                                           v.number == a.number)
-                                                       vs
-                                                       |> List.head of
+    let
+        ( vs, als ) <-
+            Task.map2
+                (\vs als -> ( vs, als ))
+                (versions (Registry r) name)
+                (aliases (Registry r) name)
+        written <- Task.sequence (List.map (writeManifest r.store) vs)
+    in
+        Task.sequence
+            (List.map
+                (\a ->
+                    case List.filter (\v -> v.number == a.number) vs
+                             |> List.head of
 
-                                                  Just v ->
-                                                      writePointer
-                                                          r.store
-                                                          { name = name
-                                                          , aliasName =
-                                                              a.aliasName
-                                                          , number = a.number
-                                                          , generation =
-                                                              a.generation
-                                                          , digest = v.digest
-                                                          , servedName =
-                                                              servedName v
-                                                          }
-                                                          0
+                        Just v ->
+                            writePointer
+                                r.store
+                                { name = name
+                                , aliasName = a.aliasName
+                                , number = a.number
+                                , generation = a.generation
+                                , digest = v.digest
+                                , servedName = servedName v
+                                }
+                                0
 
-                                                  Nothing ->
-                                                      Task.succeed 0)
-                                          als)
-                                      |> Task.map
-                                             (\moved ->
-                                                 List.foldl
-                                                     (\a b -> a + b)
-                                                     0
-                                                     (written ++ moved))))
+                        Nothing ->
+                            Task.succeed 0)
+                als)
+            |> Task.map
+                   (\moved -> List.foldl (\a b -> a + b) 0 (written ++ moved))
 
 
 -- After a commit: publish the pointers, and say how to repair them when the
@@ -2498,56 +2329,49 @@ writeManifest st v =
 -- object generation, and write with that generation as the precondition.
 writePointer : Store -> Pointer -> Int -> Task Error Int
 writePointer st p tries =
-    Store.getObject st (pointerKey p.name p.aliasName)
-        |> Task.andThen
-               (\current ->
-                   let
-                       ( objectGen, older ) =
-                           case current of
+    let
+        current <- Store.getObject st (pointerKey p.name p.aliasName)
+        ( objectGen, older ) =
+            case current of
 
-                               Nothing ->
-                                   ( "", True )
+                Nothing ->
+                    ( "", True )
 
-                               Just o ->
-                                   case JsonD.decodeString pointerDecoder o.body of
+                Just o ->
+                    case JsonD.decodeString pointerDecoder o.body of
 
-                                       Ok q ->
-                                           ( o.generation
-                                           , q.generation < p.generation
-                                           )
+                        Ok q ->
+                            ( o.generation, q.generation < p.generation )
 
-                                       Err _ ->
-                                           ( o.generation, True )
-                   in
-                       if not older then
-                           Task.succeed 0
+                        Err _ ->
+                            ( o.generation, True )
+    in
+        if not older then
+            Task.succeed 0
 
-                       else
-                           Store.putIf
-                               st
-                               (pointerKey p.name p.aliasName)
-                               objectGen
-                               (pointerJson p)
-                               |> Task.andThen
-                                      (\done ->
-                                          if done then
-                                              Task.succeed 1
+        else
+            let
+                done <-
+                    Store.putIf
+                        st
+                        (pointerKey p.name p.aliasName)
+                        objectGen
+                        (pointerJson p)
+            in
+                if done then
+                    Task.succeed 1
 
-                                          else if tries < 5 then
-                                              writePointer st p (tries + 1)
+                else if tries < 5 then
+                    writePointer st p (tries + 1)
 
-                                          else
-                                              Task.fail
-                                                  (Failure.toError
-                                                      (PromotionConflict
-                                                          { ref =
-                                                              p.name ++ "@"
-                                                                  ++ p.aliasName
-                                                          , expected =
-                                                              "a stable pointer"
-                                                          , actual =
-                                                              "five racing writers"
-                                                          }))))
+                else
+                    Task.fail
+                        (Failure.toError
+                            (PromotionConflict
+                                { ref = p.name ++ "@" ++ p.aliasName
+                                , expected = "a stable pointer"
+                                , actual = "five racing writers"
+                                }))
 
 
 -- | A resolver that reads only the store's pointer objects: for a serving
@@ -2559,95 +2383,67 @@ storeResolver st =
     { name = "store"
     , resolve =
         \ref localEngine ->
-            Task.fromResult (splitRef (stripScheme ref))
-                |> Task.andThen
-                       (\( name, which ) ->
-                           (if isVersionWord which then
-                               Task.succeed
-                                   (String.toInt (String.dropLeft 1 which)
-                                       |> Maybe.withDefault 0)
+            let
+                ( name, which ) <-
+                    Task.fromResult (splitRef (stripScheme ref))
+                number <-
+                    if isVersionWord which then
+                        Task.succeed
+                            (String.toInt (String.dropLeft 1 which)
+                                |> Maybe.withDefault 0)
 
-                           else
-                               readPointer st name which
-                                   |> Task.andThen
-                                          (\p ->
-                                              case p of
+                    else
+                        let
+                            p <- readPointer st name which
+                        in
+                            case p of
 
-                                                  Just ptr ->
-                                                      Task.succeed ptr.number
+                                Just ptr ->
+                                    Task.succeed ptr.number
 
-                                                  Nothing ->
-                                                      Task.fail
-                                                          (notRegistered
-                                                              (stripScheme ref))))
-                               |> Task.andThen
-                                      (\number ->
-                                          readManifest st name number
-                                              |> Task.andThen
-                                                     (\m ->
-                                                         case m of
+                                Nothing ->
+                                    Task.fail (notRegistered (stripScheme ref))
+                m <- readManifest st name number
+            in
+                case m of
 
-                                                             Nothing ->
-                                                                 Task.fail
-                                                                     (notRegistered
-                                                                         (name
-                                                                             ++ "@v"
-                                                                             ++ String.fromInt
-                                                                                    number))
+                    Nothing ->
+                        Task.fail
+                            (notRegistered
+                                (name ++ "@v" ++ String.fromInt number))
 
-                                                             Just man ->
-                                                                 let
-                                                                     info path digest format =
-                                                                         { ref =
-                                                                             stripScheme
-                                                                                 ref
-                                                                         , label =
-                                                                             man.label
-                                                                         , servedName =
-                                                                             man.servedName
-                                                                         , digest =
-                                                                             digest
-                                                                         , baseDigest =
-                                                                             man.baseDigest
-                                                                         , format =
-                                                                             format
-                                                                         , path =
-                                                                             path
-                                                                         -- The device clearance lives in the
-                                                                         -- registry database (allowOnDevice),
-                                                                         -- not in the store manifest, so a
-                                                                         -- store-only resolve never clears an
-                                                                         -- adapter for devices.
-                                                                         , onDevice =
-                                                                             False
-                                                                         }
-                                                                 in
-                                                                     if not
-                                                                         localEngine then
-                                                                         Task.succeed
-                                                                             (info
-                                                                                 ""
-                                                                                 man.digest
-                                                                                 man.format)
+                    Just man ->
+                        let
+                            info path digest format =
+                                { ref = stripScheme ref
+                                , label = man.label
+                                , servedName = man.servedName
+                                , digest = digest
+                                , baseDigest = man.baseDigest
+                                , format = format
+                                , path = path
+                                -- The device clearance lives in the
+                                -- registry database (allowOnDevice),
+                                -- not in the store manifest, so a
+                                -- store-only resolve never clears an
+                                -- adapter for devices.
+                                , onDevice = False
+                                }
+                        in
+                            if not localEngine then
+                                Task.succeed (info "" man.digest man.format)
 
-                                                                     else if man.gguf
-                                                                         == "" then
-                                                                         Task.fail
-                                                                             (invalidSetting
-                                                                                 "adapter"
-                                                                                 (man.label
-                                                                                     ++ " has no GGUF file; a local engine (llama.cpp) loads GGUF adapters only"))
+                            else if man.gguf == "" then
+                                Task.fail
+                                    (invalidSetting
+                                        "adapter"
+                                        (man.label
+                                            ++ " has no GGUF file; a local engine (llama.cpp) loads GGUF adapters only"))
 
-                                                                     else
-                                                                         Store.fetch
-                                                                             st
-                                                                             man.gguf
-                                                                             |> Task.map
-                                                                                    (\path ->
-                                                                                        info
-                                                                                            path
-                                                                                            man.gguf
-                                                                                            "gguf"))))
+                            else
+                                Store.fetch st man.gguf
+                                    |> Task.map
+                                           (\path -> info path man.gguf "gguf")
     }
 
 

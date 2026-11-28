@@ -291,7 +291,6 @@ func TestSyncPop_StopsAtTheDeadline(t *testing.T) {
 // No goroutine-local entry outlives a Task.timeout, whether the task finished
 // in time or was abandoned at the deadline.
 func TestTaskTimeout_LeavesNoGoroutineContext(t *testing.T) {
-	before := goroutineCtxSize()
 	RunWithTraceContext(WithRequestID(context.Background(), "req-timeout-leak"), func() {
 		for i := 0; i < 20; i++ {
 			anyTaskInvoke(Task_timeout(1000, makeOkTask(i, 0, nil, nil)))
@@ -299,10 +298,10 @@ func TestTaskTimeout_LeavesNoGoroutineContext(t *testing.T) {
 		}
 	})
 	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && goroutineCtxSize() > before {
+	for time.Now().Before(deadline) && stampsWithRequestID("req-timeout-leak") != 0 {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if n := goroutineCtxSize(); n > before {
-		t.Fatalf("trace stamps leaked: %d before, %d after", before, n)
+	if n := stampsWithRequestID("req-timeout-leak"); n != 0 {
+		t.Fatalf("%d trace stamps leaked", n)
 	}
 }

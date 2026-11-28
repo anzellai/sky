@@ -1,0 +1,95 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Set as Set
+import Sky.Core.Dict as Dict
+import Std.App as App
+import Std.Ui as Ui
+
+type Route
+    = Home
+    | Missing
+
+type alias Set =
+    { zz : Int }
+
+type alias Dict =
+    { dd : String }
+
+type alias Model =
+    { page : Route
+    , own : Set
+    , kern : Set.Set Int
+    , kd : Dict.Dict String Int
+    , d : Dict
+    }
+
+type Msg
+    = Inc
+
+
+routes : List (App.Route Route)
+routes =
+    [ App.route "/" Home ]
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home
+      , own = { zz = 4 }
+      , kern = Set.fromList [ 1, 2, 3 ]
+      , kd = Dict.fromList [ ( "a", 1 ) ]
+      , d = { dd = "dv" }
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( { model
+                  | own = { zz = model.own.zz + 1 }
+                  , kern = Set.insert 9 model.kern
+              }
+            , Cmd.none
+            )
+
+
+view : Model -> Ui.Element Msg
+view model =
+    case model.page of
+
+        Home ->
+            Ui.text
+                ("HOMEPAGE " ++ String.fromInt model.own.zz ++ " "
+                    ++ String.fromInt (Set.size model.kern)
+                    ++ " "
+                    ++ String.fromInt (Dict.size model.kd)
+                    ++ " "
+                    ++ model.d.dd)
+
+        Missing ->
+            Ui.text "MISSINGPAGE"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes routes
+        |> App.withNotFound Missing
+
+
+main =
+    App.run app

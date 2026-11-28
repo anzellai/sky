@@ -11,6 +11,125 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.32.1 — the standard library uses bind lines (2026-11-28)
+
+### Changed
+
+- **The standard library and two examples use bind lines.** Effect and
+  `Result` / `Maybe` chains in `Std.Ai`, `Std.Durable`, `Std.Codec`,
+  `Std.Db.Store`, the `Sky.Core` / `Http` stream doc examples and the SSE tick
+  chains of `examples/30-sse-server-demo` and `examples/32-sse-relay` are now
+  bind lines. There is no change of behaviour: the generated Go of each
+  changed function was compared before and after.
+
+- **`sky check` warns about a type that an imported stdlib module does not
+  export.** `Ui.Html` under `import Std.Ui as Ui` names no type of `Std.Ui`,
+  and the type checker matched it with any type named `Html`. It still
+  compiles in v0.32.x. The warning names the module that exports a type of
+  that name (`` use `Html.Html` from `Std.Html` ``). The next minor version
+  reports it as `[E1001]` (`docs/migration/v0.32.md`). `examples/64-app-native`
+  now writes `Html.Html`.
+
+### Fixed
+
+- **A type of your module named like a standard library type no longer
+  breaks a value of the stdlib type at run time.** With `type alias Set =
+  { zz : Int }` in a module, `Set.fromList [ 1, 2 ] |> Set.size` passed `sky
+  check` and then failed with `CoerceFailure: expected main.Main_Set_R, got
+  rt.SkySet`: the build read the bare kernel type `Set` as the module's own
+  alias. A bare kernel type (a type a stdlib signature names and no stdlib
+  module declares, such as `Set`) is now the kernel type in the checker and
+  in the build, for a record alias and for a custom type of that name. A test
+  reads the 319 type names of the stdlib signatures, declares each of the 309
+  that a module may declare (the other 10 are prelude names, `[E1004]`),
+  and builds and runs a program that uses a stdlib value of each.
+
+- **`HttpStream.forEachChunk` reads the whole stream.** It could return `Ok`
+  after reading only part of a finished stream when the reader started after
+  the stream had ended: it now hands out every chunk that arrived before the
+  end. WebSocket readers already did. The release now runs the runtime's
+  timing-dependent tests many times on Linux and macOS (`gate-stress`).
+
+- **A Task-owned WebSocket stays open while the Task drains its backlog.**
+  When the Task received a frame after its socket's reader had waited on a
+  full queue for more than 10 minutes, the reaper of sessionless sockets
+  could close the socket before the next frame arrived, and the Task lost
+  the frames still queued. Leaving the wait now counts as activity. A socket
+  also keeps the ping and consumer-stall timeouts it opened with.
+
+- **A nested bind line stays typed.** In a `Result` or `Maybe` bind block, the
+  second and later lines lowered to the untyped `Sky.Core.Result.andThen` /
+  `Maybe.andThen` (with a runtime narrowing of the result) when the
+  continuation took a list (`more <- walk rest`) or a value whose Go type is
+  `any` (`Json.Encode.Value`). They now lower to the typed `rt.Result_andThenT`
+  / `rt.Maybe_andThenT`, the same as the first line, and so does a
+  hand-written nested `andThen` of the same shape.
+  The seven `Std.Db.Store` `Result` ladders that stayed as `case` in the
+  migration are bind lines too, and the runtime-narrowing count of every
+  project is equal or lower (two fall by one).
+
+- **`Task.bestEffort`, `Task.unless` and `Task.toResult` work with no
+  import.** A module that used the `Task` qualifier with no `import
+  Sky.Core.Task` got `[E1001] Undefined name` for these v0.32.0 helpers,
+  because a bare kernel qualifier reached only the kernel members. A bare
+  qualifier now also reaches every export of its own home module (`Task` is
+  `Sky.Core.Task`, `Time` is `Sky.Core.Time`), so the other pure-Sky members
+  (`Task.linearBackoff`, `Task.Loop`, `Maybe.isJust`, `String.containsIn`,
+  `Http.defaultRequest`, `Process.command`, `Sub.everyWithTime` and more)
+  need no import either. This holds for value names and for type names: with
+  no import, `Process.Command` is the `Sky.Core.Process` type, and a
+  kernel-backed type the home module itself uses (`Dict.Dict`, `Set.Set`,
+  `Cmd.Cmd`, `Task.Task`) stays valid. An import that binds the qualifier
+  still wins. A value or type name the home module does not have is
+  `[E1001]`. Before, a type name with a bare qualifier was not checked:
+  `Time.NoSuchType` was accepted, and `Time.Parts` named the `Std.Time`
+  record. The type checker then adds no second error for the name. When only
+  another standard library module with the same last segment exports the
+  name, the message names the import: `Time.zones` says `` `zones` is in
+  `Std.Time`: add `import Std.Time as Time` ``, and `Time.Parts` says the
+  same for `Parts`.
+
+- **A type behind the alias of your own module must be one it exports.**
+  Under `import Lib.Db as L`, the built-in type names (`Error`, `Cmd`, `Sub`,
+  `Db`, `Session`, `Request`, `Response`, `Decoder`, `Value` and the others of
+  `hir::KERNEL_IMPLICIT_TYPES`) were accepted as `L.Error` and so on, also when
+  `Lib.Db` exported no such type, and the type checker then picked a type of
+  that name by its bare name. Each is now `[E1001]`, which says to write the
+  built-in name with no qualifier. Another unexported name gets a did-you-mean
+  among the module's types, or names the one stdlib module that exports it. A
+  type the module lists in its `exposing` clause stays valid. Under an import
+  of a standard library module the built-in names stay valid, as before
+  (`Db.Db` under `import Std.Db as Db`, `App.Route`).
+
+- **A qualified type is the type the resolver named, never a type found by its
+  bare name.** The type checker read a qualified type that the resolver left
+  without a declaration by its bare name, so `JsonEnc.Value` was the module's
+  own `type alias Value = { n : Int }` and `v.n` on a JSON value checked
+  clean. A qualified kernel type is now always the kernel type. A type that an
+  imported stdlib module does not export (the v0.32.1 warning) is the one
+  stdlib type of that name when exactly one module exports it, and is not
+  checked against any type otherwise. A bare type name in a signature is read
+  where the signature is written: `JsonEnc.int : Int -> Value` gives the JSON
+  `Value`, never a `type alias Value` of the module that calls it, or of a
+  module that module imports. A stdlib signature sees only the stdlib, and a
+  signature of your own module sees the modules it imports.
+
+### Migration
+
+- After upgrading to v0.32.x, run `sky fmt` once on a project whose CI runs
+  `sky fmt --check`: v0.32.0's formatter formats every declaration it can and
+  keeps only a declaration whose comment it cannot place, where v0.31 left the
+  whole file unformatted, so `--check` reports files that used to pass. See
+  `docs/migration/v0.32.md`.
+- Four type references that compiled on v0.32.0 now stop the build, each with
+  the fix in the message: a type with a bare qualifier that only another
+  stdlib module has (`Time.Parts` with no import: add `import Std.Time as
+  Time`), an unknown type behind a bare qualifier (`Dict.Dictionary`), a type
+  behind the alias of your own module that the module does not export
+  (`L.Error`: write `Error`), all `[E1001]`, and a qualified kernel type read
+  as your own type of the same name (`[E2001]`). See the entries marked
+  "(v0.32.1)" in `docs/migration/v0.32.md`.
+
 ## v0.32.0 — bind lines in let blocks (2026-11-27)
 
 ### Added

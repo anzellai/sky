@@ -855,33 +855,20 @@ predicateSql cols c =
                 col = l.col
                 op = l.op
                 v = l.value
+                name <- predicateCol cols col
             in
-                case predicateCol cols col of
+                if List.member op [ "=", "<>", ">", ">=", "<", "<=" ] then
+                    let
+                        bound <- condValue "" name (kindOf name cols) v
+                        lit <- sqlLiteral bound
+                    in
+                        Ok (name ++ " " ++ op ++ " " ++ lit)
 
-                    Err e ->
-                        Err e
-
-                    Ok name ->
-                        if List.member op [ "=", "<>", ">", ">=", "<", "<=" ] then
-                            case condValue "" name (kindOf name cols) v of
-
-                                Err e ->
-                                    Err e
-
-                                Ok bound ->
-                                    case sqlLiteral bound of
-
-                                        Ok lit ->
-                                            Ok (name ++ " " ++ op ++ " " ++ lit)
-
-                                        Err e ->
-                                            Err e
-
-                        else
-                            Err
-                                (Error.invalidInput
-                                    ("the operator " ++ op
-                                        ++ " is not supported in an index predicate"))
+                else
+                    Err
+                        (Error.invalidInput
+                            ("the operator " ++ op
+                                ++ " is not supported in an index predicate"))
 
         CondNull l ->
             let
@@ -904,20 +891,10 @@ predicateSql cols c =
             let
                 col = l.col
                 vs = l.values
+                name <- predicateCol cols col
+                bound <- condValues "" name (kindOf name cols) vs
             in
-                case predicateCol cols col of
-
-                    Err e ->
-                        Err e
-
-                    Ok name ->
-                        case condValues "" name (kindOf name cols) vs of
-
-                            Err e ->
-                                Err e
-
-                            Ok bound ->
-                                predicateIn name bound
+                predicateIn name bound
 
         CondAnd cs ->
             predicateGroup cols " AND " "1 = 1" cs
@@ -939,20 +916,10 @@ predicateSql cols c =
                 op = l.op
                 left = l.col
                 right = l.text
+                leftName <- predicateCol cols left
+                rightName <- predicateCol cols right
             in
-                case predicateCol cols left of
-
-                    Err e ->
-                        Err e
-
-                    Ok l ->
-                        case predicateCol cols right of
-
-                            Err e ->
-                                Err e
-
-                            Ok r ->
-                                Ok (l ++ " " ++ op ++ " " ++ r)
+                Ok (leftName ++ " " ++ op ++ " " ++ rightName)
 
         CondText l ->
             let
@@ -1007,19 +974,11 @@ predicateList cols cs =
             Ok []
 
         c :: rest ->
-            case predicateSql cols c of
-
-                Err e ->
-                    Err e
-
-                Ok p ->
-                    case predicateList cols rest of
-
-                        Err e ->
-                            Err e
-
-                        Ok more ->
-                            Ok (p :: more)
+            let
+                p <- predicateSql cols c
+                more <- predicateList cols rest
+            in
+                Ok (p :: more)
 
 
 predicateCol : List ( String, String ) -> String -> Result Error String
@@ -1079,19 +1038,11 @@ sqlLiterals vs =
             Ok []
 
         v :: rest ->
-            case sqlLiteral v of
-
-                Err e ->
-                    Err e
-
-                Ok lit ->
-                    case sqlLiterals rest of
-
-                        Err e ->
-                            Err e
-
-                        Ok more ->
-                            Ok (lit :: more)
+            let
+                lit <- sqlLiteral v
+                more <- sqlLiterals rest
+            in
+                Ok (lit :: more)
 
 
 -- | Give a column an APP-SIDE computed default: a `() -> SqlValue` the runtime
@@ -1546,19 +1497,11 @@ encodeCheckedRows verb s checks records =
             Ok []
 
         r :: rest ->
-            case encodeRowWith verb s checks r of
-
-                Err e ->
-                    Err e
-
-                Ok row ->
-                    case encodeCheckedRows verb s checks rest of
-
-                        Err e ->
-                            Err e
-
-                        Ok more ->
-                            Ok (row :: more)
+            let
+                row <- encodeRowWith verb s checks r
+                more <- encodeCheckedRows verb s checks rest
+            in
+                Ok (row :: more)
 
 
 -- The `defaultWith` values of each record of `insertMany`, computed per row.
@@ -1570,19 +1513,11 @@ checkedComputedRows s records =
             Ok []
 
         _ :: rest ->
-            case checkedComputed s of
-
-                Err e ->
-                    Err e
-
-                Ok row ->
-                    case checkedComputedRows s rest of
-
-                        Err e ->
-                            Err e
-
-                        Ok more ->
-                            Ok (row :: more)
+            let
+                row <- checkedComputed s
+                more <- checkedComputedRows s rest
+            in
+                Ok (row :: more)
 
 
 -- | Insert the record, or UPDATE it in place if its primary key already exists
@@ -2034,24 +1969,16 @@ insertOrIgnoreOn names conn store record =
     in
         runExec
             conn
-            (case insertHead "insertOrIgnoreOn" (dialectOf conn) s record of
-
-                Err e ->
-                    Err e
-
-                Ok ( head, params ) ->
-                    case conflictTarget "insertOrIgnoreOn" s names of
-
-                        Err e ->
-                            Err e
-
-                        Ok target ->
-                            Ok
-                                ( head ++ " ON CONFLICT ("
-                                      ++ String.join ", " target
-                                      ++ ") DO NOTHING"
-                                , params
-                                ))
+            (let
+                ( head, params ) <-
+                    insertHead "insertOrIgnoreOn" (dialectOf conn) s record
+                target <- conflictTarget "insertOrIgnoreOn" s names
+            in
+                Ok
+                    ( head ++ " ON CONFLICT (" ++ String.join ", " target
+                          ++ ") DO NOTHING"
+                    , params
+                    ))
 
 
 -- | Insert the record, or apply the rules to the row that exists — a partial
@@ -2087,28 +2014,19 @@ upsertWith conn store record rule =
                     Err e
 
                 Ok ( head, params ) ->
-                    case conflictTarget "upsertWith" s rule.conflictOn of
-
-                        Err e ->
-                            Err e
-
-                        Ok target ->
-                            case conflictItems d s target rule.onConflict [] [] of
-
-                                Err e ->
-                                    Err e
-
-                                Ok items ->
-                                    Ok
-                                        ( head ++ " ON CONFLICT ("
-                                              ++ String.join ", " target
-                                              ++ ") "
-                                              ++ conflictAction
-                                                     d
-                                                     (allCols s)
-                                                     items
-                                        , params
-                                        ))
+                    let
+                        target <-
+                            conflictTarget "upsertWith" s rule.conflictOn
+                        items <-
+                            conflictItems d s target rule.onConflict [] []
+                    in
+                        Ok
+                            ( head ++ " ON CONFLICT ("
+                                  ++ String.join ", " target
+                                  ++ ") "
+                                  ++ conflictAction d (allCols s) items
+                            , params
+                            ))
 
 
 -- | Insert the record and return the row as the database stored it — with a
@@ -2310,26 +2228,18 @@ insertHeadOf verb d s record computed =
                 Err <| storeErr ("\"" ++ s.name ++ "\": no column to insert")
 
             _ ->
-                case encodeRow verb s record of
-
-                    Err e ->
-                        Err e
-
-                    Ok row ->
-                        case dbObjectSqlValues plain row of
-
-                            Err e ->
-                                Err e
-
-                            Ok values ->
-                                Ok
-                                    ( "INSERT INTO " ++ s.name ++ " ("
-                                          ++ String.join ", " cols
-                                          ++ ") VALUES ("
-                                          ++ String.join ", " marks
-                                          ++ ")"
-                                    , values ++ pairValues computed
-                                    )
+                let
+                    row <- encodeRow verb s record
+                    values <- dbObjectSqlValues plain row
+                in
+                    Ok
+                        ( "INSERT INTO " ++ s.name ++ " ("
+                              ++ String.join ", " cols
+                              ++ ") VALUES ("
+                              ++ String.join ", " marks
+                              ++ ")"
+                        , values ++ pairValues computed
+                        )
 
 
 repeatText : Int -> String -> List String
@@ -2744,27 +2654,18 @@ sqlTypeOf d k =
 
 prepareUpdateSet : Dialect -> StoreRec a -> Cond -> List SetExpr -> Result Error ( String, List SqlValue )
 prepareUpdateSet d s cond exprs =
-    case writeWhere d s.name s.pk s.cols s.problems cond of
-
-        Err e ->
-            Err e
-
-        Ok ( whereSql, whereParams ) ->
-            case setExprItems d s exprs [] [] noParams of
-
-                Err e ->
-                    Err e
-
-                Ok ( items, params ) ->
-                    Ok
-                        ( "UPDATE " ++ s.name ++ " SET "
-                              ++ String.join
-                                     ", "
-                                     (items ++ touchItems d (allCols s))
-                              ++ " WHERE "
-                              ++ whereSql
-                        , params ++ whereParams
-                        )
+    let
+        ( whereSql, whereParams ) <-
+            writeWhere d s.name s.pk s.cols s.problems cond
+        ( items, params ) <- setExprItems d s exprs [] [] noParams
+    in
+        Ok
+            ( "UPDATE " ++ s.name ++ " SET "
+                  ++ String.join ", " (items ++ touchItems d (allCols s))
+                  ++ " WHERE "
+                  ++ whereSql
+            , params ++ whereParams
+            )
 
 
 setExprItems : Dialect -> StoreRec a -> List SetExpr -> List String -> List String -> List SqlValue -> Result Error ( List String, List SqlValue )
@@ -2939,61 +2840,49 @@ prepareCopy ignore verb d s spec mapping =
                 Err <| storeErr (verb ++ ": a join source needs select first")
 
             else
-                case prepare d spec of
+                let
+                    ( srcSql, srcParams ) <- prepare d spec
+                    ( ( cols, exprs ), params ) <-
+                        copyItems
+                            verb
+                            d
+                            s
+                            ( spec.outCols, spec.outNodes )
+                            (isStar spec.out)
+                            mapping
+                            []
+                            []
+                            noParams
+                in
+                    case unmappedError s cols of
 
-                    Err e ->
-                        Err e
+                        Just msg ->
+                            Err <| storeErr (verb ++ ": " ++ msg)
 
-                    Ok ( srcSql, srcParams ) ->
-                        case copyItems
-                                 verb
-                                 d
-                                 s
-                                 ( spec.outCols, spec.outNodes )
-                                 (isStar spec.out)
-                                 mapping
-                                 []
-                                 []
-                                 noParams of
+                        Nothing ->
+                            let
+                                stamped = copyNowCols d (allCols s) cols
+                            in
+                                Ok
+                                    ( "INSERT INTO " ++ s.name ++ " ("
+                                          ++ String.join ", " (cols ++ stamped)
+                                          ++ ") SELECT "
+                                          ++ String.join
+                                                 ", "
+                                                 (exprs
+                                                     ++ repeatText
+                                                            (List.length stamped)
+                                                            (nowSql d))
+                                          ++ " FROM ("
+                                          ++ srcSql
+                                          ++ ") sky_s"
+                                          ++ (if ignore then
+                                                 " WHERE 1 = 1 ON CONFLICT DO NOTHING"
 
-                            Err e ->
-                                Err e
-
-                            Ok ( ( cols, exprs ), params ) ->
-                                case unmappedError s cols of
-
-                                    Just msg ->
-                                        Err <| storeErr (verb ++ ": " ++ msg)
-
-                                    Nothing ->
-                                        let
-                                            stamped =
-                                                copyNowCols d (allCols s) cols
-                                        in
-                                            Ok
-                                                ( "INSERT INTO " ++ s.name
-                                                      ++ " ("
-                                                      ++ String.join
-                                                             ", "
-                                                             (cols ++ stamped)
-                                                      ++ ") SELECT "
-                                                      ++ String.join
-                                                             ", "
-                                                             (exprs
-                                                                 ++ repeatText
-                                                                        (List.length
-                                                                            stamped)
-                                                                        (nowSql d))
-                                                      ++ " FROM ("
-                                                      ++ srcSql
-                                                      ++ ") sky_s"
-                                                      ++ (if ignore then
-                                                             " WHERE 1 = 1 ON CONFLICT DO NOTHING"
-
-                                                         else
-                                                             "")
-                                                , params ++ srcParams
-                                                )
+                                             else
+                                                 "")
+                                    , params ++ srcParams
+                                    )
 
 
 isStar : Output -> Bool
@@ -4484,19 +4373,11 @@ pairDecoder ta ca tb cb groups =
     case groups of
 
         [ ja, jb ] ->
-            case decodeRow ta ca ja of
-
-                Err e ->
-                    Err e
-
-                Ok a ->
-                    case decodeRow tb cb jb of
-
-                        Err e ->
-                            Err e
-
-                        Ok b ->
-                            Ok ( a, b )
+            let
+                a <- decodeRow ta ca ja
+                b <- decodeRow tb cb jb
+            in
+                Ok ( a, b )
 
         _ ->
             Err (Error.decode "Store: a joined row needs two column groups")
@@ -4507,23 +4388,17 @@ pairMaybeDecoder ta ca tb cb groups =
     case groups of
 
         [ ja, jb ] ->
-            case decodeRow ta ca ja of
+            let
+                a <- decodeRow ta ca ja
+            in
+                if jb == "null" then
+                    Ok ( a, Nothing )
 
-                Err e ->
-                    Err e
-
-                Ok a ->
-                    if jb == "null" then
-                        Ok ( a, Nothing )
-
-                    else
-                        case decodeRow tb cb jb of
-
-                            Err e ->
-                                Err e
-
-                            Ok b ->
-                                Ok ( a, Just b )
+                else
+                    let
+                        b <- decodeRow tb cb jb
+                    in
+                        Ok ( a, Just b )
 
         _ ->
             Err (Error.decode "Store: a joined row needs two column groups")
@@ -4779,51 +4654,27 @@ prepare d spec =
                         Err <| storeErr msg
 
                     Nothing ->
-                        case selectList ctx spec of
-
-                            Err e ->
-                                Err e
-
-                            Ok ( selSql, selParams, aliases ) ->
-                                case fromClause ctx spec of
-
-                                    Err e ->
-                                        Err e
-
-                                    Ok ( fromSql, fromParams ) ->
-                                        case whereClause ctx spec.conds of
-
-                                            Err e ->
-                                                Err e
-
-                                            Ok ( whereSql, whereParams ) ->
-                                                case clauseTail ctx spec aliases of
-
-                                                    Err e ->
-                                                        Err e
-
-                                                    Ok ( tailSql, tailParams ) ->
-                                                        case latestCheck
-                                                                 ctx
-                                                                 spec of
-
-                                                            Err e ->
-                                                                Err e
-
-                                                            Ok window ->
-                                                                Ok
-                                                                    ( assemble
-                                                                          spec
-                                                                          window
-                                                                          fromSql
-                                                                          selSql
-                                                                          whereSql
-                                                                          tailSql
-                                                                    , selParams
-                                                                          ++ fromParams
-                                                                          ++ whereParams
-                                                                          ++ tailParams
-                                                                    )
+                        let
+                            ( selSql, selParams, aliases ) <-
+                                selectList ctx spec
+                            ( fromSql, fromParams ) <- fromClause ctx spec
+                            ( whereSql, whereParams ) <-
+                                whereClause ctx spec.conds
+                            ( tailSql, tailParams ) <-
+                                clauseTail ctx spec aliases
+                            window <- latestCheck ctx spec
+                        in
+                            Ok
+                                ( assemble
+                                      spec
+                                      window
+                                      fromSql
+                                      selSql
+                                      whereSql
+                                      tailSql
+                                , selParams ++ fromParams ++ whereParams
+                                      ++ tailParams
+                                )
 
 
 -- The FROM clause: the table, or `left a INNER|LEFT JOIN right b ON …`. On a
@@ -4843,31 +4694,24 @@ fromClause ctx spec =
                     Err e
 
                 Nothing ->
-                    case onPairs ctx spec.onPairs [] of
+                    let
+                        onSql <- onPairs ctx spec.onPairs []
+                        ( extraSql, extraParams ) <-
+                            onExtra ctx spec.onConds
+                    in
+                        Ok
+                            ( spec.source.table
+                                  ++ (if spec.leftOuter then
+                                         " a LEFT JOIN "
 
-                        Err e ->
-                            Err e
-
-                        Ok onSql ->
-                            case onExtra ctx spec.onConds of
-
-                                Err e ->
-                                    Err e
-
-                                Ok ( extraSql, extraParams ) ->
-                                    Ok
-                                        ( spec.source.table
-                                              ++ (if spec.leftOuter then
-                                                     " a LEFT JOIN "
-
-                                                 else
-                                                     " a INNER JOIN ")
-                                              ++ r.table
-                                              ++ " b ON "
-                                              ++ onSql
-                                              ++ extraSql
-                                        , extraParams
-                                        )
+                                     else
+                                         " a INNER JOIN ")
+                                  ++ r.table
+                                  ++ " b ON "
+                                  ++ onSql
+                                  ++ extraSql
+                            , extraParams
+                            )
 
 
 -- `a.x = b.y AND …`, each column checked on its own side, kinds equal.
@@ -5066,39 +4910,25 @@ assemble spec window fromSql selSql whereSql tailSql =
 -- PARTITION BY keys ORDER BY newest DESC NULLS LAST, pk DESC.
 latestRendered : Ctx -> String -> List String -> String -> Result Error String
 latestRendered ctx pk keys newestBy =
-    case refList ctx keys [] of
+    let
+        keySqls <- refList ctx keys []
+        ( nSql, _, _ ) <- refOf ctx newestBy
+        tie =
+            if pk == "" || pk == nSql then
+                ""
 
-        Err e ->
-            Err e
+            else
+                ", " ++ pk ++ " DESC"
+        partition =
+            case keySqls of
 
-        Ok keySqls ->
-            case refOf ctx newestBy of
+                [] ->
+                    ""
 
-                Err e ->
-                    Err e
-
-                Ok ( nSql, _, _ ) ->
-                    let
-                        tie =
-                            if pk == "" || pk == nSql then
-                                ""
-
-                            else
-                                ", " ++ pk ++ " DESC"
-                        partition =
-                            case keySqls of
-
-                                [] ->
-                                    ""
-
-                                _ ->
-                                    "PARTITION BY " ++ String.join ", " keySqls
-                                        ++ " "
-                    in
-                        Ok
-                            (partition ++ "ORDER BY " ++ nSql
-                                ++ " DESC NULLS LAST"
-                                ++ tie)
+                _ ->
+                    "PARTITION BY " ++ String.join ", " keySqls ++ " "
+    in
+        Ok (partition ++ "ORDER BY " ++ nSql ++ " DESC NULLS LAST" ++ tie)
 
 
 -- ── The SELECT list ──────────────────────────────────────────────────────────
@@ -5112,23 +4942,11 @@ selectList ctx spec =
                 Ok ( "*", [], [] )
 
             else
-                case prefixedItems "a" spec.source.cols [] of
-
-                    Err e ->
-                        Err e
-
-                    Ok leftItems ->
-                        case prefixedItems "b" spec.right.cols [] of
-
-                            Err e ->
-                                Err e
-
-                            Ok rightItems ->
-                                Ok
-                                    ( String.join ", " (leftItems ++ rightItems)
-                                    , []
-                                    , []
-                                    )
+                let
+                    leftItems <- prefixedItems "a" spec.source.cols []
+                    rightItems <- prefixedItems "b" spec.right.cols []
+                in
+                    Ok ( String.join ", " (leftItems ++ rightItems), [], [] )
 
         OutCount ->
             Ok ( "COUNT(*) AS n", [], [] )
@@ -5143,41 +4961,29 @@ selectList ctx spec =
                     Ok ( String.join ", " items, [], [] )
 
         OutAggs aggs ->
-            case refList ctx spec.groups [] of
+            let
+                groupSqls <- refList ctx spec.groups []
+                ( items, params, aliases ) <-
+                    aggItems
+                        ctx
+                        groupSqls
+                        (not (List.isEmpty spec.groups))
+                        ( spec.outCols, spec.outNodes )
+                        aggs
+                        []
+                        []
+                        []
+            in
+                case uncovered spec.outCols aliases of
 
-                Err e ->
-                    Err e
+                    Just col ->
+                        Err
+                            <| storeErr
+                                   ("aggregate: result field \"" ++ col
+                                       ++ "\" has no Agg")
 
-                Ok groupSqls ->
-                    case aggItems
-                             ctx
-                             groupSqls
-                             (not (List.isEmpty spec.groups))
-                             ( spec.outCols, spec.outNodes )
-                             aggs
-                             []
-                             []
-                             [] of
-
-                        Err e ->
-                            Err e
-
-                        Ok ( items, params, aliases ) ->
-                            case uncovered spec.outCols aliases of
-
-                                Just col ->
-                                    Err
-                                        <| storeErr
-                                               ("aggregate: result field \""
-                                                   ++ col
-                                                   ++ "\" has no Agg")
-
-                                Nothing ->
-                                    Ok
-                                        ( String.join ", " items
-                                        , params
-                                        , aliases
-                                        )
+                    Nothing ->
+                        Ok ( String.join ", " items, params, aliases )
 
 
 -- `a.col AS "a__col", …`: every column of one side of a join, under a quoted
@@ -5615,36 +5421,17 @@ whereClause ctx conds =
 -- GROUP BY + HAVING + ORDER BY + LIMIT/OFFSET, after the WHERE.
 clauseTail : Ctx -> QuerySpec -> List ( String, Ref ) -> Result Error ( String, List SqlValue )
 clauseTail ctx spec aliases =
-    case refList ctx spec.groups [] of
-
-        Err e ->
-            Err e
-
-        Ok groupSqls ->
-            case havingClause ctx spec.outCols aliases spec.having of
-
-                Err e ->
-                    Err e
-
-                Ok ( havingSql, havingParams ) ->
-                    case orderClause ctx spec of
-
-                        Err e ->
-                            Err e
-
-                        Ok orderSql ->
-                            case pageClause ctx.dialect spec.limitN spec.offsetN of
-
-                                Err e ->
-                                    Err e
-
-                                Ok pageSql ->
-                                    Ok
-                                        ( groupClause groupSqls ++ havingSql
-                                              ++ orderSql
-                                              ++ pageSql
-                                        , havingParams
-                                        )
+    let
+        groupSqls <- refList ctx spec.groups []
+        ( havingSql, havingParams ) <-
+            havingClause ctx spec.outCols aliases spec.having
+        orderSql <- orderClause ctx spec
+        pageSql <- pageClause ctx.dialect spec.limitN spec.offsetN
+    in
+        Ok
+            ( groupClause groupSqls ++ havingSql ++ orderSql ++ pageSql
+            , havingParams
+            )
 
 
 latestCheck : Ctx -> QuerySpec -> Result Error String
@@ -5958,33 +5745,23 @@ renderCond ctx c =
                 col = l.col
                 op = l.op
                 v = l.value
+                ( rSql, rParams, k ) <- refOf ctx col
             in
-                case refOf ctx col of
+                if isJsonRef col && not (isSqlString v) then
+                    Err
+                        <| storeErr
+                               ("a value compared with jsonText \"" ++ col
+                                   ++ "\" must be SqlString")
 
-                    Err e ->
-                        Err e
-
-                    Ok ( rSql, rParams, k ) ->
-                        if isJsonRef col && not (isSqlString v) then
-                            Err
-                                <| storeErr
-                                       ("a value compared with jsonText \""
-                                           ++ col
-                                           ++ "\" must be SqlString")
-
-                        else
-                            case condValue "Store: " col k v of
-
-                                Err e ->
-                                    Err e
-
-                                Ok bound ->
-                                    Ok
-                                        ( collated ctx k rSql ++ " " ++ op
-                                              ++ " "
-                                              ++ condParam ctx col k
-                                        , rParams ++ [ bound ]
-                                        )
+                else
+                    let
+                        bound <- condValue "Store: " col k v
+                    in
+                        Ok
+                            ( collated ctx k rSql ++ " " ++ op ++ " "
+                                  ++ condParam ctx col k
+                            , rParams ++ [ bound ]
+                            )
 
         CondNull l ->
             let
@@ -6007,58 +5784,44 @@ renderCond ctx c =
             let
                 col = l.col
                 vs = l.values
+                ( rSql, rParams, k ) <- refOf ctx col
             in
-                case refOf ctx col of
+                case vs of
 
-                    Err e ->
-                        Err e
+                    [] ->
+                        Ok ( "1 = 0", [] )
 
-                    Ok ( rSql, rParams, k ) ->
-                        case vs of
+                    _ ->
+                        if isJsonRef col && not (allSqlString vs) then
+                            Err
+                                <| storeErr
+                                       ("values compared with jsonText \"" ++ col
+                                           ++ "\" must be SqlString")
 
-                            [] ->
-                                Ok ( "1 = 0", [] )
-
-                            _ ->
-                                if isJsonRef col && not (allSqlString vs) then
-                                    Err
-                                        <| storeErr
-                                               ("values compared with jsonText \""
-                                                   ++ col
-                                                   ++ "\" must be SqlString")
+                        else
+                            let
+                                bound <- condValues "Store: " col k vs
+                            in
+                                if List.length bound > listParamFrom then
+                                    Ok
+                                        ( collated ctx k rSql
+                                              ++ listParamSql
+                                                     ctx
+                                                     col
+                                                     k
+                                                     (List.length bound)
+                                        , rParams ++ bound
+                                        )
 
                                 else
-                                    case condValues "Store: " col k vs of
-
-                                        Err e ->
-                                            Err e
-
-                                        Ok bound ->
-                                            if List.length bound > listParamFrom then
-                                                Ok
-                                                    ( collated ctx k rSql
-                                                          ++ listParamSql
-                                                                 ctx
-                                                                 col
-                                                                 k
-                                                                 (List.length
-                                                                     bound)
-                                                    , rParams ++ bound
-                                                    )
-
-                                            else
-                                                Ok
-                                                    ( collated ctx k rSql
-                                                          ++ " IN ("
-                                                          ++ markedPlaceholders
-                                                                 (condParam
-                                                                     ctx
-                                                                     col
-                                                                     k)
-                                                                 bound
-                                                          ++ ")"
-                                                    , rParams ++ bound
-                                                    )
+                                    Ok
+                                        ( collated ctx k rSql ++ " IN ("
+                                              ++ markedPlaceholders
+                                                     (condParam ctx col k)
+                                                     bound
+                                              ++ ")"
+                                        , rParams ++ bound
+                                        )
 
         CondAnd cs ->
             renderGroup ctx "1 = 1" " AND " cs
@@ -6080,37 +5843,24 @@ renderCond ctx c =
                 op = l.op
                 left = l.col
                 right = l.text
+                ( lSql, lParams, lk ) <- refOf ctx left
+                ( rSql, rParams, rk ) <- refOf ctx right
             in
-                case refOf ctx left of
+                if kindBase lk /= kindBase rk then
+                    Err
+                        <| storeErr
+                               ("\"" ++ left ++ "\" is " ++ kindBase lk
+                                   ++ " and \""
+                                   ++ right
+                                   ++ "\" is "
+                                   ++ kindBase rk
+                                   ++ ": compare columns of one kind")
 
-                    Err e ->
-                        Err e
-
-                    Ok ( lSql, lParams, lk ) ->
-                        case refOf ctx right of
-
-                            Err e ->
-                                Err e
-
-                            Ok ( rSql, rParams, rk ) ->
-                                if kindBase lk /= kindBase rk then
-                                    Err
-                                        <| storeErr
-                                               ("\"" ++ left ++ "\" is "
-                                                   ++ kindBase lk
-                                                   ++ " and \""
-                                                   ++ right
-                                                   ++ "\" is "
-                                                   ++ kindBase rk
-                                                   ++ ": compare columns of one kind")
-
-                                else
-                                    Ok
-                                        ( collated ctx lk lSql ++ " " ++ op
-                                              ++ " "
-                                              ++ rSql
-                                        , lParams ++ rParams
-                                        )
+                else
+                    Ok
+                        ( collated ctx lk lSql ++ " " ++ op ++ " " ++ rSql
+                        , lParams ++ rParams
+                        )
 
         CondText l ->
             let
@@ -6158,38 +5908,29 @@ renderCond ctx c =
 -- `col [NOT] IN (SELECT …)`, the two columns of one kind.
 inSql : Ctx -> String -> Bool -> String -> QuerySpec -> Result Error ( String, List SqlValue )
 inSql ctx col negated subCol sub =
-    case refOf ctx col of
+    let
+        ( oSql, oParams, ok ) <- refOf ctx col
+        ( sSql, sParams, ik ) <- subSelect ctx subCol sub
+    in
+        if kindBase ok /= kindBase ik then
+            Err
+                <| storeErr
+                       ("inQuery \"" ++ col ++ "\" is " ++ kindBase ok
+                           ++ " but the subquery column is "
+                           ++ kindBase ik)
 
-        Err e ->
-            Err e
+        else
+            Ok
+                ( oSql
+                      ++ (if negated then
+                             " NOT IN ("
 
-        Ok ( oSql, oParams, ok ) ->
-            case subSelect ctx subCol sub of
-
-                Err e ->
-                    Err e
-
-                Ok ( sSql, sParams, ik ) ->
-                    if kindBase ok /= kindBase ik then
-                        Err
-                            <| storeErr
-                                   ("inQuery \"" ++ col ++ "\" is "
-                                       ++ kindBase ok
-                                       ++ " but the subquery column is "
-                                       ++ kindBase ik)
-
-                    else
-                        Ok
-                            ( oSql
-                                  ++ (if negated then
-                                         " NOT IN ("
-
-                                     else
-                                         " IN (")
-                                  ++ sSql
-                                  ++ ")"
-                            , oParams ++ sParams
-                            )
+                         else
+                             " IN (")
+                      ++ sSql
+                      ++ ")"
+                , oParams ++ sParams
+                )
 
 
 -- `SELECT sqN.col FROM t sqN WHERE (…) AND sqN.col IS NOT NULL …`, checked
@@ -6214,55 +5955,30 @@ subSelect ctx col spec =
                         Err <| storeErr ("column \"" ++ col ++ "\": " ++ msg)
 
                     Nothing ->
-                        case refOf ictx col of
+                        let
+                            ( cSql, cParams, k ) <- refOf ictx col
+                            ( whereSql, whereParams ) <-
+                                whereClause ictx spec.conds
+                            orderSql <- orderClause ictx spec
+                            pageSql <-
+                                pageClause ctx.dialect spec.limitN spec.offsetN
+                        in
+                            Ok
+                                ( "SELECT " ++ cSql ++ " FROM " ++ src.table
+                                      ++ " "
+                                      ++ qname
+                                      ++ (if whereSql == "" then
+                                             " WHERE "
 
-                            Err e ->
-                                Err e
-
-                            Ok ( cSql, cParams, k ) ->
-                                case whereClause ictx spec.conds of
-
-                                    Err e ->
-                                        Err e
-
-                                    Ok ( whereSql, whereParams ) ->
-                                        case orderClause ictx spec of
-
-                                            Err e ->
-                                                Err e
-
-                                            Ok orderSql ->
-                                                case pageClause
-                                                         ctx.dialect
-                                                         spec.limitN
-                                                         spec.offsetN of
-
-                                                    Err e ->
-                                                        Err e
-
-                                                    Ok pageSql ->
-                                                        Ok
-                                                            ( "SELECT " ++ cSql
-                                                                  ++ " FROM "
-                                                                  ++ src.table
-                                                                  ++ " "
-                                                                  ++ qname
-                                                                  ++ (if whereSql
-                                                                         == "" then
-                                                                         " WHERE "
-
-                                                                     else
-                                                                         whereSql
-                                                                             ++ " AND ")
-                                                                  ++ cSql
-                                                                  ++ " IS NOT NULL"
-                                                                  ++ orderSql
-                                                                  ++ pageSql
-                                                            , cParams
-                                                                  ++ whereParams
-                                                                  ++ cParams
-                                                            , k
-                                                            )
+                                         else
+                                             whereSql ++ " AND ")
+                                      ++ cSql
+                                      ++ " IS NOT NULL"
+                                      ++ orderSql
+                                      ++ pageSql
+                                , cParams ++ whereParams ++ cParams
+                                , k
+                                )
 
 
 -- What a subquery may hold: one store, `where_`, order and paging.
@@ -6304,34 +6020,26 @@ existsSql ctx negated src pairs inner =
                 Err e
 
             Nothing ->
-                case correlations ictx octx pairs [] of
+                let
+                    corrSql <- correlations ictx octx pairs []
+                    ( cSql, cParams ) <- renderCond ictx inner
+                in
+                    Ok
+                        ( (if negated then
+                              "NOT EXISTS (SELECT 1 FROM "
 
-                    Err e ->
-                        Err e
-
-                    Ok corrSql ->
-                        case renderCond ictx inner of
-
-                            Err e ->
-                                Err e
-
-                            Ok ( cSql, cParams ) ->
-                                Ok
-                                    ( (if negated then
-                                          "NOT EXISTS (SELECT 1 FROM "
-
-                                      else
-                                          "EXISTS (SELECT 1 FROM ")
-                                          ++ src.table
-                                          ++ " "
-                                          ++ qname
-                                          ++ " WHERE "
-                                          ++ corrSql
-                                          ++ " AND ("
-                                          ++ cSql
-                                          ++ "))"
-                                    , cParams
-                                    )
+                          else
+                              "EXISTS (SELECT 1 FROM ")
+                              ++ src.table
+                              ++ " "
+                              ++ qname
+                              ++ " WHERE "
+                              ++ corrSql
+                              ++ " AND ("
+                              ++ cSql
+                              ++ "))"
+                        , cParams
+                        )
 
 
 -- `inner = outer AND …`: the inner column on the exists store, the outer
@@ -6978,24 +6686,17 @@ writeWhere d name pk cols problems cond =
 -- `UPDATE t SET c = ? …` (or `c = c + ?` for `adjust`) `WHERE …`.
 prepareSet : String -> Dialect -> String -> String -> List ( String, String ) -> (String -> String -> SqlValue -> Maybe String) -> List String -> Cond -> Bool -> List ( String, SqlValue ) -> Result Error ( String, List SqlValue )
 prepareSet verb d name pk cols check problems cond relative sets =
-    case writeWhere d name pk cols problems cond of
-
-        Err e ->
-            Err e
-
-        Ok ( whereSql, whereParams ) ->
-            case setItems verb d name cols check relative sets [] [] of
-
-                Err e ->
-                    Err e
-
-                Ok ( items, setParams ) ->
-                    Ok
-                        ( "UPDATE " ++ name ++ " SET " ++ String.join ", " items
-                              ++ " WHERE "
-                              ++ whereSql
-                        , setParams ++ whereParams
-                        )
+    let
+        ( whereSql, whereParams ) <- writeWhere d name pk cols problems cond
+        ( items, setParams ) <-
+            setItems verb d name cols check relative sets [] []
+    in
+        Ok
+            ( "UPDATE " ++ name ++ " SET " ++ String.join ", " items
+                  ++ " WHERE "
+                  ++ whereSql
+            , setParams ++ whereParams
+            )
 
 
 setItems : String -> Dialect -> String -> List ( String, String ) -> (String -> String -> SqlValue -> Maybe String) -> Bool -> List ( String, SqlValue ) -> List String -> List SqlValue -> Result Error ( List String, List SqlValue )
@@ -7315,19 +7016,11 @@ condValues prefix col kind vs =
             Ok []
 
         v :: rest ->
-            case condValue prefix col kind v of
-
-                Err msg ->
-                    Err msg
-
-                Ok one ->
-                    case condValues prefix col kind rest of
-
-                        Err msg ->
-                            Err msg
-
-                        Ok more ->
-                            Ok (one :: more)
+            let
+                one <- condValue prefix col kind v
+                more <- condValues prefix col kind rest
+            in
+                Ok (one :: more)
 
 
 -- A value written into a column: the kind rule, `SqlNull` only into a
@@ -7465,19 +7158,11 @@ zerosWith col json cols zeros =
             Just []
 
         ( c, k ) :: rest ->
-            case zeroOf col json c k zeros of
-
-                Nothing ->
-                    Nothing
-
-                Just z ->
-                    case zerosWith col json rest zeros of
-
-                        Nothing ->
-                            Nothing
-
-                        Just more ->
-                            Just (( c, z ) :: more)
+            let
+                z <- zeroOf col json c k zeros
+                more <- zerosWith col json rest zeros
+            in
+                Just (( c, z ) :: more)
 
 
 zeroOf : String -> Value -> String -> String -> List ( String, Value ) -> Maybe Value
@@ -7592,22 +7277,13 @@ textContentError nodes col kind text =
 
 nodeValueError : List ( String, Value ) -> String -> Value -> Maybe String
 nodeValueError nodes col json =
-    case lookupNode col nodes of
-
-        Just node ->
-            case Codec.schemaValueError node json of
-
-                Just msg ->
-                    Just
-                        ("column \"" ++ col
-                            ++ "\": its codec does not read the value: "
-                            ++ msg)
-
-                Nothing ->
-                    Nothing
-
-        Nothing ->
-            Nothing
+    let
+        node <- lookupNode col nodes
+        msg <- Codec.schemaValueError node json
+    in
+        Just
+            ("column \"" ++ col ++ "\": its codec does not read the value: "
+                ++ msg)
 
 
 -- The JSON Schema of each column of a record codec (its field's part of

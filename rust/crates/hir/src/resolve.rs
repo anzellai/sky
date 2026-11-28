@@ -218,6 +218,22 @@ pub struct ResolveResult {
     /// checker's program-wide table. `ty::check` decides which of them name no
     /// type at all and reports those as `[E1001]` (`ty::undefined_types`).
     pub lenient_types: Vec<(Name, Span)>,
+    /// Every QUALIFIED type reference (`"Time.Parts"`, as written) this module
+    /// reported as naming no type (`[E1001]`). The type checker reads it as an
+    /// error type, so it never finds a same-named declaration of another
+    /// module by its bare name and reports a second, wrong error.
+    pub unresolved_type_refs: HashSet<String>,
+    /// Warnings (message, span) for a qualified type under an import of a
+    /// stdlib module that the module does not export (`Ui.Html` under `import
+    /// Std.Ui as Ui`). Accepted for compatibility in v0.32.x, `[E1001]` in the
+    /// next minor (`docs/migration/v0.32.md`). The build prints them for the
+    /// project's own modules.
+    pub type_warnings: Vec<(String, Span)>,
+    /// Every QUALIFIED type reference (`"JsonEnc.Value"`, as written) this
+    /// module resolved to a kernel type with no `.sky` declaration. The type
+    /// checker never expands such a name through a same-named alias of
+    /// another module found by its bare name.
+    pub kernel_type_refs: HashSet<String>,
 }
 
 /// Resolve a module. Never panics; partial results + diagnostics (L7).
@@ -399,6 +415,13 @@ fn alias_cycle(
 /// kernel pseudo-module that re-exposes a builtin (`import Sky.Core.Prelude
 /// exposing (String, Int)`) is the SAME binding as the ambient builtin, not a
 /// second one (C-14: that import used to be `[E1012] Ambiguous type String`).
+/// `name` is listed in the kernel function table of `pseudo`. Such a member
+/// stays a kernel reference under a bare qualifier, as before. Every other
+/// name may resolve to the qualifier's stdlib home.
+fn is_enumerated_kernel_member(pseudo: &str, name: &str) -> bool {
+    crate::kernel::kernel_functions(pseudo).is_some_and(|fns| fns.contains(&name))
+}
+
 fn kernel_implicit_key(con: DefId) -> TypeKey {
     TypeKey::Id(format!("def:{}", con.0))
 }
@@ -573,6 +596,13 @@ struct Resolver<'a> {
     qual_ctors: HashMap<String, HashMap<String, CtorRef>>,
     qual_types: HashMap<String, HashMap<String, TypeResEntry>>,
     import_aliases: HashMap<String, ImportSource>,
+    /// The exports of each bare kernel qualifier's home module (`Task` ->
+    /// `Sky.Core.Task`), read on demand by [`Resolver::implicit_home_exports`].
+    /// `None` when no import-free home applies.
+    implicit_homes: HashMap<String, Option<std::rc::Rc<ModuleExports>>>,
+    /// The kernel-backed type names each home module uses itself, read on
+    /// demand by [`Resolver::home_kernel_types`].
+    home_kernel_types: HashMap<ModuleId, std::rc::Rc<HashSet<String>>>,
     /// Kernel pseudo-modules imported with `exposing (..)` — a lenient fallback
     /// for bare names we can't enumerate (no static kernel-function table).
     kernel_open: Vec<String>,
@@ -640,6 +670,18 @@ enum TypeResEntry {
     Foreign(String),
 }
 
+/// What a type `Q.Name` names when `Q` is a bare kernel qualifier that no
+/// import binds ([`Resolver::implicit_home_type`]).
+enum ImplicitType {
+    /// A type the qualifier's import-free home exports.
+    Home(TypeRes),
+    /// A kernel-backed type with no `.sky` declaration (`Dict.Dict`), or a
+    /// qualifier with no import-free home: the nominal kernel type, as before.
+    Fallthrough,
+    /// Neither: `[E1001]`.
+    Unknown,
+}
+
 impl<'a> Resolver<'a> {
     fn new(db: &'a dyn SkyDb, module: ModuleId) -> Self {
         Resolver {
@@ -653,6 +695,8 @@ impl<'a> Resolver<'a> {
             qual_ctors: HashMap::new(),
             qual_types: HashMap::new(),
             import_aliases: HashMap::new(),
+            implicit_homes: HashMap::new(),
+            home_kernel_types: HashMap::new(),
             kernel_open: Vec::new(),
             open_modules: Vec::new(),
             foreign_open: None,
@@ -1790,6 +1834,320 @@ impl<'a> Resolver<'a> {
                 self.bind_qual_from_exports(qual, &exports);
             }
         }
+    }
+
+    /// The exports of the stdlib home of the bare kernel qualifier `qual`
+    /// (`hir::implicit_qualifier_homes`), when no import of this module binds
+    /// `qual` and this module is not itself one of its homes. Cached per
+    /// qualifier; a compilation that does not carry the home yields `None`.
+    fn implicit_home_exports(&mut self, qual: &str) -> Option<std::rc::Rc<ModuleExports>> {
+        if self.import_aliases.contains_key(qual) {
+            return None;
+        }
+        if let Some(cached) = self.implicit_homes.get(qual) {
+            return cached.clone();
+        }
+        let own = self.db.module_name(self.module).to_string();
+        let homes = crate::kernel::implicit_qualifier_homes(qual);
+        let found = if homes.iter().any(|h| *h == own) {
+            None
+        } else {
+            homes
+                .iter()
+                .find_map(|p| match self.db.classify_import(p) {
+                    ImportSource::Dep(dep) if dep != self.module => Some(dep),
+                    _ => None,
+                })
+                .map(|dep| self.db.module_exports(dep))
+        };
+        self.implicit_homes.insert(qual.to_string(), found.clone());
+        found
+    }
+
+    /// What the type `qual.name` names when `qual` is a bare kernel qualifier
+    /// that no import binds. The qualifier's import-free home
+    /// (`hir::implicit_qualifier_homes`) decides, as for a value:
+    ///
+    /// * a type the home exports is that type (`Process.Command`);
+    /// * a type the home itself uses with no declaration and no import is a
+    ///   kernel-backed type (`Dict.Dict`, `Cmd.Cmd`, `JsonEnc.Value`), and so
+    ///   is the builtin type named like the home (`Task.Task`,
+    ///   `Maybe.Maybe`); both stay the nominal kernel type;
+    /// * any other name is `[E1001]`. `Time.Parts` with no import used to be
+    ///   accepted and named `Std.Time`'s record, while the import-free `Time`
+    ///   is `Sky.Core.Time`; `Time.NoSuchType` was accepted too.
+    ///
+    /// A qualifier with no import-free home in this compilation (or this
+    /// module is the home) falls through to the old nominal kernel type.
+    fn implicit_home_type(&mut self, qual: &str, name: &str) -> ImplicitType {
+        if self.db.kernel_pseudo(qual).is_none() {
+            return ImplicitType::Fallthrough;
+        }
+        let Some(ex) = self.implicit_home_exports(qual) else {
+            return ImplicitType::Fallthrough;
+        };
+        if let Some((con, arity)) = ex.type_(name) {
+            return ImplicitType::Home(TypeRes { con, arity });
+        }
+        if ex.lists_undeclared_type(name) || self.stdlib_kernel_type(ex.module, name) {
+            return ImplicitType::Fallthrough;
+        }
+        ImplicitType::Unknown
+    }
+
+    /// The unqualified type names the module `home` uses in its own source
+    /// that it neither declares nor imports, builtins left out: the
+    /// kernel-backed types it relies on (`Dict` in `Sky.Core.Dict`, `Cmd` in
+    /// `Std.Cmd`). Read from the parse and the exports of its imports, never
+    /// from `resolve`, so resolution does not re-enter itself (the same reads
+    /// `chase_reexported_type` makes through a dependency's imports). Cached.
+    fn home_kernel_types(&mut self, home: ModuleId) -> std::rc::Rc<HashSet<String>> {
+        if let Some(c) = self.home_kernel_types.get(&home) {
+            return c.clone();
+        }
+        let tree = self.db.module_parse(home).tree();
+        let mut declared: HashSet<String> = HashSet::new();
+        for decl in tree.decls() {
+            match decl {
+                ast::Decl::Union(u) => {
+                    if let Some(n) = u.name() {
+                        declared.insert(n.text().to_string());
+                    }
+                }
+                ast::Decl::Alias(a) => {
+                    if let Some(n) = a.name() {
+                        declared.insert(n.text().to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Types an import of the home binds unqualified.
+        let mut explicit: HashSet<String> = HashSet::new();
+        let mut open: Vec<std::rc::Rc<ModuleExports>> = Vec::new();
+        for imp in tree.imports() {
+            let Some(clause) = imp.exposing().map(|e| cst::read_exposing(e.syntax())) else {
+                continue;
+            };
+            for it in &clause.items {
+                if let cst::ExposedItem::Type { name, .. } = it {
+                    explicit.insert(name.clone());
+                }
+            }
+            if clause.all {
+                if let Some(path) = imp.name().map(|n| n.text()) {
+                    if let ImportSource::Dep(dep) = self.db.classify_import(&path) {
+                        open.push(self.db.module_exports(dep));
+                    }
+                }
+            }
+        }
+        let mut out: HashSet<String> = HashSet::new();
+        for node in tree.syntax().descendants() {
+            if node.kind() != SyntaxKind::TypeCon {
+                continue;
+            }
+            let Some(n) = cst::first_upper(&node) else {
+                continue;
+            };
+            if declared.contains(&n)
+                || explicit.contains(&n)
+                || BUILTIN_TYPES.iter().any(|(b, _)| *b == n)
+                || open
+                    .iter()
+                    .any(|e| e.type_(&n).is_some() || e.lists_undeclared_type(&n))
+            {
+                continue;
+            }
+            out.insert(n);
+        }
+        let out = std::rc::Rc::new(out);
+        self.home_kernel_types.insert(home, out.clone());
+        out
+    }
+
+    /// True when `name` is a kernel-backed type of the STDLIB module `dep`
+    /// (no `.sky` declaration): a type `dep` itself uses with no declaration
+    /// and no import (`Dict` in `Sky.Core.Dict`), or the builtin type named
+    /// like the module's last segment (`Task` in `Sky.Core.Task`). False for
+    /// a module outside the reserved stdlib namespaces.
+    ///
+    /// Only the import-free path uses it. Under an import, the whole stdlib is
+    /// still exempt (`type_qual`): `import Std.Ui as Ui` then `Ui.Html` is
+    /// accepted and means `Std.Html`'s `Html`, which example 64 relies on.
+    fn stdlib_kernel_type(&mut self, dep: ModuleId, name: &str) -> bool {
+        let path = self.db.module_name(dep).to_string();
+        if !is_reserved_sky_namespace(&path) {
+            return false;
+        }
+        let last = path.rsplit('.').next().unwrap_or(&path);
+        (name == last && BUILTIN_TYPES.iter().any(|(n, _)| *n == name))
+            || self.home_kernel_types(dep).contains(name)
+    }
+
+    /// The warning for a type `name` that the imported STDLIB module `dep`
+    /// neither exports nor uses as a kernel type (`Ui.Html` under `import
+    /// Std.Ui as Ui`). Such a name is still accepted in v0.32.x and becomes
+    /// `[E1001]` in the next minor. The message names the modules that export
+    /// a type `name`, from their real exports.
+    ///
+    /// Returns the type the name denotes when exactly ONE other stdlib module
+    /// exports a type `name` (`Std.Html`'s `Html`). The type checker then reads
+    /// that declaration, never a same-named type found by its bare name.
+    fn warn_unexported_stdlib_type(
+        &mut self,
+        dep: ModuleId,
+        name: &str,
+        span: Option<Span>,
+    ) -> Option<TypeRes> {
+        let module = self.db.module_name(dep).to_string();
+        let mut homes: Vec<(String, TypeRes)> = self
+            .db
+            .module_ids()
+            .into_iter()
+            .filter(|m| *m != self.module && *m != dep)
+            .filter(|m| is_reserved_sky_namespace(self.db.module_name(*m)))
+            .filter_map(|m| {
+                self.db.module_exports(m).type_(name).map(|(con, arity)| {
+                    (self.db.module_name(m).to_string(), TypeRes { con, arity })
+                })
+            })
+            .collect();
+        homes.sort_by(|a, b| a.0.cmp(&b.0));
+        homes.dedup_by(|a, b| a.0 == b.0);
+        let only = match homes.as_slice() {
+            [(_, tr)] => Some(*tr),
+            _ => None,
+        };
+        if self.quiet > 0 {
+            return only;
+        }
+        let Some(span) = span else {
+            return only;
+        };
+        let hint = if homes.is_empty() {
+            String::new()
+        } else {
+            let uses: Vec<String> = homes
+                .iter()
+                .map(|(h, _)| {
+                    let last = h.rsplit('.').next().unwrap_or(h);
+                    format!("`{last}.{name}` from `{h}`")
+                })
+                .collect();
+            format!(": use {}", uses.join(" or "))
+        };
+        self.result.type_warnings.push((
+            format!(
+                "`{name}` is not exported by `{module}`{hint}. This is accepted in v0.32 \
+                 and is [E1001] in the next minor version."
+            ),
+            span,
+        ));
+        only
+    }
+
+    /// The detail of the `[E1001]` for a type `qual.name` that the imported
+    /// USER or package module `dep` does not export. A kernel-implicit name
+    /// (`Error`, `Cmd`) needs no qualifier; a name close to an exported type
+    /// gets a did-you-mean; a type of exactly one stdlib module names it.
+    fn unexported_user_type_detail(&self, dep: ModuleId, qual: &str, name: &str) -> String {
+        let module = self.db.module_name(dep).to_string();
+        let ex = self.db.module_exports(dep);
+        let mut base = format!("module `{module}` does not export a type `{name}`");
+        if KERNEL_IMPLICIT_TYPES.contains(&name) || BUILTIN_TYPES.iter().any(|(n, _)| *n == name) {
+            base.push_str(&format!(
+                " (`{name}` is a built-in type: write `{name}` with no qualifier)"
+            ));
+            return base;
+        }
+        let mut best: Option<(usize, String)> = None;
+        for cand in ex
+            .unions
+            .iter()
+            .map(|u| u.name.as_str().to_string())
+            .chain(ex.aliases.iter().map(|a| a.name.as_str().to_string()))
+        {
+            let d = levenshtein(name, &cand);
+            if d > 2 {
+                continue;
+            }
+            let better = match &best {
+                None => true,
+                Some((bd, bc)) => d < *bd || (d == *bd && cand < *bc),
+            };
+            if better {
+                best = Some((d, cand));
+            }
+        }
+        if let Some((_, c)) = best {
+            base.push_str(&format!(" (did you mean `{qual}.{c}`?)"));
+            return base;
+        }
+        let mut homes: Vec<String> = self
+            .db
+            .module_ids()
+            .into_iter()
+            .filter(|m| *m != self.module && *m != dep)
+            .filter(|m| self.db.module_exports(*m).type_(name).is_some())
+            .map(|m| self.db.module_name(m).to_string())
+            .filter(|p| is_reserved_sky_namespace(p))
+            .collect();
+        homes.sort();
+        homes.dedup();
+        if let [h] = homes.as_slice() {
+            base.push_str(&format!(" (`{name}` is a type of `{h}`: import `{h}`)"));
+        }
+        base
+    }
+
+    /// `[E1001]` for a type `qual.name` the import-free home of `qual` does
+    /// not have. When another stdlib module written `qual` exports the type
+    /// (`Time.Parts`: `Std.Time`), the message names the import that binds
+    /// it; otherwise the closest type of the home, if any.
+    fn report_unknown_home_type(&mut self, qual: &str, name: &str, span: Option<Span>) {
+        if self.quiet > 0 {
+            return;
+        }
+        let hint = match self.missing_import_hint(qual, |e| e.type_(name).is_some()) {
+            Some(module) => format!(". `{name}` is in `{module}`: add `import {module} as {qual}`"),
+            None => {
+                let ex = self.implicit_home_exports(qual);
+                let mut known: Vec<String> = ex
+                    .iter()
+                    .flat_map(|e| {
+                        e.unions
+                            .iter()
+                            .map(|u| u.name.as_str().to_string())
+                            .chain(e.aliases.iter().map(|a| a.name.as_str().to_string()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                if let Some(e) = &ex {
+                    known.extend(self.home_kernel_types(e.module).iter().cloned());
+                }
+                known.sort();
+                let refs: Vec<&str> = known.iter().map(|s| s.as_str()).collect();
+                Self::closest_member(name, &refs)
+                    .map(|m| format!(" (did you mean `{qual}.{m}`?)"))
+                    .unwrap_or_default()
+            }
+        };
+        self.result
+            .unresolved_type_refs
+            .insert(format!("{qual}.{name}"));
+        let mut diag = Diagnostic::error("E1001", format!("`{qual}` has no type `{name}`{hint}"));
+        if let Some(sp) = span {
+            diag = diag.with_label(sp, "no such type");
+        }
+        self.result.diagnostics.push(diag);
+        self.result.class_a.push(ClassA {
+            qualifier: Some(qual.to_string()),
+            name: name.to_string(),
+            kind: RefKind::Type,
+            reason: "unknown module type".to_string(),
+            span,
+        });
     }
 
     fn bind_qual_from_exports(&mut self, q: &str, exports: &ModuleExports) {
@@ -3668,6 +4026,23 @@ impl<'a> Resolver<'a> {
         })
     }
 
+    /// A qualified type `qual.name` that names a kernel type with no `.sky`
+    /// declaration (`JsonEnc.Value`, `Dict.Dict`, a kernel-implicit name). It
+    /// is published (`ResolveResult::kernel_type_refs`), so the type checker
+    /// never expands it through a same-named alias found by its bare name.
+    fn kernel_qual_type(&mut self, qual: &str, name: &str, args: Vec<TypeId>) -> TypeId {
+        if self.quiet == 0 {
+            self.result
+                .kernel_type_refs
+                .insert(format!("{qual}.{name}"));
+        }
+        self.body.ty(Type::Con {
+            con: None,
+            name: Name::new(name),
+            args,
+        })
+    }
+
     fn type_qual(
         &mut self,
         qual: &str,
@@ -3702,13 +4077,36 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        // kernel-qualified type (e.g. Json decoders' types) — lenient kernel
-        if self.db.kernel_pseudo(qual).is_some() {
-            return self.body.ty(Type::Con {
-                con: None,
-                name: Name::new(name),
-                args,
-            });
+        // A bare kernel qualifier no import binds (`Time.Parts` with no
+        // `import … as Time`): the qualifier's import-free home decides, as for
+        // a value (`resolve_qual_var`).
+        if !self.import_aliases.contains_key(qual) {
+            match self.implicit_home_type(qual, name) {
+                ImplicitType::Home(tr) => {
+                    if self.quiet == 0 {
+                        self.result.type_refs.insert(format!("{qual}.{name}"), tr);
+                    }
+                    return self.body.ty(Type::Con {
+                        con: Some(tr),
+                        name: Name::new(name),
+                        args,
+                    });
+                }
+                ImplicitType::Unknown => {
+                    self.report_unknown_home_type(qual, name, span);
+                    return self.body.ty(Type::Error);
+                }
+                ImplicitType::Fallthrough => {}
+            }
+        }
+        // kernel-qualified type (e.g. Json decoders' types) — lenient kernel.
+        // Not when an import binds the qualifier to a Sky module (`import
+        // Lib.Db as Db`): that module decides, below, as it does for any other
+        // qualifier, so `Db.Missing` is an error.
+        if self.db.kernel_pseudo(qual).is_some()
+            && !matches!(self.import_aliases.get(qual), Some(ImportSource::Dep(_)))
+        {
+            return self.kernel_qual_type(qual, name, args);
         }
         match self.import_aliases.get(qual).cloned() {
             Some(ImportSource::Foreign(pkg)) => {
@@ -3719,11 +4117,7 @@ impl<'a> Resolver<'a> {
                     args,
                 })
             }
-            Some(ImportSource::Kernel(_)) => self.body.ty(Type::Con {
-                con: None,
-                name: Name::new(name),
-                args,
-            }),
+            Some(ImportSource::Kernel(_)) => self.kernel_qual_type(qual, name, args),
             Some(ImportSource::Dep(dep)) => {
                 let exports = self.db.module_exports(dep);
                 let con = exports
@@ -3737,28 +4131,76 @@ impl<'a> Resolver<'a> {
                 // re-export (of a kernel / Go type the chase cannot follow) or a
                 // dangling export `M` itself reports as [E1015]; both stay
                 // lenient here so the cause is reported once, at the clause.
-                // A STDLIB module is exempt: its kernel-backed types
-                // (`Dict.Dict`) live in the type checker's kernel registry, not
-                // in the module's source.
-                if con.is_none()
-                    && !KERNEL_IMPLICIT_TYPES.contains(&name)
-                    && !exports.lists_undeclared_type(name)
-                    && !is_reserved_sky_namespace(self.db.module_name(dep))
+                if let Some(tr) = con {
+                    if self.quiet == 0 {
+                        self.result.type_refs.insert(format!("{qual}.{name}"), tr);
+                    }
+                    return self.body.ty(Type::Con {
+                        con: Some(tr),
+                        name: Name::new(name),
+                        args,
+                    });
+                }
+                let stdlib = is_reserved_sky_namespace(self.db.module_name(dep));
+                if exports.lists_undeclared_type(name)
+                    || (stdlib && self.stdlib_kernel_type(dep, name))
                 {
-                    self.track_class_a(
-                        Some(qual.to_string()),
-                        name,
-                        RefKind::Type,
-                        "type not exported by module",
-                        span,
-                    );
+                    // A kernel-backed type of a STDLIB module (`Dict.Dict`
+                    // under `import Sky.Core.Dict as D`): it lives in the type
+                    // checker's kernel registry, not in the module's source.
+                    return self.kernel_qual_type(qual, name, args);
+                }
+                if stdlib {
+                    // A kernel-implicit name under a STDLIB import (`App.Route`,
+                    // `Codec.Value`) is the kernel type the bare name denotes,
+                    // with no warning, as in v0.32.0. It is published as a
+                    // kernel type, so the type checker never reads it as a
+                    // same-named type of this module.
+                    if KERNEL_IMPLICIT_TYPES.contains(&name) {
+                        return self.kernel_qual_type(qual, name, args);
+                    }
+                    // Any other type the imported STDLIB module neither exports
+                    // nor uses as a kernel type (`Ui.Html` under `import Std.Ui
+                    // as Ui`) is accepted in v0.32.x with a warning. It names
+                    // the ONE stdlib type of that name when there is one. Any
+                    // other name is an error type (no bare-name guess).
+                    let home = self.warn_unexported_stdlib_type(dep, name, span);
+                    if let Some(tr) = home {
+                        if self.quiet == 0 {
+                            self.result.type_refs.insert(format!("{qual}.{name}"), tr);
+                        }
+                        return self.body.ty(Type::Con {
+                            con: Some(tr),
+                            name: Name::new(name),
+                            args,
+                        });
+                    }
+                    if self.quiet == 0 {
+                        self.result
+                            .unresolved_type_refs
+                            .insert(format!("{qual}.{name}"));
+                    }
                     return self.body.ty(Type::Error);
                 }
-                self.body.ty(Type::Con {
-                    con,
-                    name: Name::new(name),
-                    args,
-                })
+                // A USER or package module: the type must be one it exports.
+                // A kernel-implicit name (`L.Error`, `L.Cmd`) is no exception:
+                // the module does not export it, and the bare name is the
+                // kernel type.
+                if self.quiet == 0 {
+                    self.result
+                        .unresolved_type_refs
+                        .insert(format!("{qual}.{name}"));
+                }
+                let detail = self.unexported_user_type_detail(dep, qual, name);
+                self.track_class_a_detail(
+                    Some(qual.to_string()),
+                    name,
+                    RefKind::Type,
+                    "type not exported by module",
+                    span,
+                    Some(detail),
+                );
+                self.body.ty(Type::Error)
             }
             // A qualifier that names no import, no kernel module and no Go
             // package. Every legitimate qualifier is handled above, so `Nope.Foo`
@@ -3766,6 +4208,11 @@ impl<'a> Resolver<'a> {
             // nominal `Foo` with no diagnostic; it is now the same unknown-name
             // error an unknown value qualifier gets.
             None => {
+                if self.quiet == 0 {
+                    self.result
+                        .unresolved_type_refs
+                        .insert(format!("{qual}.{name}"));
+                }
                 let hint = self.did_you_mean(qual);
                 let import = self.missing_import_hint(qual, |e| e.type_(name).is_some());
                 self.track_class_a_full(
@@ -3868,6 +4315,20 @@ impl<'a> Resolver<'a> {
         }
         if let Some(pseudo) = self.db.kernel_pseudo(qual) {
             let pseudo = pseudo.to_string();
+            // A member the kernel table does not list, exported by the
+            // qualifier's stdlib home (a pure-Sky helper such as
+            // `Task.bestEffort`): the home's own definition, as an import of
+            // the home would bind it.
+            if !is_enumerated_kernel_member(&pseudo, name) {
+                if let Some(ex) = self.implicit_home_exports(qual) {
+                    if let Some(def) = ex.value(name) {
+                        return Res::Def(def);
+                    }
+                    if let Some((_, ct)) = ex.ctor(name) {
+                        return Res::Ctor(to_ctor_ref(ct));
+                    }
+                }
+            }
             if let Some(err) = self.reject_unknown_kernel_member(&pseudo, qual, name, span) {
                 return err;
             }
@@ -4025,6 +4486,12 @@ impl<'a> Resolver<'a> {
             return None;
         }
         if self.db.kernel_pseudo(qual).is_some() {
+            // A constructor of the qualifier's stdlib home (`Task.Loop`).
+            if let Some(ex) = self.implicit_home_exports(qual) {
+                if let Some((_, ct)) = ex.ctor(name) {
+                    return Some(to_ctor_ref(ct));
+                }
+            }
             return None; // kernel ctor, resolved leniently (no CtorRef needed)
         }
         self.track_class_a(
@@ -4190,6 +4657,24 @@ impl<'a> Resolver<'a> {
         found
     }
 
+    /// The tail of the `[E1001] `Q` has no member `name`` message for a bare
+    /// kernel qualifier. When another stdlib module written `Q` exports
+    /// `name` (`Time.zones`: `Std.Time`, while the import-free `Time` is
+    /// `Sky.Core.Time`), name the import that binds it. The bare qualifier
+    /// never silently picks that module. Otherwise the closest member, if any.
+    fn unknown_member_hint(&self, qual: &str, name: &str, closest: Option<String>) -> String {
+        // The home itself never matches: a home export resolves before this
+        // (`Resolver::implicit_home_exports`).
+        let import =
+            self.missing_import_hint(qual, |e| e.value(name).is_some() || e.ctor(name).is_some());
+        match import {
+            Some(module) => format!(". `{name}` is in `{module}`: add `import {module} as {qual}`"),
+            None => closest
+                .map(|m| format!(" (did you mean `{qual}.{m}`?)"))
+                .unwrap_or_default(),
+        }
+    }
+
     fn did_you_mean(&self, qual: &str) -> Option<String> {
         let mut best: Option<(usize, String)> = None;
         let candidates = self
@@ -4284,9 +4769,7 @@ impl<'a> Resolver<'a> {
             if self.quiet == 0 {
                 let members = known.unwrap_or_default();
                 let refs: Vec<&str> = members.iter().map(|s| s.as_str()).collect();
-                let hint = Self::closest_member(name, &refs)
-                    .map(|m| format!(" (did you mean `{qual}.{m}`?)"))
-                    .unwrap_or_default();
+                let hint = self.unknown_member_hint(qual, name, Self::closest_member(name, &refs));
                 let mut diag =
                     Diagnostic::error("E1001", format!("`{qual}` has no member `{name}`{hint}"));
                 if let Some(sp) = span {
@@ -4307,9 +4790,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
         if self.quiet == 0 {
-            let hint = Self::closest_member(name, funcs)
-                .map(|m| format!(" (did you mean `{qual}.{m}`?)"))
-                .unwrap_or_default();
+            let hint = self.unknown_member_hint(qual, name, Self::closest_member(name, funcs));
             let mut diag =
                 Diagnostic::error("E1001", format!("`{qual}` has no member `{name}`{hint}"));
             if let Some(sp) = span {

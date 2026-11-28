@@ -424,23 +424,20 @@ secrets =
 -- that silently matches nothing.
 pattern : String -> String -> Result Error Rule
 pattern name re =
-    case checkPattern re of
+    let
+        _ <- checkPattern re
+    in
+        Ok
+            (validated
+                name
+                ("[" ++ String.toUpper name ++ "]")
+                (compiled (Regex.fromString re))
+                (\m ->
+                    if m == "" then
+                        Nothing
 
-        Ok _ ->
-            Ok
-                (validated
-                    name
-                    ("[" ++ String.toUpper name ++ "]")
-                    (compiled (Regex.fromString re))
-                    (\m ->
-                        if m == "" then
-                            Nothing
-
-                        else
-                            Just m))
-
-        Err e ->
-            Err e
+                    else
+                        Just m))
 
 
 checkPattern : String -> Result Error ()

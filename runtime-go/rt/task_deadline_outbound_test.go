@@ -18,6 +18,7 @@ package rt
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -359,4 +360,35 @@ func TestAiStore_TransfersStopAtTheDeadline(t *testing.T) {
 	deadlineFailure(t, r)
 	waitCancelled(t, "Ai.Store.get", cancelled)
 	refusedUnsent(t, "Ai.Store.get", &hits, get)
+}
+
+// A spool that reaches EOF before the reader starts has queued every chunk
+// and the Done event, then closed the handle (runSpool's EOF path). The
+// reader must hand out what is queued before it treats the close as the
+// end. Before the fix forEachChunk's select picked `done` over the queued
+// events at random, so a reader that started late (a slow machine, the
+// Task.timeout case above) saw only part of the stream and an Ok.
+func TestHttpStream_ForEachChunkDrainsWhatTheSpoolQueuedBeforeClose(t *testing.T) {
+	sh := &streamHandle{
+		id:   nextStreamID(),
+		ch:   make(chan streamEvent, streamChanBuffer),
+		done: make(chan struct{}),
+	}
+	var want strings.Builder
+	for i := 0; i < streamChanBuffer-1; i++ {
+		c := fmt.Sprintf("c%d;", i)
+		want.WriteString(c)
+		sh.ch <- streamEvent{kind: streamChunkEv, data: c}
+	}
+	sh.ch <- streamEvent{kind: streamDoneEv}
+	sh.Close()
+	registerStream(nil, sh)
+	var got strings.Builder
+	body := func(chunk any) any {
+		return func() any { got.WriteString(AsString(chunk)); return Ok[any, any](skyUnit()) }
+	}
+	done := anyTaskInvoke(HttpStream_forEachChunk(sh.id, body))
+	if done.Tag != 0 || got.String() != want.String() {
+		t.Fatalf("queued chunks lost at close: %+v, read %q, want %q", done, got.String(), want.String())
+	}
 }

@@ -357,29 +357,22 @@ pinWeights (BaseModel b) =
 
                 Nothing ->
                     b.id
+        mlx <- pin b.mlx
     in
-        pin b.mlx
-            |> Task.andThen
-                   (\mlx ->
-                       if b.unsloth == b.mlx then
-                           Task.succeed
-                               (BaseModel
-                                   { b
-                                       | id = idOf mlx
-                                       , mlx = mlx
-                                       , unsloth = mlx
-                                   })
+        if b.unsloth == b.mlx then
+            Task.succeed
+                (BaseModel { b | id = idOf mlx, mlx = mlx, unsloth = mlx })
 
-                       else
-                           pin b.unsloth
-                               |> Task.map
-                                      (\unsloth ->
-                                          BaseModel
-                                              { b
-                                                  | id = idOf mlx
-                                                  , mlx = mlx
-                                                  , unsloth = unsloth
-                                              }))
+        else
+            pin b.unsloth
+                |> Task.map
+                       (\unsloth ->
+                           BaseModel
+                               { b
+                                   | id = idOf mlx
+                                   , mlx = mlx
+                                   , unsloth = unsloth
+                               })
 
 type alias ParsedBase =
     { id : String
@@ -1651,44 +1644,20 @@ planWith : Job -> List Setting -> Task Error Plan
 planWith job sts =
     let
         s = settings job
+        _ <- Task.fromResult (check job)
+        b <- resolveRaw (backendCode s)
+        h <- host ()
+        shape <- shapeOf (baseOf job)
     in
-        Task.fromResult (check job)
-            |> Task.andThen (\_ -> resolveRaw (backendCode s))
-            |> Task.andThen
-                   (\b ->
-                       host ()
-                           |> Task.andThen
-                                  (\h ->
-                                      shapeOf (baseOf job)
-                                          |> Task.andThen
-                                                 (\shape ->
-                                                     if b.value == "vertex" then
-                                                         fitPlan
-                                                             job
-                                                             sts
-                                                             b
-                                                             h
-                                                             shape
-                                                             |> Task.andThen
-                                                                    (\p ->
-                                                                        planCloudWith
-                                                                            job
-                                                                            shape
-                                                                            |> Task.map
-                                                                                   (\c ->
-                                                                                       { p
-                                                                                           | cloud =
-                                                                                               Just
-                                                                                                   c
-                                                                                       }))
+        if b.value == "vertex" then
+            let
+                p <- fitPlan job sts b h shape
+            in
+                planCloudWith job shape
+                    |> Task.map (\c -> { p | cloud = Just c })
 
-                                                     else
-                                                         fitPlan
-                                                             job
-                                                             sts
-                                                             b
-                                                             h
-                                                             shape)))
+        else
+            fitPlan job sts b h shape
 
 
 -- The memory the trainer may use: the job's cap, else what this machine can
@@ -2862,34 +2831,33 @@ start db code =
 
 startEffective : Db -> Job -> Job -> Task Error String
 startEffective db code job =
-    Task.fromResult (check job)
-        |> Task.andThen (\_ -> resolveRaw (backendCode (settings job)))
-        |> Task.andThen
-               (\b ->
-                   if b.value == "vertex" then
-                       cloudSettings job
-                           |> Task.map
-                                  (\_ ->
-                                      -- A cloud job's settings are checked before a run
-                                      -- exists: no project, no budget, an unpinned image.
-                                      ())
+    let
+        _ <- Task.fromResult (check job)
+        b <- resolveRaw (backendCode (settings job))
+        _ <-
+            if b.value == "vertex" then
+                cloudSettings job
+                    |> Task.map
+                           (\_ ->
+                               -- A cloud job's settings are checked before a run
+                               -- exists: no project, no budget, an unpinned image.
+                               ())
 
-                   else
-                       Task.succeed ())
-        |> Task.andThen (\_ -> Durable.setup db)
-        |> Task.andThen (\_ -> Trace.setup db)
-        |> Task.andThen (\_ -> readRaw (runDir job))
-        |> Task.andThen
-               (\state ->
-                   -- The workflow is named after the job as written (a
-                   -- worker's `workflows` list is pure); the run is the
-                   -- effective job's.
-                   Durable.start
-                       db
-                       (defaultWorkflow code)
-                       (durableId job state.generation)
-                       (request job))
-        |> Task.map (\_ -> runId job)
+            else
+                Task.succeed ()
+        _ <- Durable.setup db
+        _ <- Trace.setup db
+        state <- readRaw (runDir job)
+    in
+        -- The workflow is named after the job as written (a
+        -- worker's `workflows` list is pure); the run is the
+        -- effective job's.
+        Durable.start
+            db
+            (defaultWorkflow code)
+            (durableId job state.generation)
+            (request job)
+            |> Task.map (\_ -> runId job)
 
 
 -- | Advance the runs of these jobs that are due (one worker tick). `True`
@@ -2906,38 +2874,35 @@ poll db jobs =
 -- `start` picks it up again.
 drive : Db -> Job -> Task Error Adapter
 drive db code =
-    effective code
-        |> Task.andThen
-               (\job ->
-                   startEffective db code job
-                       |> Task.andThen
-                              (\_ -> Task.loop (driveStep db code job) 0))
+    let
+        job <- effective code
+        _ <- startEffective db code job
+    in
+        Task.loop (driveStep db code job) 0
 
 
 driveStep : Db -> Job -> Job -> Int -> Task Error (Task.Step Int Adapter)
 driveStep db code job n =
-    readRaw (runDir job)
-        |> Task.andThen
-               (\state ->
-                   case resultOf state.result of
+    let
+        state <- readRaw (runDir job)
+    in
+        case resultOf state.result of
 
-                       Just (Ok a) ->
-                           Task.succeed (Task.Done a)
+            Just (Ok a) ->
+                Task.succeed (Task.Done a)
 
-                       Just (Err e) ->
-                           Task.fail e
+            Just (Err e) ->
+                Task.fail e
 
-                       Nothing ->
-                           poll db [ code ]
-                               |> Task.andThen
-                                      (\worked ->
-                                          if worked then
-                                              Task.succeed (Task.Loop (n + 1))
+            Nothing ->
+                let
+                    worked <- poll db [ code ]
+                in
+                    if worked then
+                        Task.succeed (Task.Loop (n + 1))
 
-                                          else
-                                              Time.sleep 250
-                                                  |> Task.map
-                                                         (\_ -> Task.Loop (n + 1))))
+                    else
+                        Time.sleep 250 |> Task.map (\_ -> Task.Loop (n + 1))
 
 
 -- The finished run's record: Ok adapter, Err failure, Nothing while it runs.
@@ -3007,27 +2972,24 @@ resumeAt dir =
 -- the GGUF adapter, or the merged model.
 exportAt : String -> Bool -> Task Error Artefact
 exportAt dir merged =
-    File.readFile (dir ++ "/job.json")
-        |> Task.andThen
-               (\text ->
-                   Task.fromResult
-                       (JsonD.decodeString
-                           (JsonD.map2
-                               Tuple.pair
-                               (JsonD.field "serving" JsonD.string)
-                               (JsonD.field "base" JsonD.string))
-                           text))
-        |> Task.andThen
-               (\( serving, base ) ->
-                   convertRaw dir serving base
-                       |> Task.andThen
-                              (\c ->
-                                  if merged then
-                                      mergeRaw dir serving
+    let
+        text <- File.readFile (dir ++ "/job.json")
+        ( serving, base ) <-
+            Task.fromResult
+                (JsonD.decodeString
+                    (JsonD.map2
+                        Tuple.pair
+                        (JsonD.field "serving" JsonD.string)
+                        (JsonD.field "base" JsonD.string))
+                    text)
+        c <- convertRaw dir serving base
+    in
+        (if merged then
+            mergeRaw dir serving
 
-                                  else
-                                      Task.succeed c))
-        |> Task.map (\c -> { path = c.path, sha256 = c.sha256 })
+        else
+            Task.succeed c)
+            |> Task.map (\out -> { path = out.path, sha256 = out.sha256 })
 
 
 -- | Cancel the job's run: the trainer writes a checkpoint and stops (killed
@@ -3468,14 +3430,17 @@ resolveStep ctx job =
 
 setupFrom : Durable.Ctx -> Job -> String -> Task Error Setup
 setupFrom ctx job backend =
-    stageStep ctx job backend |> Task.andThen (trainerStep ctx)
-        |> Task.andThen (baseStep ctx job)
-        |> Task.andThen (tokenizeStep ctx job)
-        |> Task.andThen (shapeStep ctx job)
+    let
+        _ <- stageStep ctx job
+        tool <- trainerStep ctx backend
+        weights <- baseStep ctx job backend
+        _ <- tokenizeStep ctx job backend weights
+    in
+        shapeStep ctx job backend tool weights
 
 
-stageStep : Durable.Ctx -> Job -> String -> Task Error String
-stageStep ctx job backend =
+stageStep : Durable.Ctx -> Job -> Task Error Int
+stageStep ctx job =
     let
         s = settings job
     in
@@ -3485,74 +3450,71 @@ stageStep ctx job backend =
             "stage"
             (stageRaw (runDir job) s.dataFile s.datasetDigest (jobJson job)
                 |> Task.map (\st -> st.train))
-            |> Task.map (\_ -> backend)
 
 
-trainerStep : Durable.Ctx -> String -> Task Error ( String, Tool )
+trainerStep : Durable.Ctx -> String -> Task Error Tool
 trainerStep ctx backend =
     Durable.step
         ctx
         toolCodec
         "trainer"
         (ensureTrainer backend |> Task.map toolOf)
-        |> Task.map (\tool -> ( backend, tool ))
 
 
-baseStep : Durable.Ctx -> Job -> ( String, Tool ) -> Task Error ( String, Tool, String )
-baseStep ctx job ( backend, tool ) =
+baseStep : Durable.Ctx -> Job -> String -> Task Error String
+baseStep ctx job backend =
     Durable.step ctx Codec.string "base" (weightsFor backend job)
-        |> Task.map (\w -> ( backend, tool, w ))
 
 
 -- The native trainer's data: the staged rows tokenized with the base's own
 -- tokenizer and chat format, and the order of every step (data/train.tok,
 -- data/valid.tok, data/order.bin). Only the MLX backend trains natively; the
 -- other backends read data/*.jsonl themselves.
-tokenizeStep : Durable.Ctx -> Job -> ( String, Tool, String ) -> Task Error ( String, Tool, String )
-tokenizeStep ctx job ( backend, tool, weights ) =
+tokenizeStep : Durable.Ctx -> Job -> String -> String -> Task Error ()
+tokenizeStep ctx job backend weights =
     if backend == "mlx" && weights /= "" then
         Durable.step
             ctx
             Codec.int
             "tokenize"
             (tokenizeRaw (runDir job) weights |> Task.map .steps)
-            |> Task.map (\_ -> ( backend, tool, weights ))
+            |> Task.map (\_ -> ())
 
     else
-        Task.succeed ( backend, tool, weights )
+        Task.succeed ()
 
 
-shapeStep : Durable.Ctx -> Job -> ( String, Tool, String ) -> Task Error Setup
-shapeStep ctx job ( backend, tool, weights ) =
-    Durable.step ctx shapeCodec "shape" (shapeOf (baseOf job))
-        |> Task.andThen
-               (\shape ->
-                   Durable.step
-                       ctx
-                       Codec.int
-                       "fit"
-                       (host ()
-                           |> Task.andThen
-                                  (\h ->
-                                      fitPlan
-                                          job
-                                          []
-                                          { key = ""
-                                          , name = ""
-                                          , value = backend
-                                          , source = ""
-                                          }
-                                          h
-                                          shape)
-                           |> Task.map .capBytes)
-                       |> Task.map
-                              (\cap ->
-                                  { backend = backend
-                                  , shape = shape
-                                  , tool = tool
-                                  , weights = weights
-                                  , capBytes = cap
-                                  }))
+shapeStep : Durable.Ctx -> Job -> String -> Tool -> String -> Task Error Setup
+shapeStep ctx job backend tool weights =
+    let
+        shape <- Durable.step ctx shapeCodec "shape" (shapeOf (baseOf job))
+    in
+        Durable.step
+            ctx
+            Codec.int
+            "fit"
+            (host ()
+                |> Task.andThen
+                       (\h ->
+                           fitPlan
+                               job
+                               []
+                               { key = ""
+                               , name = ""
+                               , value = backend
+                               , source = ""
+                               }
+                               h
+                               shape)
+                |> Task.map .capBytes)
+            |> Task.map
+                   (\cap ->
+                       { backend = backend
+                       , shape = shape
+                       , tool = tool
+                       , weights = weights
+                       , capBytes = cap
+                       })
 
 
 toolOf : Toolchain -> Tool
@@ -3679,40 +3641,22 @@ train : Durable.Ctx -> Job -> Setup -> Task Error ( Setup, Seen )
 train ctx job st =
     let
         dir = runDir job
+        o <- Durable.step ctx originCodec "origin" (origin dir)
     in
-        Durable.step ctx originCodec "origin" (origin dir)
-            |> Task.andThen
-                   (\o ->
-                       if o.finished || o.alive then
-                           watchLoop
-                               ctx
-                               job
-                               st
-                               (Math.max 0 o.attempt)
-                               0
-                               0
-                               o.offset
-                               |> Task.map
-                                      (\seen ->
-                                          -- Attach: the trainer finished or still runs.
-                                          ( st, seen ))
+        if o.finished || o.alive then
+            watchLoop ctx job st (Math.max 0 o.attempt) 0 0 o.offset
+                |> Task.map
+                       (\seen ->
+                           -- Attach: the trainer finished or still runs.
+                           ( st, seen ))
 
-                       else
-                           let
-                               attempt = o.attempt + 1
-                           in
-                               launchAttempt ctx job st attempt
-                                   |> Task.andThen
-                                          (\_ ->
-                                              watchLoop
-                                                  ctx
-                                                  job
-                                                  st
-                                                  attempt
-                                                  0
-                                                  0
-                                                  o.offset)
-                                   |> Task.map (\seen -> ( st, seen )))
+        else
+            let
+                attempt = o.attempt + 1
+                _ <- launchAttempt ctx job st attempt
+            in
+                watchLoop ctx job st attempt 0 0 o.offset
+                    |> Task.map (\seen -> ( st, seen ))
 
 
 launchAttempt : Durable.Ctx -> Job -> Setup -> Int -> Task Error RawLaunched
@@ -3766,75 +3710,72 @@ watchLoop ctx job st attempt relaunched n offset =
         s = settings job
         dir = runDir job
         tag = String.fromInt attempt ++ "-" ++ String.fromInt n
+        seen <-
+            Durable.step
+                ctx
+                seenCodec
+                ("watch-" ++ tag)
+                (watchRaw dir offset s.watchWindowMs
+                    |> Task.andThen
+                           (\w ->
+                               traceLines ctx job w.lines
+                                   |> Task.map (\_ -> seenOf offset w)))
     in
-        Durable.step
-            ctx
-            seenCodec
-            ("watch-" ++ tag)
-            (watchRaw dir offset s.watchWindowMs
-                |> Task.andThen
-                       (\w ->
-                           traceLines ctx job w.lines
-                               |> Task.map (\_ -> seenOf offset w)))
-            |> Task.andThen
-                   (\seen ->
-                       case seen.outcome of
+        case seen.outcome of
 
-                           "done" ->
-                               Task.succeed { seen | relaunches = relaunched }
+            "done" ->
+                Task.succeed { seen | relaunches = relaunched }
 
-                           "error" ->
-                               Task.fail (driverFailure job seen)
+            "error" ->
+                Task.fail (driverFailure job seen)
 
-                           "cancelled" ->
-                               Task.fail (cancelled job seen.step)
+            "cancelled" ->
+                Task.fail (cancelled job seen.step)
 
-                           "running" ->
-                               Durable.sleep ctx ("tick-" ++ tag) 1000
-                                   |> Task.andThen
-                                          (\_ ->
-                                              watchLoop
-                                                  ctx
-                                                  job
-                                                  st
-                                                  attempt
-                                                  relaunched
-                                                  (n + 1)
-                                                  seen.offset)
+            "running" ->
+                Durable.sleep ctx ("tick-" ++ tag) 1000
+                    |> Task.andThen
+                           (\_ ->
+                               watchLoop
+                                   ctx
+                                   job
+                                   st
+                                   attempt
+                                   relaunched
+                                   (n + 1)
+                                   seen.offset)
 
-                           "cancelling" ->
-                               Task.fail (cancelled job seen.step)
+            "cancelling" ->
+                Task.fail (cancelled job seen.step)
 
-                           _ ->
-                               if relaunched >= s.maxRelaunches then
-                                   Task.fail
-                                       (Failure.toError
-                                           (TrainingFailed
-                                               { runId = runId job
-                                               , step = seen.step
-                                               , reason =
-                                                   "the trainer died without finishing "
-                                                       ++ String.fromInt
-                                                              (relaunched + 1)
-                                                       ++ " times (withMaxRelaunches "
-                                                       ++ String.fromInt
-                                                              s.maxRelaunches
-                                                       ++ ")"
-                                               , logTail = seen.message
-                                               }))
+            _ ->
+                if relaunched >= s.maxRelaunches then
+                    Task.fail
+                        (Failure.toError
+                            (TrainingFailed
+                                { runId = runId job
+                                , step = seen.step
+                                , reason =
+                                    "the trainer died without finishing "
+                                        ++ String.fromInt (relaunched + 1)
+                                        ++ " times (withMaxRelaunches "
+                                        ++ String.fromInt s.maxRelaunches
+                                        ++ ")"
+                                , logTail = seen.message
+                                }))
 
-                               else
-                                   launchAttempt ctx job st (attempt + 1)
-                                       |> Task.andThen
-                                              (\_ ->
-                                                  watchLoop
-                                                      ctx
-                                                      job
-                                                      st
-                                                      (attempt + 1)
-                                                      (relaunched + 1)
-                                                      0
-                                                      seen.offset))
+                else
+                    launchAttempt ctx job st (attempt + 1)
+                        |> Task.andThen
+                               (\_ ->
+                                   watchLoop
+                                       ctx
+                                       job
+                                       st
+                                       (attempt + 1)
+                                       (relaunched + 1)
+                                       0
+                                       seen.offset)
 
 
 -- What a watch saw. The outcome is the attempt's terminal line, else
@@ -4029,67 +3970,59 @@ finishWith ctx job after ( st, seen ) =
         s = settings job
         dir = runDir job
         peftPath = dir ++ "/adapter/adapter_model.safetensors"
-    in
-        Durable.step
-            ctx
-            Codec.string
-            "collect"
-            (digestRaw peftPath |> Task.map .sha256
-                |> Task.andThen
-                       (\sum ->
-                           if not (String.isEmpty seen.peft) && sum /= seen.peft then
-                               Task.fail
-                                   (Failure.toError
-                                       (ChecksumMismatch
-                                           { expected = seen.peft
-                                           , actual = sum
-                                           }))
+        peftSum <-
+            Durable.step
+                ctx
+                Codec.string
+                "collect"
+                (digestRaw peftPath |> Task.map .sha256
+                    |> Task.andThen
+                           (\sum ->
+                               if not (String.isEmpty seen.peft)
+                                   && sum /= seen.peft then
+                                   Task.fail
+                                       (Failure.toError
+                                           (ChecksumMismatch
+                                               { expected = seen.peft
+                                               , actual = sum
+                                               }))
 
-                           else
-                               Task.succeed sum))
-            |> Task.andThen
-                   (\peftSum ->
-                       optionalStep
-                           ctx
-                           s.ggufExport
-                           "convert"
-                           (convertRaw dir s.serving s.baseId)
-                           |> Task.andThen
-                                  (\gguf ->
-                                      optionalStep
-                                          ctx
-                                          s.mergedExport
-                                          "merge"
-                                          (mergeRaw dir s.serving)
-                                          |> Task.map
-                                                 (\merged ->
-                                                     adapterOf
-                                                         job
-                                                         st
-                                                         seen
-                                                         { path = peftPath
-                                                         , sha256 = peftSum
-                                                         }
-                                                         gguf
-                                                         merged)))
-            |> Task.andThen (\a -> registerStep ctx job a)
-            |> Task.andThen after
-            |> Task.andThen
-                   (\a ->
-                       finishRaw
-                           dir
-                           (JsonE.encode
-                               0
-                               (JsonE.object
-                                   [ ( "adapter"
-                                     , Result.withDefault
-                                           JsonE.null
-                                           (JsonE.raw
-                                               (Codec.toJson adapterCodec a))
-                                     )
-                                   , ( "status", JsonE.string "done" )
-                                   ]))
-                           |> Task.map (\_ -> a))
+                               else
+                                   Task.succeed sum))
+        gguf <-
+            optionalStep
+                ctx
+                s.ggufExport
+                "convert"
+                (convertRaw dir s.serving s.baseId)
+        merged <-
+            optionalStep ctx s.mergedExport "merge" (mergeRaw dir s.serving)
+        registered <-
+            registerStep
+                ctx
+                job
+                (adapterOf
+                    job
+                    st
+                    seen
+                    { path = peftPath, sha256 = peftSum }
+                    gguf
+                    merged)
+        a <- after registered
+    in
+        finishRaw
+            dir
+            (JsonE.encode
+                0
+                (JsonE.object
+                    [ ( "adapter"
+                      , Result.withDefault
+                            JsonE.null
+                            (JsonE.raw (Codec.toJson adapterCodec a))
+                      )
+                    , ( "status", JsonE.string "done" )
+                    ]))
+            |> Task.map (\_ -> a)
 
 
 optionalStep : Durable.Ctx -> Bool -> String -> Task Error RawConverted -> Task Error (Maybe Artefact)
@@ -4604,99 +4537,74 @@ l4TrainingQuota =
 
 planCloudWith : Job -> ModelShape -> Task Error CloudPlan
 planCloudWith job shape =
-    cloudSettings job
-        |> Task.andThen
-               (\cs ->
-                   let
-                       ( minutes, estimate, timeout ) =
-                           cloudEstimate job cs shape.parameters
-                   in
-                       if orTrue (Money.gt estimate cs.budget) then
-                           Task.fail
-                               (Failure.toError
-                                   (BudgetExceeded
-                                       { budget = cs.budget
-                                       , estimate = estimate
-                                       }))
+    let
+        cs <- cloudSettings job
+        ( minutes, estimate, timeout ) =
+            cloudEstimate job cs shape.parameters
+        _ <-
+            if orTrue (Money.gt estimate cs.budget) then
+                Task.fail
+                    (Failure.toError
+                        (BudgetExceeded
+                            { budget = cs.budget, estimate = estimate }))
 
-                       else
-                           Task.fromResult (Store.fromUrl cs.staging)
-                               |> Task.andThen Store.bucketLocation
-                               |> Task.andThen
-                                      (\location ->
-                                          if location /= cs.region then
-                                              Task.fail
-                                                  (invalid
-                                                      "SKY_AI_TRAIN_STAGING"
-                                                      (cs.staging ++ " is in "
-                                                          ++ location
-                                                          ++ ", not in the job's region "
-                                                          ++ cs.region
-                                                          ++ "; training data stays in the job's region, so use a bucket there"))
+            else
+                Task.succeed ()
+        location <-
+            Task.fromResult (Store.fromUrl cs.staging)
+                |> Task.andThen Store.bucketLocation
+        _ <-
+            if location /= cs.region then
+                Task.fail
+                    (invalid
+                        "SKY_AI_TRAIN_STAGING"
+                        (cs.staging ++ " is in " ++ location
+                            ++ ", not in the job's region "
+                            ++ cs.region
+                            ++ "; training data stays in the job's region, so use a bucket there"))
 
-                                          else
-                                              quotaFor cs
-                                                  |> Task.andThen
-                                                         (\q ->
-                                                             case q.limit of
+            else
+                Task.succeed ()
+        q <- quotaFor cs
+        _ <-
+            case q.limit of
 
-                                                                 Just n ->
-                                                                     if n
-                                                                         < cs.acceleratorCount then
-                                                                         Task.fail
-                                                                             (Failure.toError
-                                                                                 (QuotaExceeded
-                                                                                     { resource =
-                                                                                         "aiplatform.googleapis.com/custom_model_training_nvidia_l4_gpus"
-                                                                                     , region =
-                                                                                         cs.region
-                                                                                     , limit =
-                                                                                         n
-                                                                                     }))
+                Just n ->
+                    if n < cs.acceleratorCount then
+                        Task.fail
+                            (Failure.toError
+                                (QuotaExceeded
+                                    { resource =
+                                        "aiplatform.googleapis.com/custom_model_training_nvidia_l4_gpus"
+                                    , region = cs.region
+                                    , limit = n
+                                    }))
 
-                                                                     else
-                                                                         Task.succeed
-                                                                             q
+                    else
+                        Task.succeed ()
 
-                                                                 Nothing ->
-                                                                     Task.succeed
-                                                                         q)
-                                                  |> Task.map
-                                                         (\q ->
-                                                             { project =
-                                                                 cs.project
-                                                             , region =
-                                                                 cs.region
-                                                             , machine =
-                                                                 cs.machine
-                                                             , accelerator =
-                                                                 cs.accelerator
-                                                             , acceleratorCount =
-                                                                 cs.acceleratorCount
-                                                             , image = cs.image
-                                                             , staging =
-                                                                 cs.staging
-                                                             , steps =
-                                                                 totalSteps job
-                                                             , estimateMinutes =
-                                                                 minutes
-                                                             , timeoutSeconds =
-                                                                 timeout
-                                                             , perHour =
-                                                                 cs.perHour
-                                                             , estimate =
-                                                                 estimate
-                                                             , budget =
-                                                                 cs.budget
-                                                             , priceBook =
-                                                                 cs.priceBook
-                                                             , bucketLocation =
-                                                                 location
-                                                             , quotaLimit =
-                                                                 q.limit
-                                                             , quotaNote =
-                                                                 q.note
-                                                             })))
+                Nothing ->
+                    Task.succeed ()
+    in
+        Task.succeed
+            { project = cs.project
+            , region = cs.region
+            , machine = cs.machine
+            , accelerator = cs.accelerator
+            , acceleratorCount = cs.acceleratorCount
+            , image = cs.image
+            , staging = cs.staging
+            , steps = totalSteps job
+            , estimateMinutes = minutes
+            , timeoutSeconds = timeout
+            , perHour = cs.perHour
+            , estimate = estimate
+            , budget = cs.budget
+            , priceBook = cs.priceBook
+            , bucketLocation = location
+            , quotaLimit = q.limit
+            , quotaNote = q.note
+            }
 
 
 quotaFor : CloudSettings -> Task Error Google.QuotaReading
@@ -5231,44 +5139,25 @@ cloudTrain ctx job =
         s = settings job
         dir = runDir job
         key = runKey (runId job)
+        cs <-
+            Durable.step
+                ctx
+                rawCloudCodec
+                "cloud"
+                (cloudSettings job |> Task.map toRawCloud)
+                |> Task.map fromRawCloud
+        _ <-
+            Durable.step
+                ctx
+                Codec.int
+                "stage"
+                (stageRaw dir s.dataFile s.datasetDigest (jobJson job)
+                    |> Task.map (\st -> st.train))
+        shape <- Durable.step ctx shapeCodec "shape" (shapeOf (baseOf job))
+        p <-
+            Durable.step ctx planCodec "cloud-plan" (planCloudWith job shape)
     in
-        Durable.step
-            ctx
-            rawCloudCodec
-            "cloud"
-            (cloudSettings job |> Task.map toRawCloud)
-            |> Task.map fromRawCloud
-            |> Task.andThen
-                   (\cs ->
-                       Durable.step
-                           ctx
-                           Codec.int
-                           "stage"
-                           (stageRaw dir s.dataFile s.datasetDigest (jobJson job)
-                               |> Task.map (\st -> st.train))
-                           |> Task.andThen
-                                  (\_ ->
-                                      Durable.step
-                                          ctx
-                                          shapeCodec
-                                          "shape"
-                                          (shapeOf (baseOf job)))
-                           |> Task.andThen
-                                  (\shape ->
-                                      Durable.step
-                                          ctx
-                                          planCodec
-                                          "cloud-plan"
-                                          (planCloudWith job shape)
-                                          |> Task.andThen
-                                                 (\p ->
-                                                     cloudLaunchAndWatch
-                                                         ctx
-                                                         job
-                                                         cs
-                                                         p
-                                                         shape
-                                                         key)))
+        cloudLaunchAndWatch ctx job cs p shape key
 
 
 cloudLaunchAndWatch : Durable.Ctx -> Job -> CloudSettings -> CloudPlan -> ModelShape -> String -> Task Error ( Setup, Seen, CloudRun )
@@ -5288,165 +5177,108 @@ cloudLaunchAndWatch ctx job cs p shape key =
             , weights = ""
             , capBytes = 0
             }
+        store <- Task.fromResult (Store.fromUrl cs.staging)
+        _ <-
+            Durable.step
+                ctx
+                Codec.string
+                "upload"
+                (uploadInputs job cs shape store key)
+        o <- Durable.step ctx cloudOriginCodec "origin" (cloudOrigin dir)
+        w <-
+            if o.finished then
+                Task.succeed
+                    { segment = ""
+                    , state = "JOB_STATE_SUCCEEDED"
+                    , outcome = "done"
+                    , step = 0
+                    , code = ""
+                    , message = ""
+                    , trainLoss = 0.0
+                    , valLoss = 0.0
+                    , peft = ""
+                    , resumedFrom = 0
+                    , spentMinor = o.spentMinor
+                    , errorCode = 0
+                    , errorMessage = ""
+                    , relaunches = 0
+                    , ranSeconds = 0
+                    }
+
+            else if o.live then
+                cloudWatchLoop
+                    ctx
+                    job
+                    cs
+                    p
+                    store
+                    key
+                    o.attempt
+                    o.job
+                    0
+                    ""
+                    0
+                    o.spentMinor
+
+            else
+                cloudRelaunch
+                    ctx
+                    job
+                    cs
+                    p
+                    store
+                    key
+                    (o.attempt + 1)
+                    0
+                    o.spentMinor
     in
-        Task.fromResult (Store.fromUrl cs.staging)
-            |> Task.andThen
-                   (\store ->
-                       Durable.step
-                           ctx
-                           Codec.string
-                           "upload"
-                           (uploadInputs job cs shape store key)
-                           |> Task.andThen
-                                  (\_ ->
-                                      Durable.step
-                                          ctx
-                                          cloudOriginCodec
-                                          "origin"
-                                          (cloudOrigin dir)
-                                          |> Task.andThen
-                                                 (\o ->
-                                                     if o.finished then
-                                                         Task.succeed
-                                                             { segment = ""
-                                                             , state =
-                                                                 "JOB_STATE_SUCCEEDED"
-                                                             , outcome = "done"
-                                                             , step = 0
-                                                             , code = ""
-                                                             , message = ""
-                                                             , trainLoss = 0.0
-                                                             , valLoss = 0.0
-                                                             , peft = ""
-                                                             , resumedFrom = 0
-                                                             , spentMinor =
-                                                                 o.spentMinor
-                                                             , errorCode = 0
-                                                             , errorMessage = ""
-                                                             , relaunches = 0
-                                                             , ranSeconds = 0
-                                                             }
-
-                                                     else if o.live then
-                                                         cloudWatchLoop
-                                                             ctx
-                                                             job
-                                                             cs
-                                                             p
-                                                             store
-                                                             key
-                                                             o.attempt
-                                                             o.job
-                                                             0
-                                                             ""
-                                                             0
-                                                             o.spentMinor
-
-                                                     else
-                                                         cloudRelaunch
-                                                             ctx
-                                                             job
-                                                             cs
-                                                             p
-                                                             store
-                                                             key
-                                                             (o.attempt + 1)
-                                                             0
-                                                             o.spentMinor)
-                                          |> Task.andThen
-                                                 (\w ->
-                                                     Durable.step
-                                                         ctx
-                                                         Codec.string
-                                                         "download"
-                                                         (downloadAdapter
-                                                             dir
-                                                             store
-                                                             key)
-                                                         |> Task.map
-                                                                (\_ ->
-                                                                    ( st
-                                                                    , { offset =
-                                                                          0
-                                                                      , outcome =
-                                                                          "done"
-                                                                      , step =
-                                                                          w.step
-                                                                      , code =
-                                                                          ""
-                                                                      , message =
-                                                                          ""
-                                                                      , trainLoss =
-                                                                          w.trainLoss
-                                                                      , valLoss =
-                                                                          w.valLoss
-                                                                      , peft =
-                                                                          w.peft
-                                                                      , relaunches =
-                                                                          w.relaunches
-                                                                      , resumedFrom =
-                                                                          w.resumedFrom
-                                                                      , peakBytes =
-                                                                          0
-                                                                      , capBytes =
-                                                                          0
-                                                                      }
-                                                                    , { settings =
-                                                                          cs
-                                                                      , key =
-                                                                          key
-                                                                      }
-                                                                    )))))
+        Durable.step ctx Codec.string "download" (downloadAdapter dir store key)
+            |> Task.map
+                   (\_ ->
+                       ( st
+                       , { offset = 0
+                         , outcome = "done"
+                         , step = w.step
+                         , code = ""
+                         , message = ""
+                         , trainLoss = w.trainLoss
+                         , valLoss = w.valLoss
+                         , peft = w.peft
+                         , relaunches = w.relaunches
+                         , resumedFrom = w.resumedFrom
+                         , peakBytes = 0
+                         , capBytes = 0
+                         }
+                       , { settings = cs, key = key }
+                       ))
 
 
 uploadInputs : Job -> CloudSettings -> ModelShape -> Store -> String -> Task Error String
 uploadInputs job cs shape store key =
     let
         dir = runDir job
+        train <- Store.put store (dir ++ "/data/train.jsonl")
+        valid <- Store.put store (dir ++ "/data/valid.jsonl")
+        text <- Task.fromResult (inputsJson job cs shape key train valid)
+        created <- Store.putIf store (runPath key ++ "/inputs.json") "" text
     in
-        Store.put store (dir ++ "/data/train.jsonl")
-            |> Task.andThen
-                   (\train ->
-                       Store.put store (dir ++ "/data/valid.jsonl")
-                           |> Task.andThen
-                                  (\valid ->
-                                      Task.fromResult
-                                          (inputsJson
-                                              job
-                                              cs
-                                              shape
-                                              key
-                                              train
-                                              valid)))
-            |> Task.andThen
-                   (\text ->
-                       Store.putIf store (runPath key ++ "/inputs.json") "" text
-                           |> Task.andThen
-                                  (\created ->
-                                      if created then
-                                          Task.succeed (Crypto.sha256 text)
+        if created then
+            Task.succeed (Crypto.sha256 text)
 
-                                      else
-                                          Store.getAt
-                                              store
-                                              (runPath key ++ "/inputs.json")
-                                              |> Task.andThen
-                                                     (\existing ->
-                                                         if existing == Just text then
-                                                             Task.succeed
-                                                                 (Crypto.sha256
-                                                                     text)
+        else
+            let
+                existing <-
+                    Store.getAt store (runPath key ++ "/inputs.json")
+            in
+                if existing == Just text then
+                    Task.succeed (Crypto.sha256 text)
 
-                                                         else
-                                                             Task.fail
-                                                                 (invalid
-                                                                     "job"
-                                                                     (stagingUrl
-                                                                         cs
-                                                                         (runPath
-                                                                             key
-                                                                             ++ "/inputs.json")
-                                                                         ++ " holds other inputs for this run; delete the run's staging prefix or change the job")))))
+                else
+                    Task.fail
+                        (invalid
+                            "job"
+                            (stagingUrl cs (runPath key ++ "/inputs.json")
+                                ++ " holds other inputs for this run; delete the run's staging prefix or change the job"))
 
 
 -- The run's last recorded attempt, from cloud.json and the mirrored lines.
@@ -5497,65 +5329,63 @@ cloudRelaunch : Durable.Ctx -> Job -> CloudSettings -> CloudPlan -> Store -> Str
 cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
     let
         tag = String.fromInt attempt
-    in
-        Durable.step
-            ctx
-            Codec.int
-            ("resume-" ++ tag)
-            (if attempt == 0 then
-                Task.succeed 0
+        from <-
+            Durable.step
+                ctx
+                Codec.int
+                ("resume-" ++ tag)
+                (if attempt == 0 then
+                    Task.succeed 0
 
-            else
-                newestCheckpoint store key)
-            |> Task.andThen
-                   (\from ->
-                       Durable.step
-                           ctx
-                           Codec.string
-                           ("launch-" ++ tag)
-                           (budgetLeft job cs attempt spentMinor
-                               |> Task.andThen
-                                      (\_ ->
-                                          -- The first cloud.json is written inside the launch
-                                          -- step, once: written after it, every replay of the
-                                          -- workflow wrote QUEUED over what the watches had
-                                          -- recorded (the watch then never saw its own PENDING).
-                                          launchOnce
-                                              job
-                                              cs
-                                              p
-                                              store
-                                              key
-                                              attempt
-                                              from
-                                              spentMinor)
-                               |> Task.andThen
-                                      (\launched ->
-                                          writeCloudFile
-                                              (runDir job)
-                                              cs
-                                              key
-                                              launched
-                                              "JOB_STATE_QUEUED"
-                                              attempt
-                                              spentMinor
-                                              0
-                                              |> Task.map (\_ -> launched)))
-                           |> Task.andThen
-                                  (\name ->
-                                      cloudWatchLoop
-                                          ctx
-                                          job
-                                          cs
-                                          p
-                                          store
-                                          key
-                                          attempt
-                                          name
-                                          0
-                                          ""
-                                          relaunched
-                                          spentMinor))
+                else
+                    newestCheckpoint store key)
+        name <-
+            Durable.step
+                ctx
+                Codec.string
+                ("launch-" ++ tag)
+                (budgetLeft job cs attempt spentMinor
+                    |> Task.andThen
+                           (\_ ->
+                               -- The first cloud.json is written inside the launch
+                               -- step, once: written after it, every replay of the
+                               -- workflow wrote QUEUED over what the watches had
+                               -- recorded (the watch then never saw its own PENDING).
+                               launchOnce
+                                   job
+                                   cs
+                                   p
+                                   store
+                                   key
+                                   attempt
+                                   from
+                                   spentMinor)
+                    |> Task.andThen
+                           (\launched ->
+                               writeCloudFile
+                                   (runDir job)
+                                   cs
+                                   key
+                                   launched
+                                   "JOB_STATE_QUEUED"
+                                   attempt
+                                   spentMinor
+                                   0
+                                   |> Task.map (\_ -> launched)))
+    in
+        cloudWatchLoop
+            ctx
+            job
+            cs
+            p
+            store
+            key
+            attempt
+            name
+            0
+            ""
+            relaunched
+            spentMinor
 
 
 -- An order that could not be taken (two currencies) is True: a budget that
@@ -5744,39 +5574,29 @@ launchOnce job cs p store key attempt from spentMinor =
                             spec.timeoutSeconds
                             (affordableSeconds cs spentMinor))
             }
+        now <- Time.unixMillis ()
+        mine <-
+            Store.putIf
+                store
+                intentKey
+                ""
+                (JsonE.encode
+                    0
+                    (JsonE.object
+                        [ ( "attempt", JsonE.int attempt )
+                        , ( "at", JsonE.int now )
+                        , ( "resumeFrom", JsonE.int from )
+                        ]))
     in
-        Time.unixMillis ()
-            |> Task.andThen
-                   (\now ->
-                       Store.putIf
-                           store
-                           intentKey
-                           ""
-                           (JsonE.encode
-                               0
-                               (JsonE.object
-                                   [ ( "attempt", JsonE.int attempt )
-                                   , ( "at", JsonE.int now )
-                                   , ( "resumeFrom", JsonE.int from )
-                                   ]))
-                           |> Task.andThen
-                                  (\mine ->
-                                      if mine then
-                                          Google.createCustomJob
-                                              cs.project
-                                              cs.region
-                                              (Google.customJobJson jobSpec)
-                                              |> Task.map .name
+        if mine then
+            Google.createCustomJob
+                cs.project
+                cs.region
+                (Google.customJobJson jobSpec)
+                |> Task.map .name
 
-                                      else
-                                          attach
-                                              job
-                                              cs
-                                              store
-                                              key
-                                              attempt
-                                              intentKey
-                                              0))
+        else
+            attach job cs store key attempt intentKey 0
 
 
 -- Find the attempt's job by its labels (the list can lag the create), else
@@ -5785,92 +5605,77 @@ launchOnce job cs p store key attempt from spentMinor =
 -- paying for a second one.
 attach : Job -> CloudSettings -> Store -> String -> Int -> String -> Int -> Task Error String
 attach job cs store key attempt intentKey tries =
-    Google.listCustomJobs
-        cs.project
-        cs.region
-        ("labels.sky-run=\"" ++ key ++ "\" AND labels.sky-attempt=\""
-            ++ String.fromInt attempt
-            ++ "\"")
-        |> Task.andThen
-               (\jobs ->
-                   case jobs of
+    let
+        jobs <-
+            Google.listCustomJobs
+                cs.project
+                cs.region
+                ("labels.sky-run=\"" ++ key ++ "\" AND labels.sky-attempt=\""
+                    ++ String.fromInt attempt
+                    ++ "\"")
+    in
+        case jobs of
 
-                       found :: _ ->
-                           Task.succeed found.name
+            found :: _ ->
+                Task.succeed found.name
 
-                       [] ->
-                           Store.getAt
-                               store
-                               (runPath key ++ "/attempt-"
-                                   ++ String.fromInt attempt
-                                   ++ "/hello.json")
-                               |> Task.andThen
-                                      (\hello ->
-                                          case Maybe.andThen (helloJob cs) hello of
+            [] ->
+                let
+                    hello <-
+                        Store.getAt
+                            store
+                            (runPath key ++ "/attempt-" ++ String.fromInt attempt
+                                ++ "/hello.json")
+                in
+                    case Maybe.andThen (helloJob cs) hello of
 
-                                              Just name ->
-                                                  Task.succeed name
+                        Just name ->
+                            Task.succeed name
 
-                                              Nothing ->
-                                                  Store.getAt store intentKey
-                                                      |> Task.andThen
-                                                             (\intent ->
-                                                                 Time.unixMillis
-                                                                     ()
-                                                                     |> Task.andThen
-                                                                            (\now ->
-                                                                                let
-                                                                                    at =
-                                                                                        Maybe.withDefault
-                                                                                            now
-                                                                                            (Maybe.andThen
-                                                                                                (\t ->
-                                                                                                    Result.toMaybe
-                                                                                                        (JsonD.decodeString
-                                                                                                            (JsonD.field
-                                                                                                                "at"
-                                                                                                                JsonD.int)
-                                                                                                            t))
-                                                                                                intent)
-                                                                                in
-                                                                                    if now
-                                                                                        - at
-                                                                                        > 600000 then
-                                                                                        Task.fail
-                                                                                            (Failure.toError
-                                                                                                (TrainingFailed
-                                                                                                    { runId =
-                                                                                                        runId
-                                                                                                            job
-                                                                                                    , step =
-                                                                                                        0
-                                                                                                    , reason =
-                                                                                                        "launch intent without a job: attempt "
-                                                                                                            ++ String.fromInt
-                                                                                                                   attempt
-                                                                                                            ++ " was claimed more than ten minutes ago and no job carries its labels; no second job was created"
-                                                                                                    , logTail =
-                                                                                                        ""
-                                                                                                    }))
+                        Nothing ->
+                            let
+                                intent <- Store.getAt store intentKey
+                                now <- Time.unixMillis ()
+                                at =
+                                    Maybe.withDefault
+                                        now
+                                        (Maybe.andThen
+                                            (\t ->
+                                                Result.toMaybe
+                                                    (JsonD.decodeString
+                                                        (JsonD.field
+                                                            "at"
+                                                            JsonD.int)
+                                                        t))
+                                            intent)
+                            in
+                                if now - at > 600000 then
+                                    Task.fail
+                                        (Failure.toError
+                                            (TrainingFailed
+                                                { runId = runId job
+                                                , step = 0
+                                                , reason =
+                                                    "launch intent without a job: attempt "
+                                                        ++ String.fromInt
+                                                               attempt
+                                                        ++ " was claimed more than ten minutes ago and no job carries its labels; no second job was created"
+                                                , logTail = ""
+                                                }))
 
-                                                                                    else
-                                                                                        Time.sleep
-                                                                                            (Math.min
-                                                                                                5000
-                                                                                                (500
-                                                                                                    + tries
-                                                                                                          * 500))
-                                                                                            |> Task.andThen
-                                                                                                   (\_ ->
-                                                                                                       attach
-                                                                                                           job
-                                                                                                           cs
-                                                                                                           store
-                                                                                                           key
-                                                                                                           attempt
-                                                                                                           intentKey
-                                                                                                           (tries
-                                                                                                               + 1))))))
+                                else
+                                    Time.sleep
+                                        (Math.min 5000 (500 + tries * 500))
+                                        |> Task.andThen
+                                               (\_ ->
+                                                   attach
+                                                       job
+                                                       cs
+                                                       store
+                                                       key
+                                                       attempt
+                                                       intentKey
+                                                       (tries + 1))
 
 
 -- The job a container's hello.json names: its full resource name, or the
@@ -5910,206 +5715,173 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
         s = settings job
         tag = String.fromInt attempt ++ "-" ++ String.fromInt n
         tick = Math.max 100 (Math.min 30000 s.watchWindowMs)
-    in
-        Durable.step
-            ctx
-            cloudWatchCodec
-            ("watch-" ++ tag)
-            (watchCloud job cs store key attempt name segment spentBefore
-                |> Task.andThen
-                       (\w -> traceRunLines ctx job |> Task.map (\_ -> w)))
-            |> Task.andThen
-                   (\w ->
-                       let
-                           spent =
-                               minorMoney
-                                   (Money.currency cs.budget)
-                                   w.spentMinor
-                           job0 =
-                               { name = name
-                               , displayName = ""
-                               , state = w.state
-                               , createMs = 0
-                               , startMs = 0
-                               , endMs = 0
-                               , labels = []
-                               , errorCode = w.errorCode
-                               , errorMessage = w.errorMessage
-                               }
-                           -- The ceiling this attempt was launched with
-                           -- (launchOnce: the budget left, at most the plan's).
-                           attemptTimeout =
-                               Math.max
-                                   60
-                                   (Math.min
-                                       p.timeoutSeconds
-                                       (affordableSeconds cs spentBefore))
-                           -- An attempt that ended unfinished: a typed cloud
-                           -- failure, the budget spent, too many relaunches,
-                           -- or a relaunch.
-                           ended _ =
-                               case Google.jobFailure cs.region job0 of
+        w <-
+            Durable.step
+                ctx
+                cloudWatchCodec
+                ("watch-" ++ tag)
+                (watchCloud job cs store key attempt name segment spentBefore
+                    |> Task.andThen
+                           (\w -> traceRunLines ctx job |> Task.map (\_ -> w)))
+        spent = minorMoney (Money.currency cs.budget) w.spentMinor
+        job0 =
+            { name = name
+            , displayName = ""
+            , state = w.state
+            , createMs = 0
+            , startMs = 0
+            , endMs = 0
+            , labels = []
+            , errorCode = w.errorCode
+            , errorMessage = w.errorMessage
+            }
+        -- The ceiling this attempt was launched with
+        -- (launchOnce: the budget left, at most the plan's).
+        attemptTimeout =
+            Math.max
+                60
+                (Math.min p.timeoutSeconds (affordableSeconds cs spentBefore))
+        -- An attempt that ended unfinished: a typed cloud failure, the
+        -- budget spent, too many relaunches, or a relaunch.
+        ended _ =
+            case Google.jobFailure cs.region job0 of
 
-                                   Just e ->
-                                       Task.fail e
+                Just e ->
+                    Task.fail e
+
+                Nothing ->
+                    if spendReaches spent (perMinutes cs.perHour 1) cs.budget then
+                        Task.fail
+                            (Failure.toError
+                                (BudgetExceeded
+                                    { budget = cs.budget, estimate = spent }))
+
+                    else if relaunched >= s.maxRelaunches then
+                        Google.logTail cs.project (lastSegment name) 50
+                            |> Task.andThen
+                                   (\tail ->
+                                       -- It ran into the ceiling its budget set: Vertex
+                                       -- stopped it, and nothing is left to relaunch with.
+                                       Task.fail
+                                           (Failure.toError
+                                               (TrainingFailed
+                                                   { runId = runId job
+                                                   , step = w.step
+                                                   , reason =
+                                                       "the Vertex job ended without finishing "
+                                                           ++ String.fromInt
+                                                                  (relaunched + 1)
+                                                           ++ " times (withMaxRelaunches "
+                                                           ++ String.fromInt
+                                                                  s.maxRelaunches
+                                                           ++ "): "
+                                                           ++ w.errorMessage
+                                                   , logTail = tail
+                                                   })))
+
+                    else
+                        cloudRelaunch
+                            ctx
+                            job
+                            cs
+                            p
+                            store
+                            key
+                            (attempt + 1)
+                            (relaunched + 1)
+                            w.spentMinor
+    in
+        case w.outcome of
+
+            "done" ->
+                Task.succeed { w | relaunches = relaunched }
+
+            "error" ->
+                Task.fail
+                    (driverFailure
+                        job
+                        { offset = 0
+                        , outcome = "error"
+                        , step = w.step
+                        , code = w.code
+                        , message = w.message
+                        , trainLoss = w.trainLoss
+                        , valLoss = w.valLoss
+                        , peft = ""
+                        , relaunches = relaunched
+                        , resumedFrom = w.resumedFrom
+                        , peakBytes = 0
+                        , capBytes = 0
+                        })
+
+            "cancelled" ->
+                -- Vertex also cancels a job that reached its scheduling
+                -- timeout (the runtime ceiling). Only a cancel Sky asked for
+                -- (`cancel`, or the budget stop) writes the run's cancel
+                -- object. A cancel nobody asked for, before the ceiling, is
+                -- an attempt that ended unfinished.
+                Store.getAt store (runPath key ++ "/cancel")
+                    |> Task.andThen
+                           (\asked ->
+                               case asked of
+
+                                   Just _ ->
+                                       Task.fail (cancelled job w.step)
 
                                    Nothing ->
-                                       if spendReaches
-                                           spent
-                                           (perMinutes cs.perHour 1)
-                                           cs.budget then
+                                       if w.ranSeconds + 60 >= attemptTimeout then
                                            Task.fail
-                                               (Failure.toError
-                                                   (BudgetExceeded
-                                                       { budget = cs.budget
-                                                       , estimate = spent
-                                                       }))
-
-                                       else if relaunched >= s.maxRelaunches then
-                                           Google.logTail
-                                               cs.project
-                                               (lastSegment name)
-                                               50
-                                               |> Task.andThen
-                                                      (\tail ->
-                                                          -- It ran into the ceiling its budget set: Vertex
-                                                          -- stopped it, and nothing is left to relaunch with.
-                                                          Task.fail
-                                                              (Failure.toError
-                                                                  (TrainingFailed
-                                                                      { runId =
-                                                                          runId
-                                                                              job
-                                                                      , step =
-                                                                          w.step
-                                                                      , reason =
-                                                                          "the Vertex job ended without finishing "
-                                                                              ++ String.fromInt
-                                                                                     (relaunched
-                                                                                         + 1)
-                                                                              ++ " times (withMaxRelaunches "
-                                                                              ++ String.fromInt
-                                                                                     s.maxRelaunches
-                                                                              ++ "): "
-                                                                              ++ w.errorMessage
-                                                                      , logTail =
-                                                                          tail
-                                                                      })))
+                                               (ceilingReached
+                                                   job
+                                                   cs
+                                                   p
+                                                   spent
+                                                   w.step)
 
                                        else
-                                           cloudRelaunch
-                                               ctx
-                                               job
-                                               cs
-                                               p
-                                               store
-                                               key
-                                               (attempt + 1)
-                                               (relaunched + 1)
-                                               w.spentMinor
-                       in
-                           case w.outcome of
+                                           ended ())
 
-                               "done" ->
-                                   Task.succeed { w | relaunches = relaunched }
+            "dead" ->
+                ended ()
 
-                               "error" ->
+            _ ->
+                if orTrue (Money.gte spent cs.budget) then
+                    Durable.step
+                        ctx
+                        Codec.decimal
+                        ("budget-stop-" ++ tag)
+                        (Store.putAt
+                            store
+                            (runPath key ++ "/cancel")
+                            "{\"reason\":\"budget\"}"
+                            |> Task.andThen (\_ -> Google.cancelCustomJob name)
+                            |> Task.map (\_ -> w.spentMinor))
+                        |> Task.andThen
+                               (\_ ->
                                    Task.fail
-                                       (driverFailure
-                                           job
-                                           { offset = 0
-                                           , outcome = "error"
-                                           , step = w.step
-                                           , code = w.code
-                                           , message = w.message
-                                           , trainLoss = w.trainLoss
-                                           , valLoss = w.valLoss
-                                           , peft = ""
-                                           , relaunches = relaunched
-                                           , resumedFrom = w.resumedFrom
-                                           , peakBytes = 0
-                                           , capBytes = 0
-                                           })
+                                       (Failure.toError
+                                           (BudgetExceeded
+                                               { budget = cs.budget
+                                               , estimate = spent
+                                               })))
 
-                               "cancelled" ->
-                                   -- Vertex also cancels a job that reached
-                                   -- its scheduling timeout (the runtime
-                                   -- ceiling). Only a cancel Sky asked for
-                                   -- (`cancel`, or the budget stop) writes
-                                   -- the run's cancel object. A cancel
-                                   -- nobody asked for, before the ceiling,
-                                   -- is an attempt that ended unfinished.
-                                   Store.getAt store (runPath key ++ "/cancel")
-                                       |> Task.andThen
-                                              (\asked ->
-                                                  case asked of
-
-                                                      Just _ ->
-                                                          Task.fail
-                                                              (cancelled
-                                                                  job
-                                                                  w.step)
-
-                                                      Nothing ->
-                                                          if w.ranSeconds + 60
-                                                              >= attemptTimeout then
-                                                              Task.fail
-                                                                  (ceilingReached
-                                                                      job
-                                                                      cs
-                                                                      p
-                                                                      spent
-                                                                      w.step)
-
-                                                          else
-                                                              ended ())
-
-                               "dead" ->
-                                   ended ()
-
-                               _ ->
-                                   if orTrue (Money.gte spent cs.budget) then
-                                       Durable.step
-                                           ctx
-                                           Codec.decimal
-                                           ("budget-stop-" ++ tag)
-                                           (Store.putAt
-                                               store
-                                               (runPath key ++ "/cancel")
-                                               "{\"reason\":\"budget\"}"
-                                               |> Task.andThen
-                                                      (\_ ->
-                                                          Google.cancelCustomJob
-                                                              name)
-                                               |> Task.map (\_ -> w.spentMinor))
-                                           |> Task.andThen
-                                                  (\_ ->
-                                                      Task.fail
-                                                          (Failure.toError
-                                                              (BudgetExceeded
-                                                                  { budget =
-                                                                      cs.budget
-                                                                  , estimate =
-                                                                      spent
-                                                                  })))
-
-                                   else
-                                       Durable.sleep ctx ("tick-" ++ tag) tick
-                                           |> Task.andThen
-                                                  (\_ ->
-                                                      cloudWatchLoop
-                                                          ctx
-                                                          job
-                                                          cs
-                                                          p
-                                                          store
-                                                          key
-                                                          attempt
-                                                          name
-                                                          (n + 1)
-                                                          w.segment
-                                                          relaunched
-                                                          spentBefore))
+                else
+                    Durable.sleep ctx ("tick-" ++ tag) tick
+                        |> Task.andThen
+                               (\_ ->
+                                   cloudWatchLoop
+                                       ctx
+                                       job
+                                       cs
+                                       p
+                                       store
+                                       key
+                                       attempt
+                                       name
+                                       (n + 1)
+                                       w.segment
+                                       relaunched
+                                       spentBefore)
 
 
 -- One watch: the job's state, the protocol segments written since the last
@@ -6122,245 +5894,151 @@ watchCloud job cs store key attempt name after spentBefore =
         dir = runDir job
         prefix =
             runPath key ++ "/attempt-" ++ String.fromInt attempt ++ "/events/"
+        cj <- Google.getCustomJob name
+        keys <- Store.list store prefix after
+        texts <-
+            Task.sequence
+                (List.map
+                    (\k ->
+                        Store.getAt store k
+                            |> Task.andThen
+                                   (\body ->
+                                       let
+                                           text = Maybe.withDefault "" body
+                                       in
+                                           mirrorSegment dir attempt k text
+                                               |> Task.map (\_ -> text)))
+                    keys)
+        _ <- rebuildEvents dir
+        now <- Time.unixMillis ()
+        prevFile <- readCloudFile dir
+        -- Vertex bills a job's running time. Its start time is set when it
+        -- begins PENDING, and a stockout keeps it PENDING for as long as it
+        -- lasts (an hour, live). Spend counts from the first watch that saw
+        -- it RUNNING.
+        pending =
+            cj.state == "JOB_STATE_QUEUED" || cj.state == "JOB_STATE_PENDING"
+        -- What the previous watch of this job recorded (another job's file
+        -- counts as nothing).
+        seenSince =
+            case prevFile of
+
+                Just pf ->
+                    if pf.job == name then
+                        pf.runningSinceMs
+
+                    else
+                        0
+
+                Nothing ->
+                    0
+        sawPending =
+            case prevFile of
+
+                Just pf ->
+                    pf.job == name && pf.state == "JOB_STATE_PENDING"
+
+                Nothing ->
+                    False
+        -- Recorded (and kept) only when a watch saw the job wait PENDING
+        -- and then run.
+        runningSince =
+            if pending then
+                0
+
+            else if seenSince > 0 then
+                seenSince
+
+            else if sawPending then
+                now
+
+            else
+                0
+        -- Never seen PENDING: it began running at its start.
+        from =
+            if pending then
+                0
+
+            else if runningSince > 0 then
+                runningSince
+
+            else if cj.startMs > 0 then
+                cj.startMs
+
+            else
+                cj.createMs
+        until =
+            if cj.endMs > 0 then
+                cj.endMs
+
+            else
+                now
+        ran =
+            if from > 0 then
+                Math.max 0 (until - from)
+
+            else
+                0
+        spentMinor =
+            Decimal.add spentBefore (minorCount (perMillis cs.perHour ran))
+        lines =
+            List.concatMap
+                (\t ->
+                    List.filter
+                        (\l -> not (String.isEmpty (String.trim l)))
+                        (String.lines t))
+                texts
+        live =
+            List.member
+                cj.state
+                [ "JOB_STATE_QUEUED"
+                , "JOB_STATE_PENDING"
+                , "JOB_STATE_RUNNING"
+                , "JOB_STATE_CANCELLING"
+                , "JOB_STATE_UPDATING"
+                ]
+        seen =
+            seenOf
+                0
+                { offset = 0
+                , lines = lines
+                , alive = live
+                , cancelRequested = cj.state == "JOB_STATE_CANCELLED"
+                , stderrTail = cj.errorMessage
+                }
+        outcome =
+            if seen.outcome == "cancelling" then
+                "cancelled"
+
+            else
+                seen.outcome
     in
-        Google.getCustomJob name
-            |> Task.andThen
-                   (\cj ->
-                       Store.list store prefix after
-                           |> Task.andThen
-                                  (\keys ->
-                                      Task.sequence
-                                          (List.map
-                                              (\k ->
-                                                  Store.getAt store k
-                                                      |> Task.andThen
-                                                             (\body ->
-                                                                 let
-                                                                     text =
-                                                                         Maybe.withDefault
-                                                                             ""
-                                                                             body
-                                                                 in
-                                                                     mirrorSegment
-                                                                         dir
-                                                                         attempt
-                                                                         k
-                                                                         text
-                                                                         |> Task.map
-                                                                                (\_ ->
-                                                                                    text)))
-                                              keys)
-                                          |> Task.andThen
-                                                 (\texts ->
-                                                     rebuildEvents dir
-                                                         |> Task.map
-                                                                (\_ -> texts))
-                                          |> Task.andThen
-                                                 (\texts ->
-                                                     Time.unixMillis ()
-                                                         |> Task.andThen
-                                                                (\now ->
-                                                                    readCloudFile
-                                                                        dir
-                                                                        |> Task.andThen
-                                                                               (\prevFile ->
-                                                                                   let
-                                                                                       -- Vertex bills a job's
-                                                                                       -- running time. Its start
-                                                                                       -- time is set when it
-                                                                                       -- begins PENDING, and a
-                                                                                       -- stockout keeps it PENDING
-                                                                                       -- for as long as it lasts
-                                                                                       -- (an hour, live). Spend
-                                                                                       -- counts from the first
-                                                                                       -- watch that saw it RUNNING.
-                                                                                       pending =
-                                                                                           cj.state
-                                                                                               == "JOB_STATE_QUEUED"
-                                                                                               || cj.state
-                                                                                                      == "JOB_STATE_PENDING"
-                                                                                       -- What the previous watch of this
-                                                                                       -- job recorded (another job's
-                                                                                       -- file counts as nothing).
-                                                                                       seenSince =
-                                                                                           case prevFile of
+        writeCloudFile dir cs key name cj.state attempt spentMinor runningSince
+            |> Task.map
+                   (\_ ->
+                       { segment =
+                           List.reverse keys |> List.head
+                               |> Maybe.withDefault after
+                       , state = cj.state
+                       , outcome = outcome
+                       , step = seen.step
+                       , code = seen.code
+                       , message = seen.message
+                       , trainLoss = seen.trainLoss
+                       , valLoss = seen.valLoss
+                       , peft = seen.peft
+                       , resumedFrom = seen.resumedFrom
+                       , spentMinor = spentMinor
+                       , errorCode = cj.errorCode
+                       , errorMessage = cj.errorMessage
+                       , relaunches = 0
+                       , ranSeconds =
+                           if cj.startMs > 0 && cj.endMs > cj.startMs then
+                               (cj.endMs - cj.startMs) // 1000
 
-                                                                                               Just pf ->
-                                                                                                   if pf.job
-                                                                                                       == name then
-                                                                                                       pf.runningSinceMs
-
-                                                                                                   else
-                                                                                                       0
-
-                                                                                               Nothing ->
-                                                                                                   0
-                                                                                       sawPending =
-                                                                                           case prevFile of
-
-                                                                                               Just pf ->
-                                                                                                   pf.job
-                                                                                                       == name
-                                                                                                       && pf.state
-                                                                                                              == "JOB_STATE_PENDING"
-
-                                                                                               Nothing ->
-                                                                                                   False
-                                                                                       -- Recorded (and kept) only when
-                                                                                       -- a watch saw the job wait
-                                                                                       -- PENDING and then run.
-                                                                                       runningSince =
-                                                                                           if pending then
-                                                                                               0
-
-                                                                                           else if seenSince
-                                                                                               > 0 then
-                                                                                               seenSince
-
-                                                                                           else if sawPending then
-                                                                                               now
-
-                                                                                           else
-                                                                                               0
-                                                                                       -- Never seen PENDING: it began
-                                                                                       -- running at its start.
-                                                                                       from =
-                                                                                           if pending then
-                                                                                               0
-
-                                                                                           else if runningSince
-                                                                                               > 0 then
-                                                                                               runningSince
-
-                                                                                           else if cj.startMs
-                                                                                               > 0 then
-                                                                                               cj.startMs
-
-                                                                                           else
-                                                                                               cj.createMs
-                                                                                       until =
-                                                                                           if cj.endMs
-                                                                                               > 0 then
-                                                                                               cj.endMs
-
-                                                                                           else
-                                                                                               now
-                                                                                       ran =
-                                                                                           if from
-                                                                                               > 0 then
-                                                                                               Math.max
-                                                                                                   0
-                                                                                                   (until
-                                                                                                       - from)
-
-                                                                                           else
-                                                                                               0
-                                                                                       spentMinor =
-                                                                                           Decimal.add
-                                                                                               spentBefore
-                                                                                               (minorCount
-                                                                                                   (perMillis
-                                                                                                       cs.perHour
-                                                                                                       ran))
-                                                                                       lines =
-                                                                                           List.concatMap
-                                                                                               (\t ->
-                                                                                                   List.filter
-                                                                                                       (\l ->
-                                                                                                           not
-                                                                                                               (String.isEmpty
-                                                                                                                   (String.trim
-                                                                                                                       l)))
-                                                                                                       (String.lines
-                                                                                                           t))
-                                                                                               texts
-                                                                                       live =
-                                                                                           List.member
-                                                                                               cj.state
-                                                                                               [ "JOB_STATE_QUEUED"
-                                                                                               , "JOB_STATE_PENDING"
-                                                                                               , "JOB_STATE_RUNNING"
-                                                                                               , "JOB_STATE_CANCELLING"
-                                                                                               , "JOB_STATE_UPDATING"
-                                                                                               ]
-                                                                                       seen =
-                                                                                           seenOf
-                                                                                               0
-                                                                                               { offset =
-                                                                                                   0
-                                                                                               , lines =
-                                                                                                   lines
-                                                                                               , alive =
-                                                                                                   live
-                                                                                               , cancelRequested =
-                                                                                                   cj.state
-                                                                                                       == "JOB_STATE_CANCELLED"
-                                                                                               , stderrTail =
-                                                                                                   cj.errorMessage
-                                                                                               }
-                                                                                       outcome =
-                                                                                           if seen.outcome
-                                                                                               == "cancelling" then
-                                                                                               "cancelled"
-
-                                                                                           else
-                                                                                               seen.outcome
-                                                                                   in
-                                                                                       writeCloudFile
-                                                                                           dir
-                                                                                           cs
-                                                                                           key
-                                                                                           name
-                                                                                           cj.state
-                                                                                           attempt
-                                                                                           spentMinor
-                                                                                           runningSince
-                                                                                           |> Task.map
-                                                                                                  (\_ ->
-                                                                                                      { segment =
-                                                                                                          List.reverse
-                                                                                                              keys
-                                                                                                              |> List.head
-                                                                                                              |> Maybe.withDefault
-                                                                                                                     after
-                                                                                                      , state =
-                                                                                                          cj.state
-                                                                                                      , outcome =
-                                                                                                          outcome
-                                                                                                      , step =
-                                                                                                          seen.step
-                                                                                                      , code =
-                                                                                                          seen.code
-                                                                                                      , message =
-                                                                                                          seen.message
-                                                                                                      , trainLoss =
-                                                                                                          seen.trainLoss
-                                                                                                      , valLoss =
-                                                                                                          seen.valLoss
-                                                                                                      , peft =
-                                                                                                          seen.peft
-                                                                                                      , resumedFrom =
-                                                                                                          seen.resumedFrom
-                                                                                                      , spentMinor =
-                                                                                                          spentMinor
-                                                                                                      , errorCode =
-                                                                                                          cj.errorCode
-                                                                                                      , errorMessage =
-                                                                                                          cj.errorMessage
-                                                                                                      , relaunches =
-                                                                                                          0
-                                                                                                      , ranSeconds =
-                                                                                                          if cj.startMs
-                                                                                                              > 0
-                                                                                                              && cj.endMs
-                                                                                                                     > cj.startMs then
-                                                                                                              (cj.endMs
-                                                                                                                  - cj.startMs)
-                                                                                                                  // 1000
-
-                                                                                                          else
-                                                                                                              0
-                                                                                                      }))))))
+                           else
+                               0
+                       })
 
 
 -- A segment's local copy: `cloud-events/<attempt>-<seq>.jsonl`, the same
@@ -6380,28 +6058,22 @@ mirrorSegment dir attempt key text =
 -- (progress, the console, `runs`) see a cloud run as a local one.
 rebuildEvents : String -> Task Error ()
 rebuildEvents dir =
-    File.readDir (dir ++ "/cloud-events")
-        |> Task.onError (\_ -> Task.succeed [])
-        |> Task.andThen
-               (\names ->
-                   Task.sequence
-                       (List.map
-                           (\n -> File.readFile (dir ++ "/cloud-events/" ++ n))
-                           (List.sort
-                               (List.filter
-                                   (\n -> String.endsWith ".jsonl" n)
-                                   names)))
-                       |> Task.andThen
-                              (\texts ->
-                                  File.writeFile
-                                      (dir ++ "/events.jsonl.partial")
-                                      (String.concat texts)
-                                      |> Task.andThen
-                                             (\_ ->
-                                                 File.rename
-                                                     (dir
-                                                         ++ "/events.jsonl.partial")
-                                                     (dir ++ "/events.jsonl"))))
+    let
+        names <-
+            File.readDir (dir ++ "/cloud-events")
+                |> Task.onError (\_ -> Task.succeed [])
+        texts <-
+            Task.sequence
+                (List.map
+                    (\n -> File.readFile (dir ++ "/cloud-events/" ++ n))
+                    (List.sort
+                        (List.filter (\n -> String.endsWith ".jsonl" n) names)))
+        _ <-
+            File.writeFile
+                (dir ++ "/events.jsonl.partial")
+                (String.concat texts)
+    in
+        File.rename (dir ++ "/events.jsonl.partial") (dir ++ "/events.jsonl")
 
 
 -- Download the adapter the container uploaded, each file checked against
@@ -6409,63 +6081,50 @@ rebuildEvents dir =
 -- run leaves it). Returns the PEFT weights' digest.
 downloadAdapter : String -> Store -> String -> Task Error String
 downloadAdapter dir store key =
-    Store.getAt store (runPath key ++ "/adapter/manifest.json")
-        |> Task.andThen
-               (\found ->
-                   case found of
+    let
+        found <- Store.getAt store (runPath key ++ "/adapter/manifest.json")
+        files <-
+            case found of
 
-                       Nothing ->
-                           Task.fail
-                               (Failure.toError
-                                   (TrainingFailed
-                                       { runId = key
-                                       , step = 0
-                                       , reason =
-                                           "the job finished but its adapter has no manifest in the staging bucket"
-                                       , logTail = ""
-                                       }))
+                Nothing ->
+                    Task.fail
+                        (Failure.toError
+                            (TrainingFailed
+                                { runId = key
+                                , step = 0
+                                , reason =
+                                    "the job finished but its adapter has no manifest in the staging bucket"
+                                , logTail = ""
+                                }))
 
-                       Just text ->
-                           Task.fromResult
-                               (JsonD.decodeString
-                                   (JsonD.field
-                                       "files"
-                                       (JsonD.list
-                                           (JsonD.map2
-                                               (\n h -> ( n, h ))
-                                               (JsonD.field "name" JsonD.string)
-                                               (JsonD.field "sha256" JsonD.string))))
-                                   text))
-        |> Task.andThen
-               (\files ->
-                   File.mkdirAll (dir ++ "/adapter")
-                       |> Task.andThen
-                              (\_ ->
-                                  Task.sequence
-                                      (List.map
-                                          (\( n, h ) ->
-                                              Store.fetchAt
-                                                  store
-                                                  (runPath key ++ "/adapter/"
-                                                      ++ n)
-                                                  h
-                                                  |> Task.andThen
-                                                         (\path ->
-                                                             File.copy
-                                                                 path
-                                                                 (dir
-                                                                     ++ "/adapter/"
-                                                                     ++ n)))
-                                          files))
-                       |> Task.map
-                              (\_ ->
-                                  List.filter
-                                      (\( n, _ ) ->
-                                          n == "adapter_model.safetensors")
-                                      files
-                                      |> List.head
-                                      |> Maybe.map (\( _, h ) -> h)
-                                      |> Maybe.withDefault ""))
+                Just text ->
+                    Task.fromResult
+                        (JsonD.decodeString
+                            (JsonD.field
+                                "files"
+                                (JsonD.list
+                                    (JsonD.map2
+                                        (\n h -> ( n, h ))
+                                        (JsonD.field "name" JsonD.string)
+                                        (JsonD.field "sha256" JsonD.string))))
+                            text)
+        _ <- File.mkdirAll (dir ++ "/adapter")
+    in
+        Task.sequence
+            (List.map
+                (\( n, h ) ->
+                    Store.fetchAt store (runPath key ++ "/adapter/" ++ n) h
+                        |> Task.andThen
+                               (\path -> File.copy path (dir ++ "/adapter/" ++ n)))
+                files)
+            |> Task.map
+                   (\_ ->
+                       List.filter
+                           (\( n, _ ) -> n == "adapter_model.safetensors")
+                           files
+                           |> List.head
+                           |> Maybe.map (\( _, h ) -> h)
+                           |> Maybe.withDefault "")
 
 
 -- After the adapter is registered: delete the run's Vertex job records and
@@ -6482,35 +6141,31 @@ cloudCleanup ctx job cloud a =
             ctx
             Codec.int
             "cleanup"
-            (Google.listCustomJobs
-                cloud.settings.project
-                cloud.settings.region
-                ("labels.sky-run=\"" ++ cloud.key ++ "\"")
-                |> Task.andThen
-                       (\jobs ->
-                           Task.sequence
-                               (List.map
-                                   (\j ->
-                                       if List.member
-                                           j.state
-                                           [ "JOB_STATE_SUCCEEDED"
-                                           , "JOB_STATE_FAILED"
-                                           , "JOB_STATE_CANCELLED"
-                                           ] then
-                                           Google.deleteCustomJob j.name
+            (let
+                jobs <-
+                    Google.listCustomJobs
+                        cloud.settings.project
+                        cloud.settings.region
+                        ("labels.sky-run=\"" ++ cloud.key ++ "\"")
+                _ <-
+                    Task.sequence
+                        (List.map
+                            (\j ->
+                                if List.member
+                                    j.state
+                                    [ "JOB_STATE_SUCCEEDED"
+                                    , "JOB_STATE_FAILED"
+                                    , "JOB_STATE_CANCELLED"
+                                    ] then
+                                    Google.deleteCustomJob j.name
 
-                                       else
-                                           Task.succeed ())
-                                   jobs))
-                |> Task.andThen
-                       (\_ ->
-                           Task.fromResult
-                               (Store.fromUrl cloud.settings.staging)
-                               |> Task.andThen
-                                      (\store ->
-                                          Store.deletePrefix
-                                              store
-                                              (runPath cloud.key ++ "/"))))
+                                else
+                                    Task.succeed ())
+                            jobs)
+                store <-
+                    Task.fromResult (Store.fromUrl cloud.settings.staging)
+            in
+                Store.deletePrefix store (runPath cloud.key ++ "/"))
             |> Task.map (\_ -> a)
 
 -- | A Vertex run as its last watch saw it: the job, its state

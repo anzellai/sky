@@ -933,21 +933,16 @@ streamOpen slot path body =
 
 runOn : Runner -> String -> String -> String -> Task Error String
 runOn runner slot path body =
-    offerRaw slot
-        |> Task.andThen
-               (\json ->
-                   decodeTask "offer" decodeOffer json
-                       |> Task.andThen
-                              (\offer ->
-                                  route
-                                      runner
-                                      { slot = slot
-                                      , offerJson = json
-                                      , offer = offer
-                                      }
-                                      True
-                                      path
-                                      body))
+    let
+        json <- offerRaw slot
+        offer <- decodeTask "offer" decodeOffer json
+    in
+        route
+            runner
+            { slot = slot, offerJson = json, offer = offer }
+            True
+            path
+            body
 
 
 -- `retry` is True on the first attempt: a backend that fails to load with
@@ -1074,11 +1069,11 @@ statusOf decision progress =
 `prepare` runs to show the progress. -}
 status : String -> Task Error Status
 status slot =
-    offerRaw slot
-        |> Task.andThen
-               (\json ->
-                   decodeTask "offer" decodeOffer json
-                       |> Task.andThen (statusFor slot json))
+    let
+        json <- offerRaw slot
+        offer <- decodeTask "offer" decodeOffer json
+    in
+        statusFor slot json offer
 
 
 statusFor : String -> String -> Offer -> Task Error Status
@@ -1105,11 +1100,11 @@ resulting status is `Ready`, or `ServerSide` for a slot that runs on the
 server. -}
 prepare : String -> Task Error Status
 prepare slot =
-    offerRaw slot
-        |> Task.andThen
-               (\json ->
-                   decodeTask "offer" decodeOffer json
-                       |> Task.andThen (prepareFor slot json))
+    let
+        json <- offerRaw slot
+        offer <- decodeTask "offer" decodeOffer json
+    in
+        prepareFor slot json offer
 
 
 prepareFor : String -> String -> Offer -> Task Error Status

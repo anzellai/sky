@@ -419,24 +419,24 @@ journalledAsk db name parts messages live =
                                      messages)
                            ]))
     in
-        Db.query
-            db
-            "SELECT reply, prompt_tokens, completion_tokens FROM _sky_ai_synthetic_journal WHERE entry_key = ?"
-            [ SqlString key ]
-            |> Task.andThen
-                   (\rows ->
-                       case List.head rows of
+        let
+            rows <-
+                Db.query
+                    db
+                    "SELECT reply, prompt_tokens, completion_tokens FROM _sky_ai_synthetic_journal WHERE entry_key = ?"
+                    [ SqlString key ]
+        in
+            case List.head rows of
 
-                           Just row ->
-                               Task.succeed ( replayed row, True )
+                Just row ->
+                    Task.succeed ( replayed row, True )
 
-                           Nothing ->
-                               live
-                                   |> Task.andThen
-                                          (\r ->
-                                              rememberCall db name key r
-                                                  |> Task.map
-                                                         (\_ -> ( r, False ))))
+                Nothing ->
+                    let
+                        r <- live
+                    in
+                        rememberCall db name key r
+                            |> Task.map (\_ -> ( r, False ))
 
 
 replayed : Dict String String -> Provider.ChatResponse
@@ -470,8 +470,7 @@ rememberCall db name key r =
                        , SqlInt r.usage.completionTokens
                        , SqlInt now
                        ]
-                       |> Task.map (\_ -> ())
-                       |> Task.onError (\_ -> Task.succeed ()))
+                       |> Task.bestEffort)
 
 -- ── The plan ────────────────────────────────────────────────────────
 -- | One teacher call: its index, persona, topic, sampling seed and messages.
@@ -879,25 +878,15 @@ loop (Generator g) requests st =
                                            case ( g.budget, report.cost ) of
 
                                                ( Just ( book, _ ), Just spent ) ->
-                                                   case Provider.cost
-                                                            book
-                                                            response.usage of
-
-                                                       Ok call ->
-                                                           case Money.add
-                                                                    spent
-                                                                    call of
-
-                                                               Ok total ->
-                                                                   Ok
-                                                                       (Just
-                                                                           total)
-
-                                                               Err e ->
-                                                                   Err e
-
-                                                       Err e ->
-                                                           Err e
+                                                   let
+                                                       call <-
+                                                           Provider.cost
+                                                               book
+                                                               response.usage
+                                                       total <-
+                                                           Money.add spent call
+                                                   in
+                                                       Ok (Just total)
 
                                                _ ->
                                                    Ok report.cost

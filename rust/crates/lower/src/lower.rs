@@ -588,6 +588,7 @@ fn lower_program_impl(
         carrier_scope: Some(carrier_scope),
         model,
         goty_cache: Default::default(),
+        kernel_types: signature_world.kernel_types().clone(),
     };
 
     // Type names declared in MORE THAN ONE module (`Msg`/`Model`/`Page` in a
@@ -7597,6 +7598,25 @@ impl<'a> Ctx<'a> {
         !ps.iter().any(rebuilds) && !rebuilds(r)
     }
 
+    /// `callback_reaches_slot` for the `andThen` / `mapError` twins, whose
+    /// callback is never a list combinator's element closure.
+    ///
+    /// A LAMBDA callback is lowered at the slot's own Go types: `lower_lambda`
+    /// takes each param type from the slot (`split_function_type(actual, …)`)
+    /// and changes it only for a STRUCT param (the subset-struct widening and
+    /// the element pin), which `provable` has already refused, and the
+    /// element pin (`closure_elem`) is set only when the LAST argument is a
+    /// list, which a Maybe / Result argument is not. So a slice param or
+    /// result costs no per-call `rt.AsListT` rebuild here: the lambda is
+    /// emitted as `func([]T) …` and matches the slot exactly. That is the
+    /// nested bind line of a recursive list walk (`more <- walk rest`, the
+    /// `Std.Db.Store` ladders), which the general rule sent to the erased
+    /// `Sky.Core.Result.andThen` (doc 14 R12, surfacing as R1 at the caller).
+    /// Any other callback keeps the general rule.
+    fn monad_callback_reaches_slot(&self, cb: ExprId, ps: &[GoTy], r: &GoTy) -> bool {
+        matches!(&self.body.exprs[cb], Expr::Lambda { .. }) || self.callback_reaches_slot(cb, ps, r)
+    }
+
     /// Decide — before any argument is lowered — whether this call to a pure-Sky
     /// `Sky.Core.List` HOF can be re-pointed at its typed runtime twin
     /// (`SKY_LIST_HOF_TWINS`).
@@ -7780,7 +7800,16 @@ impl<'a> Ctx<'a> {
         }
         let a = ta[want - 1].clone();
         let prefix: Vec<GoTy> = ta[..want - 1].to_vec();
-        if !provable(&m) || matches!(a, GoTy::Func(..)) {
+        // A LAMBDA continuation may bind a value whose Go type holds `any`
+        // (`Json.Encode.Value` is `any`, a `List Value` is `[]any`): the
+        // lambda's parameter and result are lowered at exactly those slot
+        // types (`monad_callback_reaches_slot`), so the twin instantiated at
+        // `any` narrows nothing the erased call did not, and every shape is
+        // still known at emit time (doc 14 §1). `E`, a type parameter and an
+        // anonymous struct stay refused. Any other callback keeps `provable`.
+        let lambda = matches!(&self.body.exprs[args[0]], Expr::Lambda { .. });
+        let proven = |t: &GoTy| provable(t) || (lambda && provable_or_any(t));
+        if !prefix.iter().all(provable) || !proven(&a) || matches!(a, GoTy::Func(..)) {
             return None;
         }
         let (ps, r) = closure::split_function_type(&self.probe_goty(args[0]), 1)?;
@@ -7794,10 +7823,10 @@ impl<'a> Ctx<'a> {
             return None;
         }
         let b = rta[want - 1].clone();
-        if !provable(&r) || matches!(b, GoTy::Func(..)) {
+        if !proven(&b) || matches!(b, GoTy::Func(..)) {
             return None;
         }
-        if !self.callback_reaches_slot(args[0], &[a.clone()], &r) {
+        if !self.monad_callback_reaches_slot(args[0], &[a.clone()], &r) {
             return None;
         }
         let mut targs = prefix;
@@ -7843,7 +7872,7 @@ impl<'a> Ctx<'a> {
         if ps != vec![e.clone()] || !provable(&f) || matches!(f, GoTy::Func(..)) {
             return None;
         }
-        if !self.callback_reaches_slot(args[0], &[e.clone()], &f) {
+        if !self.monad_callback_reaches_slot(args[0], &[e.clone()], &f) {
             return None;
         }
         let out = GoTy::Named("rt.SkyResult".into(), vec![f.clone(), a.clone()]);
@@ -11935,6 +11964,22 @@ fn provable(t: &GoTy) -> bool {
         GoTy::Tuple(es) => es.iter().all(provable),
         GoTy::Named(_, args) => args.iter().all(provable),
         GoTy::Func(ps, r) => ps.iter().all(provable) && provable(r),
+    })
+}
+
+/// `provable`, with `any` accepted at any depth: the Go type of a value whose
+/// Sky type is `any`-represented (`Json.Encode.Value`). A type parameter and
+/// an anonymous struct are still refused. Used only where the consumer is a
+/// lambda lowered at the same slot (`and_then_plan`).
+fn provable_or_any(t: &GoTy) -> bool {
+    base::ensure_stack(|| match t {
+        GoTy::Any | GoTy::Bare(_) | GoTy::Unit => true,
+        GoTy::TyVar(_) | GoTy::Struct(_) => false,
+        GoTy::Slice(e) => provable_or_any(e),
+        GoTy::Map(k, v) => provable_or_any(k) && provable_or_any(v),
+        GoTy::Tuple(es) => es.iter().all(provable_or_any),
+        GoTy::Named(_, args) => args.iter().all(provable_or_any),
+        GoTy::Func(ps, r) => ps.iter().all(provable_or_any) && provable_or_any(r),
     })
 }
 

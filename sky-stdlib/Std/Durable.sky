@@ -51,13 +51,12 @@ deterministic: no `Time.now` / `Uuid` / `Random` / direct I/O outside a `step`
 
     checkout : Durable.Ctx -> Input -> Task Error OrderId
     checkout ctx input =
-        Durable.step ctx reserveCodec "reserve" (Inventory.reserve input.items)
-            |> Task.andThen (\r ->
-                Durable.step ctx chargeCodec "charge" (Payments.charge input.card)
-                |> Task.andThen (\c ->
-                    Durable.awaitSignal ctx settledCodec "payment.settled"
-                    |> Task.andThen (\s ->
-                        Durable.step ctx orderCodec "finalise" (Orders.finalise r c s))))
+        let
+            r <- Durable.step ctx reserveCodec "reserve" (Inventory.reserve input.items)
+            c <- Durable.step ctx chargeCodec "charge" (Payments.charge input.card)
+            s <- Durable.awaitSignal ctx settledCodec "payment.settled"
+        in
+            Durable.step ctx orderCodec "finalise" (Orders.finalise r c s)
 
     -- once, at startup:
     Durable.setup db
@@ -237,10 +236,10 @@ setup db =
                    -- lacks the `version` column. ADD COLUMN it; a duplicate-column
                    -- error (new table, or a re-run) is swallowed, so setup stays
                    -- idempotent on both fresh and existing databases.
-                   Db.execRaw
-                       db
-                       "ALTER TABLE _sky_durable_runs ADD COLUMN version TEXT NOT NULL DEFAULT ''"
-                       |> Task.onError (\_ -> Task.succeed 0))
+                   Task.bestEffort
+                       (Db.execRaw
+                           db
+                           "ALTER TABLE _sky_durable_runs ADD COLUMN version TEXT NOT NULL DEFAULT ''"))
         |> Task.andThen
                (\_ ->
                    Db.execRaw
@@ -298,29 +297,25 @@ it. Idempotent per (run, name). The run becomes claimable immediately.
 -}
 signal : Db -> String -> String -> Codec a -> a -> Task Error ()
 signal db runId name codec payload =
-    Time.now ()
-        |> Task.andThen
-               (\now ->
-                   Db.exec
-                       db
-                       ("INSERT INTO _sky_durable_signals (run_id, name, payload, created_at) "
-                           ++ "VALUES (?, ?, ?, ?) ON CONFLICT (run_id, name) DO NOTHING")
-                       [ SqlString runId
-                       , SqlString name
-                       , SqlString (Codec.toJson codec payload)
-                       , SqlInt now
-                       ]
-                       |> Task.andThen
-                              (\_ ->
-                                  Db.exec
-                                      db
-                                      ("UPDATE _sky_durable_runs SET wake_at = ?, waiting_signal = NULL, updated_at = ? "
-                                          ++ "WHERE id = ?")
-                                      [ SqlInt now
-                                      , SqlInt now
-                                      , SqlString runId
-                                      ])
-                       |> Task.map (\_ -> ()))
+    let
+        now <- Time.now ()
+        _ <-
+            Db.exec
+                db
+                ("INSERT INTO _sky_durable_signals (run_id, name, payload, created_at) "
+                    ++ "VALUES (?, ?, ?, ?) ON CONFLICT (run_id, name) DO NOTHING")
+                [ SqlString runId
+                , SqlString name
+                , SqlString (Codec.toJson codec payload)
+                , SqlInt now
+                ]
+    in
+        Db.exec
+            db
+            ("UPDATE _sky_durable_runs SET wake_at = ?, waiting_signal = NULL, updated_at = ? "
+                ++ "WHERE id = ?")
+            [ SqlInt now, SqlInt now, SqlString runId ]
+            |> Task.map (\_ -> ())
 
 -- ---------------------------------------------------------------------------
 -- Workflow-body primitives
@@ -397,15 +392,15 @@ step (Ctx c) codec stepId task =
                            Task.fromResult (Codec.fromJson codec json)
 
                        Nothing ->
-                           task
-                               |> Task.andThen
-                                      (\result ->
-                                          writeJournal
-                                              c.db
-                                              c.runId
-                                              stepId
-                                              (Codec.toJson codec result)
-                                              |> Task.map (\_ -> result)))
+                           let
+                               result <- task
+                           in
+                               writeJournal
+                                   c.db
+                                   c.runId
+                                   stepId
+                                   (Codec.toJson codec result)
+                                   |> Task.map (\_ -> result))
 
 
 {-| Journal a fresh, nondeterministic PURE value (a uuid, a timestamp) so it is
@@ -436,27 +431,18 @@ sleep (Ctx c) sleepId ms =
                                Task.succeed ()
 
                            Nothing ->
-                               Time.now ()
-                                   |> Task.andThen
-                                          (\now ->
-                                              let
-                                                  wake = now + ms
-                                              in
-                                                  writeJournal
-                                                      c.db
-                                                      c.runId
-                                                      key
-                                                      (String.fromInt wake)
-                                                      |> Task.andThen
-                                                             (\_ ->
-                                                                 setWake
-                                                                     c.db
-                                                                     c.runId
-                                                                     wake)
-                                                      |> Task.andThen
-                                                             (\_ ->
-                                                                 Task.fail
-                                                                     suspendError)))
+                               let
+                                   now <- Time.now ()
+                                   wake = now + ms
+                                   _ <-
+                                       writeJournal
+                                           c.db
+                                           c.runId
+                                           key
+                                           (String.fromInt wake)
+                                   _ <- setWake c.db c.runId wake
+                               in
+                                   Task.fail suspendError)
 
 
 {-| Suspend the run until a signal named `name` is delivered (by `signal`), then
@@ -565,20 +551,17 @@ type VersionPolicy
 {-| `poll` with an explicit `VersionPolicy`. `poll = pollWith FailSafe`. -}
 pollWith : Db -> VersionPolicy -> List RegisteredWorkflow -> Task Error Bool
 pollWith db policy defs =
-    Time.now ()
-        |> Task.andThen
-               (\now ->
-                   claim db now
-                       |> Task.andThen
-                              (\maybe ->
-                                  case maybe of
+    let
+        now <- Time.now ()
+        maybe <- claim db now
+    in
+        case maybe of
 
-                                      Nothing ->
-                                          Task.succeed False
+            Nothing ->
+                Task.succeed False
 
-                                      Just row ->
-                                          advance db policy defs row
-                                              |> Task.map (\_ -> True)))
+            Just row ->
+                advance db policy defs row |> Task.map (\_ -> True)
 
 
 -- Optimistic, dialect-portable claim: pick the oldest-due candidate, then take it
@@ -586,49 +569,47 @@ pollWith db policy defs =
 -- nothing this tick. Correct under concurrency without `FOR UPDATE SKIP LOCKED`.
 claim : Db -> Int -> Task Error (Maybe ClaimRow)
 claim db now =
-    Db.query
-        db
-        ("SELECT id, workflow, version, input FROM _sky_durable_runs "
-            ++ "WHERE status IN ('running', 'waiting') AND wake_at <= ? "
-            ++ "AND (claimed_at IS NULL OR claimed_at < ?) "
-            ++ "ORDER BY wake_at ASC LIMIT 1")
-        [ SqlInt now, SqlInt (now - leaseMs) ]
-        |> Task.andThen
-               (\rows ->
-                   case List.head rows of
+    let
+        rows <-
+            Db.query
+                db
+                ("SELECT id, workflow, version, input FROM _sky_durable_runs "
+                    ++ "WHERE status IN ('running', 'waiting') AND wake_at <= ? "
+                    ++ "AND (claimed_at IS NULL OR claimed_at < ?) "
+                    ++ "ORDER BY wake_at ASC LIMIT 1")
+                [ SqlInt now, SqlInt (now - leaseMs) ]
+    in
+        case List.head rows of
 
-                       Nothing ->
-                           Task.succeed Nothing
+            Nothing ->
+                Task.succeed Nothing
 
-                       Just row ->
-                           let
-                               rowId = dictGet "id" row
-                           in
-                               Db.exec
-                                   db
-                                   ("UPDATE _sky_durable_runs SET claimed_at = ?, status = 'running', "
-                                       ++ "attempts = attempts + 1, updated_at = ? "
-                                       ++ "WHERE id = ? AND (claimed_at IS NULL OR claimed_at < ?)")
-                                   [ SqlInt now
-                                   , SqlInt now
-                                   , SqlString rowId
-                                   , SqlInt (now - leaseMs)
-                                   ]
-                                   |> Task.map
-                                          (\affected ->
-                                              if affected == 1 then
-                                                  Just
-                                                      { id = rowId
-                                                      , workflow =
-                                                          dictGet "workflow" row
-                                                      , version =
-                                                          dictGet "version" row
-                                                      , input =
-                                                          dictGet "input" row
-                                                      }
+            Just row ->
+                let
+                    rowId = dictGet "id" row
+                in
+                    Db.exec
+                        db
+                        ("UPDATE _sky_durable_runs SET claimed_at = ?, status = 'running', "
+                            ++ "attempts = attempts + 1, updated_at = ? "
+                            ++ "WHERE id = ? AND (claimed_at IS NULL OR claimed_at < ?)")
+                        [ SqlInt now
+                        , SqlInt now
+                        , SqlString rowId
+                        , SqlInt (now - leaseMs)
+                        ]
+                        |> Task.map
+                               (\affected ->
+                                   if affected == 1 then
+                                       Just
+                                           { id = rowId
+                                           , workflow = dictGet "workflow" row
+                                           , version = dictGet "version" row
+                                           , input = dictGet "input" row
+                                           }
 
-                                              else
-                                                  Nothing))
+                                   else
+                                       Nothing)
 
 
 advance : Db -> VersionPolicy -> List RegisteredWorkflow -> ClaimRow -> Task Error ()
@@ -773,28 +754,24 @@ bounded. `compact db 0` collapses every terminal run immediately.
 -}
 compact : Db -> Int -> Task Error Int
 compact db retentionMs =
-    Time.now ()
-        |> Task.andThen
-               (\now ->
-                   let
-                       cutoff = now - retentionMs
-                       terminalOlderThan =
-                           " IN (SELECT id FROM _sky_durable_runs "
-                               ++ "WHERE status IN ('done', 'dead', 'failed') AND updated_at <= ?)"
-                   in
-                       Db.exec
-                           db
-                           ("DELETE FROM _sky_durable_journal WHERE run_id"
-                               ++ terminalOlderThan)
-                           [ SqlInt cutoff ]
-                           |> Task.andThen
-                                  (\journalDeleted ->
-                                      Db.exec
-                                          db
-                                          ("DELETE FROM _sky_durable_signals WHERE run_id"
-                                              ++ terminalOlderThan)
-                                          [ SqlInt cutoff ]
-                                          |> Task.map (\_ -> journalDeleted)))
+    let
+        now <- Time.now ()
+        cutoff = now - retentionMs
+        terminalOlderThan =
+            " IN (SELECT id FROM _sky_durable_runs "
+                ++ "WHERE status IN ('done', 'dead', 'failed') AND updated_at <= ?)"
+        journalDeleted <-
+            Db.exec
+                db
+                ("DELETE FROM _sky_durable_journal WHERE run_id"
+                    ++ terminalOlderThan)
+                [ SqlInt cutoff ]
+    in
+        Db.exec
+            db
+            ("DELETE FROM _sky_durable_signals WHERE run_id" ++ terminalOlderThan)
+            [ SqlInt cutoff ]
+            |> Task.map (\_ -> journalDeleted)
 
 
 -- ---------------------------------------------------------------------------

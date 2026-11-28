@@ -50,10 +50,12 @@
 --   handleEvents : Request -> Task Error Response
 --   handleEvents _ =
 --       Stream.stream "text/event-stream" (\writer ->
---           Stream.emit "event: hello\ndata: 1\n\n" writer
---               |> Task.andThen (\_ -> Time.sleep 100)
---               |> Task.andThen (\_ -> Stream.emit "event: tick\ndata: 2\n\n" writer)
---               |> Task.andThen (\_ -> Stream.finish writer))
+--           let
+--               _ <- Stream.emit "event: hello\ndata: 1\n\n" writer
+--               _ <- Time.sleep 100
+--               _ <- Stream.emit "event: tick\ndata: 2\n\n" writer
+--           in
+--               Stream.finish writer)
 --
 -- See `docs/skylive/http-streaming.md` (§"Server-side") for the
 -- architectural write-up and `examples/30-sse-server-demo` for a

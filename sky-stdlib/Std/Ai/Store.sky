@@ -358,12 +358,11 @@ put (Store c) path =
             localPutRaw c.root path
 
         _ ->
-            digestRaw path
-                |> Task.andThen
-                       (\blob ->
-                           putRequest c blob
-                               |> Task.andThen (\req -> httpPutRaw req path)
-                               |> Task.map (\_ -> blob))
+            let
+                blob <- digestRaw path
+                req <- putRequest c blob
+            in
+                httpPutRaw req path |> Task.map (\_ -> blob)
 
 
 -- | A local path holding the blob with this digest, checked against the
@@ -377,15 +376,17 @@ fetch (Store c) sha =
             localGetRaw c.root sha
 
         _ ->
-            cachedRaw sha
-                |> Task.andThen
-                       (\cached ->
-                           if cached /= "" then
-                               Task.succeed cached
+            let
+                cached <- cachedRaw sha
+            in
+                if cached /= "" then
+                    Task.succeed cached
 
-                           else
-                               getRequest c sha
-                                   |> Task.andThen (\req -> httpGetRaw req sha))
+                else
+                    let
+                        req <- getRequest c sha
+                    in
+                        httpGetRaw req sha
 
 
 blobKey : Config -> String -> String
@@ -744,46 +745,37 @@ stripPrefix c key =
 -- Every file below a directory, as keys relative to the store's root.
 localKeys : Config -> String -> Task Error (List String)
 localKeys c dir =
-    File.isDir dir |> Task.onError (\_ -> Task.succeed False)
-        |> Task.andThen
-               (\isDir ->
-                   if not isDir then
-                       Task.succeed []
+    let
+        isDir <- File.isDir dir |> Task.onError (\_ -> Task.succeed False)
+    in
+        if not isDir then
+            Task.succeed []
 
-                   else
-                       File.readDir dir
-                           |> Task.andThen
-                                  (\names ->
-                                      Task.sequence
-                                          (List.map
-                                              (\n ->
-                                                  let
-                                                      path = dir ++ "/" ++ n
-                                                  in
-                                                      File.isDir path
-                                                          |> Task.andThen
-                                                                 (\sub ->
-                                                                     if sub then
-                                                                         localKeys
-                                                                             c
-                                                                             path
+        else
+            let
+                names <- File.readDir dir
+            in
+                Task.sequence
+                    (List.map
+                        (\n ->
+                            let
+                                path = dir ++ "/" ++ n
+                                sub <- File.isDir path
+                            in
+                                if sub then
+                                    localKeys c path
 
-                                                                     else if String.endsWith
-                                                                         ".partial"
-                                                                         n then
-                                                                         Task.succeed
-                                                                             []
+                                else if String.endsWith ".partial" n then
+                                    Task.succeed []
 
-                                                                     else
-                                                                         Task.succeed
-                                                                             [ String.dropLeft
-                                                                                   (String.length
-                                                                                       c.root
-                                                                                       + 1)
-                                                                                   path
-                                                                             ]))
-                                              names))
-                           |> Task.map List.concat)
+                                else
+                                    Task.succeed
+                                        [ String.dropLeft
+                                              (String.length c.root + 1)
+                                              path
+                                        ])
+                        names)
+                    |> Task.map List.concat
 
 
 gcsList : Config -> String -> String -> String -> List String -> Task Error (List String)
@@ -927,19 +919,22 @@ fetchAt (Store c) key sha =
                                                })))
 
         _ ->
-            cachedRaw sha
-                |> Task.andThen
-                       (\cached ->
-                           if cached /= "" then
-                               Task.succeed cached
+            let
+                cached <- cachedRaw sha
+            in
+                if cached /= "" then
+                    Task.succeed cached
 
-                           else
-                               (if c.kind == "gs" then
-                                   mediaRequest c (keyOf c key)
+                else
+                    let
+                        req <-
+                            if c.kind == "gs" then
+                                mediaRequest c (keyOf c key)
 
-                               else
-                                   s3Request c "GET" (keyOf c key) emptyHash [])
-                                   |> Task.andThen (\req -> httpGetRaw req sha))
+                            else
+                                s3Request c "GET" (keyOf c key) emptyHash []
+                    in
+                        httpGetRaw req sha
 
 
 -- | Delete every object below a prefix and return how many there were. An
@@ -1278,49 +1273,43 @@ instanceRoleKeysNow _ =
             else
                 Task.fail
                     (Failure.toError (RemoteRejected { status = resp.status }))
+        token <-
+            Http.defaultRequest (base ++ "/latest/api/token")
+                |> Http.withMethod "PUT"
+                |> Http.withHeader
+                       "X-aws-ec2-metadata-token-ttl-seconds"
+                       "21600"
+                |> Http.withTimeout 2000
+                |> Http.request
+                |> Task.andThen ok
+        roles <-
+            Http.defaultRequest
+                (base ++ "/latest/meta-data/iam/security-credentials/")
+                |> Http.withHeader "X-aws-ec2-metadata-token" token
+                |> Http.withTimeout 2000
+                |> Http.request
+                |> Task.andThen ok
+        body <-
+            Http.defaultRequest
+                (base ++ "/latest/meta-data/iam/security-credentials/"
+                    ++ (String.lines roles |> List.head |> Maybe.withDefault ""))
+                |> Http.withHeader "X-aws-ec2-metadata-token" token
+                |> Http.withTimeout 2000
+                |> Http.request
+                |> Task.andThen ok
     in
-        Http.defaultRequest (base ++ "/latest/api/token")
-            |> Http.withMethod "PUT"
-            |> Http.withHeader "X-aws-ec2-metadata-token-ttl-seconds" "21600"
-            |> Http.withTimeout 2000
-            |> Http.request
-            |> Task.andThen ok
-            |> Task.andThen
-                   (\token ->
-                       Http.defaultRequest
-                           (base ++ "/latest/meta-data/iam/security-credentials/")
-                           |> Http.withHeader "X-aws-ec2-metadata-token" token
-                           |> Http.withTimeout 2000
-                           |> Http.request
-                           |> Task.andThen ok
-                           |> Task.andThen
-                                  (\roles ->
-                                      Http.defaultRequest
-                                          (base
-                                              ++ "/latest/meta-data/iam/security-credentials/"
-                                              ++ (String.lines roles |> List.head
-                                                     |> Maybe.withDefault ""))
-                                          |> Http.withHeader
-                                                 "X-aws-ec2-metadata-token"
-                                                 token
-                                          |> Http.withTimeout 2000
-                                          |> Http.request
-                                          |> Task.andThen ok))
-            |> Task.andThen
-                   (\body ->
-                       Task.fromResult
-                           (JsonD.decodeString
-                               (JsonD.map3
-                                   (\a s t ->
-                                       { accessKey = a
-                                       , secretKey = Secret.fromString s
-                                       , sessionToken =
-                                           Just (Secret.fromString t)
-                                       })
-                                   (JsonD.field "AccessKeyId" JsonD.string)
-                                   (JsonD.field "SecretAccessKey" JsonD.string)
-                                   (JsonD.field "Token" JsonD.string))
-                               body))
+        Task.fromResult
+            (JsonD.decodeString
+                (JsonD.map3
+                    (\a s t ->
+                        { accessKey = a
+                        , secretKey = Secret.fromString s
+                        , sessionToken = Just (Secret.fromString t)
+                        })
+                    (JsonD.field "AccessKeyId" JsonD.string)
+                    (JsonD.field "SecretAccessKey" JsonD.string)
+                    (JsonD.field "Token" JsonD.string))
+                body)
 
 -- ── AWS Signature Version 4 ─────────────────────────────────────────
 -- | What `signV4` signs. `path` is the canonical URI (already

@@ -1,0 +1,42 @@
+module Main exposing (main)
+
+import Sky.Core.Set as KSet
+import Sky.Core.Dict as Dict
+import Std.Log exposing (println)
+import Types exposing (Set(..), Holder, mk, val)
+
+type Dict
+    = DictC String
+
+type alias Wrap =
+    { h : Holder
+    , s : Set
+    , d : Dict
+    , kd : Dict.Dict String Set
+    }
+
+
+unD : Dict -> String
+unD d =
+    case d of
+
+        DictC x ->
+            x
+
+
+main =
+    let
+        w =
+            { h = mk 5
+            , s = SetE
+            , d = DictC "dz"
+            , kd = Dict.fromList [ ( "k", SetC 7 ) ]
+            }
+        total =
+            val w.h.own + KSet.size w.h.kern
+                + List.foldl (\a b -> a + b) 0 (List.map val w.h.many)
+                + Maybe.withDefault 0 (Maybe.map val w.h.opt)
+                + val w.s
+                + Maybe.withDefault 0 (Maybe.map val (Dict.get "k" w.kd))
+    in
+        println (String.fromInt total ++ " " ++ unD w.d)

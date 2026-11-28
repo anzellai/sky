@@ -680,36 +680,25 @@ runAs candidate db p (Suite s) =
     let
         j = judgeFor (Suite s)
         rubric = List.any (\c -> hasRubric c.expect) s.cases
-    in
-        checkedSetup (oneCurrencyBooks s.priceBook s.judgePriceBook) db
-            |> Task.andThen
-                   (\_ ->
-                       if rubric then
-                           judgeIdentity j
+        _ <- checkedSetup (oneCurrencyBooks s.priceBook s.judgePriceBook) db
+        identity <-
+            if rubric then
+                judgeIdentity j
 
-                       else
-                           Task.succeed "")
-            |> Task.andThen
-                   (\identity ->
-                       Uuid.v4
-                           |> Task.map
-                                  (\id ->
-                                      { judge = j
-                                      , db = db
-                                      , identity = identity
-                                      , trace =
-                                          Just
-                                              { runId = "eval-" ++ id
-                                              , judgeBook = s.judgePriceBook
-                                              }
-                                      }))
-            |> Task.andThen
-                   (\ctx ->
-                       calibrateIf rubric ctx |> Task.map (\cal -> ( ctx, cal )))
-            |> Task.andThen
-                   (\( ctx, cal ) -> runCases candidate ctx p (Suite s) cal)
-            |> Task.andThen
-                   (\report -> store db report |> Task.map (\_ -> report))
+            else
+                Task.succeed ""
+        id <- Uuid.v4
+        ctx =
+            { judge = j
+            , db = db
+            , identity = identity
+            , trace =
+                Just { runId = "eval-" ++ id, judgeBook = s.judgePriceBook }
+            }
+        cal <- calibrateIf rubric ctx
+        report <- runCases candidate ctx p (Suite s) cal
+    in
+        store db report |> Task.map (\_ -> report)
 
 
 calibrateIf : Bool -> JudgeCtx -> Task Error (Maybe Calibration)
@@ -734,24 +723,20 @@ runCases candidate ctx p (Suite s) cal =
                         (\k -> runCase ctx p (Suite s) c k)
                         (List.range 0 (s.samples - 1)))
                 s.cases
+        started <- Time.now ()
+        results <- Task.parallelN s.concurrency jobs
     in
         Time.now ()
-            |> Task.andThen
-                   (\started ->
-                       Task.parallelN s.concurrency jobs
-                           |> Task.andThen
-                                  (\results ->
-                                      Time.now ()
-                                          |> Task.map
-                                                 (\ended ->
-                                                     buildReport
-                                                         (traceRunOf ctx)
-                                                         candidate
-                                                         (Suite s)
-                                                         cal
-                                                         started
-                                                         (ended - started)
-                                                         results)))
+            |> Task.map
+                   (\ended ->
+                       buildReport
+                           (traceRunOf ctx)
+                           candidate
+                           (Suite s)
+                           cal
+                           started
+                           (ended - started)
+                           results)
 
 
 -- One case at one sample. A failed model call is a result, not a failed run.
@@ -773,30 +758,22 @@ runCase ctx p (Suite s) c sample =
             }
         messages = s.prompt c.input
         info = { id = c.id, tags = c.tags, expect = c.expect }
+        t0 <- Time.now ()
+        called <- callModel ctx s.priceBook p s.tools opts messages
+        t1 <- Time.now ()
+        -- The row is written after the clock stops, so the
+        -- case's latency (the p95 gate) is the call's alone.
+        _ <- called.record
     in
-        Time.now ()
-            |> Task.andThen
-                   (\t0 ->
-                       callModel ctx s.priceBook p s.tools opts messages
-                           |> Task.andThen
-                                  (\called ->
-                                      Time.now ()
-                                          |> Task.andThen
-                                                 (\t1 ->
-                                                     -- The row is written after the clock stops, so the
-                                                     -- case's latency (the p95 gate) is the call's alone.
-                                                     called.record
-                                                         |> Task.andThen
-                                                                (\_ ->
-                                                                    scoreCall
-                                                                        ctx
-                                                                        s.seed
-                                                                        s.priceBook
-                                                                        info
-                                                                        sample
-                                                                        messages
-                                                                        (t1 - t0)
-                                                                        called.result))))
+        scoreCall
+            ctx
+            s.seed
+            s.priceBook
+            info
+            sample
+            messages
+            (t1 - t0)
+            called.result
 
 -- What scoring reads of a case: everything but its input. The scorers take
 -- this, not the `Case input`, so they are not polymorphic in the input and
@@ -1366,8 +1343,7 @@ remember ctx key reply =
                        , SqlString reply
                        , SqlInt now
                        ]
-                       |> Task.map (\_ -> ())
-                       |> Task.onError (\_ -> Task.succeed ()))
+                       |> Task.bestEffort)
 
 
 messageValue : Message -> JsonE.Value

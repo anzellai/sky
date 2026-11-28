@@ -1576,19 +1576,21 @@ dictDecoder keys kdec vdec =
                 pairs
 
             _ ->
-                D.andThen
-                    (\isArray ->
-                        if isArray then
-                            pairs
+                let
+                    isArray <-
+                        D.oneOf
+                            [ D.map (\_ -> True) (D.list (D.succeed ()))
+                            , D.succeed False
+                            ]
+                in
+                    if isArray then
+                        pairs
 
-                        else
-                            D.andThen
-                                (\members -> dictMembers keys kdec members [])
-                                (D.keyValuePairs vdec))
-                    (D.oneOf
-                        [ D.map (\_ -> True) (D.list (D.succeed ()))
-                        , D.succeed False
-                        ])
+                    else
+                        let
+                            members <- D.keyValuePairs vdec
+                        in
+                            dictMembers keys kdec members []
 
 
 -- Each member's key read by the key codec. Tail recursive, so a large object
@@ -3069,28 +3071,22 @@ toXml root (Codec c) x =
 -- The codec's own decoder then runs on the value read, unchanged.
 fromXml : String -> Codec a -> String -> Result Error a
 fromXml root (Codec c) src =
-    case Xml.parse src of
+    let
+        n <- Xml.parse src
+    in
+        if Xml.name n /= root then
+            Err
+                (xmlFailAt
+                    ("/" ++ Xml.name n)
+                    ("expected the root element <" ++ root ++ ">, got <"
+                        ++ Xml.name n
+                        ++ ">"))
 
-        Err e ->
-            Err e
-
-        Ok n ->
-            if Xml.name n /= root then
-                Err
-                    (xmlFailAt
-                        ("/" ++ Xml.name n)
-                        ("expected the root element <" ++ root ++ ">, got <"
-                            ++ Xml.name n
-                            ++ ">"))
-
-            else
-                case xmlRead ("/" ++ root) c.sch n of
-
-                    Ok v ->
-                        D.decodeValue c.dec v
-
-                    Err e ->
-                        Err e
+        else
+            let
+                v <- xmlRead ("/" ++ root) c.sch n
+            in
+                D.decodeValue c.dec v
 
 
 xmlFailAt : String -> String -> Error

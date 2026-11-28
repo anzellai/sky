@@ -526,35 +526,32 @@ adapterFrom st ref =
 -- on Cloud Run the shared volume), then serve until the process ends.
 run : Tier -> Task Error ()
 run (Tier t) =
-    (case t.registry of
+    let
+        st <-
+            case t.registry of
 
-        Just st ->
-            Task.succeed st
+                Just st ->
+                    Task.succeed st
 
-        Nothing ->
-            Store.configured "")
-        |> Task.andThen
-               (\st ->
-                   Train.provisionSnapshot t.base
-                       |> Task.andThen
-                              (\_ ->
-                                  let
-                                      r = raw t
-                                  in
-                                      runRaw
-                                          { engine = r.engine
-                                          , bind = r.bind
-                                          , engineUrl = r.engineUrl
-                                          , baseId = r.baseId
-                                          , baseName = r.baseName
-                                          , adapters = r.adapters
-                                          , maxAdapters = r.maxAdapters
-                                          , pollS = r.pollS
-                                          , modelsDir = r.modelsDir
-                                          , hasToken = r.hasToken
-                                          , token = r.token
-                                          , resolve = adapterFrom st
-                                          }))
+                Nothing ->
+                    Store.configured ""
+        _ <- Train.provisionSnapshot t.base
+        r = raw t
+    in
+        runRaw
+            { engine = r.engine
+            , bind = r.bind
+            , engineUrl = r.engineUrl
+            , baseId = r.baseId
+            , baseName = r.baseName
+            , adapters = r.adapters
+            , maxAdapters = r.maxAdapters
+            , pollS = r.pollS
+            , modelsDir = r.modelsDir
+            , hasToken = r.hasToken
+            , token = r.token
+            , resolve = adapterFrom st
+            }
 
 -- ── Deployment targets ──────────────────────────────────────────────
 -- | Where a tier is deployed.
@@ -1219,97 +1216,79 @@ quote s =
 -- platform's reason.
 deploy : Target -> Tier -> Task Error Deployment
 deploy target t =
-    resolveTarget target
-        |> Task.andThen
-               (\ts ->
-                   let
-                       tgt = CloudRun ts
-                       name = serviceName tgt
-                   in
-                       Task.map2
-                           (\a b -> ( a, b ))
-                           (Google.artifactExists ts.tierImage)
-                           (Google.artifactExists ts.engineImage)
-                           |> Task.andThen
-                                  (\( tierThere, engineThere ) ->
-                                      if not tierThere then
-                                          Task.fail
-                                              (Failure.toError
-                                                  (NotProvisioned
-                                                      { what =
-                                                          "the tier image "
-                                                              ++ ts.tierImage
-                                                      , command =
-                                                          "sky ai image build --tier"
-                                                      }))
+    let
+        ts <- resolveTarget target
+        tgt = CloudRun ts
+        name = serviceName tgt
+        ( tierThere, engineThere ) <-
+            Task.map2
+                (\a b -> ( a, b ))
+                (Google.artifactExists ts.tierImage)
+                (Google.artifactExists ts.engineImage)
+        _ <-
+            if not tierThere then
+                Task.fail
+                    (Failure.toError
+                        (NotProvisioned
+                            { what = "the tier image " ++ ts.tierImage
+                            , command = "sky ai image build --tier"
+                            }))
 
-                                      else if not engineThere then
-                                          Task.fail
-                                              (Failure.toError
-                                                  (NotProvisioned
-                                                      { what =
-                                                          "the engine image "
-                                                              ++ ts.engineImage
-                                                      , command =
-                                                          "an Artifact Registry remote repository of Docker Hub (docs/ai/deploy-gcp.md)"
-                                                      }))
+            else if not engineThere then
+                Task.fail
+                    (Failure.toError
+                        (NotProvisioned
+                            { what = "the engine image " ++ ts.engineImage
+                            , command =
+                                "an Artifact Registry remote repository of Docker Hub (docs/ai/deploy-gcp.md)"
+                            }))
 
-                                      else
-                                          upsert ts tgt t)
-                           |> Task.andThen (\_ -> waitReady ts name 0)
-                           |> Task.andThen
-                                  (\svc ->
-                                      Google.grantInvoker name ts.invokers
-                                          |> Task.map
-                                                 (\_ ->
-                                                     { url = svc.uri
-                                                     , revision =
-                                                         lastPart
-                                                             svc.latestReady
-                                                     , region = ts.region
-                                                     , service = ts.service
-                                                     })))
+            else
+                upsert ts tgt t
+        svc <- waitReady ts name 0
+    in
+        Google.grantInvoker name ts.invokers
+            |> Task.map
+                   (\_ ->
+                       { url = svc.uri
+                       , revision = lastPart svc.latestReady
+                       , region = ts.region
+                       , service = ts.service
+                       })
 
 
 upsert : TargetSettings -> Target -> Tier -> Task Error ()
 upsert ts tgt t =
-    Google.createService ts.project ts.region ts.service (serviceJson tgt t)
-        |> Task.andThen
-               (\created ->
-                   case created of
+    let
+        created <-
+            Google.createService
+                ts.project
+                ts.region
+                ts.service
+                (serviceJson tgt t)
+    in
+        case created of
 
-                       Just _ ->
-                           Task.succeed ()
+            Just _ ->
+                Task.succeed ()
 
-                       Nothing ->
-                           -- It exists: replace its spec, guarded by its etag.
-                           Google.getService (serviceName tgt)
-                               |> Task.andThen
-                                      (\found ->
-                                          let
-                                              etag =
-                                                  Maybe.map .etag found
-                                                      |> Maybe.withDefault ""
-                                              spec = serviceJson tgt t
-                                              withEtag =
-                                                  if etag == "" then
-                                                      spec
+            Nothing ->
+                -- It exists: replace its spec, guarded by its etag.
+                let
+                    found <- Google.getService (serviceName tgt)
+                    etag = Maybe.map .etag found |> Maybe.withDefault ""
+                    spec = serviceJson tgt t
+                    withEtag =
+                        if etag == "" then
+                            spec
 
-                                                  else
-                                                      "{\"etag\":"
-                                                          ++ JsonE.encode
-                                                                 0
-                                                                 (JsonE.string
-                                                                     etag)
-                                                          ++ ","
-                                                          ++ String.dropLeft
-                                                                 1
-                                                                 spec
-                                          in
-                                              Google.patchService
-                                                  (serviceName tgt)
-                                                  withEtag
-                                                  |> Task.map (\_ -> ())))
+                        else
+                            "{\"etag\":" ++ JsonE.encode 0 (JsonE.string etag)
+                                ++ ","
+                                ++ String.dropLeft 1 spec
+                in
+                    Google.patchService (serviceName tgt) withEtag
+                        |> Task.map (\_ -> ())
 
 
 -- Poll the service until its Ready condition settles: up to 30 minutes

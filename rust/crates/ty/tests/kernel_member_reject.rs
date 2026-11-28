@@ -10,7 +10,7 @@
 //! `hir::kernel::KERNEL_FUNCTIONS[Mod]` (a proven superset of the runtime, per
 //! the `xtask kernel-members` gate) and emits `[E1001]` at NAME RESOLUTION.
 
-use hir::SourceDb;
+use hir::{SkyDb, SourceDb};
 use std::path::{Path, PathBuf};
 
 fn repo_root() -> PathBuf {
@@ -202,5 +202,341 @@ fn sortwith_via_exposing_accepts_and_is_precisely_typed() {
     assert!(
         type_errors(bad) > 0,
         "a String-returning comparator must be rejected by sortWith's precise `.sky` type"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A pure-Sky member of a bare kernel qualifier's home (`Task.bestEffort`,
+// `Task.unless`, `Task.toResult`, `Maybe.isJust`) type-checks with NO import,
+// with the precise type of its `.sky` definition. Before the fix each was
+// `[E1001] Undefined name` (`hir::implicit_qualifier_homes`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const NO_IMPORT_HEAD: &str = "module Main exposing (main)\n\
+    import Std.Log exposing (println)\n";
+
+#[test]
+fn pure_sky_members_of_an_implicit_qualifier_check_with_no_import() {
+    let src = format!(
+        "{NO_IMPORT_HEAD}\n\
+         step : Int -> Task Error (Task.Step Int Int)\n\
+         step n =\n    if n >= 3 then\n        Task.succeed (Task.Done n)\n\n    else\n        Task.succeed (Task.Loop (n + 1))\n\n\
+         main =\n    Task.run\n        (Task.bestEffort (println \"a\")\n            \
+         |> Task.andThen (\\_ -> Task.unless (Maybe.isJust (Just 1)) (println \"b\"))\n            \
+         |> Task.andThen (\\_ -> Task.toResult (Task.loop step 0))\n            \
+         |> Task.andThen (\\_ -> println \"c\")\n        )\n"
+    );
+    let codes = error_codes(&src);
+    assert!(
+        codes.is_empty(),
+        "no-import Task helpers must check; got {codes:?}"
+    );
+}
+
+#[test]
+fn pure_sky_member_with_no_import_keeps_its_precise_type() {
+    // `Task.unless : Bool -> Task e () -> Task e ()`: a String condition is a
+    // type error, so the member resolved to the typed `.sky` definition, not a
+    // fresh flexible variable.
+    let src =
+        format!("{NO_IMPORT_HEAD}\nmain =\n    Task.run (Task.unless \"yes\" (println \"b\"))\n");
+    assert!(
+        type_errors(&src) > 0,
+        "`Task.unless \"yes\"` must be a type error"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Type names under a bare kernel qualifier with NO import. A kernel-backed type
+// (no `.sky` declaration) and a type of the home still check; a type the home
+// does not have is `[E1001]` (`hir` `Resolver::implicit_home_type`). Before,
+// `Time.Parts` checked and named `Std.Time`'s record, and `Time.NoSuchType`
+// checked as an unknown nominal type.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn kernel_backed_and_home_types_check_with_no_import() {
+    let src = format!(
+        "{NO_IMPORT_HEAD}\n\
+         count : Dict.Dict String Int -> Set.Set Int -> Maybe.Maybe Int -> Int\n\
+         count d s m =\n    Dict.size d + Set.size s + Maybe.withDefault 0 m\n\n\
+         later : Int -> Task.Task Error Int\n\
+         later n =\n    Task.succeed n\n\n\
+         cmd : Process.Command\n\
+         cmd =\n    Process.command \"ls\"\n\n\
+         main =\n    Task.run (later (count Dict.empty Set.empty (Just 1)) |> Task.andThen (\\_ -> println \"ok\"))\n"
+    );
+    let codes = error_codes(&src);
+    assert!(
+        codes.is_empty(),
+        "kernel-backed and home types must check with no import; got {codes:?}"
+    );
+}
+
+#[test]
+fn a_type_the_implicit_home_lacks_is_e1001() {
+    for ty in ["Time.Parts", "Time.NoSuchType"] {
+        let src = format!(
+            "{NO_IMPORT_HEAD}\nf : {ty} -> Int\nf p =\n    0\n\nmain =\n    println (String.fromInt (f 1))\n"
+        );
+        let codes = error_codes(&src);
+        assert!(
+            codes.iter().any(|c| c == "E1001"),
+            "`{ty}` with no import must be E1001; got {codes:?}"
+        );
+    }
+}
+
+/// The Judge repro gives ONE diagnostic: the `[E1001]` with the import hint.
+/// The type checker used to read the rejected `Time.Parts` as `Std.Time`'s
+/// record by its bare name and added a second, wrong `[E2001]` (the call's
+/// record "is missing field(s): abbreviation, …").
+#[test]
+fn an_unknown_qualified_type_gives_one_diagnostic() {
+    for (import, ty) in [("", "Time.Parts")] {
+        let src = format!(
+            "{NO_IMPORT_HEAD}{import}\nf : {ty} -> Int\nf p =\n    p.weekday\n\n\
+             main =\n    println (String.fromInt (f {{ year = 1 }}))\n"
+        );
+        let root = repo_root();
+        let mut db = SourceDb::new();
+        for (n, parse) in &load_stdlib(&root) {
+            db.add_module(n, parse.clone());
+        }
+        let mid = db.add_module("Main", syntax::parse(&src, base::FileId(0)));
+        let errs: Vec<(String, String)> = ty::check_modules(&db, &[mid])
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == diagnostics::Severity::Error)
+            .map(|d| (d.code.0.clone(), d.message.clone()))
+            .collect();
+        assert_eq!(
+            errs.len(),
+            1,
+            "`{ty}`: exactly one error expected: {errs:?}"
+        );
+        assert_eq!(errs[0].0, "E1001", "`{ty}`: {errs:?}");
+        if import.is_empty() {
+            assert!(
+                errs[0]
+                    .1
+                    .contains("`Parts` is in `Std.Time`: add `import Std.Time as Time`"),
+                "{errs:?}"
+            );
+        }
+    }
+}
+
+/// Errors (code, message) of a `Main` checked with the stdlib and `extra`
+/// project modules.
+fn errors_with(extra: &[(&str, &str)], main_src: &str) -> Vec<(String, String)> {
+    let root = repo_root();
+    let mut db = SourceDb::new();
+    for (n, parse) in &load_stdlib(&root) {
+        db.add_module(n, parse.clone());
+    }
+    let mut ids = Vec::new();
+    for (n, src) in extra {
+        ids.push(db.add_module(n, syntax::parse(src, base::FileId(0))));
+    }
+    ids.push(db.add_module("Main", syntax::parse(main_src, base::FileId(0))));
+    ty::check_modules(&db, &ids)
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == diagnostics::Severity::Error)
+        .map(|d| (d.code.0.clone(), d.message.clone()))
+        .collect()
+}
+
+/// The Judge repro: `Lib.Db` exports only `Conn`, and `Main` names five
+/// kernel-implicit types through its alias. Each is ONE `[E1001]`, with no
+/// second error from a type picked by its bare name.
+#[test]
+fn kernel_implicit_types_under_a_user_alias_are_e1001_with_no_cascade() {
+    let lib = "module Lib.Db exposing (Conn)\n\ntype alias Conn =\n    { n : Int }\n";
+    let main = format!(
+        "{NO_IMPORT_HEAD}import Lib.Db as L\n\n\
+         g : L.Error -> L.Db -> L.Session -> L.Cmd Int -> Int\n\
+         g e d s c =\n    0\n\n\
+         f : L.Request -> Int\nf r =\n    r.method\n\n\
+         main =\n    println \"ok\"\n"
+    );
+    let errs = errors_with(&[("Lib.Db", lib)], &main);
+    assert_eq!(errs.len(), 5, "{errs:?}");
+    for name in ["Error", "Db", "Session", "Cmd", "Request"] {
+        assert!(
+            errs.iter().any(|(c, m)| c == "E1001"
+                && m.contains(&format!("L.{name}"))
+                && m.contains(&format!("does not export a type `{name}`"))),
+            "`L.{name}`: {errs:?}"
+        );
+    }
+}
+
+/// A qualified kernel type never names a same-named local type by its bare
+/// name: with a local `type alias Value = { n : Int }`, `JsonEnc.Value` is the
+/// JSON value, so reading the field `n` from it is a type error.
+#[test]
+fn a_qualified_kernel_type_is_not_captured_by_a_local_type() {
+    let main = format!(
+        "{NO_IMPORT_HEAD}\ntype alias Value =\n    {{ n : Int }}\n\n\
+         f : JsonEnc.Value -> Int\nf v =\n    v.n\n\n\
+         main =\n    println (String.fromInt 1)\n"
+    );
+    let errs = errors_with(&[], &main);
+    assert!(
+        errs.iter().any(|(c, _)| c == "E2001"),
+        "`JsonEnc.Value` must not be the local record: {errs:?}"
+    );
+}
+
+/// The accepted unexported stdlib type (`Ui.Html`, a warning) is `Std.Html`'s
+/// `Html`, not a same-named local type.
+#[test]
+fn an_unexported_stdlib_type_is_its_one_home_not_a_local_type() {
+    let main = format!(
+        "{NO_IMPORT_HEAD}import Std.Ui as Ui\n\ntype alias Html a =\n    {{ n : a }}\n\n\
+         f : Ui.Html Int -> Int\nf h =\n    h.n\n\n\
+         main =\n    println (String.fromInt 1)\n"
+    );
+    let errs = errors_with(&[], &main);
+    assert!(
+        errs.iter().any(|(c, _)| c == "E2001"),
+        "`Ui.Html` must be Std.Html's Html: {errs:?}"
+    );
+}
+
+/// The Judge repros `cap3` / `cap4`: a module's own `type alias Value` does not
+/// capture the BARE `Value` of the stdlib signatures (`JsonEnc.int : Int ->
+/// Value`). A signature resolves its bare names where it is written.
+#[test]
+fn a_local_alias_does_not_capture_a_stdlib_signature() {
+    let head = "module Main exposing (main)\n\n\
+                import Sky.Core.Json.Encode as JsonEnc\n\
+                import Std.Log exposing (println)\n\n\
+                type alias Value =\n    { n : Int }\n\n";
+    let cap3 = format!(
+        "{head}e : JsonEnc.Value -> String\ne v =\n    JsonEnc.encode 0 v\n\n\
+         main =\n    println (e (JsonEnc.int 1))\n"
+    );
+    assert_eq!(errors_with(&[], &cap3), vec![], "cap3");
+    let cap4 = format!(
+        "{head}k : Value -> Int\nk v =\n    v.n\n\n\
+         e : JsonEnc.Value -> String\ne v =\n    JsonEnc.encode 0 v\n\n\
+         main =\n    println (e (JsonEnc.int (k {{ n = 1 }})))\n"
+    );
+    assert_eq!(errors_with(&[], &cap4), vec![], "cap4");
+}
+
+/// The probe for each stdlib type name: an expression whose type comes only
+/// from stdlib signatures, read as the record `{ n : Int }`. It must be an
+/// error whether the same-named record alias is in `Main` or in a user
+/// module `Main` imports (before the fix the alias captured the signature and
+/// `.n` checked clean).
+const CAPTURE_PROBES: &[(&str, &str)] = &[
+    ("Value", "(JsonEnc.int 1).n"),
+    ("Decoder", "JsonDec.int.n"),
+    ("Response", "(Server.text \"x\").n"),
+    ("Html", "(Html.text \"x\").n"),
+    ("Element", "(Ui.text \"x\").n"),
+    (
+        "Error",
+        "(case JsonDec.decodeString JsonDec.int \"1\" of\n            Ok _ ->\n                0\n\n            Err e ->\n                e.n\n        )",
+    ),
+];
+
+fn probe_main(alias_here: Option<&str>, import_lib: bool, probe: &str) -> String {
+    let mut s = String::from(
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Json.Encode as JsonEnc\n\
+         import Sky.Core.Json.Decode as JsonDec\n\
+         import Sky.Http.Server as Server\n\
+         import Std.Html as Html\n\
+         import Std.Ui as Ui\n\
+         import Std.Log exposing (println)\n",
+    );
+    if import_lib {
+        s.push_str("import Lib\n");
+    }
+    if let Some(n) = alias_here {
+        s.push_str(&format!("\n\ntype alias {n} =\n    {{ n : Int }}\n"));
+    }
+    s.push_str(&format!(
+        "\n\nprobe : Int\nprobe =\n    {probe}\n\n\nmain =\n    println (String.fromInt probe)\n"
+    ));
+    s
+}
+
+#[test]
+fn a_user_alias_named_like_a_stdlib_type_never_captures_a_stdlib_signature() {
+    for (name, probe) in CAPTURE_PROBES {
+        let here = errors_with(&[], &probe_main(Some(name), false, probe));
+        assert!(
+            here.iter().any(|(c, _)| c == "E2001"),
+            "alias `{name}` in Main captured a stdlib signature: {here:?}"
+        );
+        let lib = format!(
+            "module Lib exposing ({name}, one)\n\n\ntype alias {name} =\n    {{ n : Int }}\n\n\n\
+             one : {name}\none =\n    {{ n = 1 }}\n"
+        );
+        let there = errors_with(&[("Lib", &lib)], &probe_main(None, true, probe));
+        assert!(
+            there.iter().any(|(c, _)| c == "E2001"),
+            "alias `{name}` in an imported module captured a stdlib signature: {there:?}"
+        );
+    }
+}
+
+/// A user alias named like a stdlib type, used with the stdlib functions of
+/// that type, checks clean (the cap3 shape for every name).
+#[test]
+fn stdlib_calls_check_clean_beside_a_same_named_user_alias() {
+    for name in [
+        "Value", "Decoder", "Request", "Response", "Html", "Element", "Model",
+    ] {
+        let probe = "String.length (JsonEnc.encode 0 (JsonEnc.int 1))\n        \
+                     + (Result.withDefault 0 (JsonDec.decodeString JsonDec.int \"1\"))";
+        let errs = errors_with(&[], &probe_main(Some(name), false, probe));
+        assert_eq!(errs, vec![], "alias `{name}`");
+    }
+}
+
+/// D7 at unit level (the `spa-route-module` fixture served 500): `App.Route`
+/// names the `type Route page` that `Std.App` declares without exporting,
+/// never the module's own `type Route`. A route value is not a page.
+#[test]
+fn an_unexported_stdlib_type_is_its_qualifiers_own_declaration() {
+    let head = "module Main exposing (main)\n\n\
+                import Std.App as App\n\
+                import Std.Log exposing (println)\n\n\n\
+                type Route\n    = Home\n    | Away\n\n\n";
+    let ok = format!(
+        "{head}routes : List (App.Route Route)\nroutes =\n    [ App.route \"/\" Home ]\n\n\n\
+         main =\n    println \"ok\"\n"
+    );
+    assert_eq!(errors_with(&[], &ok), vec![], "the route table checks");
+    // The scheme of `routes` names Std.App's declaration: the lowering reads
+    // it to type the route table.
+    let root = repo_root();
+    let mut db = SourceDb::new();
+    for (n, parse) in &load_stdlib(&root) {
+        db.add_module(n, parse.clone());
+    }
+    let m = db.add_module("Main", syntax::parse(&ok, base::FileId(0)));
+    let world = ty::World::build(&db);
+    let def = db
+        .resolve(m)
+        .top_defs
+        .iter()
+        .find(|td| td.name.as_str() == "routes")
+        .map(|td| td.def)
+        .expect("routes is defined");
+    let shown = format!(
+        "{:?}",
+        world.value_sigs.get(&def).expect("routes has a scheme")
+    );
+    assert!(
+        shown.contains("Std.App.Route"),
+        "`App.Route` is Std.App's Route: {shown}"
     );
 }

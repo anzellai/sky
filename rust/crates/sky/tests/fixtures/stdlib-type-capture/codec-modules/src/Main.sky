@@ -1,0 +1,85 @@
+module Main exposing (main)
+
+import Sky.Core.Set as Set
+import Sky.Core.Dict as Dict
+import Sky.Core.Array as Array
+import Std.Codec as Codec exposing (Codec)
+import Std.Log exposing (println)
+import Types exposing (Set, Dict, Array(..), mkSet)
+
+type alias Row =
+    { own : Set
+    , ks : Dict.Dict String Int
+    , tags : Set.Set String
+    , arr : Array.Array Int
+    , mine : Array
+    , d : Dict
+    }
+
+
+ownCodec : Codec Set
+ownCodec =
+    Codec.object Set |> Codec.field "zz" .zz Codec.int |> Codec.buildObject
+
+
+dCodec : Codec Dict
+dCodec =
+    Codec.object Dict |> Codec.field "dd" .dd Codec.string |> Codec.buildObject
+
+
+rowCodec : Codec Row
+rowCodec =
+    Codec.object
+        (\o k t a m d ->
+            { own = o
+            , ks = k
+            , tags = Set.fromList t
+            , arr = Array.fromList a
+            , mine = ArrayC m
+            , d = d
+            })
+        |> Codec.field "own" .own ownCodec
+        |> Codec.field "ks" .ks (Codec.dict Codec.string Codec.int)
+        |> Codec.field
+               "tags"
+               (\r -> Set.toList r.tags)
+               (Codec.list Codec.string)
+        |> Codec.field "arr" (\r -> Array.toList r.arr) (Codec.list Codec.int)
+        |> Codec.field "mine" (\r -> mineInt r.mine) Codec.int
+        |> Codec.field "d" .d dCodec
+        |> Codec.buildObject
+
+
+mineInt : Array -> Int
+mineInt a =
+    case a of
+
+        ArrayC n ->
+            n
+
+
+main =
+    let
+        row =
+            { own = mkSet 3
+            , ks = Dict.fromList [ ( "a", 1 ) ]
+            , tags = Set.fromList [ "x", "y" ]
+            , arr = Array.fromList [ 1, 2, 3 ]
+            , mine = ArrayC 9
+            , d = { dd = "q" }
+            }
+        json = Codec.toJson rowCodec row
+    in
+        case Codec.fromJson rowCodec json of
+
+            Ok r ->
+                println
+                    (json ++ " "
+                        ++ String.fromInt
+                               (r.own.zz + Dict.size r.ks + Set.size r.tags
+                                   + Array.length r.arr
+                                   + mineInt r.mine)
+                        ++ r.d.dd)
+
+            Err _ ->
+                println "decode failed"

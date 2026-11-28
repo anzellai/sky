@@ -112,6 +112,9 @@ pub struct TypeEnv {
     /// large records (a `Codec.object` pipeline), and measured as the largest
     /// live structure left in lowering once the typed tables were interned.
     pub goty_cache: std::cell::RefCell<GotyCache>,
+    /// The kernel types (`ty::World::kernel_types`): a bare one of these
+    /// names is the kernel type, never a project type of that name.
+    pub kernel_types: HashSet<String>,
 }
 
 /// The `go_ty` memo: `(type, cur_mod) -> GoTy`, with the type interned in a
@@ -1168,7 +1171,15 @@ fn app_to_go_with(
             // same-named type correctly (`Sky.Core.Error.Error`) and finds nothing
             // for a truly-undeclared one, which erases to `any` below — exactly
             // right for an opaque kernel handle.
-            let nominal = if KERNEL_IMPLICIT_TYPES.contains(&bare) {
+            // A bare KERNEL type (`Set`, which no stdlib module declares) is
+            // the kernel handle in every module. The checker writes a project
+            // type as its qualified key or as its record, so a bare kernel
+            // name never denotes the project's same-named alias or union: a
+            // `type alias Set = { zz : Int }` took `Set.fromList`'s value and
+            // the build panicked with `CoerceFailure ... rt.SkySet`.
+            let nominal = if env.kernel_types.contains(bare) {
+                None
+            } else if KERNEL_IMPLICIT_TYPES.contains(&bare) {
                 env.nominal.get(bare)
             } else {
                 cur_mod

@@ -53,6 +53,16 @@ fn import_paths(parse: &syntax::Parse) -> Vec<String> {
             }
         }
     }
+    // The home of a bare kernel qualifier (`Task` -> `Sky.Core.Task`) is read
+    // by `resolve` for a member the kernel table does not list, with no
+    // `import` line, so every candidate home is part of the footprint too.
+    for q in crate::kernel::implicit_qualifiers() {
+        for p in crate::kernel::implicit_qualifier_homes(q) {
+            if !out.iter().any(|o| o == p) {
+                out.push(p.to_string());
+            }
+        }
+    }
     // A default qualified import (`Tuple`) is read by `resolve` with no
     // `import` line, so it is part of every module's footprint too.
     for (_, p) in crate::kernel::DEFAULT_QUALIFIED_IMPORTS {

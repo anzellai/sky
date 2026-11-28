@@ -1175,6 +1175,16 @@ fn the_release_workflow_is_the_full_suite() {
             "the Go runtime under the race detector (sharded by test; every shard \
              runs: go_test_shards_run_every_shard_once_in_a_gating_job)",
         ),
+        (
+            "go-test-stress.sh",
+            "the timing-dependent rt tests run many times under -race with a \
+             small GOMAXPROCS (gate-stress; one green run of a scheduling-dependent \
+             test is not a verdict: the Http.Stream.forEachChunk partial-stream bug)",
+        ),
+        (
+            "go test ./rt/... -count=1 -timeout 20m",
+            "the Go runtime tests on macOS (gate-stress's macOS leg)",
+        ),
         // Every `scripts/*-e2e.sh` is required by the rule in
         // `e2e_scripts_are_gated.rs`, not by a hand list that cannot notice a
         // new script (G-1: nav-e2e ran nowhere for a whole release).

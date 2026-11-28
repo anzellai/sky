@@ -1788,9 +1788,11 @@ liveConfig_ (App a) =
 -- it. The Task program that calls it keeps running:
 --
 --     main =
---         App.serve statusApp
---             |> Task.andThen (\running -> Log.println ("status UI on " ++ App.address running))
---             |> Task.andThen (\_ -> Task.loop work 0)
+--         let
+--             running <- App.serve statusApp
+--             _ <- Log.println ("status UI on " ++ App.address running)
+--         in
+--             Task.loop work 0
 --
 -- The app runs embedded ([`withEmbedded`] is implied): no signal handler, no
 -- process exit. A port already in use, a session store that refuses to start

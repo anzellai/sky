@@ -72,14 +72,15 @@ handleUpstream _ =
     ServerStream.stream
         "text/event-stream"
         (\writer ->
-            emitTick writer 1 |> Task.andThen (\_ -> emitTick writer 2)
-                |> Task.andThen (\_ -> emitTick writer 3)
-                |> Task.andThen (\_ -> emitTick writer 4)
-                |> Task.andThen (\_ -> emitTick writer 5)
-                |> Task.andThen
-                       (\_ ->
-                           ServerStream.emit "event: done\ndata: bye\n\n" writer)
-                |> Task.andThen (\_ -> ServerStream.finish writer))
+            let
+                _ <- emitTick writer 1
+                _ <- emitTick writer 2
+                _ <- emitTick writer 3
+                _ <- emitTick writer 4
+                _ <- emitTick writer 5
+                _ <- ServerStream.emit "event: done\ndata: bye\n\n" writer
+            in
+                ServerStream.finish writer)
 
 
 emitTick : ServerStream.StreamWriter -> Int -> Task Error ()

@@ -209,15 +209,35 @@ func itoaInt(n int) string {
 // (every Db_* via WithDbSpan) therefore left a PERMANENT map entry:
 // ~80 B each, forever, plus O(N) sync.Map promotion stalls.
 //
-// The assertion is an EXACT count back to baseline, not "roughly".
+// The assertion is exact, per probe goroutine: none of the N goroutine IDs
+// is in the map afterwards. It used to compare the WHOLE map's size with a
+// baseline, and the map is process-wide: a stamped goroutine an earlier test
+// left running that cleared its stamp while this test ran made the count
+// fall below the baseline ("leaked -1 entries", 2 runs in 40 on macOS under
+// -race). The bystander below reproduces that every run: it holds a stamp
+// at the baseline and clears it during the burst.
 func TestWithSpan_UnstampedGoroutineLeavesNoEntry(t *testing.T) {
 	const N = 200
-	baseline := goroutineCtxSize()
+
+	stamped := make(chan struct{})
+	release := make(chan struct{})
+	bystanderDone := make(chan struct{})
+	go func() {
+		defer close(bystanderDone)
+		SetGoroutineTraceContext(WithRequestID(context.Background(), "bystander"))
+		close(stamped)
+		<-release
+		ClearGoroutineTraceContext()
+	}()
+	<-stamped
+
+	gids := make(chan int64, N)
 	var wg sync.WaitGroup
 	for i := 0; i < N; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			gids <- currentGoroutineID()
 			// No prior stamp on this goroutine — the exact shape of a
 			// Cmd.perform / background worker goroutine calling an
 			// auto-instrumented kernel.
@@ -226,11 +246,34 @@ func TestWithSpan_UnstampedGoroutineLeavesNoEntry(t *testing.T) {
 			})
 		}()
 	}
+	close(release)
 	wg.Wait()
-	if after := goroutineCtxSize(); after != baseline {
-		t.Fatalf("goroutineCtx leaked %d entries: baseline %d, after %d (unstamped goroutines must leave the map exactly as they found it)",
-			after-baseline, baseline, after)
+	<-bystanderDone
+	close(gids)
+
+	leaked := 0
+	for gid := range gids {
+		if _, ok := goroutineCtx.Load(gid); ok {
+			leaked++
+		}
 	}
+	if leaked != 0 {
+		t.Fatalf("goroutineCtx kept %d of %d entries for unstamped goroutines (they must leave no entry)", leaked, N)
+	}
+}
+
+// stampsWithRequestID counts the goroutine stamps that carry request id
+// `id`. A leak test counts its own stamps this way, never the size of the
+// process-wide map, which goroutines of other tests change at any time.
+func stampsWithRequestID(id string) int {
+	n := 0
+	goroutineCtx.Range(func(_, v any) bool {
+		if ctx, ok := v.(context.Context); ok && RequestIDFromContext(ctx) == id {
+			n++
+		}
+		return true
+	})
+	return n
 }
 
 // The nested case: a goroutine that WAS stamped must get its stamp

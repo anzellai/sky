@@ -186,6 +186,24 @@ pub struct WorldDecls {
     /// module poison a stdlib signature's un-imported bare-name reference (the
     /// entry-passes / dependency-fails divergence — see `extend_decls` pass 1a).
     aliases: HashMap<String, AliasDef>,
+    /// The module whose declaration each `aliases` entry holds (the first
+    /// writer). A signature of module `m` may expand a bare name through
+    /// `aliases` only when that module is not downstream of `m`
+    /// ([`WorldDecls::protect_set`]).
+    alias_definer: HashMap<String, ModuleId>,
+    /// For each non-stdlib module in `alias_definer`: every module it
+    /// imports, directly or through its imports ([`import_closure`]).
+    alias_definer_imports: HashMap<ModuleId, HashSet<ModuleId>>,
+    /// The kernel types: every bare type name a stdlib signature or type
+    /// declaration uses that no stdlib module declares (`Set`, `Value`,
+    /// `Cmd`), builtins excepted. Such a bare name is the kernel type in every
+    /// module. No alias of a project module answers it
+    /// ([`WorldDecls::protect_set`], [`WorldDecls::expand_ty`]), and the
+    /// lowering never reads it as a project type (`World::is_kernel_type`).
+    kernel_types: HashSet<String>,
+    /// [`WorldDecls::protect_set`] of each module, by module name, for the
+    /// lowering's [`WorldDecls::expand_ty_in_module`].
+    protect_by_mod: HashMap<String, HashSet<String>>,
     /// MODULE-QUALIFIED alias table, keyed by `"<defining-module>.<name>"`.
     /// This is the #164 fix: same-named aliases in different modules are
     /// distinct keys. The type-checker's signature path resolves each type
@@ -912,6 +930,9 @@ impl World {
                         // (`fallback_reason` → `BareAliasCollision`) and rebuilds,
                         // so it never depends on the overwrite either.)
                         let body_bare = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
+                        if !world.aliases.contains_key(&name) {
+                            world.alias_definer.insert(name.clone(), m);
+                        }
                         world.aliases.entry(name.clone()).or_insert(AliasDef {
                             params: params.clone(),
                             body: body_bare,
@@ -922,6 +943,19 @@ impl World {
                         }
                     }
                 }
+            }
+        }
+        world.kernel_types = kernel_type_names(db);
+        // The import closure of each module that wrote a bare alias entry, for
+        // `protect_set`: a module that imports `m` is downstream of `m`, and
+        // its alias never answers a bare name in `m`'s signatures.
+        let definers: Vec<ModuleId> = world.alias_definer.values().copied().collect();
+        for d in definers {
+            if !hir::is_stdlib_module_name(db.module_name(d))
+                && !world.alias_definer_imports.contains_key(&d)
+            {
+                let closure = import_closure(db, d);
+                world.alias_definer_imports.insert(d, closure);
             }
         }
         // ---- pass 1b: resolve each alias body against its OWN module and the
@@ -947,7 +981,8 @@ impl World {
             // Names this module sees as UNIONS (own decls + `exposing`-imported).
             // Passed to `expand` so the bare `aliases` fallback can't rewrite a
             // union `Model` into a foreign same-named alias (#164 follow-up).
-            let protect = union_names_in_module(db, m);
+            let protect = world.protect_set(db, m);
+            world.protect_by_mod.insert(mname.clone(), protect.clone());
             let tree = db.module_parse(m).tree();
             for decl in tree.decls() {
                 match &decl {
@@ -1316,7 +1351,7 @@ impl World {
             .descendants()
             .filter(|n| n.text_range() == range)
             .find_map(ast::Type::cast)?;
-        let protect = union_names_in_module(db, m);
+        let protect = self.protect_set(db, m);
         let raw = resolve_type_names(db, m, &t, self.type_keys());
         Some(self.expand(&raw, 0, &protect, None))
     }
@@ -1859,9 +1894,51 @@ impl World {
         // Lowering path: field types arrive as BARE names (`collect_types` uses
         // `ast_type_to_ty_qualified`, not `resolve_type_names`), so the bare
         // first-writer-wins `aliases` fallback IS needed to expand e.g. a bare
-        // `Point` field to its tuple. No union-protection here — behaviour is
-        // byte-identical to before the #164-follow-up fix.
-        self.expand(ty, 0, &HashSet::new(), None)
+        // `Point` field to its tuple. A bare KERNEL type (`Set`) is never
+        // expanded through it: no project alias of that name answers it.
+        self.expand(ty, 0, &self.kernel_types, None)
+    }
+
+    /// True when the bare type name `name` is a kernel type
+    /// ([`WorldDecls::kernel_types`]): in every module it is the kernel type,
+    /// never a project type of that name.
+    pub fn is_kernel_type(&self, name: &str) -> bool {
+        self.kernel_types.contains(name)
+    }
+
+    /// Every kernel type name ([`WorldDecls::kernel_types`]).
+    pub fn kernel_types(&self) -> &HashSet<String> {
+        &self.kernel_types
+    }
+
+    /// The bare names a type written in module `m` must not expand through
+    /// the program-wide bare `aliases` table: the names `m` sees as unions or
+    /// as qualified kernel types ([`union_names_in_module`]), and every bare
+    /// alias whose module is downstream of `m`. A bare name in a signature is
+    /// resolved where the signature is written: `int : Int -> Value` in
+    /// `Sky.Core.Json.Encode` is the kernel JSON `Value`, never the
+    /// `type alias Value = { n : Int }` of a module that imports it. A stdlib
+    /// signature takes a bare alias of the stdlib only. A signature of another
+    /// module takes any alias except one of a module that imports it, directly
+    /// or through its imports: the un-imported alias of an unrelated module
+    /// (`Store.insightsSummary : () -> InsightsSummary`) still resolves.
+    fn protect_set(&self, db: &dyn SkyDb, m: ModuleId) -> HashSet<String> {
+        let mut out = union_names_in_module(db, m);
+        out.extend(self.kernel_types.iter().cloned());
+        let m_std = hir::is_stdlib_module_name(db.module_name(m));
+        for (name, definer) in &self.alias_definer {
+            if *definer == m {
+                continue;
+            }
+            let Some(imports) = self.alias_definer_imports.get(definer) else {
+                // a stdlib module: in every module's scope
+                continue;
+            };
+            if m_std || imports.contains(&m) {
+                out.insert(name.clone());
+            }
+        }
+        out
     }
 
     /// Module-aware `expand_ty` for the lowering DECL path. A bare field-type
@@ -1876,7 +1953,11 @@ impl World {
     /// so `{cur_mod}.{name}` first is the correct resolution; the bare fallback
     /// still covers an imported-unqualified alias (`Store.x : () -> InsightsSummary`).
     pub fn expand_ty_in_module(&self, ty: &Ty, cur_mod: &str) -> Ty {
-        self.expand(ty, 0, &HashSet::new(), Some(cur_mod))
+        let protect = self
+            .protect_by_mod
+            .get(cur_mod)
+            .unwrap_or(&self.kernel_types);
+        self.expand(ty, 0, protect, Some(cur_mod))
     }
 
     /// Expand a type transparently through the alias table (record/function
@@ -2241,6 +2322,94 @@ pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
     ast_type_to_ty_impl(t, false)
 }
 
+/// The kernel types ([`WorldDecls::kernel_types`]): the bare type names of
+/// stdlib signatures and type declarations that no stdlib module declares.
+fn kernel_type_names(db: &dyn SkyDb) -> HashSet<String> {
+    fn walk(t: &Ty, out: &mut HashSet<String>) {
+        match t {
+            Ty::App(n, args) => {
+                if !n.as_str().contains('.') {
+                    out.insert(n.as_str().to_string());
+                }
+                for a in args {
+                    walk(a, out);
+                }
+            }
+            Ty::Fun(a, b) => {
+                walk(a, out);
+                walk(b, out);
+            }
+            Ty::Tuple(xs) => xs.iter().for_each(|x| walk(x, out)),
+            Ty::Record(fs, _) => fs.iter().for_each(|(_, x)| walk(x, out)),
+            _ => {}
+        }
+    }
+    let mut used = HashSet::new();
+    let mut declared = HashSet::new();
+    for m in db.module_ids() {
+        let mname = db.module_name(m);
+        if !hir::is_stdlib_module_name(mname) {
+            continue;
+        }
+        let tree = db.module_parse(m).tree();
+        for decl in tree.decls() {
+            match &decl {
+                ast::Decl::TypeAnno(a) => {
+                    if let Some(t) = a.ty() {
+                        walk(&ast_type_to_ty(&t), &mut used);
+                    }
+                }
+                ast::Decl::Alias(a) => {
+                    if let Some(n) = a.name() {
+                        declared.insert(n.text().to_string());
+                    }
+                    if let Some(t) = a.ty() {
+                        walk(&ast_type_to_ty(&t), &mut used);
+                    }
+                }
+                ast::Decl::Union(u) => {
+                    if let Some(n) = u.name() {
+                        declared.insert(n.text().to_string());
+                    }
+                    for v in u.variants() {
+                        for t in variant_arg_types_qualified(v.syntax()) {
+                            walk(&t, &mut used);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    used.retain(|n| {
+        !declared.contains(n)
+            && !hir::BUILTIN_TYPES.iter().any(|(b, _)| b == n)
+            && n.starts_with(|c: char| c.is_ascii_uppercase())
+    });
+    used
+}
+
+/// Every module `m` imports, directly or through the imports of the modules
+/// it imports (Sky-source modules only; kernel and Go imports have no alias).
+fn import_closure(db: &dyn SkyDb, m: ModuleId) -> HashSet<ModuleId> {
+    let mut seen: HashSet<ModuleId> = HashSet::new();
+    let mut work = vec![m];
+    while let Some(cur) = work.pop() {
+        let tree = db.module_parse(cur).tree();
+        for imp in tree.imports() {
+            let Some(path) = imp.name().map(|n| n.text()) else {
+                continue;
+            };
+            if let hir::ImportSource::Dep(dep) = db.classify_import(&path) {
+                if seen.insert(dep) {
+                    work.push(dep);
+                }
+            }
+        }
+    }
+    seen
+}
+
 /// Convert an annotation to a `Ty`, resolving every type reference that names an
 /// ALIAS to its module-qualified key (`"<defining-module>.<name>"`) via HIR.
 /// Non-alias references (unions, kernel types, type variables) and references
@@ -2269,6 +2438,14 @@ fn union_names_in_module(db: &dyn SkyDb, m: ModuleId) -> HashSet<String> {
             }
         }
     }
+    // A qualified kernel type (`JsonEnc.Value`) reaches `expand` as its bare
+    // name. It is the kernel type, never a same-named alias of this or another
+    // module (`type alias Value = { n : Int }` captured `JsonEnc.Value`, and
+    // reading `.n` from a JSON value checked clean). This module's own aliases
+    // are written under their module-qualified key, so they still expand.
+    for name in &resolved.kernel_type_refs {
+        out.insert(crate::nominal::base(name).to_string());
+    }
     out
 }
 
@@ -2288,6 +2465,7 @@ fn resolve_type_names(db: &dyn SkyDb, m: ModuleId, t: &ast::Type, keys: TypeKeys
     rewrite_alias_refs(
         db,
         &resolved.type_refs,
+        &resolved.unresolved_type_refs,
         &resolved.qualifiers,
         keys,
         &qualified,
@@ -2310,6 +2488,7 @@ fn kernel_home_key(keys: TypeKeys<'_>, base: &str) -> Option<String> {
 fn rewrite_alias_refs(
     db: &dyn SkyDb,
     type_refs: &HashMap<String, TypeRes>,
+    unresolved: &HashSet<String>,
     qualifiers: &HashMap<String, hir::ImportSource>,
     keys: TypeKeys<'_>,
     ty: &Ty,
@@ -2320,9 +2499,17 @@ fn rewrite_alias_refs(
             Ty::App(name, args) => {
                 let args: Vec<Ty> = args
                     .iter()
-                    .map(|a| rewrite_alias_refs(db, type_refs, qualifiers, keys, a))
+                    .map(|a| rewrite_alias_refs(db, type_refs, unresolved, qualifiers, keys, a))
                     .collect();
                 let full = name.as_str();
+                // A qualified name HIR reported as naming no type (`[E1001]`,
+                // `ResolveResult::unresolved_type_refs`) is an error type that
+                // unifies silently. The bare-name fallback below used to find a
+                // same-named declaration of ANOTHER module (`Time.Parts` with no
+                // import read as `Std.Time.Parts`) and add a second, wrong error.
+                if unresolved.contains(full) {
+                    return Ty::Error;
+                }
                 // The bare final segment: what `ast_type_to_ty` produces, and the
                 // `<name>` half of any alias / union key.
                 let base = crate::nominal::base(full);
@@ -2338,40 +2525,46 @@ fn rewrite_alias_refs(
                         return Ty::App(Name::new(&crate::nominal::go_type(package, base)), args);
                     }
                 }
-                // Resolve through HIR: prefer the exact (possibly qualified) name,
-                // then fall back to the bare base (an `exposing`-imported name is
-                // registered bare). A hit that lands on a DECLARED alias or union is
-                // rewritten to that declaration's defining-module key; anything else
-                // stays bare, exactly as before this fix.
-                // A QUALIFIED reference (`App.Route`) names a type of the
-                // qualifier's module, never a same-named type of this one. When
-                // HIR has no entry for it (the module declares the type but does
-                // not expose it, or it is kernel-implicit), the bare fallback
-                // below must not land on a type of ANOTHER module: a local
-                // `type Route` captured `App.Route` there, so `List (App.Route
-                // Page)` was read as the app's own `Route` (D7). Name the
-                // qualifier's own declaration instead. A bare hit in the
-                // qualifier's module itself, or a builtin, keeps the old path.
-                let qual_dep = full
-                    .rsplit_once('.')
-                    .and_then(|(q, _)| match qualifiers.get(q) {
-                        Some(hir::ImportSource::Dep(dep)) => Some(*dep),
-                        _ => None,
-                    });
-                if let (Some(dep), None) = (qual_dep, type_refs.get(full)) {
-                    let captured = type_refs
-                        .get(base)
-                        .and_then(|tr| db.def_loc(tr.con))
-                        .is_some_and(|l| l.module.index() != u32::MAX && l.module != dep);
-                    if captured {
-                        let key = crate::nominal::qualify(db.module_name(dep), base);
-                        if keys.union.contains(&key) || keys.alias.contains(&key) {
-                            return Ty::App(Name::new(&key), args);
-                        }
-                        return Ty::App(Name::new(base), args);
+                // A QUALIFIED reference (`App.Route`, `JsonEnc.Value`) names
+                // the declaration HIR resolved for it, and nothing else. When
+                // HIR published no declaration (a kernel-backed type such as
+                // `Dict.Dict`, a type a module lists without declaring, or a
+                // kernel-implicit name), it is the kernel type the bare name
+                // denotes. It never falls back to a lookup of the bare name in
+                // this module's scope: that found a same-named type of ANOTHER
+                // module (a local `type Route` captured `App.Route`, D7; a local
+                // `type alias Value` captured `JsonEnc.Value`).
+                if full != base && !type_refs.contains_key(full) {
+                    // The qualifier's own module declares the type without
+                    // exporting it (`type Route page` in `Std.App`, reached as
+                    // `App.Route`): it is that declaration. The kernel-implicit
+                    // home of the bare name is another module's type
+                    // (`Std.Live.Route`), and taking it lowered `App.withRoutes`
+                    // with the wrong route type (GET / answered 500).
+                    let own = full
+                        .rsplit_once('.')
+                        .and_then(|(q, _)| match qualifiers.get(q) {
+                            Some(hir::ImportSource::Dep(dep)) => {
+                                let key = crate::nominal::qualify(db.module_name(*dep), base);
+                                (keys.union.contains(&key) || keys.alias.contains(&key))
+                                    .then_some(key)
+                            }
+                            _ => None,
+                        });
+                    if let Some(key) = own {
+                        return Ty::App(Name::new(&key), args);
                     }
+                    if let Some(key) = kernel_home_key(keys, base) {
+                        return Ty::App(Name::new(&key), args);
+                    }
+                    return Ty::App(Name::new(base), args);
                 }
-                if let Some(tr) = type_refs.get(full).or_else(|| type_refs.get(base)) {
+                // An unqualified name resolves through HIR's scope (own
+                // declarations and `exposing`-imports are registered bare). A
+                // hit that lands on a DECLARED alias or union is rewritten to
+                // that declaration's defining-module key; anything else stays
+                // bare.
+                if let Some(tr) = type_refs.get(full) {
                     if let Some(loc) = db.def_loc(tr.con) {
                         // Check the SENTINEL before touching `module_name`: builtins
                         // and kernel-implicit types are interned into
@@ -2422,12 +2615,16 @@ fn rewrite_alias_refs(
                 Ty::App(Name::new(base), args)
             }
             Ty::Fun(a, b) => Ty::Fun(
-                Box::new(rewrite_alias_refs(db, type_refs, qualifiers, keys, a)),
-                Box::new(rewrite_alias_refs(db, type_refs, qualifiers, keys, b)),
+                Box::new(rewrite_alias_refs(
+                    db, type_refs, unresolved, qualifiers, keys, a,
+                )),
+                Box::new(rewrite_alias_refs(
+                    db, type_refs, unresolved, qualifiers, keys, b,
+                )),
             ),
             Ty::Tuple(xs) => Ty::Tuple(
                 xs.iter()
-                    .map(|x| rewrite_alias_refs(db, type_refs, qualifiers, keys, x))
+                    .map(|x| rewrite_alias_refs(db, type_refs, unresolved, qualifiers, keys, x))
                     .collect(),
             ),
             Ty::Record(fs, ext) => Ty::Record(
@@ -2435,7 +2632,7 @@ fn rewrite_alias_refs(
                     .map(|(n, ft)| {
                         (
                             n.clone(),
-                            rewrite_alias_refs(db, type_refs, qualifiers, keys, ft),
+                            rewrite_alias_refs(db, type_refs, unresolved, qualifiers, keys, ft),
                         )
                     })
                     .collect(),
