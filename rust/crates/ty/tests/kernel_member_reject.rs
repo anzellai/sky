@@ -557,3 +557,21 @@ fn a_kernel_implicit_record_under_a_stdlib_qualifier_is_its_one_alias() {
     let errs = errors_with(&[], &main);
     assert!(errs.is_empty(), "{errs:?}");
 }
+
+/// The rule above holds only where the qualifier's module itself names the
+/// bare type: the HTTP client `Sky.Core.Http` never names `Request`, so
+/// `Http.Request` keeps its v0.32.1 meaning and reading a server field of it
+/// stays an error.
+#[test]
+fn a_kernel_implicit_name_under_a_module_that_never_names_it_is_unchanged() {
+    let main = format!(
+        "{NO_IMPORT_HEAD}import Sky.Core.Http as Http\n\n\
+         path : Http.Request -> String\npath r =\n    r.path\n\n\
+         main =\n    println \"ok\"\n"
+    );
+    let errs = errors_with(&[], &main);
+    assert!(
+        !errs.is_empty(),
+        "`Http.Request` is not the server request record"
+    );
+}

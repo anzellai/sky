@@ -20,8 +20,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   under `import Std.App as App`) became an opaque kernel type, so a hook such
   as `admit : App.Request -> Model -> ( Model, Cmd Msg )` passed to
   `App.withRequest` failed with `type mismatch: record vs Request`, and
-  `req.query` failed too. Such a name is now the one stdlib type alias of
-  that name (`Sky.Http.Server.Request`, also `Response`), as in v0.32.0.
+  `req.query` failed too. When the qualifier's module itself names the type
+  in its own signatures (`Std.App` names `Request`), such a name is now the
+  one stdlib type alias of that name (`Sky.Http.Server.Request`; the same
+  for `Response` and `Handler`), the type `withRequest` takes. Under a module
+  that never names it (`Http.Request` under `import Sky.Core.Http as Http`)
+  nothing changes.
 
 - **A Sky.Spa app whose codecs live in a sibling module builds again.** When
   `Shared` copied a sibling's codec (`sessionCodec : Codec Session`, in a
