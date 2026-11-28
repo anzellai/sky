@@ -5122,12 +5122,19 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         )?;
         // A copied declaration that names a type of a module `Shared` cannot
         // import copies that module's type too (it is a wire type as well).
+        // Copied VALUES count as well as copied types: a sibling's
+        // `sessionCodec : Codec Session` names `Types.Session`, and the
+        // rewrite below names a type of a copied module bare, so `Shared`
+        // must declare it. (Before v0.32.2 only the copied types were read,
+        // and such a name resolved by the program-wide alias table, or, for a
+        // kernel type name such as `Session`, as the kernel type.)
         loop {
             let mut grew = false;
             for m in copy_mods.clone() {
-                let types = copy_types_of(m, &seed_ty, &seed_keys, &copied_values_by_mod);
+                let mut names = copy_types_of(m, &seed_ty, &seed_keys, &copied_values_by_mod);
+                names.extend(copied_values_by_mod.get(&m).cloned().unwrap_or_default());
                 let mtext = db.module_parse(m).syntax().text().to_string();
-                for (_, _, _, owner, tname) in type_occs_in(&db, m, &mtext, &decl_ranges(m, &types))
+                for (_, _, _, owner, tname) in type_occs_in(&db, m, &mtext, &decl_ranges(m, &names))
                 {
                     if !project_mods.contains(&owner) || owner == entry {
                         continue;

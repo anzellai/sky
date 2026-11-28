@@ -11,6 +11,22 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.32.2 — a Sky.Spa split copies every type its copied codecs name (2026-11-28)
+
+### Fixed
+
+- **A Sky.Spa app whose codecs live in a sibling module builds again.** When
+  `Shared` copied a sibling's codec (`sessionCodec : Codec Session`, in a
+  module with a server effect) whose type comes from a third module that
+  `Shared` also copies from (the module that holds `Msg`), it wrote the type
+  name bare but did not copy the type. Up to v0.32.0 the bare name resolved
+  through the program-wide alias table. In v0.32.1 a bare kernel type name
+  (`Session`, `Request`, `Store`, `Route` and the others) is the kernel type
+  in every module, so `sky build --target web:app` failed in the generated
+  backend with `type mismatch: Session vs record`, while `sky check` passed.
+  `Shared` now copies each type that a copied codec names, so no generated
+  name depends on that fallback. No change in your code is needed.
+
 ## v0.32.1 — the standard library uses bind lines (2026-11-28)
 
 ### Changed
