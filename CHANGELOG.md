@@ -32,6 +32,18 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- **A type of your module named like a standard library type no longer
+  breaks a value of the stdlib type at run time.** With `type alias Set =
+  { zz : Int }` in a module, `Set.fromList [ 1, 2 ] |> Set.size` passed `sky
+  check` and then failed with `CoerceFailure: expected main.Main_Set_R, got
+  rt.SkySet`: the build read the bare kernel type `Set` as the module's own
+  alias. A bare kernel type (a type a stdlib signature names and no stdlib
+  module declares, such as `Set`) is now the kernel type in the checker and
+  in the build, for a record alias and for a custom type of that name. A test
+  reads the 319 type names of the stdlib signatures, declares each of the 309
+  that a module may declare (the other 10 are prelude names, `[E1004]`),
+  and builds and runs a program that uses a stdlib value of each.
+
 - **`HttpStream.forEachChunk` reads the whole stream.** It could return `Ok`
   after reading only part of a finished stream when the reader started after
   the stream had ended: it now hands out every chunk that arrived before the

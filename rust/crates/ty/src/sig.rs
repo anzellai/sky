@@ -194,6 +194,16 @@ pub struct WorldDecls {
     /// For each non-stdlib module in `alias_definer`: every module it
     /// imports, directly or through its imports ([`import_closure`]).
     alias_definer_imports: HashMap<ModuleId, HashSet<ModuleId>>,
+    /// The kernel types: every bare type name a stdlib signature or type
+    /// declaration uses that no stdlib module declares (`Set`, `Value`,
+    /// `Cmd`), builtins excepted. Such a bare name is the kernel type in every
+    /// module. No alias of a project module answers it
+    /// ([`WorldDecls::protect_set`], [`WorldDecls::expand_ty`]), and the
+    /// lowering never reads it as a project type (`World::is_kernel_type`).
+    kernel_types: HashSet<String>,
+    /// [`WorldDecls::protect_set`] of each module, by module name, for the
+    /// lowering's [`WorldDecls::expand_ty_in_module`].
+    protect_by_mod: HashMap<String, HashSet<String>>,
     /// MODULE-QUALIFIED alias table, keyed by `"<defining-module>.<name>"`.
     /// This is the #164 fix: same-named aliases in different modules are
     /// distinct keys. The type-checker's signature path resolves each type
@@ -935,6 +945,7 @@ impl World {
                 }
             }
         }
+        world.kernel_types = kernel_type_names(db);
         // The import closure of each module that wrote a bare alias entry, for
         // `protect_set`: a module that imports `m` is downstream of `m`, and
         // its alias never answers a bare name in `m`'s signatures.
@@ -971,6 +982,7 @@ impl World {
             // Passed to `expand` so the bare `aliases` fallback can't rewrite a
             // union `Model` into a foreign same-named alias (#164 follow-up).
             let protect = world.protect_set(db, m);
+            world.protect_by_mod.insert(mname.clone(), protect.clone());
             let tree = db.module_parse(m).tree();
             for decl in tree.decls() {
                 match &decl {
@@ -1882,9 +1894,21 @@ impl World {
         // Lowering path: field types arrive as BARE names (`collect_types` uses
         // `ast_type_to_ty_qualified`, not `resolve_type_names`), so the bare
         // first-writer-wins `aliases` fallback IS needed to expand e.g. a bare
-        // `Point` field to its tuple. No union-protection here — behaviour is
-        // byte-identical to before the #164-follow-up fix.
-        self.expand(ty, 0, &HashSet::new(), None)
+        // `Point` field to its tuple. A bare KERNEL type (`Set`) is never
+        // expanded through it: no project alias of that name answers it.
+        self.expand(ty, 0, &self.kernel_types, None)
+    }
+
+    /// True when the bare type name `name` is a kernel type
+    /// ([`WorldDecls::kernel_types`]): in every module it is the kernel type,
+    /// never a project type of that name.
+    pub fn is_kernel_type(&self, name: &str) -> bool {
+        self.kernel_types.contains(name)
+    }
+
+    /// Every kernel type name ([`WorldDecls::kernel_types`]).
+    pub fn kernel_types(&self) -> &HashSet<String> {
+        &self.kernel_types
     }
 
     /// The bare names a type written in module `m` must not expand through
@@ -1900,6 +1924,7 @@ impl World {
     /// (`Store.insightsSummary : () -> InsightsSummary`) still resolves.
     fn protect_set(&self, db: &dyn SkyDb, m: ModuleId) -> HashSet<String> {
         let mut out = union_names_in_module(db, m);
+        out.extend(self.kernel_types.iter().cloned());
         let m_std = hir::is_stdlib_module_name(db.module_name(m));
         for (name, definer) in &self.alias_definer {
             if *definer == m {
@@ -1928,7 +1953,11 @@ impl World {
     /// so `{cur_mod}.{name}` first is the correct resolution; the bare fallback
     /// still covers an imported-unqualified alias (`Store.x : () -> InsightsSummary`).
     pub fn expand_ty_in_module(&self, ty: &Ty, cur_mod: &str) -> Ty {
-        self.expand(ty, 0, &HashSet::new(), Some(cur_mod))
+        let protect = self
+            .protect_by_mod
+            .get(cur_mod)
+            .unwrap_or(&self.kernel_types);
+        self.expand(ty, 0, protect, Some(cur_mod))
     }
 
     /// Expand a type transparently through the alias table (record/function
@@ -2291,6 +2320,73 @@ fn topo_order(
 /// final segment (name-based nominal equality — accept-parity honesty note).
 pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
     ast_type_to_ty_impl(t, false)
+}
+
+/// The kernel types ([`WorldDecls::kernel_types`]): the bare type names of
+/// stdlib signatures and type declarations that no stdlib module declares.
+fn kernel_type_names(db: &dyn SkyDb) -> HashSet<String> {
+    fn walk(t: &Ty, out: &mut HashSet<String>) {
+        match t {
+            Ty::App(n, args) => {
+                if !n.as_str().contains('.') {
+                    out.insert(n.as_str().to_string());
+                }
+                for a in args {
+                    walk(a, out);
+                }
+            }
+            Ty::Fun(a, b) => {
+                walk(a, out);
+                walk(b, out);
+            }
+            Ty::Tuple(xs) => xs.iter().for_each(|x| walk(x, out)),
+            Ty::Record(fs, _) => fs.iter().for_each(|(_, x)| walk(x, out)),
+            _ => {}
+        }
+    }
+    let mut used = HashSet::new();
+    let mut declared = HashSet::new();
+    for m in db.module_ids() {
+        let mname = db.module_name(m);
+        if !hir::is_stdlib_module_name(mname) {
+            continue;
+        }
+        let tree = db.module_parse(m).tree();
+        for decl in tree.decls() {
+            match &decl {
+                ast::Decl::TypeAnno(a) => {
+                    if let Some(t) = a.ty() {
+                        walk(&ast_type_to_ty(&t), &mut used);
+                    }
+                }
+                ast::Decl::Alias(a) => {
+                    if let Some(n) = a.name() {
+                        declared.insert(n.text().to_string());
+                    }
+                    if let Some(t) = a.ty() {
+                        walk(&ast_type_to_ty(&t), &mut used);
+                    }
+                }
+                ast::Decl::Union(u) => {
+                    if let Some(n) = u.name() {
+                        declared.insert(n.text().to_string());
+                    }
+                    for v in u.variants() {
+                        for t in variant_arg_types_qualified(v.syntax()) {
+                            walk(&t, &mut used);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    used.retain(|n| {
+        !declared.contains(n)
+            && !hir::BUILTIN_TYPES.iter().any(|(b, _)| b == n)
+            && n.starts_with(|c: char| c.is_ascii_uppercase())
+    });
+    used
 }
 
 /// Every module `m` imports, directly or through the imports of the modules

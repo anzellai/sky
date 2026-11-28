@@ -588,6 +588,7 @@ fn lower_program_impl(
         carrier_scope: Some(carrier_scope),
         model,
         goty_cache: Default::default(),
+        kernel_types: signature_world.kernel_types().clone(),
     };
 
     // Type names declared in MORE THAN ONE module (`Msg`/`Model`/`Page` in a
