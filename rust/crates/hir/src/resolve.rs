@@ -4250,6 +4250,24 @@ impl<'a> Resolver<'a> {
         found
     }
 
+    /// The tail of the `[E1001] `Q` has no member `name`` message for a bare
+    /// kernel qualifier. When another stdlib module written `Q` exports
+    /// `name` (`Time.zones`: `Std.Time`, while the import-free `Time` is
+    /// `Sky.Core.Time`), name the import that binds it. The bare qualifier
+    /// never silently picks that module. Otherwise the closest member, if any.
+    fn unknown_member_hint(&self, qual: &str, name: &str, closest: Option<String>) -> String {
+        // The home itself never matches: a home export resolves before this
+        // (`Resolver::implicit_home_exports`).
+        let import =
+            self.missing_import_hint(qual, |e| e.value(name).is_some() || e.ctor(name).is_some());
+        match import {
+            Some(module) => format!(". `{name}` is in `{module}`: add `import {module} as {qual}`"),
+            None => closest
+                .map(|m| format!(" (did you mean `{qual}.{m}`?)"))
+                .unwrap_or_default(),
+        }
+    }
+
     fn did_you_mean(&self, qual: &str) -> Option<String> {
         let mut best: Option<(usize, String)> = None;
         let candidates = self
@@ -4344,9 +4362,7 @@ impl<'a> Resolver<'a> {
             if self.quiet == 0 {
                 let members = known.unwrap_or_default();
                 let refs: Vec<&str> = members.iter().map(|s| s.as_str()).collect();
-                let hint = Self::closest_member(name, &refs)
-                    .map(|m| format!(" (did you mean `{qual}.{m}`?)"))
-                    .unwrap_or_default();
+                let hint = self.unknown_member_hint(qual, name, Self::closest_member(name, &refs));
                 let mut diag =
                     Diagnostic::error("E1001", format!("`{qual}` has no member `{name}`{hint}"));
                 if let Some(sp) = span {
@@ -4367,9 +4383,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
         if self.quiet == 0 {
-            let hint = Self::closest_member(name, funcs)
-                .map(|m| format!(" (did you mean `{qual}.{m}`?)"))
-                .unwrap_or_default();
+            let hint = self.unknown_member_hint(qual, name, Self::closest_member(name, funcs));
             let mut diag =
                 Diagnostic::error("E1001", format!("`{qual}` has no member `{name}`{hint}"));
             if let Some(sp) = span {

@@ -52,11 +52,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   import.** A module that used the `Task` qualifier with no `import
   Sky.Core.Task` got `[E1001] Undefined name` for these v0.32.0 helpers,
   because a bare kernel qualifier reached only the kernel members. A bare
-  qualifier now also reaches every export of its standard library module, so
-  the other pure-Sky members (`Task.linearBackoff`, `Task.Loop`,
-  `Maybe.isJust`, `String.containsIn`, `Http.defaultRequest`,
-  `Process.command`, `Sub.everyWithTime` and more) need no import either. An
-  import that binds the qualifier still wins.
+  qualifier now also reaches every export of its own home module (`Task` is
+  `Sky.Core.Task`, `Time` is `Sky.Core.Time`), so the other pure-Sky members
+  (`Task.linearBackoff`, `Task.Loop`, `Maybe.isJust`, `String.containsIn`,
+  `Http.defaultRequest`, `Process.command`, `Sub.everyWithTime` and more) need
+  no import either. An import that binds the qualifier still wins. A name that
+  only another standard library module with the same last segment exports is
+  still `[E1001]`, and the message names the import: `Time.zones` says
+  `` `zones` is in `Std.Time`: add `import Std.Time as Time` ``.
 
 ### Migration
 

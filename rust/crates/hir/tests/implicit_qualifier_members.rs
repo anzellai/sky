@@ -328,3 +328,73 @@ fn an_unknown_member_is_still_undefined() {
         r.class_a
     );
 }
+
+/// The E1001 messages of `Main` (one source line, no imports).
+fn e1001_messages(main: &str) -> Vec<String> {
+    let (mut db, next) = stdlib_db();
+    db.add_module("Main", syntax::parse(main, FileId(next)));
+    let r = hir::resolve(&db, db.module_by_name("Main").unwrap());
+    r.diagnostics
+        .iter()
+        .filter(|d| d.code.0 == "E1001")
+        .map(|d| d.message.clone())
+        .collect()
+}
+
+/// `Time` with no import is `Sky.Core.Time`. `Time.zones` is an export of
+/// `Std.Time`, the other stdlib module written `Time`. The bare qualifier does
+/// not silently pick `Std.Time`, so it stays `[E1001]`, and the message names
+/// the import that binds it.
+#[test]
+fn a_member_of_the_other_time_module_gets_an_import_hint() {
+    for member in ["zones", "toParts", "fromParts"] {
+        let msgs = e1001_messages(&format!(
+            "module Main exposing (main)\n\nmain =\n    Time.{member}\n"
+        ));
+        let want = format!("`{member}` is in `Std.Time`: add `import Std.Time as Time`");
+        assert!(
+            msgs.iter().any(|m| m.contains(&want)),
+            "`Time.{member}` must be E1001 with the hint {want:?}: {msgs:?}"
+        );
+    }
+}
+
+/// A member that neither `Sky.Core.Time` nor `Std.Time` exports gets no import
+/// hint.
+#[test]
+fn a_member_of_no_time_module_gets_no_import_hint() {
+    let msgs = e1001_messages("module Main exposing (main)\n\nmain =\n    Time.noSuchMember\n");
+    assert!(!msgs.is_empty(), "`Time.noSuchMember` must be E1001");
+    assert!(
+        msgs.iter().all(|m| !m.contains("import")),
+        "no import hint expected: {msgs:?}"
+    );
+}
+
+/// Every pair of stdlib modules that share a bare qualifier's name, pinned.
+/// A new pair is a reviewed decision: its members get the import hint above.
+#[test]
+fn the_stdlib_modules_that_share_a_bare_qualifier_are_pinned() {
+    let (db, _) = stdlib_db();
+    let mut got: Vec<(String, String)> = Vec::new();
+    for q in hir::implicit_qualifiers() {
+        let Some(home) = home_of(&db, q) else {
+            continue;
+        };
+        for mid in db.module_ids() {
+            let path = db.module_name(mid).to_string();
+            if path == home || !(path.starts_with("Sky.") || path.starts_with("Std.")) {
+                continue;
+            }
+            let segs: Vec<&str> = path.split('.').collect();
+            let last = segs[segs.len() - 1];
+            let two = (segs.len() >= 3).then(|| format!("{}{}", segs[segs.len() - 2], last));
+            if last == q || two.as_deref() == Some(q) {
+                got.push((q.to_string(), path));
+            }
+        }
+    }
+    got.sort();
+    got.dedup();
+    assert_eq!(got, vec![("Time".to_string(), "Std.Time".to_string())]);
+}
