@@ -2269,6 +2269,14 @@ fn union_names_in_module(db: &dyn SkyDb, m: ModuleId) -> HashSet<String> {
             }
         }
     }
+    // A qualified kernel type (`JsonEnc.Value`) reaches `expand` as its bare
+    // name. It is the kernel type, never a same-named alias of this or another
+    // module (`type alias Value = { n : Int }` captured `JsonEnc.Value`, and
+    // reading `.n` from a JSON value checked clean). This module's own aliases
+    // are written under their module-qualified key, so they still expand.
+    for name in &resolved.kernel_type_refs {
+        out.insert(crate::nominal::base(name).to_string());
+    }
     out
 }
 
@@ -2348,40 +2356,27 @@ fn rewrite_alias_refs(
                         return Ty::App(Name::new(&crate::nominal::go_type(package, base)), args);
                     }
                 }
-                // Resolve through HIR: prefer the exact (possibly qualified) name,
-                // then fall back to the bare base (an `exposing`-imported name is
-                // registered bare). A hit that lands on a DECLARED alias or union is
-                // rewritten to that declaration's defining-module key; anything else
-                // stays bare, exactly as before this fix.
-                // A QUALIFIED reference (`App.Route`) names a type of the
-                // qualifier's module, never a same-named type of this one. When
-                // HIR has no entry for it (the module declares the type but does
-                // not expose it, or it is kernel-implicit), the bare fallback
-                // below must not land on a type of ANOTHER module: a local
-                // `type Route` captured `App.Route` there, so `List (App.Route
-                // Page)` was read as the app's own `Route` (D7). Name the
-                // qualifier's own declaration instead. A bare hit in the
-                // qualifier's module itself, or a builtin, keeps the old path.
-                let qual_dep = full
-                    .rsplit_once('.')
-                    .and_then(|(q, _)| match qualifiers.get(q) {
-                        Some(hir::ImportSource::Dep(dep)) => Some(*dep),
-                        _ => None,
-                    });
-                if let (Some(dep), None) = (qual_dep, type_refs.get(full)) {
-                    let captured = type_refs
-                        .get(base)
-                        .and_then(|tr| db.def_loc(tr.con))
-                        .is_some_and(|l| l.module.index() != u32::MAX && l.module != dep);
-                    if captured {
-                        let key = crate::nominal::qualify(db.module_name(dep), base);
-                        if keys.union.contains(&key) || keys.alias.contains(&key) {
-                            return Ty::App(Name::new(&key), args);
-                        }
-                        return Ty::App(Name::new(base), args);
+                // A QUALIFIED reference (`App.Route`, `JsonEnc.Value`) names
+                // the declaration HIR resolved for it, and nothing else. When
+                // HIR published no declaration (a kernel-backed type such as
+                // `Dict.Dict`, a type a module lists without declaring, or a
+                // kernel-implicit name), it is the kernel type the bare name
+                // denotes. It never falls back to a lookup of the bare name in
+                // this module's scope: that found a same-named type of ANOTHER
+                // module (a local `type Route` captured `App.Route`, D7; a local
+                // `type alias Value` captured `JsonEnc.Value`).
+                if full != base && !type_refs.contains_key(full) {
+                    if let Some(key) = kernel_home_key(keys, base) {
+                        return Ty::App(Name::new(&key), args);
                     }
+                    return Ty::App(Name::new(base), args);
                 }
-                if let Some(tr) = type_refs.get(full).or_else(|| type_refs.get(base)) {
+                // An unqualified name resolves through HIR's scope (own
+                // declarations and `exposing`-imports are registered bare). A
+                // hit that lands on a DECLARED alias or union is rewritten to
+                // that declaration's defining-module key; anything else stays
+                // bare.
+                if let Some(tr) = type_refs.get(full) {
                     if let Some(loc) = db.def_loc(tr.con) {
                         // Check the SENTINEL before touching `module_name`: builtins
                         // and kernel-implicit types are interned into

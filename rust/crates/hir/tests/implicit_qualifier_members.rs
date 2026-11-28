@@ -717,3 +717,132 @@ fn the_tree_has_no_unexported_stdlib_type_reference() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A qualified type under an alias of a USER module must be one the module
+// exports. The kernel-implicit names (`Error`, `Cmd`, `Request`, …) used to be
+// exempt under ANY alias, so `import Lib.Db as L` then `L.Error` was accepted
+// although `Lib.Db` exports no `Error`, and the type checker picked a type of
+// that name by its bare name. Each is now `[E1001]`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The resolve result of `Main` that imports the user module `lib` as `L`.
+fn resolve_user_alias(lib: &str, main_body: &str) -> hir::ResolveResult {
+    let (mut db, next) = stdlib_db();
+    let main = format!("module Main exposing (..)\nimport Lib.Db as L\n\n{main_body}");
+    db.add_module("Lib.Db", syntax::parse(lib, FileId(next)));
+    db.add_module("Main", syntax::parse(&main, FileId(next + 1)));
+    hir::resolve(&db, db.module_by_name("Main").unwrap())
+}
+
+const LIB_CONN: &str = "module Lib.Db exposing (Conn)\n\ntype alias Conn =\n    { n : Int }\n";
+
+#[test]
+fn every_kernel_implicit_type_under_a_user_alias_is_e1001() {
+    assert_eq!(hir::KERNEL_IMPLICIT_TYPES.len(), 15);
+    for name in hir::KERNEL_IMPLICIT_TYPES {
+        let r = resolve_user_alias(LIB_CONN, &format!("f : L.{name} -> Int\nf x =\n    0\n"));
+        let msgs = e1001(&r);
+        assert_eq!(msgs.len(), 1, "`L.{name}`: {msgs:?}");
+        assert!(
+            msgs[0].contains(&format!(
+                "module `Lib.Db` does not export a type `{name}` (`{name}` is a built-in \
+                 type: write `{name}` with no qualifier)"
+            )),
+            "`L.{name}`: {msgs:?}"
+        );
+        assert!(
+            r.unresolved_type_refs.contains(&format!("L.{name}")),
+            "`L.{name}` must be published as unresolved"
+        );
+        assert!(!r.type_refs.contains_key(&format!("L.{name}")));
+    }
+}
+
+#[test]
+fn an_unexported_user_type_gets_a_did_you_mean() {
+    let r = resolve_user_alias(LIB_CONN, "f : L.Con -> Int\nf x =\n    0\n");
+    let msgs = e1001(&r);
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    assert!(msgs[0].contains("(did you mean `L.Conn`?)"), "{msgs:?}");
+}
+
+#[test]
+fn a_stdlib_type_under_a_user_alias_names_its_module() {
+    let r = resolve_user_alias(LIB_CONN, "f : L.Element Int -> Int\nf x =\n    0\n");
+    let msgs = e1001(&r);
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    assert!(
+        msgs[0].contains("(`Element` is a type of `Std.Ui`: import `Std.Ui`)"),
+        "{msgs:?}"
+    );
+}
+
+/// The user module's own exports, and a kernel type it re-exports by listing
+/// it, still resolve with no diagnostic.
+#[test]
+fn exported_and_listed_user_types_still_resolve() {
+    let lib = "module Lib.Db exposing (Conn, Db)\n\
+               import Std.Db exposing (Db)\n\n\
+               type alias Conn =\n    { n : Int }\n";
+    let r = resolve_user_alias(lib, "f : L.Conn -> L.Db -> Int\nf c d =\n    c.n\n");
+    assert!(e1001(&r).is_empty(), "{:?}", e1001(&r));
+    assert!(r.class_a.is_empty(), "{:?}", r.class_a);
+    assert!(r.type_refs.contains_key("L.Conn"));
+}
+
+/// A kernel-implicit type that the imported STDLIB module itself uses with no
+/// declaration stays its kernel type, with no warning (the exemption is real
+/// there).
+#[test]
+fn kernel_implicit_types_a_stdlib_module_uses_stay_valid() {
+    for (import, ty) in [
+        ("import Std.Db as Db", "Db.Db"),
+        ("import Std.Cmd as Cmd", "Cmd.Cmd Int"),
+        ("import Std.Sub as Sub", "Sub.Sub Int"),
+        ("import Sky.Core.Json.Encode as E", "E.Value"),
+        ("import Sky.Core.Json.Decode as D", "D.Decoder Int"),
+    ] {
+        let r = resolve_with_import(import, ty);
+        assert!(e1001(&r).is_empty(), "`{ty}`: {:?}", e1001(&r));
+        assert!(r.type_warnings.is_empty(), "`{ty}`: {:?}", r.type_warnings);
+    }
+}
+
+/// The accepted unexported stdlib type names the ONE stdlib type of that name,
+/// so the type checker never picks a type by its bare name.
+#[test]
+fn an_unexported_stdlib_type_resolves_to_its_one_home() {
+    let (db, r) = {
+        let (mut db, next) = stdlib_db();
+        let main = "module Main exposing (f)\nimport Std.Ui as Ui\n\n\
+                    f : Ui.Html Int -> Int\nf x =\n    0\n";
+        db.add_module("Main", syntax::parse(main, FileId(next)));
+        let r = hir::resolve(&db, db.module_by_name("Main").unwrap());
+        (db, r)
+    };
+    let html = db
+        .module_exports(db.module_by_name("Std.Html").unwrap())
+        .type_("Html")
+        .unwrap()
+        .0;
+    assert_eq!(r.type_refs.get("Ui.Html").map(|t| t.con), Some(html));
+    let r = resolve_with_import("import Std.Ui as Ui", "Ui.NoSuchThing");
+    assert!(r.unresolved_type_refs.contains("Ui.NoSuchThing"));
+}
+
+/// A kernel-implicit name under an import of a stdlib module that does not
+/// export it (`App.Route`, `Codec.Value`) is the kernel type, with no warning,
+/// as in v0.32.0. It is published as a kernel type for the type checker.
+#[test]
+fn a_kernel_implicit_name_under_a_stdlib_import_does_not_warn() {
+    for (import, ty, key) in [
+        ("import Std.App as App", "App.Route Int", "App.Route"),
+        ("import Std.Codec as Codec", "Codec.Value", "Codec.Value"),
+    ] {
+        let r = resolve_with_import(import, ty);
+        assert!(e1001(&r).is_empty(), "`{ty}`: {:?}", e1001(&r));
+        assert!(r.type_warnings.is_empty(), "`{ty}`: {:?}", r.type_warnings);
+        assert!(r.kernel_type_refs.contains(key), "`{ty}`");
+    }
+}

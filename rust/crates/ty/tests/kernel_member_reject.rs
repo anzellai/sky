@@ -326,3 +326,82 @@ fn an_unknown_qualified_type_gives_one_diagnostic() {
         }
     }
 }
+
+/// Errors (code, message) of a `Main` checked with the stdlib and `extra`
+/// project modules.
+fn errors_with(extra: &[(&str, &str)], main_src: &str) -> Vec<(String, String)> {
+    let root = repo_root();
+    let mut db = SourceDb::new();
+    for (n, parse) in &load_stdlib(&root) {
+        db.add_module(n, parse.clone());
+    }
+    let mut ids = Vec::new();
+    for (n, src) in extra {
+        ids.push(db.add_module(n, syntax::parse(src, base::FileId(0))));
+    }
+    ids.push(db.add_module("Main", syntax::parse(main_src, base::FileId(0))));
+    ty::check_modules(&db, &ids)
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == diagnostics::Severity::Error)
+        .map(|d| (d.code.0.clone(), d.message.clone()))
+        .collect()
+}
+
+/// The Judge repro: `Lib.Db` exports only `Conn`, and `Main` names five
+/// kernel-implicit types through its alias. Each is ONE `[E1001]`, with no
+/// second error from a type picked by its bare name.
+#[test]
+fn kernel_implicit_types_under_a_user_alias_are_e1001_with_no_cascade() {
+    let lib = "module Lib.Db exposing (Conn)\n\ntype alias Conn =\n    { n : Int }\n";
+    let main = format!(
+        "{NO_IMPORT_HEAD}import Lib.Db as L\n\n\
+         g : L.Error -> L.Db -> L.Session -> L.Cmd Int -> Int\n\
+         g e d s c =\n    0\n\n\
+         f : L.Request -> Int\nf r =\n    r.method\n\n\
+         main =\n    println \"ok\"\n"
+    );
+    let errs = errors_with(&[("Lib.Db", lib)], &main);
+    assert_eq!(errs.len(), 5, "{errs:?}");
+    for name in ["Error", "Db", "Session", "Cmd", "Request"] {
+        assert!(
+            errs.iter().any(|(c, m)| c == "E1001"
+                && m.contains(&format!("L.{name}"))
+                && m.contains(&format!("does not export a type `{name}`"))),
+            "`L.{name}`: {errs:?}"
+        );
+    }
+}
+
+/// A qualified kernel type never names a same-named local type by its bare
+/// name: with a local `type alias Value = { n : Int }`, `JsonEnc.Value` is the
+/// JSON value, so reading the field `n` from it is a type error.
+#[test]
+fn a_qualified_kernel_type_is_not_captured_by_a_local_type() {
+    let main = format!(
+        "{NO_IMPORT_HEAD}\ntype alias Value =\n    {{ n : Int }}\n\n\
+         f : JsonEnc.Value -> Int\nf v =\n    v.n\n\n\
+         main =\n    println (String.fromInt 1)\n"
+    );
+    let errs = errors_with(&[], &main);
+    assert!(
+        errs.iter().any(|(c, _)| c == "E2001"),
+        "`JsonEnc.Value` must not be the local record: {errs:?}"
+    );
+}
+
+/// The accepted unexported stdlib type (`Ui.Html`, a warning) is `Std.Html`'s
+/// `Html`, not a same-named local type.
+#[test]
+fn an_unexported_stdlib_type_is_its_one_home_not_a_local_type() {
+    let main = format!(
+        "{NO_IMPORT_HEAD}import Std.Ui as Ui\n\ntype alias Html a =\n    {{ n : a }}\n\n\
+         f : Ui.Html Int -> Int\nf h =\n    h.n\n\n\
+         main =\n    println (String.fromInt 1)\n"
+    );
+    let errs = errors_with(&[], &main);
+    assert!(
+        errs.iter().any(|(c, _)| c == "E2001"),
+        "`Ui.Html` must be Std.Html's Html: {errs:?}"
+    );
+}

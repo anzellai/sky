@@ -77,6 +77,27 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Std.Time`: add `import Std.Time as Time` ``, and `Time.Parts` says the
   same for `Parts`.
 
+- **A type behind the alias of your own module must be one it exports.**
+  Under `import Lib.Db as L`, the built-in type names (`Error`, `Cmd`, `Sub`,
+  `Db`, `Session`, `Request`, `Response`, `Decoder`, `Value` and the others of
+  `hir::KERNEL_IMPLICIT_TYPES`) were accepted as `L.Error` and so on, also when
+  `Lib.Db` exported no such type, and the type checker then picked a type of
+  that name by its bare name. Each is now `[E1001]`, which says to write the
+  built-in name with no qualifier. Another unexported name gets a did-you-mean
+  among the module's types, or names the one stdlib module that exports it. A
+  type the module lists in its `exposing` clause stays valid. Under an import
+  of a standard library module the built-in names stay valid, as before
+  (`Db.Db` under `import Std.Db as Db`, `App.Route`).
+
+- **A qualified type is the type the resolver named, never a type found by its
+  bare name.** The type checker read a qualified type that the resolver left
+  without a declaration by its bare name, so `JsonEnc.Value` was the module's
+  own `type alias Value = { n : Int }` and `v.n` on a JSON value checked
+  clean. A qualified kernel type is now always the kernel type. A type that an
+  imported stdlib module does not export (the v0.32.1 warning) is the one
+  stdlib type of that name when exactly one module exports it, and is not
+  checked against any type otherwise.
+
 ### Migration
 
 - After upgrading to v0.32.x, run `sky fmt` once on a project whose CI runs
@@ -84,6 +105,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   keeps only a declaration whose comment it cannot place, where v0.31 left the
   whole file unformatted, so `--check` reports files that used to pass. See
   `docs/migration/v0.32.md`.
+- Four type references that compiled on v0.32.0 now stop the build, each with
+  the fix in the message: a type with a bare qualifier that only another
+  stdlib module has (`Time.Parts` with no import: add `import Std.Time as
+  Time`), an unknown type behind a bare qualifier (`Dict.Dictionary`), a type
+  behind the alias of your own module that the module does not export
+  (`L.Error`: write `Error`), all `[E1001]`, and a qualified kernel type read
+  as your own type of the same name (`[E2001]`). See the entries marked
+  "(v0.32.1)" in `docs/migration/v0.32.md`.
 
 ## v0.32.0 — bind lines in let blocks (2026-11-27)
 
