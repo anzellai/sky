@@ -186,6 +186,14 @@ pub struct WorldDecls {
     /// module poison a stdlib signature's un-imported bare-name reference (the
     /// entry-passes / dependency-fails divergence — see `extend_decls` pass 1a).
     aliases: HashMap<String, AliasDef>,
+    /// The module whose declaration each `aliases` entry holds (the first
+    /// writer). A signature of module `m` may expand a bare name through
+    /// `aliases` only when that module is not downstream of `m`
+    /// ([`WorldDecls::protect_set`]).
+    alias_definer: HashMap<String, ModuleId>,
+    /// For each non-stdlib module in `alias_definer`: every module it
+    /// imports, directly or through its imports ([`import_closure`]).
+    alias_definer_imports: HashMap<ModuleId, HashSet<ModuleId>>,
     /// MODULE-QUALIFIED alias table, keyed by `"<defining-module>.<name>"`.
     /// This is the #164 fix: same-named aliases in different modules are
     /// distinct keys. The type-checker's signature path resolves each type
@@ -912,6 +920,9 @@ impl World {
                         // (`fallback_reason` → `BareAliasCollision`) and rebuilds,
                         // so it never depends on the overwrite either.)
                         let body_bare = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
+                        if !world.aliases.contains_key(&name) {
+                            world.alias_definer.insert(name.clone(), m);
+                        }
                         world.aliases.entry(name.clone()).or_insert(AliasDef {
                             params: params.clone(),
                             body: body_bare,
@@ -922,6 +933,18 @@ impl World {
                         }
                     }
                 }
+            }
+        }
+        // The import closure of each module that wrote a bare alias entry, for
+        // `protect_set`: a module that imports `m` is downstream of `m`, and
+        // its alias never answers a bare name in `m`'s signatures.
+        let definers: Vec<ModuleId> = world.alias_definer.values().copied().collect();
+        for d in definers {
+            if !hir::is_stdlib_module_name(db.module_name(d))
+                && !world.alias_definer_imports.contains_key(&d)
+            {
+                let closure = import_closure(db, d);
+                world.alias_definer_imports.insert(d, closure);
             }
         }
         // ---- pass 1b: resolve each alias body against its OWN module and the
@@ -947,7 +970,7 @@ impl World {
             // Names this module sees as UNIONS (own decls + `exposing`-imported).
             // Passed to `expand` so the bare `aliases` fallback can't rewrite a
             // union `Model` into a foreign same-named alias (#164 follow-up).
-            let protect = union_names_in_module(db, m);
+            let protect = world.protect_set(db, m);
             let tree = db.module_parse(m).tree();
             for decl in tree.decls() {
                 match &decl {
@@ -1316,7 +1339,7 @@ impl World {
             .descendants()
             .filter(|n| n.text_range() == range)
             .find_map(ast::Type::cast)?;
-        let protect = union_names_in_module(db, m);
+        let protect = self.protect_set(db, m);
         let raw = resolve_type_names(db, m, &t, self.type_keys());
         Some(self.expand(&raw, 0, &protect, None))
     }
@@ -1864,6 +1887,35 @@ impl World {
         self.expand(ty, 0, &HashSet::new(), None)
     }
 
+    /// The bare names a type written in module `m` must not expand through
+    /// the program-wide bare `aliases` table: the names `m` sees as unions or
+    /// as qualified kernel types ([`union_names_in_module`]), and every bare
+    /// alias whose module is downstream of `m`. A bare name in a signature is
+    /// resolved where the signature is written: `int : Int -> Value` in
+    /// `Sky.Core.Json.Encode` is the kernel JSON `Value`, never the
+    /// `type alias Value = { n : Int }` of a module that imports it. A stdlib
+    /// signature takes a bare alias of the stdlib only. A signature of another
+    /// module takes any alias except one of a module that imports it, directly
+    /// or through its imports: the un-imported alias of an unrelated module
+    /// (`Store.insightsSummary : () -> InsightsSummary`) still resolves.
+    fn protect_set(&self, db: &dyn SkyDb, m: ModuleId) -> HashSet<String> {
+        let mut out = union_names_in_module(db, m);
+        let m_std = hir::is_stdlib_module_name(db.module_name(m));
+        for (name, definer) in &self.alias_definer {
+            if *definer == m {
+                continue;
+            }
+            let Some(imports) = self.alias_definer_imports.get(definer) else {
+                // a stdlib module: in every module's scope
+                continue;
+            };
+            if m_std || imports.contains(&m) {
+                out.insert(name.clone());
+            }
+        }
+        out
+    }
+
     /// Module-aware `expand_ty` for the lowering DECL path. A bare field-type
     /// name is first resolved against the DECLARING module's own alias
     /// (`alias_by_mod["{cur_mod}.{name}"]`) before the bare first-writer-wins
@@ -2241,6 +2293,27 @@ pub fn ast_type_to_ty(t: &ast::Type) -> Ty {
     ast_type_to_ty_impl(t, false)
 }
 
+/// Every module `m` imports, directly or through the imports of the modules
+/// it imports (Sky-source modules only; kernel and Go imports have no alias).
+fn import_closure(db: &dyn SkyDb, m: ModuleId) -> HashSet<ModuleId> {
+    let mut seen: HashSet<ModuleId> = HashSet::new();
+    let mut work = vec![m];
+    while let Some(cur) = work.pop() {
+        let tree = db.module_parse(cur).tree();
+        for imp in tree.imports() {
+            let Some(path) = imp.name().map(|n| n.text()) else {
+                continue;
+            };
+            if let hir::ImportSource::Dep(dep) = db.classify_import(&path) {
+                if seen.insert(dep) {
+                    work.push(dep);
+                }
+            }
+        }
+    }
+    seen
+}
+
 /// Convert an annotation to a `Ty`, resolving every type reference that names an
 /// ALIAS to its module-qualified key (`"<defining-module>.<name>"`) via HIR.
 /// Non-alias references (unions, kernel types, type variables) and references
@@ -2366,6 +2439,25 @@ fn rewrite_alias_refs(
                 // module (a local `type Route` captured `App.Route`, D7; a local
                 // `type alias Value` captured `JsonEnc.Value`).
                 if full != base && !type_refs.contains_key(full) {
+                    // The qualifier's own module declares the type without
+                    // exporting it (`type Route page` in `Std.App`, reached as
+                    // `App.Route`): it is that declaration. The kernel-implicit
+                    // home of the bare name is another module's type
+                    // (`Std.Live.Route`), and taking it lowered `App.withRoutes`
+                    // with the wrong route type (GET / answered 500).
+                    let own = full
+                        .rsplit_once('.')
+                        .and_then(|(q, _)| match qualifiers.get(q) {
+                            Some(hir::ImportSource::Dep(dep)) => {
+                                let key = crate::nominal::qualify(db.module_name(*dep), base);
+                                (keys.union.contains(&key) || keys.alias.contains(&key))
+                                    .then_some(key)
+                            }
+                            _ => None,
+                        });
+                    if let Some(key) = own {
+                        return Ty::App(Name::new(&key), args);
+                    }
                     if let Some(key) = kernel_home_key(keys, base) {
                         return Ty::App(Name::new(&key), args);
                     }

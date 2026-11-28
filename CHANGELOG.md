@@ -96,7 +96,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   clean. A qualified kernel type is now always the kernel type. A type that an
   imported stdlib module does not export (the v0.32.1 warning) is the one
   stdlib type of that name when exactly one module exports it, and is not
-  checked against any type otherwise.
+  checked against any type otherwise. A bare type name in a signature is read
+  where the signature is written: `JsonEnc.int : Int -> Value` gives the JSON
+  `Value`, never a `type alias Value` of the module that calls it, or of a
+  module that module imports. A stdlib signature sees only the stdlib, and a
+  signature of your own module sees the modules it imports.
 
 ### Migration
 

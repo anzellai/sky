@@ -10,7 +10,7 @@
 //! `hir::kernel::KERNEL_FUNCTIONS[Mod]` (a proven superset of the runtime, per
 //! the `xtask kernel-members` gate) and emits `[E1001]` at NAME RESOLUTION.
 
-use hir::SourceDb;
+use hir::{SkyDb, SourceDb};
 use std::path::{Path, PathBuf};
 
 fn repo_root() -> PathBuf {
@@ -403,5 +403,140 @@ fn an_unexported_stdlib_type_is_its_one_home_not_a_local_type() {
     assert!(
         errs.iter().any(|(c, _)| c == "E2001"),
         "`Ui.Html` must be Std.Html's Html: {errs:?}"
+    );
+}
+
+/// The Judge repros `cap3` / `cap4`: a module's own `type alias Value` does not
+/// capture the BARE `Value` of the stdlib signatures (`JsonEnc.int : Int ->
+/// Value`). A signature resolves its bare names where it is written.
+#[test]
+fn a_local_alias_does_not_capture_a_stdlib_signature() {
+    let head = "module Main exposing (main)\n\n\
+                import Sky.Core.Json.Encode as JsonEnc\n\
+                import Std.Log exposing (println)\n\n\
+                type alias Value =\n    { n : Int }\n\n";
+    let cap3 = format!(
+        "{head}e : JsonEnc.Value -> String\ne v =\n    JsonEnc.encode 0 v\n\n\
+         main =\n    println (e (JsonEnc.int 1))\n"
+    );
+    assert_eq!(errors_with(&[], &cap3), vec![], "cap3");
+    let cap4 = format!(
+        "{head}k : Value -> Int\nk v =\n    v.n\n\n\
+         e : JsonEnc.Value -> String\ne v =\n    JsonEnc.encode 0 v\n\n\
+         main =\n    println (e (JsonEnc.int (k {{ n = 1 }})))\n"
+    );
+    assert_eq!(errors_with(&[], &cap4), vec![], "cap4");
+}
+
+/// The probe for each stdlib type name: an expression whose type comes only
+/// from stdlib signatures, read as the record `{ n : Int }`. It must be an
+/// error whether the same-named record alias is in `Main` or in a user
+/// module `Main` imports (before the fix the alias captured the signature and
+/// `.n` checked clean).
+const CAPTURE_PROBES: &[(&str, &str)] = &[
+    ("Value", "(JsonEnc.int 1).n"),
+    ("Decoder", "JsonDec.int.n"),
+    ("Response", "(Server.text \"x\").n"),
+    ("Html", "(Html.text \"x\").n"),
+    ("Element", "(Ui.text \"x\").n"),
+    (
+        "Error",
+        "(case JsonDec.decodeString JsonDec.int \"1\" of\n            Ok _ ->\n                0\n\n            Err e ->\n                e.n\n        )",
+    ),
+];
+
+fn probe_main(alias_here: Option<&str>, import_lib: bool, probe: &str) -> String {
+    let mut s = String::from(
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Json.Encode as JsonEnc\n\
+         import Sky.Core.Json.Decode as JsonDec\n\
+         import Sky.Http.Server as Server\n\
+         import Std.Html as Html\n\
+         import Std.Ui as Ui\n\
+         import Std.Log exposing (println)\n",
+    );
+    if import_lib {
+        s.push_str("import Lib\n");
+    }
+    if let Some(n) = alias_here {
+        s.push_str(&format!("\n\ntype alias {n} =\n    {{ n : Int }}\n"));
+    }
+    s.push_str(&format!(
+        "\n\nprobe : Int\nprobe =\n    {probe}\n\n\nmain =\n    println (String.fromInt probe)\n"
+    ));
+    s
+}
+
+#[test]
+fn a_user_alias_named_like_a_stdlib_type_never_captures_a_stdlib_signature() {
+    for (name, probe) in CAPTURE_PROBES {
+        let here = errors_with(&[], &probe_main(Some(name), false, probe));
+        assert!(
+            here.iter().any(|(c, _)| c == "E2001"),
+            "alias `{name}` in Main captured a stdlib signature: {here:?}"
+        );
+        let lib = format!(
+            "module Lib exposing ({name}, one)\n\n\ntype alias {name} =\n    {{ n : Int }}\n\n\n\
+             one : {name}\none =\n    {{ n = 1 }}\n"
+        );
+        let there = errors_with(&[("Lib", &lib)], &probe_main(None, true, probe));
+        assert!(
+            there.iter().any(|(c, _)| c == "E2001"),
+            "alias `{name}` in an imported module captured a stdlib signature: {there:?}"
+        );
+    }
+}
+
+/// A user alias named like a stdlib type, used with the stdlib functions of
+/// that type, checks clean (the cap3 shape for every name).
+#[test]
+fn stdlib_calls_check_clean_beside_a_same_named_user_alias() {
+    for name in [
+        "Value", "Decoder", "Request", "Response", "Html", "Element", "Model",
+    ] {
+        let probe = "String.length (JsonEnc.encode 0 (JsonEnc.int 1))\n        \
+                     + (Result.withDefault 0 (JsonDec.decodeString JsonDec.int \"1\"))";
+        let errs = errors_with(&[], &probe_main(Some(name), false, probe));
+        assert_eq!(errs, vec![], "alias `{name}`");
+    }
+}
+
+/// D7 at unit level (the `spa-route-module` fixture served 500): `App.Route`
+/// names the `type Route page` that `Std.App` declares without exporting,
+/// never the module's own `type Route`. A route value is not a page.
+#[test]
+fn an_unexported_stdlib_type_is_its_qualifiers_own_declaration() {
+    let head = "module Main exposing (main)\n\n\
+                import Std.App as App\n\
+                import Std.Log exposing (println)\n\n\n\
+                type Route\n    = Home\n    | Away\n\n\n";
+    let ok = format!(
+        "{head}routes : List (App.Route Route)\nroutes =\n    [ App.route \"/\" Home ]\n\n\n\
+         main =\n    println \"ok\"\n"
+    );
+    assert_eq!(errors_with(&[], &ok), vec![], "the route table checks");
+    // The scheme of `routes` names Std.App's declaration: the lowering reads
+    // it to type the route table.
+    let root = repo_root();
+    let mut db = SourceDb::new();
+    for (n, parse) in &load_stdlib(&root) {
+        db.add_module(n, parse.clone());
+    }
+    let m = db.add_module("Main", syntax::parse(&ok, base::FileId(0)));
+    let world = ty::World::build(&db);
+    let def = db
+        .resolve(m)
+        .top_defs
+        .iter()
+        .find(|td| td.name.as_str() == "routes")
+        .map(|td| td.def)
+        .expect("routes is defined");
+    let shown = format!(
+        "{:?}",
+        world.value_sigs.get(&def).expect("routes has a scheme")
+    );
+    assert!(
+        shown.contains("Std.App.Route"),
+        "`App.Route` is Std.App's Route: {shown}"
     );
 }
