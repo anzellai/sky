@@ -406,7 +406,10 @@ fn a_moved_union_imported_by_name_or_qualified_points_at_shared() {
         "{head}{DATA_NOTE}\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto {{ userId = (if Types.Admin == Guest then \"x\" else \"\"), email = \"\" }}\n"
     );
     let shared = split_and_check("moved-named", SESSION_TYPES, &data, &[]);
-    assert!(shared.contains("type Role"), "the union is copied:\n{shared}");
+    assert!(
+        shared.contains("type Role"),
+        "the union is copied:\n{shared}"
+    );
 }
 
 /// A wire union with its own codec (`roleCodec : Codec Role`) moves to
@@ -457,6 +460,11 @@ fn a_wire_union_with_its_own_codec_points_its_importers_at_shared() {
     let out = dir.join("generated");
     spa_split::generate(&root(), &dir, None, &out, None, None)
         .unwrap_or_else(|e| panic!("the app must split: {e}"));
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    assert!(
+        shared.contains("type Role") && shared.contains("roleCodec"),
+        "the wire union and its codec move to Shared:\n{shared}"
+    );
     for half in ["backend", "frontend"] {
         let errors = front_half_errors(&root(), &out.join(half), None);
         assert!(

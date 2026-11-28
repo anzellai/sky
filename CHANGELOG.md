@@ -38,6 +38,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   in the generated `Shared`, because the rewrite replaced the space before the
   name too. It now writes `Codec.auto SpaTy_Helpers_.blankSession`.
 
+- **A union that moves into `Shared` is found there by every module.** A
+  module that imported such a union from its own module by name
+  (`import Types exposing (Session, Role(..))`) or wrote it qualified
+  (`Types.Admin`) kept those references in its generated copy, and the
+  backend failed with `[E1011] module Types does not expose the type Role` or
+  `[E1001] Undefined name: Types.Admin`. Each generated module now takes the
+  union from `Shared`.
+
 ## v0.32.1 — the standard library uses bind lines (2026-11-28)
 
 ### Changed
