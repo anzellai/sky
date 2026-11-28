@@ -47,11 +47,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   union from `Shared`. Text in a string literal or a comment is never
   changed.
 
-- **A client module that names a copied codec through its module reads it
-  from `Shared`.** `Codec.toJson Data.sessionCodec …` in a pure module, where
-  `Data` runs a server effect, failed in the generated client with
-  `[E1001] Undefined name: Data.sessionCodec`, because the client copy of
-  `Data` does not have the codec. It now names `Shared.sessionCodec`.
+- **A client module that names a copied codec through its module finds it.**
+  `Codec.toJson Data.sessionCodec …` (or a bare `sessionCodec` through
+  `import Data exposing (..)`) in a pure module, where `Data` runs a server
+  effect, failed in the generated client with `[E1001] Undefined name`,
+  because the client copy of `Data` dropped the codec. The client copy now
+  keeps `sessionCodec = Shared.sessionCodec`, so every use resolves as in your
+  source, local names that hide it included.
 
 ## v0.32.1 — the standard library uses bind lines (2026-11-28)
 

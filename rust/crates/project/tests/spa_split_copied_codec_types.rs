@@ -682,3 +682,37 @@ fn a_local_name_that_hides_a_copied_value_is_not_rewritten() {
         );
     }
 }
+
+/// The client copy of a copied value's home keeps a forwarder, so a client
+/// module names it through the compiler's own scoping: a record or `as`
+/// pattern that binds the same name keeps its own value, and a reference out
+/// of a binder's scope still finds the copied value.
+#[test]
+fn copied_values_resolve_by_scope_through_their_home_forwarder() {
+    let data = format!(
+        "{}{DATA_NOTE}\n\nblank : Session\nblank =\n    {{ userId = \"z\", email = \"\" }}\n\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto blank\n",
+        DATA_HEAD.replace(
+            "module Data exposing (note, sessionCodec)",
+            "module Data exposing (blank, note, sessionCodec)"
+        )
+    );
+    let bodies = [
+        ("record-pattern", "describe : String -> String\ndescribe r =\n    (\\{ blank } -> blank.userId) { blank = { userId = r, email = \"\" } }\n"),
+        ("as-pattern", "describe : String -> String\ndescribe r =\n    case r of\n        _ as sessionCodec ->\n            sessionCodec ++ \"?\"\n"),
+        ("let-fn-scope", "describe : String -> String\ndescribe r =\n    let\n        tag sessionCodec =\n            sessionCodec ++ \"!\"\n    in\n    tag (Codec.toJson sessionCodec { userId = r, email = \"\" })\n"),
+        ("case-scope", "describe : String -> String\ndescribe r =\n    case r of\n        \"a\" ->\n            Codec.toJson sessionCodec { userId = r, email = \"\" }\n\n        sessionCodec ->\n            sessionCodec\n"),
+        ("bare", "describe : String -> String\ndescribe r =\n    Codec.toJson sessionCodec { userId = r, email = blank.email }\n"),
+    ];
+    for (tag, body) in bodies {
+        let helper = format!(
+            "module Helper exposing (describe)\n\nimport Sky.Core.Prelude exposing (..)\nimport Std.Codec as Codec exposing (Codec)\nimport Types exposing (Session)\nimport Data exposing (..)\n\n\n{body}"
+        );
+        split_with_view(
+            &format!("scope-{tag}"),
+            &data,
+            &[("src/Helper.sky", &helper)],
+            "import Helper\n",
+            "Helper.describe model.status",
+        );
+    }
+}

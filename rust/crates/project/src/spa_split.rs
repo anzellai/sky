@@ -8850,7 +8850,6 @@ fn retarget_shared_owned(
     // exposing entry (a bare name could then be ambiguous with a home that
     // `exposing (..)` still gives it, on the backend).
     let mut qualified_any = false;
-    let mut open_homes: HashSet<String> = HashSet::new();
     for imp in file.imports() {
         let Some(path) = imp.name().map(|n| n.text()) else {
             continue;
@@ -8880,9 +8879,6 @@ fn retarget_shared_owned(
                 }
             }
             edits.push((a, b, stripped));
-        }
-        if t.contains("exposing (..)") {
-            open_homes.insert(path.clone());
         }
         let q = imp
             .alias()
@@ -8947,67 +8943,6 @@ fn retarget_shared_owned(
                 edits.push((s, e, format!("Shared.{w}")));
                 qualified_any = true;
             }
-        }
-    }
-    // A copied VALUE named bare through `import Data exposing (..)`: the
-    // client copy of its home does not have it, so each bare reference (a
-    // `RefExpr`, never a record label, a pattern or a field) names
-    // `Shared.x`. A module that declares the name itself keeps its own.
-    let own_decls: HashSet<String> = file.decls().filter_map(|d| decl_name(&d)).collect();
-    for (i, o) in owned.iter().enumerate() {
-        if o.expose.ends_with("(..)") || !open_homes.contains(&o.home) || o.home == own_module {
-            continue;
-        }
-        let w = &o.words[0];
-        if own_decls.contains(w) {
-            continue;
-        }
-        for node in parse.syntax().descendants() {
-            if node.kind() != SyntaxKind::RefExpr {
-                continue;
-            }
-            let Some(tok) = node
-                .descendants_with_tokens()
-                .filter_map(|e| e.into_token())
-                .find(|t| !t.kind().is_trivia())
-            else {
-                continue;
-            };
-            if tok.text() != w.as_str() {
-                continue;
-            }
-            // A local name hides the import: a parameter, a lambda or `case`
-            // pattern variable, or a `let` line anywhere in the enclosing
-            // top-level declaration with this name keeps every reference in
-            // that declaration as written (at worst a loud `[E1001]`, never a
-            // reference to the wrong value).
-            let top = node
-                .ancestors()
-                .find(|a| a.parent().is_some_and(|p| p.parent().is_none()))
-                .unwrap_or_else(|| node.clone());
-            let binds = top.descendants().any(|d| {
-                let first = || {
-                    d.descendants_with_tokens()
-                        .filter_map(|e| e.into_token())
-                        .find(|t| !t.kind().is_trivia())
-                        .is_some_and(|t| t.text() == w.as_str())
-                };
-                match d.kind() {
-                    SyntaxKind::PatVar | SyntaxKind::LetBinding => first(),
-                    _ => false,
-                }
-            });
-            if binds {
-                continue;
-            }
-            let r = tok.text_range();
-            let (a, b) = (usize::from(r.start()), usize::from(r.end()));
-            if skip.iter().any(|(s, e)| a >= *s && a < *e) {
-                continue;
-            }
-            edits.push((a, b, format!("Shared.{w}")));
-            qualified_any = true;
-            let _ = i;
         }
     }
     let mut out = text.to_string();
@@ -13731,6 +13666,7 @@ fn render_module_client_subset(
 
     let mut body = String::new();
     let mut stripped_copied = false;
+    let mut forwarded: BTreeSet<String> = BTreeSet::new();
     for d in mfile.decls() {
         let name = decl_name(&d);
         let n = name.as_deref();
@@ -13745,6 +13681,18 @@ fn render_module_client_subset(
             // copy's source (a local alias shadowing an imported wire type) stays.
             if copied_names.contains(n) {
                 stripped_copied = true;
+                // A copied VALUE stays in this client copy as a forwarder to
+                // its one definition in `Shared`, so every module that names it
+                // through this module (bare through `exposing (..)`,
+                // qualified, or with a field access) still finds it, by the
+                // compiler's own scoping. Its annotation is dropped (the
+                // forwarder's type is inferred from `Shared`'s).
+                if n.starts_with(|c: char| c.is_ascii_lowercase())
+                    && decl_kind(&d) == DeclKind::Value
+                    && forwarded.insert(n.to_string())
+                {
+                    body.push_str(&format!("{n} =\n    Shared.{n}\n\n\n"));
+                }
                 continue;
             }
         }
@@ -13831,6 +13779,11 @@ fn render_module_client_subset(
     let references_moved = moved_unions
         .values()
         .any(|words| words.iter().any(|w| module_mentions_word(&out, w)));
+    // A forwarded value is declared here: it is named `Shared.x`, never
+    // exposed from `Shared` too (that would be two definitions of one name).
+    let forwarded_set: HashSet<String> = forwarded.iter().cloned().collect();
+    let shared_expose = strip_names_from_import_exposing(shared_expose, &forwarded_set);
+    let shared_expose = shared_expose.as_str();
     let out = if regen_update || inject_msg || stripped_copied || references_moved {
         ensure_import_present(&out, "Shared", shared_expose)
     } else {
