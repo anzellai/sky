@@ -5134,8 +5134,26 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 let mut names = copy_types_of(m, &seed_ty, &seed_keys, &copied_values_by_mod);
                 names.extend(copied_values_by_mod.get(&m).cloned().unwrap_or_default());
                 let mtext = db.module_parse(m).syntax().text().to_string();
-                for (_, _, _, owner, tname) in type_occs_in(&db, m, &mtext, &decl_ranges(m, &names))
-                {
+                let ranges = decl_ranges(m, &names);
+                let mut named: Vec<(ModuleId, String)> = type_occs_in(&db, m, &mtext, &ranges)
+                    .into_iter()
+                    .map(|(_, _, _, owner, tname)| (owner, tname))
+                    .collect();
+                // A constructor a copied declaration names (`Admin`, of
+                // `type Role = Admin | Guest`) is written bare for a copied
+                // module too, so its union is copied with it.
+                for occ in &db.resolve(m).ref_occs {
+                    let (a, b) = (occ.span.range.0 as usize, occ.span.range.1 as usize);
+                    if !ranges.iter().any(|(s, e)| a >= *s && b <= *e) {
+                        continue;
+                    }
+                    if let hir::Res::Ctor(c) = &occ.res {
+                        if let Some(loc) = db.def_loc(c.type_) {
+                            named.push((loc.module, loc.name.as_str().to_string()));
+                        }
+                    }
+                }
+                for (owner, tname) in named {
                     if !project_mods.contains(&owner) || owner == entry {
                         continue;
                     }
@@ -5300,7 +5318,12 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 continue;
             }
             let name = loc.name.as_str().to_string();
+            // A reference span can start at the whitespace before the name
+            // (`Codec.auto Helpers.blankSession`): the rewrite keeps it.
             let mut start = a;
+            while start < b && bytes[start].is_ascii_whitespace() {
+                start += 1;
+            }
             while start > 0 && bytes[start - 1] == b'.' {
                 let mut q = start - 1;
                 while q > 0 && (bytes[q - 1].is_ascii_alphanumeric() || bytes[q - 1] == b'_') {
@@ -8080,8 +8103,12 @@ fn type_occs_in(
             continue;
         }
         // The occurrence span covers the type's own name; a qualifier (`S.`
-        // in `S.Point`) sits right before it.
+        // in `S.Point`) sits right before it. A span that starts at the
+        // whitespace before the name keeps that whitespace.
         let mut start = a;
+        while start < b && bytes[start].is_ascii_whitespace() {
+            start += 1;
+        }
         while start > 0 && bytes[start - 1] == b'.' {
             let mut q = start - 1;
             while q > 0 && (bytes[q - 1].is_ascii_alphanumeric() || bytes[q - 1] == b'_') {

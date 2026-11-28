@@ -191,3 +191,205 @@ fn types_named_by_a_copied_sibling_codec_are_copied_into_shared() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Split `src` (the three modules, with `Data` given) and type-check both
+/// generated halves.
+fn split_and_check(tag: &str, types: &str, data: &str, extra: &[(&str, &str)]) -> String {
+    let dir =
+        std::env::temp_dir().join(format!("sky-spa-copied-codec-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    write(
+        &dir,
+        "sky.toml",
+        "name = \"copied\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    );
+    write(&dir, "src/Types.sky", types);
+    write(&dir, "src/Data.sky", data);
+    write(&dir, "src/Main.sky", SESSION_MAIN);
+    for (p, t) in extra {
+        write(&dir, p, t);
+    }
+    let errors = front_half_errors(&root(), &dir, None);
+    assert!(errors.is_empty(), "the app itself must check: {errors:?}");
+    let out = dir.join("generated");
+    spa_split::generate(&root(), &dir, None, &out, None, None)
+        .unwrap_or_else(|e| panic!("the app must split: {e}"));
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    for half in ["backend", "frontend"] {
+        let errors = front_half_errors(&root(), &out.join(half), None);
+        assert!(
+            errors.is_empty(),
+            "the generated {half} must type-check: {errors:?}\n{}",
+            tree_text(&out.join(half).join("src"))
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    shared
+}
+
+const SESSION_TYPES: &str = r#"module Types exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+
+type Role
+    = Admin
+    | Guest
+
+
+type alias Session =
+    { userId : String, email : String }
+
+
+type alias Model =
+    { status : String
+    , session : Maybe Session
+    }
+
+
+type Msg
+    = Save
+    | Saved (Result Error ())
+    | Local String
+"#;
+
+const DATA_HEAD: &str = r#"module Data exposing (note, sessionCodec)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+import Std.Log as Log
+import Types exposing (..)
+"#;
+
+const DATA_NOTE: &str = r#"
+
+note : String -> Task Error ()
+note s =
+    Log.println s
+"#;
+
+const SESSION_MAIN: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Cmd as Cmd
+import Std.Spa as Spa
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Types exposing (..)
+import Data
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "ready", session = Nothing }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Save ->
+            ( { model | session = Just { userId = "u", email = "e" } }
+            , Cmd.perform (Data.note model.status) Saved
+            )
+
+        Saved _ ->
+            ( model, Cmd.none )
+
+        Local s ->
+            ( { model | status = s }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout [] (Ui.text model.status)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task.Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init, update = update, view = view, subscriptions = subscriptions }
+        )
+"#;
+
+/// A copied codec names a constructor (`Admin`) of a union no copied type
+/// names. The constructor is written bare, so its union is copied too.
+#[test]
+fn a_constructor_named_by_a_copied_codec_copies_its_union() {
+    let data = format!(
+        "{DATA_HEAD}{DATA_NOTE}\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto {{ userId = (if Admin == Guest then \"x\" else \"\"), email = \"\" }}\n"
+    );
+    let shared = split_and_check("ctor", SESSION_TYPES, &data, &[]);
+    assert!(
+        shared.contains("type Role"),
+        "the union is copied:\n{shared}"
+    );
+}
+
+/// A copied codec names a value of another project module by its qualifier
+/// (`Codec.auto Helpers.blankSession`). The rewrite to the generated alias
+/// keeps the space before it.
+#[test]
+fn a_qualified_value_in_a_copied_codec_keeps_its_spacing() {
+    let helpers = "module Helpers exposing (blankSession)\n\nimport Sky.Core.Prelude exposing (..)\n\n\nblankSession : { userId : String, email : String }\nblankSession =\n    { userId = \"\", email = \"\" }\n";
+    let data = format!(
+        "{DATA_HEAD}import Helpers\n{DATA_NOTE}\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto Helpers.blankSession\n"
+    );
+    let shared = split_and_check(
+        "qualified",
+        SESSION_TYPES,
+        &data,
+        &[("src/Helpers.sky", helpers)],
+    );
+    assert!(
+        !shared.contains("autoSpaTy_"),
+        "the rewrite keeps the space:\n{shared}"
+    );
+}
+
+/// The same codec, with a `Helpers` that imports `Types` (which imports
+/// `Shared`): `Shared` cannot import `Helpers`, and the split refuses with a
+/// message that names the cycle, never generated code that does not compile.
+#[test]
+fn a_qualified_value_on_an_import_cycle_is_refused_by_name() {
+    let dir = std::env::temp_dir().join(format!(
+        "sky-spa-copied-codec-cycle-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    write(
+        &dir,
+        "sky.toml",
+        "name = \"copied\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    );
+    write(&dir, "src/Types.sky", SESSION_TYPES);
+    write(
+        &dir,
+        "src/Helpers.sky",
+        "module Helpers exposing (blankSession)\n\nimport Sky.Core.Prelude exposing (..)\nimport Types exposing (Session)\n\n\nblankSession : Session\nblankSession =\n    { userId = \"\", email = \"\" }\n",
+    );
+    write(
+        &dir,
+        "src/Data.sky",
+        &format!(
+            "{DATA_HEAD}import Helpers\n{DATA_NOTE}\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto Helpers.blankSession\n"
+        ),
+    );
+    write(&dir, "src/Main.sky", SESSION_MAIN);
+    let out = dir.join("generated");
+    let Err(err) = spa_split::generate(&root(), &dir, None, &out, None, None) else {
+        panic!("an import cycle through Shared must be refused");
+    };
+    assert!(
+        err.contains("Helpers -> Types -> Shared") && err.contains("cycle"),
+        "the refusal names the cycle: {err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

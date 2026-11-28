@@ -27,6 +27,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Shared` now copies each type that a copied codec names, so no generated
   name depends on that fallback. No change in your code is needed.
 
+- **A copied codec that names a constructor copies its union.** A codec that
+  `Shared` copies and that names a constructor (`Admin`, of
+  `type Role = Admin | Guest`) of a module `Shared` copies from got the
+  constructor but not the union, and the generated code failed with
+  `Undefined name: Admin`.
+
+- **A copied codec that names a qualified value keeps its spacing.**
+  `Codec.auto Helpers.blankSession` became `Codec.autoSpaTy_Helpers_.blankSession`
+  in the generated `Shared`, because the rewrite replaced the space before the
+  name too. It now writes `Codec.auto SpaTy_Helpers_.blankSession`.
+
 ## v0.32.1 — the standard library uses bind lines (2026-11-28)
 
 ### Changed
