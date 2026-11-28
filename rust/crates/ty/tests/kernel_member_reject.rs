@@ -540,3 +540,20 @@ fn an_unexported_stdlib_type_is_its_qualifiers_own_declaration() {
         "`App.Route` is Std.App's Route: {shown}"
     );
 }
+
+/// `App.Request` (a kernel-implicit name `Std.App` does not export) is the one
+/// stdlib alias `Sky.Http.Server.Request`, the record `App.withRequest`
+/// passes, as in v0.32.0. v0.32.1 made it an opaque kernel type, so an app's
+/// `admit : App.Request -> Model -> ( Model, Cmd Msg )` hook failed with
+/// `record vs Request`, and reading a field of it failed too.
+#[test]
+fn a_kernel_implicit_record_under_a_stdlib_qualifier_is_its_one_alias() {
+    let main = format!(
+        "{NO_IMPORT_HEAD}import Std.App as App\nimport Sky.Http.Server as Server\n\n\
+         path : App.Request -> String\npath r =\n    r.path\n\n\
+         same : Server.Request -> String\nsame r =\n    path r\n\n\
+         main =\n    println \"ok\"\n"
+    );
+    let errs = errors_with(&[], &main);
+    assert!(errs.is_empty(), "{errs:?}");
+}

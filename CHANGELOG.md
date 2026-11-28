@@ -15,6 +15,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- **`App.Request` is the request record again.** In v0.32.1 a kernel type
+  name written under a stdlib module that does not export it (`App.Request`
+  under `import Std.App as App`) became an opaque kernel type, so a hook such
+  as `admit : App.Request -> Model -> ( Model, Cmd Msg )` passed to
+  `App.withRequest` failed with `type mismatch: record vs Request`, and
+  `req.query` failed too. Such a name is now the one stdlib type alias of
+  that name (`Sky.Http.Server.Request`, also `Response`), as in v0.32.0.
+
 - **A Sky.Spa app whose codecs live in a sibling module builds again.** When
   `Shared` copied a sibling's codec (`sessionCodec : Codec Session`, in a
   module with a server effect) whose type comes from a third module that
