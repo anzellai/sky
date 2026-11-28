@@ -44,7 +44,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   (`Types.Admin`) kept those references in its generated copy, and the
   backend failed with `[E1011] module Types does not expose the type Role` or
   `[E1001] Undefined name: Types.Admin`. Each generated module now takes the
-  union from `Shared`.
+  union from `Shared`. Text in a string literal or a comment is never
+  changed.
+
+- **A client module that names a copied codec through its module reads it
+  from `Shared`.** `Codec.toJson Data.sessionCodec …` in a pure module, where
+  `Data` runs a server effect, failed in the generated client with
+  `[E1001] Undefined name: Data.sessionCodec`, because the client copy of
+  `Data` does not have the codec. It now names `Shared.sessionCodec`.
 
 ## v0.32.1 — the standard library uses bind lines (2026-11-28)
 

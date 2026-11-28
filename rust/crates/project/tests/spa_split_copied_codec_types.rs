@@ -475,3 +475,109 @@ fn a_wire_union_with_its_own_codec_points_its_importers_at_shared() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The rewrite to `Shared` never touches a string literal or a comment:
+/// `"Types.Admin"` is text the program shows.
+#[test]
+fn a_moved_union_name_in_a_string_or_comment_is_not_rewritten() {
+    let head = DATA_HEAD
+        .replace(
+            "module Data exposing (note, sessionCodec)",
+            "module Data exposing (label, note, sessionCodec)",
+        )
+        .replace(
+            "import Types exposing (..)\n",
+            "import Types exposing (..)\nimport Types\n",
+        );
+    let data = format!(
+        "{head}{DATA_NOTE}\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto {{ userId = (if Types.Admin == Types.Admin then \"x\" else \"\"), email = \"\" }}\n\n\n-- Types.Admin in a comment\nlabel : String\nlabel =\n    \"Types.Admin\" ++ \"\"\"Types.Guest\"\"\"\n"
+    );
+    let dir = std::env::temp_dir().join(format!(
+        "sky-spa-copied-codec-strings-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    write(
+        &dir,
+        "sky.toml",
+        "name = \"copied\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    );
+    write(&dir, "src/Types.sky", SESSION_TYPES);
+    write(&dir, "src/Data.sky", &data);
+    write(
+        &dir,
+        "src/Main.sky",
+        &SESSION_MAIN.replace(
+            "Ui.layout [] (Ui.text model.status)",
+            "Ui.layout [] (Ui.text (model.status ++ Data.label))",
+        ),
+    );
+    let errors = front_half_errors(&root(), &dir, None);
+    assert!(errors.is_empty(), "the app itself must check: {errors:?}");
+    let out = dir.join("generated");
+    spa_split::generate(&root(), &dir, None, &out, None, None)
+        .unwrap_or_else(|e| panic!("the app must split: {e}"));
+    for half in ["backend", "frontend"] {
+        let errors = front_half_errors(&root(), &out.join(half), None);
+        assert!(
+            errors.is_empty(),
+            "the generated {half} must type-check: {errors:?}\n{}",
+            tree_text(&out.join(half).join("src"))
+        );
+        let data = std::fs::read_to_string(out.join(half).join("src/Data.sky")).unwrap();
+        assert!(
+            data.contains("\"Types.Admin\" ++ \"\"\"Types.Guest\"\"\"")
+                && data.contains("-- Types.Admin in a comment"),
+            "string literals and comments keep their text ({half}):\n{data}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A client module that names a copied codec through its home module
+/// (`Data.sessionCodec`, where `Data` runs a server effect) reads it from
+/// `Shared`: the client copy of `Data` does not have it.
+#[test]
+fn a_client_module_naming_a_copied_codec_reads_it_from_shared() {
+    let data = format!(
+        "{DATA_HEAD}{DATA_NOTE}\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto {{ userId = \"\", email = \"\" }}\n"
+    );
+    let helper = "module Helper exposing (describe)\n\nimport Sky.Core.Prelude exposing (..)\nimport Std.Codec as Codec exposing (Codec)\nimport Types exposing (Session)\nimport Data\n\n\ndescribe : String -> String\ndescribe r =\n    if r == \"a\" then\n        Codec.toJson Data.sessionCodec { userId = \"\", email = \"\" }\n\n    else\n        \"g\"\n";
+    let dir = std::env::temp_dir().join(format!(
+        "sky-spa-copied-codec-client-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    write(
+        &dir,
+        "sky.toml",
+        "name = \"copied\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    );
+    write(&dir, "src/Types.sky", SESSION_TYPES);
+    write(&dir, "src/Data.sky", &data);
+    write(&dir, "src/Helper.sky", helper);
+    write(
+        &dir,
+        "src/Main.sky",
+        &SESSION_MAIN
+            .replace("import Data\n", "import Data\nimport Helper\n")
+            .replace(
+                "Ui.layout [] (Ui.text model.status)",
+                "Ui.layout [] (Ui.text (Helper.describe model.status))",
+            ),
+    );
+    let errors = front_half_errors(&root(), &dir, None);
+    assert!(errors.is_empty(), "the app itself must check: {errors:?}");
+    let out = dir.join("generated");
+    spa_split::generate(&root(), &dir, None, &out, None, None)
+        .unwrap_or_else(|e| panic!("the app must split: {e}"));
+    for half in ["backend", "frontend"] {
+        let errors = front_half_errors(&root(), &out.join(half), None);
+        assert!(
+            errors.is_empty(),
+            "the generated {half} must type-check: {errors:?}\n{}",
+            tree_text(&out.join(half).join("src"))
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

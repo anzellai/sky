@@ -5061,7 +5061,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // stays in its module, and is not a wire field), so it is excluded below.
     let mut moved_unions: BTreeMap<String, Vec<String>>;
     // Each moved union's HOME module name (the module that declared it).
-    let mut moved_union_home: BTreeMap<String, String> = BTreeMap::new();
+    let mut moved_union_home: BTreeMap<String, String>;
     let copy_types_of = |m: ModuleId,
                          seed: &BTreeSet<String>,
                          keys: &BTreeSet<String>,
@@ -6034,6 +6034,35 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let frontend_src =
         enforce_client_builder_invariant(&frontend_src, &entry_taint_reason, &mut notes)?;
 
+    // The names `Shared` owns that a generated module may still name through
+    // their home module: each moved union, and each copied value (a user
+    // codec) of a module other than the entry.
+    let entry_name = db.module_name(entry).to_string();
+    let mut shared_owned: Vec<SharedOwned> = Vec::new();
+    for (u, words) in &moved_unions {
+        if let Some(home) = moved_union_home.get(u) {
+            shared_owned.push(SharedOwned {
+                home: home.clone(),
+                expose: format!("{u}(..)"),
+                words: words.clone(),
+            });
+        }
+    }
+    for (m, values) in &copied_values_by_mod {
+        let home = db.module_name(*m).to_string();
+        if home == entry_name {
+            continue;
+        }
+        for v in values {
+            if v.starts_with(|c: char| c.is_ascii_lowercase()) {
+                shared_owned.push(SharedOwned {
+                    home: home.clone(),
+                    expose: v.clone(),
+                    words: vec![v.clone()],
+                });
+            }
+        }
+    }
     let mut files: Vec<String> = Vec::new();
     let write = |rel: &str, content: &str, files: &mut Vec<String>| -> Result<(), String> {
         // Every Sky file the split writes imports exactly the reserved aliases
@@ -6049,7 +6078,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 .trim_end_matches(".sky")
                 .replace('/', ".");
             let finished = finish_type_refs(content, Some(&own));
-            let finished = retarget_moved_unions(&finished, &own, &moved_unions, &moved_union_home);
+            let finished = retarget_shared_owned(&finished, &own, &shared_owned);
             reserved = ensure_reserved_imports(&finished);
             generated_source_parses(rel, &reserved)?;
             reserved.as_str()
@@ -8760,102 +8789,138 @@ fn own_moved_nominals_verbatim(
     ensure_import_present(&stripped, "Shared", &clause)
 }
 
-/// Point a generated module's references to a MOVED UNION at `Shared`, its
-/// single definition, when the module named it through the union's HOME
-/// module (`home`: union → the module that declared it). The home copy no
-/// longer declares the union, so:
+/// One name `Shared` now owns and its home module no longer gives every
+/// generated module: a MOVED UNION (`expose` = `Role(..)`, `words` = the type
+/// and its constructors) or a COPIED VALUE, a user codec (`expose` = `words[0]`
+/// = `sessionCodec`; the client copy of its home drops it).
+struct SharedOwned {
+    home: String,
+    expose: String,
+    words: Vec<String>,
+}
+
+/// Point a generated module's references to a name `Shared` owns
+/// ([`SharedOwned`]) at `Shared`, when the module named it through its HOME
+/// module:
 ///   * `import Types exposing (Session, Role(..))` drops `Role(..)` (else
 ///     `[E1011] module Types does not expose the type Role`), and
-///   * `Types.Admin` / `T.Role` (the module name, or its `as` alias) become
-///     `Shared.Admin` / `Shared.Role` (else `[E1001] Undefined name`).
-/// The module then imports `Shared` exposing each union it names (merged into
-/// an existing `import Shared exposing (…)`), so a bare `Admin` that came from
-/// the dropped exposing entry still resolves. `Shared` itself is unchanged.
-fn retarget_moved_unions(
-    text: &str,
-    own_module: &str,
-    moved_unions: &BTreeMap<String, Vec<String>>,
-    home: &BTreeMap<String, String>,
-) -> String {
-    if moved_unions.is_empty() || own_module == "Shared" {
+///   * `Types.Admin` / `T.Role` / `Data.sessionCodec` (the module name, or its
+///     `as` alias) become `Shared.Admin` / `Shared.Role` /
+///     `Shared.sessionCodec` (else `[E1001] Undefined name`).
+/// String literals, characters and comments are never rewritten. The module
+/// then imports `Shared` exposing each name it names this way (merged into an
+/// existing `import Shared exposing (…)`), so a bare `Admin` that came from the
+/// dropped exposing entry still resolves. `Shared` itself is unchanged.
+fn retarget_shared_owned(text: &str, own_module: &str, owned: &[SharedOwned]) -> String {
+    if owned.is_empty() || own_module == "Shared" {
         return text.to_string();
     }
     let parse = syntax::parse(text, base::FileId(0));
     let file = parse.tree();
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
-    let mut quals: Vec<(String, Vec<String>)> = Vec::new();
-    let mut touched: BTreeSet<String> = BTreeSet::new();
+    let mut quals: Vec<(String, usize)> = Vec::new();
+    let mut touched: BTreeSet<usize> = BTreeSet::new();
     for imp in file.imports() {
         let Some(path) = imp.name().map(|n| n.text()) else {
             continue;
         };
-        let unions: HashSet<String> = home
-            .iter()
-            .filter(|(u, h)| **h == path && moved_unions.contains_key(*u))
-            .map(|(u, _)| u.clone())
+        let here: Vec<usize> = (0..owned.len())
+            .filter(|i| owned[*i].home == path && owned[*i].home != own_module)
             .collect();
-        if unions.is_empty() {
+        if here.is_empty() {
             continue;
         }
         let r = imp.syntax().text_range();
         let (a, b) = (usize::from(r.start()), usize::from(r.end()));
         let t = &text[a..b];
-        let stripped = strip_names_from_import_exposing(t, &unions);
+        let names: HashSet<String> = here
+            .iter()
+            .map(|i| owned[*i].expose.trim_end_matches("(..)").to_string())
+            .collect();
+        let exposed = explicit_exposed_names(t);
+        let stripped = strip_names_from_import_exposing(t, &names);
         if stripped != t {
-            touched.extend(unions.iter().cloned());
+            for i in &here {
+                if exposed
+                    .iter()
+                    .any(|e| names.contains(e) && owned[*i].expose.starts_with(e.as_str()))
+                {
+                    touched.insert(*i);
+                }
+            }
             edits.push((a, b, stripped));
         }
         let q = imp
             .alias()
             .map(|t| t.text().to_string())
             .unwrap_or_else(|| path.clone());
-        let words: Vec<String> = unions
-            .iter()
-            .flat_map(|u| moved_unions[u].iter().cloned())
-            .collect();
-        quals.push((q, words));
+        for i in here {
+            quals.push((q.clone(), i));
+        }
+    }
+    // Text a rewrite never touches: imports, string literals, characters
+    // and comments.
+    let mut skip: Vec<(usize, usize)> = Vec::new();
+    for imp in file.imports() {
+        let r = imp.syntax().text_range();
+        skip.push((usize::from(r.start()), usize::from(r.end())));
+    }
+    for tok in parse
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+    {
+        if matches!(
+            tok.kind(),
+            SyntaxKind::String
+                | SyntaxKind::MultilineString
+                | SyntaxKind::StringChunk
+                | SyntaxKind::Char
+                | SyntaxKind::LineComment
+                | SyntaxKind::BlockComment
+        ) {
+            let r = tok.text_range();
+            skip.push((usize::from(r.start()), usize::from(r.end())));
+        }
+    }
+    // A module may import its home twice (`import Types exposing (..)` and
+    // `import Types`): one qualifier, one rewrite.
+    quals.sort();
+    quals.dedup();
+    let bytes = text.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'.';
+    for (q, i) in &quals {
+        for w in &owned[*i].words {
+            let from = format!("{q}.{w}");
+            let mut at = 0usize;
+            while let Some(rel) = text[at..].find(&from) {
+                let s = at + rel;
+                let e = s + from.len();
+                at = e;
+                if s > 0 && ident(bytes[s - 1]) {
+                    continue;
+                }
+                if e < bytes.len() && ident(bytes[e]) {
+                    continue;
+                }
+                if skip.iter().any(|(a, b)| s >= *a && s < *b) {
+                    continue;
+                }
+                edits.push((s, e, format!("Shared.{w}")));
+                touched.insert(*i);
+            }
+        }
     }
     let mut out = text.to_string();
-    edits.sort_by(|x, y| y.0.cmp(&x.0));
+    edits.sort_by(|x, y| y.0.cmp(&x.0).then(y.1.cmp(&x.1)));
+    edits.dedup_by(|x, y| x.0 == y.0 && x.1 == y.1);
     for (a, b, n) in edits {
         out.replace_range(a..b, &n);
-    }
-    // `Q.Word` → `Shared.Word`, at identifier boundaries, outside imports.
-    for (q, words) in &quals {
-        for w in words {
-            let from = format!("{q}.{w}");
-            let mut res = String::with_capacity(out.len());
-            let mut rest = out.as_str();
-            let mut prev: Option<char> = None;
-            while let Some(i) = rest.find(&from) {
-                let before = rest[..i].chars().last().or(prev);
-                let after = rest[i + from.len()..].chars().next();
-                let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '.';
-                let line_start = rest[..i].rfind('\n').map(|p| p + 1).unwrap_or(0);
-                let in_import = rest[line_start..i].trim_start().starts_with("import ");
-                res.push_str(&rest[..i]);
-                if !before.is_some_and(ident) && !after.is_some_and(ident) && !in_import {
-                    res.push_str("Shared.");
-                    res.push_str(w);
-                    for (u, ws) in moved_unions {
-                        if ws.contains(w) {
-                            touched.insert(u.clone());
-                        }
-                    }
-                } else {
-                    res.push_str(&from);
-                }
-                prev = from.chars().last();
-                rest = &rest[i + from.len()..];
-            }
-            res.push_str(rest);
-            out = res;
-        }
     }
     if touched.is_empty() {
         return out;
     }
-    let wanted: Vec<String> = touched.iter().map(|u| format!("{u}(..)")).collect();
+    let wanted: Vec<String> = touched.iter().map(|i| owned[*i].expose.clone()).collect();
     // Merge into an existing `import Shared exposing (…)`, else add one.
     let parse = syntax::parse(&out, base::FileId(0));
     let file = parse.tree();
@@ -8866,13 +8931,10 @@ fn retarget_moved_unions(
         let r = imp.syntax().text_range();
         let (a, b) = (usize::from(r.start()), usize::from(r.end()));
         let t = out[a..b].to_string();
+        let have = explicit_exposed_names(&t);
         let missing: Vec<&String> = wanted
             .iter()
-            .filter(|w| {
-                !explicit_exposed_names(&t)
-                    .iter()
-                    .any(|e| format!("{e}(..)") == **w)
-            })
+            .filter(|w| !have.iter().any(|h| h == w.trim_end_matches("(..)")))
             .collect();
         if t.contains("exposing (..)") || missing.is_empty() {
             return out;
