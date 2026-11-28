@@ -8976,6 +8976,30 @@ fn retarget_shared_owned(
             if tok.text() != w.as_str() {
                 continue;
             }
+            // A local name hides the import: a parameter, a lambda or `case`
+            // pattern variable, or a `let` line anywhere in the enclosing
+            // top-level declaration with this name keeps every reference in
+            // that declaration as written (at worst a loud `[E1001]`, never a
+            // reference to the wrong value).
+            let top = node
+                .ancestors()
+                .find(|a| a.parent().is_some_and(|p| p.parent().is_none()))
+                .unwrap_or_else(|| node.clone());
+            let binds = top.descendants().any(|d| {
+                let first = || {
+                    d.descendants_with_tokens()
+                        .filter_map(|e| e.into_token())
+                        .find(|t| !t.kind().is_trivia())
+                        .is_some_and(|t| t.text() == w.as_str())
+                };
+                match d.kind() {
+                    SyntaxKind::PatVar | SyntaxKind::LetBinding => first(),
+                    _ => false,
+                }
+            });
+            if binds {
+                continue;
+            }
             let r = tok.text_range();
             let (a, b) = (usize::from(r.start()), usize::from(r.end()));
             if skip.iter().any(|(s, e)| a >= *s && a < *e) {

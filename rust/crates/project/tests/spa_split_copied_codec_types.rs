@@ -654,3 +654,31 @@ fn a_copied_value_with_a_field_access_reads_it_from_shared() {
     );
     split_with_view("field", &data, &[], "", "model.status ++ Data.blank.userId");
 }
+
+/// A local name that hides a copied value imported through `exposing (..)`
+/// (a parameter, a lambda or `case` pattern variable, a `let` line) keeps its
+/// own references.
+#[test]
+fn a_local_name_that_hides_a_copied_value_is_not_rewritten() {
+    let data = format!(
+        "{DATA_HEAD}{DATA_NOTE}\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto {{ userId = \"\", email = \"\" }}\n"
+    );
+    let bodies = [
+        ("lambda", "describe : String -> String\ndescribe r =\n    (\\sessionCodec -> sessionCodec ++ \"!\") r\n"),
+        ("param", "describe : String -> String\ndescribe sessionCodec =\n    sessionCodec ++ \"x\"\n"),
+        ("let", "describe : String -> String\ndescribe r =\n    let\n        sessionCodec =\n            r ++ \"?\"\n    in\n    sessionCodec\n"),
+        ("case", "describe : String -> String\ndescribe r =\n    case r of\n        sessionCodec ->\n            sessionCodec ++ \".\"\n"),
+    ];
+    for (tag, body) in bodies {
+        let helper = format!(
+            "module Helper exposing (describe)\n\nimport Sky.Core.Prelude exposing (..)\nimport Std.Codec as Codec exposing (Codec)\nimport Types exposing (Session)\nimport Data exposing (..)\n\n\n{body}"
+        );
+        split_with_view(
+            &format!("shadow-{tag}"),
+            &data,
+            &[("src/Helper.sky", &helper)],
+            "import Helper\n",
+            "Helper.describe model.status",
+        );
+    }
+}
