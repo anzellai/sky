@@ -581,3 +581,76 @@ fn a_client_module_naming_a_copied_codec_reads_it_from_shared() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Split a fixture with `Types`, the given `Data`, extra modules and a `Main`
+/// view expression, and type-check both generated halves.
+fn split_with_view(tag: &str, data: &str, extra: &[(&str, &str)], imports: &str, view: &str) {
+    let dir =
+        std::env::temp_dir().join(format!("sky-spa-copied-codec-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    write(
+        &dir,
+        "sky.toml",
+        "name = \"copied\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    );
+    write(&dir, "src/Types.sky", SESSION_TYPES);
+    write(&dir, "src/Data.sky", data);
+    for (p, t) in extra {
+        write(&dir, p, t);
+    }
+    write(
+        &dir,
+        "src/Main.sky",
+        &SESSION_MAIN
+            .replace("import Data\n", &format!("import Data\n{imports}"))
+            .replace(
+                "Ui.layout [] (Ui.text model.status)",
+                &format!("Ui.layout [] (Ui.text ({view}))"),
+            ),
+    );
+    let errors = front_half_errors(&root(), &dir, None);
+    assert!(errors.is_empty(), "the app itself must check: {errors:?}");
+    let out = dir.join("generated");
+    spa_split::generate(&root(), &dir, None, &out, None, None)
+        .unwrap_or_else(|e| panic!("the app must split: {e}"));
+    for half in ["backend", "frontend"] {
+        let errors = front_half_errors(&root(), &out.join(half), None);
+        assert!(
+            errors.is_empty(),
+            "the generated {half} must type-check: {errors:?}\n{}",
+            tree_text(&out.join(half).join("src"))
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A copied codec named bare through `import Data exposing (..)` in a client
+/// module reads it from `Shared`.
+#[test]
+fn a_copied_codec_named_bare_through_exposing_all_reads_it_from_shared() {
+    let data = format!(
+        "{DATA_HEAD}{DATA_NOTE}\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto {{ userId = \"\", email = \"\" }}\n"
+    );
+    let helper = "module Helper exposing (describe)\n\nimport Sky.Core.Prelude exposing (..)\nimport Std.Codec as Codec exposing (Codec)\nimport Types exposing (Session)\nimport Data exposing (..)\n\n\ndescribe : String -> String\ndescribe r =\n    Codec.toJson sessionCodec { userId = r, email = \"\" }\n";
+    split_with_view(
+        "bare-all",
+        &data,
+        &[("src/Helper.sky", helper)],
+        "import Helper\n",
+        "Helper.describe model.status",
+    );
+}
+
+/// A copied value read with a field access (`Data.blank.userId`) is pointed
+/// at `Shared` too.
+#[test]
+fn a_copied_value_with_a_field_access_reads_it_from_shared() {
+    let data = format!(
+        "{}{DATA_NOTE}\n\nblank : Session\nblank =\n    {{ userId = \"z\", email = \"\" }}\n\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto blank\n",
+        DATA_HEAD.replace(
+            "module Data exposing (note, sessionCodec)",
+            "module Data exposing (blank, note, sessionCodec)"
+        )
+    );
+    split_with_view("field", &data, &[], "", "model.status ++ Data.blank.userId");
+}

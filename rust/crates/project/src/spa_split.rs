@@ -6078,7 +6078,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 .trim_end_matches(".sky")
                 .replace('/', ".");
             let finished = finish_type_refs(content, Some(&own));
-            let finished = retarget_shared_owned(&finished, &own, &shared_owned);
+            let finished =
+                retarget_shared_owned(&finished, &own, &shared_owned, rel.starts_with("frontend/"));
             reserved = ensure_reserved_imports(&finished);
             generated_source_parses(rel, &reserved)?;
             reserved.as_str()
@@ -8811,8 +8812,33 @@ struct SharedOwned {
 /// then imports `Shared` exposing each name it names this way (merged into an
 /// existing `import Shared exposing (…)`), so a bare `Admin` that came from the
 /// dropped exposing entry still resolves. `Shared` itself is unchanged.
-fn retarget_shared_owned(text: &str, own_module: &str, owned: &[SharedOwned]) -> String {
+fn retarget_shared_owned(
+    text: &str,
+    own_module: &str,
+    owned: &[SharedOwned],
+    client: bool,
+) -> String {
     if owned.is_empty() || own_module == "Shared" {
+        return text.to_string();
+    }
+    // A copied value is missing only from the CLIENT copy of its home (the
+    // backend keeps the whole module), so a backend file keeps naming it
+    // there: retargeting it could add `import Shared` to a module `Shared`
+    // imports (a cycle).
+    let kept: Vec<&SharedOwned> = owned
+        .iter()
+        .filter(|o| client || o.expose.ends_with("(..)"))
+        .collect();
+    let owned: Vec<SharedOwned> = kept
+        .into_iter()
+        .map(|o| SharedOwned {
+            home: o.home.clone(),
+            expose: o.expose.clone(),
+            words: o.words.clone(),
+        })
+        .collect();
+    let owned = owned.as_slice();
+    if owned.is_empty() {
         return text.to_string();
     }
     let parse = syntax::parse(text, base::FileId(0));
@@ -8820,6 +8846,11 @@ fn retarget_shared_owned(text: &str, own_module: &str, owned: &[SharedOwned]) ->
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     let mut quals: Vec<(String, usize)> = Vec::new();
     let mut touched: BTreeSet<usize> = BTreeSet::new();
+    // Names rewritten to `Shared.x`: they need `import Shared`, never an
+    // exposing entry (a bare name could then be ambiguous with a home that
+    // `exposing (..)` still gives it, on the backend).
+    let mut qualified_any = false;
+    let mut open_homes: HashSet<String> = HashSet::new();
     for imp in file.imports() {
         let Some(path) = imp.name().map(|n| n.text()) else {
             continue;
@@ -8849,6 +8880,9 @@ fn retarget_shared_owned(text: &str, own_module: &str, owned: &[SharedOwned]) ->
                 }
             }
             edits.push((a, b, stripped));
+        }
+        if t.contains("exposing (..)") {
+            open_homes.insert(path.clone());
         }
         let q = imp
             .alias()
@@ -8900,15 +8934,56 @@ fn retarget_shared_owned(text: &str, own_module: &str, owned: &[SharedOwned]) ->
                 if s > 0 && ident(bytes[s - 1]) {
                     continue;
                 }
-                if e < bytes.len() && ident(bytes[e]) {
+                // `Data.blank.userId`: a `.` after a value is a field access.
+                let field_access = e < bytes.len()
+                    && bytes[e] == b'.'
+                    && w.starts_with(|c: char| c.is_ascii_lowercase());
+                if e < bytes.len() && ident(bytes[e]) && !field_access {
                     continue;
                 }
                 if skip.iter().any(|(a, b)| s >= *a && s < *b) {
                     continue;
                 }
                 edits.push((s, e, format!("Shared.{w}")));
-                touched.insert(*i);
+                qualified_any = true;
             }
+        }
+    }
+    // A copied VALUE named bare through `import Data exposing (..)`: the
+    // client copy of its home does not have it, so each bare reference (a
+    // `RefExpr`, never a record label, a pattern or a field) names
+    // `Shared.x`. A module that declares the name itself keeps its own.
+    let own_decls: HashSet<String> = file.decls().filter_map(|d| decl_name(&d)).collect();
+    for (i, o) in owned.iter().enumerate() {
+        if o.expose.ends_with("(..)") || !open_homes.contains(&o.home) || o.home == own_module {
+            continue;
+        }
+        let w = &o.words[0];
+        if own_decls.contains(w) {
+            continue;
+        }
+        for node in parse.syntax().descendants() {
+            if node.kind() != SyntaxKind::RefExpr {
+                continue;
+            }
+            let Some(tok) = node
+                .descendants_with_tokens()
+                .filter_map(|e| e.into_token())
+                .find(|t| !t.kind().is_trivia())
+            else {
+                continue;
+            };
+            if tok.text() != w.as_str() {
+                continue;
+            }
+            let r = tok.text_range();
+            let (a, b) = (usize::from(r.start()), usize::from(r.end()));
+            if skip.iter().any(|(s, e)| a >= *s && a < *e) {
+                continue;
+            }
+            edits.push((a, b, format!("Shared.{w}")));
+            qualified_any = true;
+            let _ = i;
         }
     }
     let mut out = text.to_string();
@@ -8918,7 +8993,10 @@ fn retarget_shared_owned(text: &str, own_module: &str, owned: &[SharedOwned]) ->
         out.replace_range(a..b, &n);
     }
     if touched.is_empty() {
-        return out;
+        if !qualified_any {
+            return out;
+        }
+        return ensure_import_present(&out, "Shared", "import Shared");
     }
     let wanted: Vec<String> = touched.iter().map(|i| owned[*i].expose.clone()).collect();
     // Merge into an existing `import Shared exposing (…)`, else add one.
