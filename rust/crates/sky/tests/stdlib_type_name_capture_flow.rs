@@ -20,6 +20,16 @@
 //! Each program is built AND run, and all three must print the same line. The
 //! prelude-protected names (`Int`, `Maybe`, `Error`, ...) cannot be declared:
 //! a fourth program declares them all and must fail with `[E1004]` for each.
+//!
+//! The generated program puts each stdlib value in a `let`, a record field, a
+//! list element and a `Maybe` payload, and, when its type can be written,
+//! in an annotated record alias, argument and result (see [`program`]). The
+//! hand-written projects under `tests/fixtures/stdlib-type-capture/` cover
+//! the rest: case scrutinees, `Result` payloads, a `Codec` round trip, a
+//! `Std.Db.Store` row on SQLite, a Sky.Live model served over HTTP, a module
+//! boundary, a union nested in records, and parametric project types
+//! (`Dict k v`, `Set a`) beside the kernel ones.
+//!
 //! Needs a `go` toolchain.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -144,7 +154,7 @@ fn arrows(ty: &str) -> Vec<String> {
     let mut i = 0;
     while i < cs.len() {
         let c = cs[i];
-        if (c == '(' || c == '{' || c == '[') {
+        if c == '(' || c == '{' || c == '[' {
             depth += 1;
         } else if c == ')' || c == '}' || c == ']' {
             depth -= 1;
@@ -211,6 +221,8 @@ struct Call {
     func: String,
     args: Vec<&'static str>,
     reference: bool,
+    /// The signature's result type, as written in the stdlib source.
+    result: String,
 }
 
 /// Calls the generator must not make: the build checks their literal
@@ -220,12 +232,13 @@ const NO_CALL: &[(&str, &str)] = &[("Std.Ai.Device", "provider")];
 
 /// For every type name the exported stdlib signatures mention, the exported
 /// function with the fewest literal arguments whose result mentions it.
-fn plan() -> (BTreeSet<String>, BTreeMap<String, Call>) {
+fn plan() -> (BTreeSet<String>, BTreeMap<String, Call>, Declared) {
     let root = repo_root().join("sky-stdlib");
     let mut files = Vec::new();
     sky_files(&root, &mut files);
     let mut all_names = BTreeSet::new();
     let mut best: BTreeMap<String, Call> = BTreeMap::new();
+    let mut declared = Declared::default();
     for f in files {
         let src = std::fs::read_to_string(&f).unwrap();
         let module = f
@@ -235,6 +248,23 @@ fn plan() -> (BTreeSet<String>, BTreeMap<String, Call>) {
             .to_string_lossy()
             .replace('/', ".");
         let exposed = exposing_list(&src);
+        for name in declared_types(&src) {
+            if exposed.as_ref().is_none_or(|e| e.contains(&name)) {
+                declared
+                    .types
+                    .entry(name)
+                    .or_default()
+                    .insert(module.clone());
+            }
+        }
+        declared.imports.insert(
+            module.clone(),
+            src.lines()
+                .filter_map(|l| l.strip_prefix("import "))
+                .filter_map(|l| l.split_whitespace().next())
+                .map(str::to_string)
+                .collect(),
+        );
         for (func, ty) in signatures(&src) {
             let visible = exposed
                 .as_ref()
@@ -276,6 +306,7 @@ fn plan() -> (BTreeSet<String>, BTreeMap<String, Call>) {
                             func: func.clone(),
                             args: args.clone(),
                             reference,
+                            result: result.clone(),
                         },
                     );
                 }
@@ -291,11 +322,118 @@ fn plan() -> (BTreeSet<String>, BTreeMap<String, Call>) {
                     func: func.clone(),
                     args: Vec::new(),
                     reference: true,
+                    result: result.clone(),
                 });
             }
         }
     }
-    (all_names, best)
+    (all_names, best, declared)
+}
+
+/// The stdlib's type declarations and imports.
+#[derive(Default)]
+struct Declared {
+    /// For each type name a stdlib module declares and exposes, those modules.
+    types: BTreeMap<String, BTreeSet<String>>,
+    /// The modules each stdlib module imports.
+    imports: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// The names of the top-level `type` and `type alias` declarations.
+fn declared_types(src: &str) -> Vec<String> {
+    src.lines()
+        .filter_map(|l| {
+            let rest = l
+                .strip_prefix("type alias ")
+                .or_else(|| l.strip_prefix("type "))?;
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            name.starts_with(|c: char| c.is_ascii_uppercase())
+                .then_some(name)
+        })
+        .collect()
+}
+
+/// The call's result type written so a program can annotate with it: each
+/// type name qualified with the alias of the stdlib module that exposes it
+/// (the called module's own, else the one module it imports that declares
+/// it, else the called module for a kernel type no module declares), each type
+/// variable instantiated to `Int`. `None` when the type has a record, a
+/// function, a name the source writes qualified, or a name no single
+/// importable module exposes.
+fn annotatable(
+    c: &Call,
+    declared: &Declared,
+    import: &mut dyn FnMut(&str) -> String,
+) -> Option<String> {
+    if c.reference || c.result.contains('{') || c.result.contains("->") {
+        return None;
+    }
+    let mut out = String::new();
+    let mut word = String::new();
+    let flush = |word: &mut String,
+                 out: &mut String,
+                 import: &mut dyn FnMut(&str) -> String|
+     -> Option<()> {
+        if word.is_empty() {
+            return Some(());
+        }
+        let w = std::mem::take(word);
+        if w.contains('.') {
+            return None;
+        }
+        // A type variable is free in a call with literal arguments (a literal
+        // argument is concrete, or `[]` / `Nothing`), so `Int` instantiates it.
+        if w.starts_with(|c: char| c.is_ascii_lowercase()) {
+            out.push_str("Int");
+            return Some(());
+        }
+        if !w.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return None;
+        }
+        if PROTECTED.contains(&w.as_str()) {
+            out.push_str(&w);
+            return Some(());
+        }
+        // The name means the called module's own type, else the type of the
+        // one module it imports that declares it, else the kernel type.
+        let home = match declared.types.get(&w) {
+            None => c.module.clone(),
+            Some(ms) if ms.contains(&c.module) => c.module.clone(),
+            Some(ms) => {
+                let imported: Vec<&String> = ms
+                    .iter()
+                    .filter(|m| {
+                        declared
+                            .imports
+                            .get(&c.module)
+                            .is_some_and(|i| i.contains(*m))
+                    })
+                    .collect();
+                match imported.as_slice() {
+                    [m] => (*m).clone(),
+                    _ => return None,
+                }
+            }
+        };
+        if NOT_IMPORTABLE.contains(&home.as_str()) {
+            return None;
+        }
+        out.push_str(&format!("{}.{w}", import(&home)));
+        Some(())
+    };
+    for ch in c.result.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' {
+            word.push(ch);
+        } else {
+            flush(&mut word, &mut out, import)?;
+            out.push(ch);
+        }
+    }
+    flush(&mut word, &mut out, import)?;
+    Some(out.trim().to_string())
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -305,33 +443,93 @@ enum Variant {
     Union,
 }
 
-fn program(calls: &BTreeMap<String, Call>, variant: Variant) -> String {
-    let mut modules: Vec<&String> = calls.values().map(|c| &c.module).collect();
-    modules.sort();
-    modules.dedup();
-    let qual: BTreeMap<&String, String> = modules
+/// The program for one variant, and the line it must print.
+///
+/// Each stdlib value `v{i}` flows through these positions, beside a value
+/// `u{i}` of the project's own type of that name (an `Int` in the control):
+///
+/// * a `let` binding passed to `toString`,
+/// * a field of an unannotated record `{ own = u{i}, kern = v{i} }`,
+/// * a list element and a `Maybe` payload (`List.head [ v{i} ]`),
+/// * when its result type can be written in an annotation ([`annotatable`]):
+///   a field of a record alias `W{i} = { own : <Name>, kern : <its type> }`,
+///   the argument and the result of an annotated `pass{i} : W{i} -> W{i}`,
+///   and the result of `kern{i} : W{i} -> <its type>`.
+///
+/// Every position shows one value and adds one to the sum of the project's
+/// own values, so the line is `<positions> <positions>` in every variant.
+fn program(
+    calls: &BTreeMap<String, Call>,
+    declared: &Declared,
+    variant: Variant,
+) -> (String, String) {
+    let names: Vec<&String> = calls.keys().collect();
+    let mut homes: BTreeSet<String> = calls.values().map(|c| c.module.clone()).collect();
+    let annotated: Vec<Option<String>> = names
+        .iter()
+        .map(|n| {
+            annotatable(&calls[*n], declared, &mut |m: &str| {
+                homes.insert(m.to_string());
+                format!("@{m}@")
+            })
+        })
+        .collect();
+    let qual: BTreeMap<String, String> = homes
         .iter()
         .enumerate()
-        .map(|(i, m)| (*m, format!("Q{i}")))
+        .map(|(i, m)| (m.clone(), format!("Q{i}")))
+        .collect();
+    let annotated: Vec<Option<String>> = annotated
+        .into_iter()
+        .map(|a| {
+            a.map(|mut t| {
+                for (m, q) in &qual {
+                    t = t.replace(&format!("@{m}@"), q);
+                }
+                t
+            })
+        })
         .collect();
     let mut s = String::from("module Main exposing (main)\n\n");
-    for m in &modules {
-        s.push_str(&format!("import {} as {}\n", m, qual[*m]));
+    for (m, q) in &qual {
+        s.push_str(&format!("import {m} as {q}\n"));
     }
     s.push_str("import Std.Log exposing (println)\n\n\n");
-    let names: Vec<&String> = calls.keys().collect();
     for (i, n) in names.iter().enumerate() {
-        match variant {
-            Variant::Control => {}
-            Variant::Alias => s.push_str(&format!(
-                "type alias {n} =\n    {{ zz : Int }}\n\n\nu{i} : {n}\nu{i} =\n    {{ zz = 1 }}\n\n\n"
-            )),
-            Variant::Union => s.push_str(&format!(
-                "type {n}\n    = {n}C Int\n\n\nu{i} : {n}\nu{i} =\n    {n}C 1\n\n\n\
-                 z{i} : {n} -> Int\nz{i} v =\n    case v of\n        {n}C k ->\n            k\n\n\n"
-            )),
+        let own_ty = match variant {
+            Variant::Control => {
+                s.push_str(&format!("u{i} : Int\nu{i} =\n    1\n\n\n"));
+                "Int".to_string()
+            }
+            Variant::Alias => {
+                s.push_str(&format!(
+                    "type alias {n} =\n    {{ zz : Int }}\n\n\nu{i} : {n}\nu{i} =\n    {{ zz = 1 }}\n\n\n"
+                ));
+                n.to_string()
+            }
+            Variant::Union => {
+                s.push_str(&format!(
+                    "type {n}\n    = {n}C Int\n\n\nu{i} : {n}\nu{i} =\n    {n}C 1\n\n\n\
+                     z{i} : {n} -> Int\nz{i} v =\n    case v of\n        {n}C k ->\n            k\n\n\n"
+                ));
+                n.to_string()
+            }
+        };
+        if let Some(kt) = &annotated[i] {
+            s.push_str(&format!(
+                "type alias W{i} =\n    {{ own : {own_ty}, kern : {kt} }}\n\n\n\
+                 pass{i} : W{i} -> W{i}\npass{i} w =\n    w\n\n\n\
+                 kern{i} : W{i} -> {kt}\nkern{i} w =\n    w.kern\n\n\n"
+            ));
         }
     }
+    let own_of = |i: usize, e: String| match variant {
+        Variant::Control => e,
+        Variant::Alias => format!("({e}).zz"),
+        Variant::Union => format!("z{i} ({e})"),
+    };
+    let mut shown = Vec::new();
+    let mut own = Vec::new();
     s.push_str("main =\n    let\n");
     for (i, n) in names.iter().enumerate() {
         let c = &calls[*n];
@@ -343,24 +541,40 @@ fn program(calls: &BTreeMap<String, Call>, variant: Variant) -> String {
             }
         }
         s.push_str(&format!("        v{i} =\n            {call}\n\n"));
+        s.push_str(&format!(
+            "        r{i} =\n            {{ own = u{i}, kern = v{i} }}\n\n"
+        ));
+        shown.push(format!("toString v{i}"));
+        own.push(own_of(i, format!("u{i}")));
+        shown.push(format!("toString r{i}.kern"));
+        own.push(own_of(i, format!("r{i}.own")));
+        shown.push(format!(
+            "toString (Maybe.withDefault v{i} (List.head [ v{i} ]))"
+        ));
+        own.push(own_of(
+            i,
+            format!("Maybe.withDefault u{i} (List.head [ u{i} ])"),
+        ));
+        if annotated[i].is_some() {
+            s.push_str(&format!(
+                "        w{i} =\n            pass{i} {{ own = u{i}, kern = v{i} }}\n\n"
+            ));
+            shown.push(format!("toString (kern{i} w{i})"));
+            own.push(own_of(i, format!("(pass{i} w{i}).own")));
+        }
     }
     s.push_str("        shown =\n            [ ");
-    let shown: Vec<String> = (0..names.len()).map(|i| format!("toString v{i}")).collect();
     s.push_str(&shown.join("\n            , "));
     s.push_str("\n            ]\n\n        own =\n            ");
-    let own: Vec<String> = (0..names.len())
-        .map(|i| match variant {
-            Variant::Control => "1".to_string(),
-            Variant::Alias => format!("u{i}.zz"),
-            Variant::Union => format!("z{i} u{i}"),
-        })
-        .collect();
-    s.push_str(&own.join(" + "));
+    s.push_str(&own.join("\n                + "));
     s.push_str(
         "\n    in\n    println (String.fromInt (List.length shown) ++ \" \" ++ String.fromInt own)\n",
     );
-    s
+    (s, format!("{} {}", shown.len(), own.len()))
 }
+
+/// One build at a time: the tests of this file run in parallel threads.
+static BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn scratch(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -412,23 +626,29 @@ fn bounded(cmd: &mut Command, limit: Duration) -> (bool, String) {
 fn build_and_run(tag: &str, src: &str) -> Result<String, String> {
     let dir = scratch(tag);
     std::fs::write(dir.join("src/Main.sky"), src).unwrap();
+    run_project(tag, &dir)
+}
+
+/// Build the project in `dir` and run it; its last output line.
+fn run_project(tag: &str, dir: &Path) -> Result<String, String> {
+    let _lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (ok, log) = bounded(
         Command::new(SKY)
             .args(["build", "src/Main.sky"])
-            .current_dir(&dir),
+            .current_dir(dir),
         Duration::from_secs(900),
     );
     if !ok {
         return Err(format!("{tag}: build failed ({}):\n{log}", dir.display()));
     }
     let (ok, out) = bounded(
-        Command::new(dir.join("sky-out/app")).current_dir(&dir),
+        Command::new(dir.join("sky-out/app")).current_dir(dir),
         Duration::from_secs(120),
     );
     if !ok {
         return Err(format!("{tag}: run failed ({}):\n{out}", dir.display()));
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(dir);
     Ok(out.lines().last().unwrap_or("").to_string())
 }
 
@@ -437,7 +657,7 @@ fn a_project_type_named_like_any_stdlib_type_never_captures_a_stdlib_value() {
     if !required(Need::Go, have_go()) {
         return;
     }
-    let (all_names, mut calls) = plan();
+    let (all_names, mut calls, declared) = plan();
     for p in PROTECTED {
         calls.remove(*p);
     }
@@ -463,17 +683,32 @@ fn a_project_type_named_like_any_stdlib_type_never_captures_a_stdlib_value() {
         "the plan must cover Set and the stdlib's type names: {:?}",
         calls.keys().collect::<Vec<_>>()
     );
-    let expected = format!("{} {}", calls.len(), calls.len());
-    let control = build_and_run("control", &program(&calls, Variant::Control));
-    assert_eq!(control, Ok(expected.clone()), "the control program");
-    let alias = build_and_run("alias", &program(&calls, Variant::Alias));
-    assert_eq!(
-        alias,
-        Ok(expected.clone()),
-        "a record alias per stdlib type name"
+    let annotated: Vec<&String> = calls
+        .iter()
+        .filter(|(_, c)| annotatable(c, &declared, &mut |_| String::new()).is_some())
+        .map(|(n, _)| n)
+        .collect();
+    eprintln!(
+        "{} names also flow through an annotated record alias, argument and result",
+        annotated.len()
     );
-    let union = build_and_run("union", &program(&calls, Variant::Union));
-    assert_eq!(union, Ok(expected), "a union per stdlib type name");
+    assert!(
+        annotated.iter().any(|n| *n == "Set") && annotated.len() >= 100,
+        "the annotated positions must cover Set and most called names: {annotated:?}"
+    );
+    for variant in [Variant::Control, Variant::Alias, Variant::Union] {
+        let (src, expected) = program(&calls, &declared, variant);
+        let tag = match variant {
+            Variant::Control => "control",
+            Variant::Alias => "alias",
+            Variant::Union => "union",
+        };
+        assert_eq!(
+            build_and_run(tag, &src),
+            Ok(expected),
+            "the {tag} program: a stdlib value in every position keeps its type"
+        );
+    }
 }
 
 #[test]
@@ -505,4 +740,135 @@ fn a_prelude_type_name_cannot_be_declared() {
         );
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A copy of the fixture project `name` in a fresh scratch directory.
+fn fixture(name: &str) -> PathBuf {
+    fn copy(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                copy(&p, &to.join(e.file_name()));
+            } else {
+                std::fs::copy(&p, to.join(e.file_name())).unwrap();
+            }
+        }
+    }
+    let dir = scratch(name);
+    copy(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/stdlib-type-capture")
+            .join(name)
+            .join("src"),
+        &dir.join("src"),
+    );
+    dir
+}
+
+/// Each project declares types named like stdlib types (`Set`, `Dict`,
+/// `Array`, `Bytes`, `Store`, `Db`, `Codec`, `Query`) and uses the stdlib
+/// values of those types beside its own, in every position a value takes. It
+/// is built and run, and prints the line its values compute.
+#[test]
+fn a_stdlib_value_keeps_its_type_beside_a_same_named_project_type_in_every_position() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let cases: &[(&str, &str)] = &[
+        // record fields, annotated arguments and results, a case scrutinee,
+        // a `Maybe` and a `Result` payload, list elements
+        ("positions", "5 2 x 1 3 7"),
+        // the project types from another module, and a `Codec` round trip of
+        // a record holding both kinds
+        (
+            "codec-modules",
+            r#"{"own":{"zz":3},"ks":{"a":1},"tags":["x","y"],"arr":[1,2,3],"mine":9,"d":{"dd":"q"}} 18q"#,
+        ),
+        // `Std.Db.Store` rows on SQLite beside `Store` / `Db` / `Codec` /
+        // `Query` / `Set` aliases
+        ("store", "2 2 1"),
+        // a union from another module nested in records, lists, `Maybe` and
+        // a kernel `Dict`
+        ("union-modules", "216 dz"),
+        // parametric project unions `Dict k v` / `Set a` and a `Bytes` alias
+        ("parametric", "17"),
+    ];
+    let failed: Vec<String> = cases
+        .iter()
+        .filter_map(|(name, expected)| {
+            let got = run_project(name, &fixture(name));
+            (got != Ok(expected.to_string()))
+                .then(|| format!("fixture {name}: expected {expected:?}, got {got:?}"))
+        })
+        .collect();
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}
+
+/// A Sky.Live app whose model holds project `Set` / `Dict` aliases beside
+/// kernel `Set` / `Dict` values. It is built, started, and its page served.
+#[test]
+fn a_live_model_keeps_stdlib_values_beside_same_named_project_types() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let dir = fixture("live");
+    let (ok, log) = bounded(
+        Command::new(SKY)
+            .args(["build", "src/Main.sky"])
+            .current_dir(&dir),
+        Duration::from_secs(900),
+    );
+    assert!(ok, "live: build failed ({}):\n{log}", dir.display());
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let log_path = dir.join("server.log");
+    let mut child = Command::new(dir.join("sky-out/app"))
+        .current_dir(&dir)
+        .env("SKY_LIVE_PORT", port.to_string())
+        .stdout(std::fs::File::create(&log_path).unwrap())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn the live app");
+    let start = Instant::now();
+    let mut page = String::new();
+    while start.elapsed() < Duration::from_secs(60) {
+        page = http_get(port, "/");
+        if page.contains("HOMEPAGE") {
+            break;
+        }
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        page.starts_with("HTTP/1.1 200") && page.contains("HOMEPAGE 4 3 1 dv"),
+        "the page shows the model's values:\n{page}\n{}",
+        std::fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// One HTTP/1.1 GET to 127.0.0.1:`port`; the whole answer, or "" when the
+/// server does not answer.
+fn http_get(port: u16, path: &str) -> String {
+    use std::io::{Read as _, Write as _};
+    let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
+        return String::new();
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    if stream.write_all(req.as_bytes()).is_err() {
+        return String::new();
+    }
+    let mut out = String::new();
+    let _ = stream.read_to_string(&mut out);
+    out
 }

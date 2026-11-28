@@ -1,0 +1,15 @@
+module Types exposing (Set, Dict, Array(..), mkSet)
+
+type alias Set =
+    { zz : Int }
+
+type alias Dict =
+    { dd : String }
+
+type Array
+    = ArrayC Int
+
+
+mkSet : Int -> Set
+mkSet n =
+    { zz = n }

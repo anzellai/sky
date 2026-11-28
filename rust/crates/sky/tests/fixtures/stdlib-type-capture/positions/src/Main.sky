@@ -1,0 +1,73 @@
+module Main exposing (main)
+
+import Sky.Core.Set as Set
+import Sky.Core.Dict as Dict
+import Std.Log exposing (println)
+
+type alias Set =
+    { zz : Int }
+
+type alias Dict =
+    { dd : String }
+
+type alias Holder =
+    { own : Set
+    , kern : Set.Set Int
+    , d : Dict
+    , kd : Dict.Dict String Int
+    }
+
+
+mkOwn : Int -> Set
+mkOwn n =
+    { zz = n }
+
+
+useOwn : Set -> Int
+useOwn s =
+    s.zz
+
+
+kernSize : Set.Set Int -> Int
+kernSize s =
+    Set.size s
+
+
+build : Int -> Holder
+build n =
+    { own = mkOwn n
+    , kern = Set.fromList [ n, n + 1 ]
+    , d = { dd = "x" }
+    , kd = Dict.fromList [ ( "a", n ) ]
+    }
+
+
+pick : Maybe Set -> Int
+pick m =
+    case m of
+
+        Just s ->
+            s.zz
+
+        Nothing ->
+            0
+
+
+main =
+    let
+        h = build 5
+        owns = [ mkOwn 1, mkOwn 2 ]
+        r : Result String Set
+        r = Ok (mkOwn 7)
+    in
+        println
+            (String.fromInt (useOwn h.own) ++ " "
+                ++ String.fromInt (kernSize h.kern)
+                ++ " "
+                ++ h.d.dd
+                ++ " "
+                ++ String.fromInt (Dict.size h.kd)
+                ++ " "
+                ++ String.fromInt (List.length owns + pick (List.head owns))
+                ++ " "
+                ++ String.fromInt (Result.withDefault 0 (Result.map .zz r)))

@@ -1,0 +1,61 @@
+module Main exposing (main)
+
+import Sky.Core.Dict as KDict
+import Sky.Core.Set as KSet
+import Std.Log exposing (println)
+
+type alias Bytes =
+    { b : Int }
+
+type Dict k v
+    = DictC k v
+
+type Set a
+    = SetC a a
+
+type alias Box =
+    { by : Bytes
+    , d : Dict Int String
+    , s : Set Int
+    , kd : KDict.Dict String Int
+    , ks : KSet.Set Int
+    }
+
+
+mkBox : Int -> Box
+mkBox n =
+    { by = { b = n }
+    , d = DictC n "v"
+    , s = SetC n 1
+    , kd = KDict.fromList [ ( "a", n ) ]
+    , ks = KSet.fromList [ n, n ]
+    }
+
+
+dKey : Dict Int String -> Int
+dKey d =
+    case d of
+
+        DictC k _ ->
+            k
+
+
+sSum : Set Int -> Int
+sSum s =
+    case s of
+
+        SetC a b ->
+            a + b
+
+
+main =
+    let
+        bx = mkBox 4
+        ds : List (Dict Int String)
+        ds = [ bx.d, DictC 10 "w" ]
+    in
+        println
+            (String.fromInt
+                (bx.by.b + dKey bx.d + sSum bx.s + KDict.size bx.kd
+                    + KSet.size bx.ks
+                    + List.length ds))

@@ -1,0 +1,34 @@
+module Types exposing (Set(..), Holder, mk, val)
+
+import Sky.Core.Set as KSet
+
+type Set
+    = SetC Int
+    | SetE
+
+type alias Holder =
+    { own : Set
+    , kern : KSet.Set Int
+    , many : List Set
+    , opt : Maybe Set
+    }
+
+
+mk : Int -> Holder
+mk n =
+    { own = SetC n
+    , kern = KSet.fromList [ n ]
+    , many = [ SetC 1, SetE ]
+    , opt = Just (SetC 2)
+    }
+
+
+val : Set -> Int
+val s =
+    case s of
+
+        SetC n ->
+            n
+
+        SetE ->
+            100
