@@ -56,10 +56,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Sky.Core.Task`, `Time` is `Sky.Core.Time`), so the other pure-Sky members
   (`Task.linearBackoff`, `Task.Loop`, `Maybe.isJust`, `String.containsIn`,
   `Http.defaultRequest`, `Process.command`, `Sub.everyWithTime` and more) need
-  no import either. An import that binds the qualifier still wins. A name that
-  only another standard library module with the same last segment exports is
-  still `[E1001]`, and the message names the import: `Time.zones` says
-  `` `zones` is in `Std.Time`: add `import Std.Time as Time` ``.
+  no import either. This holds for value names and for type names: with no
+  import, `Process.Command` is the `Sky.Core.Process` type, and a
+  kernel-backed type the home module itself uses (`Dict.Dict`, `Set.Set`,
+  `Cmd.Cmd`, `Task.Task`) stays valid. An import that binds the qualifier
+  still wins. A value or type name the home module does not have is
+  `[E1001]`. Before, a type name with a bare qualifier was not checked:
+  `Time.NoSuchType` was accepted, and `Time.Parts` named the `Std.Time`
+  record. When only another standard library module with the same last
+  segment exports the name, the message names the import: `Time.zones` says
+  `` `zones` is in `Std.Time`: add `import Std.Time as Time` ``, and
+  `Time.Parts` says the same for `Parts`.
 
 ### Migration
 

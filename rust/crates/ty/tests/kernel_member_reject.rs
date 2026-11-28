@@ -245,3 +245,44 @@ fn pure_sky_member_with_no_import_keeps_its_precise_type() {
         "`Task.unless \"yes\"` must be a type error"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Type names under a bare kernel qualifier with NO import. A kernel-backed type
+// (no `.sky` declaration) and a type of the home still check; a type the home
+// does not have is `[E1001]` (`hir` `Resolver::implicit_home_type`). Before,
+// `Time.Parts` checked and named `Std.Time`'s record, and `Time.NoSuchType`
+// checked as an unknown nominal type.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn kernel_backed_and_home_types_check_with_no_import() {
+    let src = format!(
+        "{NO_IMPORT_HEAD}\n\
+         count : Dict.Dict String Int -> Set.Set Int -> Maybe.Maybe Int -> Int\n\
+         count d s m =\n    Dict.size d + Set.size s + Maybe.withDefault 0 m\n\n\
+         later : Int -> Task.Task Error Int\n\
+         later n =\n    Task.succeed n\n\n\
+         cmd : Process.Command\n\
+         cmd =\n    Process.command \"ls\"\n\n\
+         main =\n    Task.run (later (count Dict.empty Set.empty (Just 1)) |> Task.andThen (\\_ -> println \"ok\"))\n"
+    );
+    let codes = error_codes(&src);
+    assert!(
+        codes.is_empty(),
+        "kernel-backed and home types must check with no import; got {codes:?}"
+    );
+}
+
+#[test]
+fn a_type_the_implicit_home_lacks_is_e1001() {
+    for ty in ["Time.Parts", "Time.NoSuchType"] {
+        let src = format!(
+            "{NO_IMPORT_HEAD}\nf : {ty} -> Int\nf p =\n    0\n\nmain =\n    println (String.fromInt (f 1))\n"
+        );
+        let codes = error_codes(&src);
+        assert!(
+            codes.iter().any(|c| c == "E1001"),
+            "`{ty}` with no import must be E1001; got {codes:?}"
+        );
+    }
+}

@@ -398,3 +398,162 @@ fn the_stdlib_modules_that_share_a_bare_qualifier_are_pinned() {
     got.dedup();
     assert_eq!(got, vec![("Time".to_string(), "Std.Time".to_string())]);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Type names. A bare kernel qualifier in TYPE position used to accept ANY
+// `Q.Name` as a nominal type with no module (`resolve.rs`, `type_qual`):
+// `Time.Parts` with no import named `Std.Time`'s record (the import-free
+// `Time` is `Sky.Core.Time`), and `Time.NoSuchType` was accepted. A type of the
+// home resolves to it, a kernel-backed type the home itself uses (`Dict.Dict`)
+// stays a kernel type, and every other name is `[E1001]`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The db and the resolve result of `Main` (one annotation `f : <ty> -> Int`).
+fn resolve_annotation_in(ty: &str) -> (SourceDb, hir::ResolveResult) {
+    let (mut db, next) = stdlib_db();
+    let main = format!("module Main exposing (f)\n\nf : {ty} -> Int\nf x =\n    0\n");
+    db.add_module("Main", syntax::parse(&main, FileId(next)));
+    let r = hir::resolve(&db, db.module_by_name("Main").unwrap());
+    (db, r)
+}
+
+fn resolve_annotation(ty: &str) -> hir::ResolveResult {
+    resolve_annotation_in(ty).1
+}
+
+fn e1001(r: &hir::ResolveResult) -> Vec<String> {
+    r.diagnostics
+        .iter()
+        .filter(|d| d.code.0 == "E1001")
+        .map(|d| d.message.clone())
+        .collect()
+}
+
+#[test]
+fn a_type_exported_by_the_home_resolves_with_no_import() {
+    let (db, r) = resolve_annotation_in("Process.Command");
+    let home = db.module_by_name("Sky.Core.Process").unwrap();
+    let want = db.module_exports(home).type_("Command").unwrap().0;
+    assert!(e1001(&r).is_empty(), "{:?}", e1001(&r));
+    assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+    assert_eq!(
+        r.type_refs.get("Process.Command").map(|t| t.con),
+        Some(want),
+        "`Process.Command` must name Sky.Core.Process.Command"
+    );
+}
+
+#[test]
+fn every_exported_type_resolves_through_its_implicit_qualifier() {
+    let (mut db, mut next) = stdlib_db();
+    let mut failures: Vec<String> = Vec::new();
+    for &(qual, home) in EXPECTED_HOMES {
+        let home_id = db.module_by_name(home).unwrap();
+        let ex = db.module_exports(home_id);
+        let mut types: Vec<(String, DefId, u16)> = ex
+            .unions
+            .iter()
+            .map(|u| (u.name.as_str().to_string(), u.def, u.arity))
+            .chain(
+                ex.aliases
+                    .iter()
+                    .map(|a| (a.name.as_str().to_string(), a.def, a.arity)),
+            )
+            .collect();
+        types.sort_by(|a, b| a.0.cmp(&b.0));
+        if types.is_empty() {
+            continue;
+        }
+        let mut src = format!("module ProbeT{qual} exposing (..)\n\n");
+        for (i, (t, _, arity)) in types.iter().enumerate() {
+            let args: String = (0..*arity).map(|k| format!(" a{k}")).collect();
+            src.push_str(&format!(
+                "ref{i} : ({qual}.{t}{args}) -> Int\nref{i} x =\n    0\n\n"
+            ));
+        }
+        let name = format!("ProbeT{qual}");
+        db.add_module(&name, syntax::parse(&src, FileId(next)));
+        next += 1;
+        let r = hir::resolve(&db, db.module_by_name(&name).unwrap());
+        for m in e1001(&r) {
+            failures.push(format!("{home}: {m}"));
+        }
+        for (t, def, _) in &types {
+            let got = r.type_refs.get(&format!("{qual}.{t}")).map(|tr| tr.con);
+            if got != Some(*def) {
+                failures.push(format!("{qual}.{t} (home {home}) resolved to {got:?}"));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "types not reachable through their implicit qualifier:\n  {}",
+        failures.join("\n  ")
+    );
+}
+
+/// `Parts` is a type of `Std.Time`, not of the import-free `Sky.Core.Time`.
+#[test]
+fn a_type_of_the_other_time_module_gets_an_import_hint() {
+    let r = resolve_annotation("Time.Parts");
+    let msgs = e1001(&r);
+    let want = "`Parts` is in `Std.Time`: add `import Std.Time as Time`";
+    assert!(
+        msgs.iter().any(|m| m.contains(want)),
+        "`Time.Parts` must be E1001 with the hint {want:?}: {msgs:?}"
+    );
+    assert!(!r.type_refs.contains_key("Time.Parts"));
+}
+
+#[test]
+fn an_unknown_type_of_a_bare_qualifier_is_undefined() {
+    for ty in ["Time.NoSuchType", "Task.Nope", "Dict.Dictionary String Int"] {
+        let msgs = e1001(&resolve_annotation(ty));
+        assert!(!msgs.is_empty(), "`{ty}` must be E1001");
+        assert!(
+            msgs.iter().all(|m| !m.contains("import")),
+            "`{ty}`: no import hint expected: {msgs:?}"
+        );
+    }
+}
+
+#[test]
+fn an_import_binding_the_qualifier_wins_for_a_type() {
+    let (mut db, next) = stdlib_db();
+    let mine = "module Mine exposing (Parts)\n\ntype alias Parts =\n    { n : Int }\n";
+    let main = "module Main exposing (f)\n\
+                import Mine as Time\n\n\
+                f : Time.Parts -> Int\nf p =\n    p.n\n";
+    db.add_module("Mine", syntax::parse(mine, FileId(next)));
+    db.add_module("Main", syntax::parse(main, FileId(next + 1)));
+    let want = db
+        .module_exports(db.module_by_name("Mine").unwrap())
+        .type_("Parts")
+        .unwrap()
+        .0;
+    let r = hir::resolve(&db, db.module_by_name("Main").unwrap());
+    assert!(e1001(&r).is_empty(), "{:?}", e1001(&r));
+    assert_eq!(r.type_refs.get("Time.Parts").map(|t| t.con), Some(want));
+}
+
+/// Kernel-backed types have no `.sky` declaration. The home module itself
+/// uses each of them as a kernel type, so the bare qualifier keeps them.
+#[test]
+fn kernel_backed_types_of_a_bare_qualifier_still_resolve() {
+    for ty in [
+        "Dict.Dict String Int",
+        "Set.Set Int",
+        "Cmd.Cmd Int",
+        "Sub.Sub Int",
+        "Task.Task Error Int",
+        "Maybe.Maybe Int",
+        "Result.Result Error Int",
+        "List.List Int",
+        "JsonEnc.Value",
+        "JsonDec.Decoder Int",
+    ] {
+        let r = resolve_annotation(ty);
+        assert!(e1001(&r).is_empty(), "`{ty}`: {:?}", e1001(&r));
+        assert!(r.class_a.is_empty(), "`{ty}` class-a: {:?}", r.class_a);
+    }
+}

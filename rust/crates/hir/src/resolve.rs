@@ -584,6 +584,9 @@ struct Resolver<'a> {
     /// `Sky.Core.Task`), read on demand by [`Resolver::implicit_home_exports`].
     /// `None` when no import-free home applies.
     implicit_homes: HashMap<String, Option<std::rc::Rc<ModuleExports>>>,
+    /// The kernel-backed type names each home module uses itself, read on
+    /// demand by [`Resolver::home_kernel_types`].
+    home_kernel_types: HashMap<ModuleId, std::rc::Rc<HashSet<String>>>,
     /// Kernel pseudo-modules imported with `exposing (..)` — a lenient fallback
     /// for bare names we can't enumerate (no static kernel-function table).
     kernel_open: Vec<String>,
@@ -651,6 +654,18 @@ enum TypeResEntry {
     Foreign(String),
 }
 
+/// What a type `Q.Name` names when `Q` is a bare kernel qualifier that no
+/// import binds ([`Resolver::implicit_home_type`]).
+enum ImplicitType {
+    /// A type the qualifier's import-free home exports.
+    Home(TypeRes),
+    /// A kernel-backed type with no `.sky` declaration (`Dict.Dict`), or a
+    /// qualifier with no import-free home: the nominal kernel type, as before.
+    Fallthrough,
+    /// Neither: `[E1001]`.
+    Unknown,
+}
+
 impl<'a> Resolver<'a> {
     fn new(db: &'a dyn SkyDb, module: ModuleId) -> Self {
         Resolver {
@@ -665,6 +680,7 @@ impl<'a> Resolver<'a> {
             qual_types: HashMap::new(),
             import_aliases: HashMap::new(),
             implicit_homes: HashMap::new(),
+            home_kernel_types: HashMap::new(),
             kernel_open: Vec::new(),
             open_modules: Vec::new(),
             foreign_open: None,
@@ -1830,6 +1846,159 @@ impl<'a> Resolver<'a> {
         };
         self.implicit_homes.insert(qual.to_string(), found.clone());
         found
+    }
+
+    /// What the type `qual.name` names when `qual` is a bare kernel qualifier
+    /// that no import binds. The qualifier's import-free home
+    /// (`hir::implicit_qualifier_homes`) decides, as for a value:
+    ///
+    /// * a type the home exports is that type (`Process.Command`);
+    /// * a type the home itself uses with no declaration and no import is a
+    ///   kernel-backed type (`Dict.Dict`, `Cmd.Cmd`, `JsonEnc.Value`), and so
+    ///   is a builtin type named like the qualifier (`Task.Task`,
+    ///   `Maybe.Maybe`); both stay the nominal kernel type;
+    /// * any other name is `[E1001]`. `Time.Parts` with no import used to be
+    ///   accepted and named `Std.Time`'s record, while the import-free `Time`
+    ///   is `Sky.Core.Time`; `Time.NoSuchType` was accepted too.
+    ///
+    /// A qualifier with no import-free home in this compilation (or this
+    /// module is the home) falls through to the old nominal kernel type.
+    fn implicit_home_type(&mut self, qual: &str, name: &str) -> ImplicitType {
+        if self.db.kernel_pseudo(qual).is_none() {
+            return ImplicitType::Fallthrough;
+        }
+        let Some(ex) = self.implicit_home_exports(qual) else {
+            return ImplicitType::Fallthrough;
+        };
+        if let Some((con, arity)) = ex.type_(name) {
+            return ImplicitType::Home(TypeRes { con, arity });
+        }
+        let builtin_named_like_qualifier =
+            name == qual && BUILTIN_TYPES.iter().any(|(n, _)| *n == name);
+        if builtin_named_like_qualifier
+            || ex.lists_undeclared_type(name)
+            || self.home_kernel_types(ex.module).contains(name)
+        {
+            return ImplicitType::Fallthrough;
+        }
+        ImplicitType::Unknown
+    }
+
+    /// The unqualified type names the module `home` uses in its own source
+    /// that it neither declares nor imports, builtins left out: the
+    /// kernel-backed types it relies on (`Dict` in `Sky.Core.Dict`, `Cmd` in
+    /// `Std.Cmd`). Read from the parse and the exports of its imports, never
+    /// from `resolve`, so resolution does not re-enter itself (the same reads
+    /// `chase_reexported_type` makes through a dependency's imports). Cached.
+    fn home_kernel_types(&mut self, home: ModuleId) -> std::rc::Rc<HashSet<String>> {
+        if let Some(c) = self.home_kernel_types.get(&home) {
+            return c.clone();
+        }
+        let tree = self.db.module_parse(home).tree();
+        let mut declared: HashSet<String> = HashSet::new();
+        for decl in tree.decls() {
+            match decl {
+                ast::Decl::Union(u) => {
+                    if let Some(n) = u.name() {
+                        declared.insert(n.text().to_string());
+                    }
+                }
+                ast::Decl::Alias(a) => {
+                    if let Some(n) = a.name() {
+                        declared.insert(n.text().to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Types an import of the home binds unqualified.
+        let mut explicit: HashSet<String> = HashSet::new();
+        let mut open: Vec<std::rc::Rc<ModuleExports>> = Vec::new();
+        for imp in tree.imports() {
+            let Some(clause) = imp.exposing().map(|e| cst::read_exposing(e.syntax())) else {
+                continue;
+            };
+            for it in &clause.items {
+                if let cst::ExposedItem::Type { name, .. } = it {
+                    explicit.insert(name.clone());
+                }
+            }
+            if clause.all {
+                if let Some(path) = imp.name().map(|n| n.text()) {
+                    if let ImportSource::Dep(dep) = self.db.classify_import(&path) {
+                        open.push(self.db.module_exports(dep));
+                    }
+                }
+            }
+        }
+        let mut out: HashSet<String> = HashSet::new();
+        for node in tree.syntax().descendants() {
+            if node.kind() != SyntaxKind::TypeCon {
+                continue;
+            }
+            let Some(n) = cst::first_upper(&node) else {
+                continue;
+            };
+            if declared.contains(&n)
+                || explicit.contains(&n)
+                || BUILTIN_TYPES.iter().any(|(b, _)| *b == n)
+                || open
+                    .iter()
+                    .any(|e| e.type_(&n).is_some() || e.lists_undeclared_type(&n))
+            {
+                continue;
+            }
+            out.insert(n);
+        }
+        let out = std::rc::Rc::new(out);
+        self.home_kernel_types.insert(home, out.clone());
+        out
+    }
+
+    /// `[E1001]` for a type `qual.name` the import-free home of `qual` does
+    /// not have. When another stdlib module written `qual` exports the type
+    /// (`Time.Parts`: `Std.Time`), the message names the import that binds
+    /// it; otherwise the closest type of the home, if any.
+    fn report_unknown_home_type(&mut self, qual: &str, name: &str, span: Option<Span>) {
+        if self.quiet > 0 {
+            return;
+        }
+        let hint = match self.missing_import_hint(qual, |e| e.type_(name).is_some()) {
+            Some(module) => format!(". `{name}` is in `{module}`: add `import {module} as {qual}`"),
+            None => {
+                let ex = self.implicit_home_exports(qual);
+                let mut known: Vec<String> = ex
+                    .iter()
+                    .flat_map(|e| {
+                        e.unions
+                            .iter()
+                            .map(|u| u.name.as_str().to_string())
+                            .chain(e.aliases.iter().map(|a| a.name.as_str().to_string()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                if let Some(e) = &ex {
+                    known.extend(self.home_kernel_types(e.module).iter().cloned());
+                }
+                known.sort();
+                let refs: Vec<&str> = known.iter().map(|s| s.as_str()).collect();
+                Self::closest_member(name, &refs)
+                    .map(|m| format!(" (did you mean `{qual}.{m}`?)"))
+                    .unwrap_or_default()
+            }
+        };
+        let mut diag = Diagnostic::error("E1001", format!("`{qual}` has no type `{name}`{hint}"));
+        if let Some(sp) = span {
+            diag = diag.with_label(sp, "no such type");
+        }
+        self.result.diagnostics.push(diag);
+        self.result.class_a.push(ClassA {
+            qualifier: Some(qual.to_string()),
+            name: name.to_string(),
+            kind: RefKind::Type,
+            reason: "unknown module type".to_string(),
+            span,
+        });
     }
 
     fn bind_qual_from_exports(&mut self, q: &str, exports: &ModuleExports) {
@@ -3740,6 +3909,28 @@ impl<'a> Resolver<'a> {
                         });
                     }
                 }
+            }
+        }
+        // A bare kernel qualifier no import binds (`Time.Parts` with no
+        // `import … as Time`): the qualifier's import-free home decides, as for
+        // a value (`resolve_qual_var`).
+        if !self.import_aliases.contains_key(qual) {
+            match self.implicit_home_type(qual, name) {
+                ImplicitType::Home(tr) => {
+                    if self.quiet == 0 {
+                        self.result.type_refs.insert(format!("{qual}.{name}"), tr);
+                    }
+                    return self.body.ty(Type::Con {
+                        con: Some(tr),
+                        name: Name::new(name),
+                        args,
+                    });
+                }
+                ImplicitType::Unknown => {
+                    self.report_unknown_home_type(qual, name, span);
+                    return self.body.ty(Type::Error);
+                }
+                ImplicitType::Fallthrough => {}
             }
         }
         // kernel-qualified type (e.g. Json decoders' types) — lenient kernel
