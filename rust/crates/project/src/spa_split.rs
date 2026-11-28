@@ -5060,6 +5060,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // `Msg` union itself is NEVER moved (it is the `Applied<Msg>` inject target,
     // stays in its module, and is not a wire field), so it is excluded below.
     let mut moved_unions: BTreeMap<String, Vec<String>>;
+    // Each moved union's HOME module name (the module that declared it).
+    let mut moved_union_home: BTreeMap<String, String> = BTreeMap::new();
     let copy_types_of = |m: ModuleId,
                          seed: &BTreeSet<String>,
                          keys: &BTreeSet<String>,
@@ -5180,6 +5182,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         // The unions `Shared` now owns, and the modules that import `Shared`
         // because of them or because their copy strips a copied declaration.
         moved_unions = BTreeMap::new();
+        moved_union_home = BTreeMap::new();
         for m in copy_mods.iter().copied() {
             let mtypes = project_type_decls(&db.module_parse(m).tree());
             for n in copy_types_of(m, &seed_ty, &seed_keys, &copied_values_by_mod) {
@@ -5187,6 +5190,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 if decl_kind(d) == DeclKind::Union && Some(&n) != msg_union_name.as_ref() {
                     let mut words = vec![n.clone()];
                     words.extend(union_variant_names(d));
+                    moved_union_home.insert(n.clone(), db.module_name(m).to_string());
                     moved_unions.insert(n, words);
                 }
             }
@@ -6045,6 +6049,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 .trim_end_matches(".sky")
                 .replace('/', ".");
             let finished = finish_type_refs(content, Some(&own));
+            let finished = retarget_moved_unions(&finished, &own, &moved_unions, &moved_union_home);
             reserved = ensure_reserved_imports(&finished);
             generated_source_parses(rel, &reserved)?;
             reserved.as_str()
@@ -8753,6 +8758,137 @@ fn own_moved_nominals_verbatim(
     }
     let clause = format!("import Shared exposing ({})", exposes.join(", "));
     ensure_import_present(&stripped, "Shared", &clause)
+}
+
+/// Point a generated module's references to a MOVED UNION at `Shared`, its
+/// single definition, when the module named it through the union's HOME
+/// module (`home`: union → the module that declared it). The home copy no
+/// longer declares the union, so:
+///   * `import Types exposing (Session, Role(..))` drops `Role(..)` (else
+///     `[E1011] module Types does not expose the type Role`), and
+///   * `Types.Admin` / `T.Role` (the module name, or its `as` alias) become
+///     `Shared.Admin` / `Shared.Role` (else `[E1001] Undefined name`).
+/// The module then imports `Shared` exposing each union it names (merged into
+/// an existing `import Shared exposing (…)`), so a bare `Admin` that came from
+/// the dropped exposing entry still resolves. `Shared` itself is unchanged.
+fn retarget_moved_unions(
+    text: &str,
+    own_module: &str,
+    moved_unions: &BTreeMap<String, Vec<String>>,
+    home: &BTreeMap<String, String>,
+) -> String {
+    if moved_unions.is_empty() || own_module == "Shared" {
+        return text.to_string();
+    }
+    let parse = syntax::parse(text, base::FileId(0));
+    let file = parse.tree();
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    let mut quals: Vec<(String, Vec<String>)> = Vec::new();
+    let mut touched: BTreeSet<String> = BTreeSet::new();
+    for imp in file.imports() {
+        let Some(path) = imp.name().map(|n| n.text()) else {
+            continue;
+        };
+        let unions: HashSet<String> = home
+            .iter()
+            .filter(|(u, h)| **h == path && moved_unions.contains_key(*u))
+            .map(|(u, _)| u.clone())
+            .collect();
+        if unions.is_empty() {
+            continue;
+        }
+        let r = imp.syntax().text_range();
+        let (a, b) = (usize::from(r.start()), usize::from(r.end()));
+        let t = &text[a..b];
+        let stripped = strip_names_from_import_exposing(t, &unions);
+        if stripped != t {
+            touched.extend(unions.iter().cloned());
+            edits.push((a, b, stripped));
+        }
+        let q = imp
+            .alias()
+            .map(|t| t.text().to_string())
+            .unwrap_or_else(|| path.clone());
+        let words: Vec<String> = unions
+            .iter()
+            .flat_map(|u| moved_unions[u].iter().cloned())
+            .collect();
+        quals.push((q, words));
+    }
+    let mut out = text.to_string();
+    edits.sort_by(|x, y| y.0.cmp(&x.0));
+    for (a, b, n) in edits {
+        out.replace_range(a..b, &n);
+    }
+    // `Q.Word` → `Shared.Word`, at identifier boundaries, outside imports.
+    for (q, words) in &quals {
+        for w in words {
+            let from = format!("{q}.{w}");
+            let mut res = String::with_capacity(out.len());
+            let mut rest = out.as_str();
+            let mut prev: Option<char> = None;
+            while let Some(i) = rest.find(&from) {
+                let before = rest[..i].chars().last().or(prev);
+                let after = rest[i + from.len()..].chars().next();
+                let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '.';
+                let line_start = rest[..i].rfind('\n').map(|p| p + 1).unwrap_or(0);
+                let in_import = rest[line_start..i].trim_start().starts_with("import ");
+                res.push_str(&rest[..i]);
+                if !before.is_some_and(ident) && !after.is_some_and(ident) && !in_import {
+                    res.push_str("Shared.");
+                    res.push_str(w);
+                    for (u, ws) in moved_unions {
+                        if ws.contains(w) {
+                            touched.insert(u.clone());
+                        }
+                    }
+                } else {
+                    res.push_str(&from);
+                }
+                prev = from.chars().last();
+                rest = &rest[i + from.len()..];
+            }
+            res.push_str(rest);
+            out = res;
+        }
+    }
+    if touched.is_empty() {
+        return out;
+    }
+    let wanted: Vec<String> = touched.iter().map(|u| format!("{u}(..)")).collect();
+    // Merge into an existing `import Shared exposing (…)`, else add one.
+    let parse = syntax::parse(&out, base::FileId(0));
+    let file = parse.tree();
+    if let Some(imp) = file
+        .imports()
+        .find(|i| i.name().map(|n| n.text()).as_deref() == Some("Shared"))
+    {
+        let r = imp.syntax().text_range();
+        let (a, b) = (usize::from(r.start()), usize::from(r.end()));
+        let t = out[a..b].to_string();
+        let missing: Vec<&String> = wanted
+            .iter()
+            .filter(|w| {
+                !explicit_exposed_names(&t)
+                    .iter()
+                    .any(|e| format!("{e}(..)") == **w)
+            })
+            .collect();
+        if t.contains("exposing (..)") || missing.is_empty() {
+            return out;
+        }
+        let extra: String = missing.iter().map(|m| format!(", {m}")).collect();
+        let new = match t.rfind(')') {
+            Some(close) if t.contains("exposing") => {
+                format!("{}{}{}", &t[..close], extra, &t[close..])
+            }
+            _ => format!("{t} exposing ({})", wanted.join(", ")),
+        };
+        out.replace_range(a..b, &new);
+        return out;
+    }
+    let clause = format!("import Shared exposing ({})", wanted.join(", "));
+    ensure_import_present(&out, "Shared", &clause)
 }
 
 // ---------------------------------------------------------------------------

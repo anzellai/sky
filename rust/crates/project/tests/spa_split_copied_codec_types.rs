@@ -359,10 +359,8 @@ fn a_qualified_value_in_a_copied_codec_keeps_its_spacing() {
 /// message that names the cycle, never generated code that does not compile.
 #[test]
 fn a_qualified_value_on_an_import_cycle_is_refused_by_name() {
-    let dir = std::env::temp_dir().join(format!(
-        "sky-spa-copied-codec-cycle-{}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("sky-spa-copied-codec-cycle-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     write(
         &dir,
@@ -391,5 +389,81 @@ fn a_qualified_value_on_an_import_cycle_is_refused_by_name() {
         err.contains("Helpers -> Types -> Shared") && err.contains("cycle"),
         "the refusal names the cycle: {err}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A union `Shared` takes over (its constructor is named by a copied codec)
+/// leaves its home module. A module that imported it from there by name
+/// (`Types exposing (Session, Msg, Role(..))`) or named it qualified
+/// (`Types.Admin`) is pointed at `Shared`.
+#[test]
+fn a_moved_union_imported_by_name_or_qualified_points_at_shared() {
+    let head = DATA_HEAD.replace(
+        "import Types exposing (..)\n",
+        "import Types exposing (Session, Msg, Role(..))\nimport Types\n",
+    );
+    let data = format!(
+        "{head}{DATA_NOTE}\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto {{ userId = (if Types.Admin == Guest then \"x\" else \"\"), email = \"\" }}\n"
+    );
+    let shared = split_and_check("moved-named", SESSION_TYPES, &data, &[]);
+    assert!(shared.contains("type Role"), "the union is copied:\n{shared}");
+}
+
+/// A wire union with its own codec (`roleCodec : Codec Role`) moves to
+/// `Shared` the same way, and its home module's `exposing (Role(..))`
+/// importers are pointed at `Shared`.
+#[test]
+fn a_wire_union_with_its_own_codec_points_its_importers_at_shared() {
+    let types = SESSION_TYPES.replace(
+        "    , session : Maybe Session\n    }",
+        "    , session : Maybe Session\n    , role : Role\n    }",
+    );
+    let head = DATA_HEAD
+        .replace(
+            "module Data exposing (note, sessionCodec)",
+            "module Data exposing (note, roleCodec, sessionCodec)",
+        )
+        .replace(
+            "import Types exposing (..)\n",
+            "import Types exposing (Session, Msg, Role(..))\n",
+        );
+    let data = format!(
+        "{head}{DATA_NOTE}\n\nsessionCodec : Codec Session\nsessionCodec =\n    Codec.auto {{ userId = \"\", email = \"\" }}\n\n\nroleCodec : Codec Role\nroleCodec =\n    Codec.enum [ ( Admin, \"admin\" ), ( Guest, \"guest\" ) ]\n"
+    );
+    let dir = std::env::temp_dir().join(format!(
+        "sky-spa-copied-codec-wire-union-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    write(
+        &dir,
+        "sky.toml",
+        "name = \"copied\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    );
+    write(&dir, "src/Types.sky", &types);
+    write(&dir, "src/Data.sky", &data);
+    let main = SESSION_MAIN
+        .replace(
+            "{ status = \"ready\", session = Nothing }",
+            "{ status = \"ready\", session = Nothing, role = Guest }",
+        )
+        .replace(
+            "{ model | session = Just { userId = \"u\", email = \"e\" } }",
+            "{ model | session = Just { userId = \"u\", email = \"e\" }, role = Admin }",
+        );
+    write(&dir, "src/Main.sky", &main);
+    let errors = front_half_errors(&root(), &dir, None);
+    assert!(errors.is_empty(), "the app itself must check: {errors:?}");
+    let out = dir.join("generated");
+    spa_split::generate(&root(), &dir, None, &out, None, None)
+        .unwrap_or_else(|e| panic!("the app must split: {e}"));
+    for half in ["backend", "frontend"] {
+        let errors = front_half_errors(&root(), &out.join(half), None);
+        assert!(
+            errors.is_empty(),
+            "the generated {half} must type-check: {errors:?}\n{}",
+            tree_text(&out.join(half).join("src"))
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
