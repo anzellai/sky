@@ -557,3 +557,63 @@ fn kernel_backed_types_of_a_bare_qualifier_still_resolve() {
         assert!(r.class_a.is_empty(), "`{ty}` class-a: {:?}", r.class_a);
     }
 }
+
+/// The resolve result of `Main` with one `import` line and one annotation.
+fn resolve_with_import(import: &str, ty: &str) -> hir::ResolveResult {
+    let (mut db, next) = stdlib_db();
+    let main = format!("module Main exposing (f)\n{import}\n\nf : {ty} -> Int\nf x =\n    0\n");
+    db.add_module("Main", syntax::parse(&main, FileId(next)));
+    hir::resolve(&db, db.module_by_name("Main").unwrap())
+}
+
+#[test]
+fn kernel_backed_types_of_an_imported_stdlib_module_still_resolve() {
+    for (import, ty) in [
+        ("import Sky.Core.Dict as Dict", "Dict.Dict String Int"),
+        ("import Sky.Core.Dict as D", "D.Dict String Int"),
+        ("import Std.Db as Db", "Db.Db"),
+        ("import Sky.Core.Maybe as M", "M.Maybe Int"),
+        ("import Sky.Core.Task as Task", "Task.Task Error Int"),
+        ("import Std.Sub as Sub", "Sub.Sub Int"),
+        ("import Sky.Core.Json.Encode as JsonEnc", "JsonEnc.Value"),
+        ("import Std.Time as Time", "Time.Parts"),
+    ] {
+        let r = resolve_with_import(import, ty);
+        assert!(
+            e1001(&r).is_empty(),
+            "`{ty}` under `{import}`: {:?}",
+            e1001(&r)
+        );
+        assert!(
+            r.class_a.is_empty(),
+            "`{ty}` under `{import}`: {:?}",
+            r.class_a
+        );
+    }
+}
+
+/// A user module imported under a kernel qualifier's name is that module: a
+/// type it does not export is an error.
+#[test]
+fn a_user_module_under_a_kernel_qualifier_name_is_checked() {
+    let (mut db, next) = stdlib_db();
+    let mine = "module Lib.Db exposing (Vote)\n\ntype alias Vote =\n    { n : Int }\n";
+    let main = "module Main exposing (f, g)\nimport Lib.Db as Db\n\n\
+                f : Db.Vote -> Int\nf v =\n    v.n\n\n\
+                g : Db.Missing -> Int\ng m =\n    0\n";
+    db.add_module("Lib.Db", syntax::parse(mine, FileId(next)));
+    db.add_module("Main", syntax::parse(main, FileId(next + 1)));
+    let r = hir::resolve(&db, db.module_by_name("Main").unwrap());
+    let names: Vec<&str> = r.class_a.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, vec!["Missing"], "{:?}", r.class_a);
+}
+
+#[test]
+fn an_unknown_home_type_is_published_as_unresolved() {
+    let r = resolve_annotation("Time.Parts");
+    assert!(
+        r.unresolved_type_refs.contains("Time.Parts"),
+        "{:?}",
+        r.unresolved_type_refs
+    );
+}

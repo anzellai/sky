@@ -286,3 +286,43 @@ fn a_type_the_implicit_home_lacks_is_e1001() {
         );
     }
 }
+
+/// The Judge repro gives ONE diagnostic: the `[E1001]` with the import hint.
+/// The type checker used to read the rejected `Time.Parts` as `Std.Time`'s
+/// record by its bare name and added a second, wrong `[E2001]` (the call's
+/// record "is missing field(s): abbreviation, …").
+#[test]
+fn an_unknown_qualified_type_gives_one_diagnostic() {
+    for (import, ty) in [("", "Time.Parts")] {
+        let src = format!(
+            "{NO_IMPORT_HEAD}{import}\nf : {ty} -> Int\nf p =\n    p.weekday\n\n\
+             main =\n    println (String.fromInt (f {{ year = 1 }}))\n"
+        );
+        let root = repo_root();
+        let mut db = SourceDb::new();
+        for (n, parse) in &load_stdlib(&root) {
+            db.add_module(n, parse.clone());
+        }
+        let mid = db.add_module("Main", syntax::parse(&src, base::FileId(0)));
+        let errs: Vec<(String, String)> = ty::check_modules(&db, &[mid])
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == diagnostics::Severity::Error)
+            .map(|d| (d.code.0.clone(), d.message.clone()))
+            .collect();
+        assert_eq!(
+            errs.len(),
+            1,
+            "`{ty}`: exactly one error expected: {errs:?}"
+        );
+        assert_eq!(errs[0].0, "E1001", "`{ty}`: {errs:?}");
+        if import.is_empty() {
+            assert!(
+                errs[0]
+                    .1
+                    .contains("`Parts` is in `Std.Time`: add `import Std.Time as Time`"),
+                "{errs:?}"
+            );
+        }
+    }
+}

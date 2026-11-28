@@ -2288,6 +2288,7 @@ fn resolve_type_names(db: &dyn SkyDb, m: ModuleId, t: &ast::Type, keys: TypeKeys
     rewrite_alias_refs(
         db,
         &resolved.type_refs,
+        &resolved.unresolved_type_refs,
         &resolved.qualifiers,
         keys,
         &qualified,
@@ -2310,6 +2311,7 @@ fn kernel_home_key(keys: TypeKeys<'_>, base: &str) -> Option<String> {
 fn rewrite_alias_refs(
     db: &dyn SkyDb,
     type_refs: &HashMap<String, TypeRes>,
+    unresolved: &HashSet<String>,
     qualifiers: &HashMap<String, hir::ImportSource>,
     keys: TypeKeys<'_>,
     ty: &Ty,
@@ -2320,9 +2322,17 @@ fn rewrite_alias_refs(
             Ty::App(name, args) => {
                 let args: Vec<Ty> = args
                     .iter()
-                    .map(|a| rewrite_alias_refs(db, type_refs, qualifiers, keys, a))
+                    .map(|a| rewrite_alias_refs(db, type_refs, unresolved, qualifiers, keys, a))
                     .collect();
                 let full = name.as_str();
+                // A qualified name HIR reported as naming no type (`[E1001]`,
+                // `ResolveResult::unresolved_type_refs`) is an error type that
+                // unifies silently. The bare-name fallback below used to find a
+                // same-named declaration of ANOTHER module (`Time.Parts` with no
+                // import read as `Std.Time.Parts`) and add a second, wrong error.
+                if unresolved.contains(full) {
+                    return Ty::Error;
+                }
                 // The bare final segment: what `ast_type_to_ty` produces, and the
                 // `<name>` half of any alias / union key.
                 let base = crate::nominal::base(full);
@@ -2422,12 +2432,16 @@ fn rewrite_alias_refs(
                 Ty::App(Name::new(base), args)
             }
             Ty::Fun(a, b) => Ty::Fun(
-                Box::new(rewrite_alias_refs(db, type_refs, qualifiers, keys, a)),
-                Box::new(rewrite_alias_refs(db, type_refs, qualifiers, keys, b)),
+                Box::new(rewrite_alias_refs(
+                    db, type_refs, unresolved, qualifiers, keys, a,
+                )),
+                Box::new(rewrite_alias_refs(
+                    db, type_refs, unresolved, qualifiers, keys, b,
+                )),
             ),
             Ty::Tuple(xs) => Ty::Tuple(
                 xs.iter()
-                    .map(|x| rewrite_alias_refs(db, type_refs, qualifiers, keys, x))
+                    .map(|x| rewrite_alias_refs(db, type_refs, unresolved, qualifiers, keys, x))
                     .collect(),
             ),
             Ty::Record(fs, ext) => Ty::Record(
@@ -2435,7 +2449,7 @@ fn rewrite_alias_refs(
                     .map(|(n, ft)| {
                         (
                             n.clone(),
-                            rewrite_alias_refs(db, type_refs, qualifiers, keys, ft),
+                            rewrite_alias_refs(db, type_refs, unresolved, qualifiers, keys, ft),
                         )
                     })
                     .collect(),

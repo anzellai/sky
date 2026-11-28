@@ -218,6 +218,11 @@ pub struct ResolveResult {
     /// checker's program-wide table. `ty::check` decides which of them name no
     /// type at all and reports those as `[E1001]` (`ty::undefined_types`).
     pub lenient_types: Vec<(Name, Span)>,
+    /// Every QUALIFIED type reference (`"Time.Parts"`, as written) this module
+    /// reported as naming no type (`[E1001]`). The type checker reads it as an
+    /// error type, so it never finds a same-named declaration of another
+    /// module by its bare name and reports a second, wrong error.
+    pub unresolved_type_refs: HashSet<String>,
 }
 
 /// Resolve a module. Never panics; partial results + diagnostics (L7).
@@ -1855,7 +1860,7 @@ impl<'a> Resolver<'a> {
     /// * a type the home exports is that type (`Process.Command`);
     /// * a type the home itself uses with no declaration and no import is a
     ///   kernel-backed type (`Dict.Dict`, `Cmd.Cmd`, `JsonEnc.Value`), and so
-    ///   is a builtin type named like the qualifier (`Task.Task`,
+    ///   is the builtin type named like the home (`Task.Task`,
     ///   `Maybe.Maybe`); both stay the nominal kernel type;
     /// * any other name is `[E1001]`. `Time.Parts` with no import used to be
     ///   accepted and named `Std.Time`'s record, while the import-free `Time`
@@ -1873,12 +1878,7 @@ impl<'a> Resolver<'a> {
         if let Some((con, arity)) = ex.type_(name) {
             return ImplicitType::Home(TypeRes { con, arity });
         }
-        let builtin_named_like_qualifier =
-            name == qual && BUILTIN_TYPES.iter().any(|(n, _)| *n == name);
-        if builtin_named_like_qualifier
-            || ex.lists_undeclared_type(name)
-            || self.home_kernel_types(ex.module).contains(name)
-        {
+        if ex.lists_undeclared_type(name) || self.stdlib_kernel_type(ex.module, name) {
             return ImplicitType::Fallthrough;
         }
         ImplicitType::Unknown
@@ -1955,6 +1955,25 @@ impl<'a> Resolver<'a> {
         out
     }
 
+    /// True when `name` is a kernel-backed type of the STDLIB module `dep`
+    /// (no `.sky` declaration): a type `dep` itself uses with no declaration
+    /// and no import (`Dict` in `Sky.Core.Dict`), or the builtin type named
+    /// like the module's last segment (`Task` in `Sky.Core.Task`). False for
+    /// a module outside the reserved stdlib namespaces.
+    ///
+    /// Only the import-free path uses it. Under an import, the whole stdlib is
+    /// still exempt (`type_qual`): `import Std.Ui as Ui` then `Ui.Html` is
+    /// accepted and means `Std.Html`'s `Html`, which example 64 relies on.
+    fn stdlib_kernel_type(&mut self, dep: ModuleId, name: &str) -> bool {
+        let path = self.db.module_name(dep).to_string();
+        if !is_reserved_sky_namespace(&path) {
+            return false;
+        }
+        let last = path.rsplit('.').next().unwrap_or(&path);
+        (name == last && BUILTIN_TYPES.iter().any(|(n, _)| *n == name))
+            || self.home_kernel_types(dep).contains(name)
+    }
+
     /// `[E1001]` for a type `qual.name` the import-free home of `qual` does
     /// not have. When another stdlib module written `qual` exports the type
     /// (`Time.Parts`: `Std.Time`), the message names the import that binds
@@ -1987,6 +2006,9 @@ impl<'a> Resolver<'a> {
                     .unwrap_or_default()
             }
         };
+        self.result
+            .unresolved_type_refs
+            .insert(format!("{qual}.{name}"));
         let mut diag = Diagnostic::error("E1001", format!("`{qual}` has no type `{name}`{hint}"));
         if let Some(sp) = span {
             diag = diag.with_label(sp, "no such type");
@@ -3933,8 +3955,13 @@ impl<'a> Resolver<'a> {
                 ImplicitType::Fallthrough => {}
             }
         }
-        // kernel-qualified type (e.g. Json decoders' types) — lenient kernel
-        if self.db.kernel_pseudo(qual).is_some() {
+        // kernel-qualified type (e.g. Json decoders' types) — lenient kernel.
+        // Not when an import binds the qualifier to a Sky module (`import
+        // Lib.Db as Db`): that module decides, below, as it does for any other
+        // qualifier, so `Db.Missing` is an error.
+        if self.db.kernel_pseudo(qual).is_some()
+            && !matches!(self.import_aliases.get(qual), Some(ImportSource::Dep(_)))
+        {
             return self.body.ty(Type::Con {
                 con: None,
                 name: Name::new(name),
@@ -3976,6 +4003,11 @@ impl<'a> Resolver<'a> {
                     && !exports.lists_undeclared_type(name)
                     && !is_reserved_sky_namespace(self.db.module_name(dep))
                 {
+                    if self.quiet == 0 {
+                        self.result
+                            .unresolved_type_refs
+                            .insert(format!("{qual}.{name}"));
+                    }
                     self.track_class_a(
                         Some(qual.to_string()),
                         name,
@@ -3997,6 +4029,11 @@ impl<'a> Resolver<'a> {
             // nominal `Foo` with no diagnostic; it is now the same unknown-name
             // error an unknown value qualifier gets.
             None => {
+                if self.quiet == 0 {
+                    self.result
+                        .unresolved_type_refs
+                        .insert(format!("{qual}.{name}"));
+                }
                 let hint = self.did_you_mean(qual);
                 let import = self.missing_import_hint(qual, |e| e.type_(name).is_some());
                 self.track_class_a_full(
