@@ -17,6 +17,7 @@ import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui exposing (Element)
+import Std.Html as Html
 import Std.Ui.Input as Input
 import Std.Ui.Font as Font
 import Std.Ui.Border as Border
@@ -336,7 +337,7 @@ card =
     Ui.rgb255 245 246 250
 
 
-view : Model -> Ui.Html Msg
+view : Model -> Html.Html Msg
 view model =
     Ui.layout [ Background.color (Ui.rgb255 236 238 244), Font.color ink ]
         <| Ui.column

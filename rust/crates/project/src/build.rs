@@ -1215,9 +1215,22 @@ fn assemble_and_emit_loaded(
     // Lowering warnings carry the span of the node being lowered; resolve them
     // now, while the sources are at hand. `warnings` keeps the plain messages
     // (every consumer of `BuildReport::warnings` reads text).
-    let located_warnings: Vec<(String, diagnostics::Reported)> = prog
-        .warnings
+    // The resolver's warnings for the project's own modules: a qualified type
+    // under a stdlib import that the module does not export (`Ui.Html`),
+    // accepted in v0.32.x (`hir::ResolveResult::type_warnings`).
+    let resolve_warnings: Vec<lower::LowerDiag> = check_ids
         .iter()
+        .flat_map(|m| {
+            hir::SkyDb::resolve(&db, *m)
+                .type_warnings
+                .iter()
+                .map(|(msg, sp)| lower::LowerDiag::new(msg.clone(), Some(*sp)))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let located_warnings: Vec<(String, diagnostics::Reported)> = resolve_warnings
+        .iter()
+        .chain(prog.warnings.iter())
         .map(|w| {
             (
                 w.message.clone(),
@@ -1225,7 +1238,11 @@ fn assemble_and_emit_loaded(
             )
         })
         .collect();
-    let mut warnings: Vec<String> = prog.warnings.iter().map(|w| w.message.clone()).collect();
+    let mut warnings: Vec<String> = resolve_warnings
+        .iter()
+        .chain(prog.warnings.iter())
+        .map(|w| w.message.clone())
+        .collect();
     if let Some(w) = db_driver_diag {
         warnings.push(w);
     }

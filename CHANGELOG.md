@@ -22,6 +22,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   bind lines. There is no change of behaviour: the generated Go of each
   changed function was compared before and after.
 
+- **`sky check` warns about a type that an imported stdlib module does not
+  export.** `Ui.Html` under `import Std.Ui as Ui` names no type of `Std.Ui`,
+  and the type checker matched it with any type named `Html`. It still
+  compiles in v0.32.x. The warning names the module that exports a type of
+  that name (`` use `Html.Html` from `Std.Html` ``). The next minor version
+  reports it as `[E1001]` (`docs/migration/v0.32.md`). `examples/64-app-native`
+  now writes `Html.Html`.
+
 ### Fixed
 
 - **`HttpStream.forEachChunk` reads the whole stream.** It could return `Ok`

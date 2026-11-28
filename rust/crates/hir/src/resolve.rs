@@ -223,6 +223,12 @@ pub struct ResolveResult {
     /// error type, so it never finds a same-named declaration of another
     /// module by its bare name and reports a second, wrong error.
     pub unresolved_type_refs: HashSet<String>,
+    /// Warnings (message, span) for a qualified type under an import of a
+    /// stdlib module that the module does not export (`Ui.Html` under `import
+    /// Std.Ui as Ui`). Accepted for compatibility in v0.32.x, `[E1001]` in the
+    /// next minor (`docs/migration/v0.32.md`). The build prints them for the
+    /// project's own modules.
+    pub type_warnings: Vec<(String, Span)>,
 }
 
 /// Resolve a module. Never panics; partial results + diagnostics (L7).
@@ -1972,6 +1978,53 @@ impl<'a> Resolver<'a> {
         let last = path.rsplit('.').next().unwrap_or(&path);
         (name == last && BUILTIN_TYPES.iter().any(|(n, _)| *n == name))
             || self.home_kernel_types(dep).contains(name)
+    }
+
+    /// The warning for a type `name` that the imported STDLIB module `dep`
+    /// neither exports nor uses as a kernel type (`Ui.Html` under `import
+    /// Std.Ui as Ui`). Such a name is still accepted, as a nominal type with no
+    /// module, which the type checker unifies with ANY type of that name
+    /// (`Std.Html`'s `Html`, or a type of the app). It becomes `[E1001]` in the
+    /// next minor. The message names the modules that export a type `name`,
+    /// from their real exports.
+    fn warn_unexported_stdlib_type(&mut self, dep: ModuleId, name: &str, span: Option<Span>) {
+        if self.quiet > 0 {
+            return;
+        }
+        let Some(span) = span else {
+            return;
+        };
+        let module = self.db.module_name(dep).to_string();
+        let mut homes: Vec<String> = self
+            .db
+            .module_ids()
+            .into_iter()
+            .filter(|m| *m != self.module && *m != dep)
+            .filter(|m| self.db.module_exports(*m).type_(name).is_some())
+            .map(|m| self.db.module_name(m).to_string())
+            .filter(|p| is_reserved_sky_namespace(p))
+            .collect();
+        homes.sort();
+        homes.dedup();
+        let hint = if homes.is_empty() {
+            String::new()
+        } else {
+            let uses: Vec<String> = homes
+                .iter()
+                .map(|h| {
+                    let last = h.rsplit('.').next().unwrap_or(h);
+                    format!("`{last}.{name}` from `{h}`")
+                })
+                .collect();
+            format!(": use {}", uses.join(" or "))
+        };
+        self.result.type_warnings.push((
+            format!(
+                "`{name}` is not exported by `{module}`{hint}. This is accepted in v0.32 \
+                 and is [E1001] in the next minor version."
+            ),
+            span,
+        ));
     }
 
     /// `[E1001]` for a type `qual.name` the import-free home of `qual` does
@@ -3998,6 +4051,14 @@ impl<'a> Resolver<'a> {
                 // A STDLIB module is exempt: its kernel-backed types
                 // (`Dict.Dict`) live in the type checker's kernel registry, not
                 // in the module's source.
+                if con.is_none()
+                    && !KERNEL_IMPLICIT_TYPES.contains(&name)
+                    && !exports.lists_undeclared_type(name)
+                    && is_reserved_sky_namespace(self.db.module_name(dep))
+                    && !self.stdlib_kernel_type(dep, name)
+                {
+                    self.warn_unexported_stdlib_type(dep, name, span);
+                }
                 if con.is_none()
                     && !KERNEL_IMPLICIT_TYPES.contains(&name)
                     && !exports.lists_undeclared_type(name)

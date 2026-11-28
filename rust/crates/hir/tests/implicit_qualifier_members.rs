@@ -617,3 +617,103 @@ fn an_unknown_home_type_is_published_as_unresolved() {
         r.unresolved_type_refs
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A qualified type under an import of a STDLIB module that the module does not
+// export (`Ui.Html` under `import Std.Ui as Ui`) is still accepted in v0.32.x,
+// as a nominal type with no module, which the type checker unifies with ANY
+// type of that name. It is a warning now and `[E1001]` in the next minor.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn an_unexported_stdlib_type_under_an_import_warns_with_its_home() {
+    let r = resolve_with_import("import Std.Ui as Ui", "Ui.Html Int");
+    assert!(e1001(&r).is_empty(), "still accepted: {:?}", e1001(&r));
+    let msgs: Vec<&str> = r.type_warnings.iter().map(|(m, _)| m.as_str()).collect();
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    assert!(
+        msgs[0].contains("`Html` is not exported by `Std.Ui`: use `Html.Html` from `Std.Html`"),
+        "{msgs:?}"
+    );
+}
+
+#[test]
+fn an_unexported_stdlib_type_with_no_home_warns_without_a_hint() {
+    let r = resolve_with_import("import Std.Ui as Ui", "Ui.NoSuchThing");
+    let msgs: Vec<&str> = r.type_warnings.iter().map(|(m, _)| m.as_str()).collect();
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    assert!(
+        msgs[0].contains("`NoSuchThing` is not exported by `Std.Ui`."),
+        "{msgs:?}"
+    );
+}
+
+#[test]
+fn an_exported_or_kernel_backed_stdlib_type_does_not_warn() {
+    for (import, ty) in [
+        ("import Std.Ui as Ui", "Ui.Element Int"),
+        ("import Std.Html as Html", "Html.Html Int"),
+        ("import Sky.Core.Dict as D", "D.Dict String Int"),
+        ("import Std.Db as Db", "Db.Db"),
+        ("import Sky.Core.Task as T", "T.Task Error Int"),
+    ] {
+        let r = resolve_with_import(import, ty);
+        assert!(r.type_warnings.is_empty(), "`{ty}`: {:?}", r.type_warnings);
+    }
+}
+
+/// No Sky source in the tree uses an unexported stdlib type under an import:
+/// the stdlib, the examples, the apps, the tests, the templates and the corpus.
+#[test]
+fn the_tree_has_no_unexported_stdlib_type_reference() {
+    let root = repo_root();
+    let (mut db, mut next) = stdlib_db();
+    let mut failures: Vec<String> = Vec::new();
+    for dir in [
+        "sky-stdlib",
+        "examples",
+        "apps",
+        "tests",
+        "templates",
+        "corpus",
+        "sky-bundled",
+    ] {
+        let mut files = Vec::new();
+        collect_sky(&root.join(dir), &mut files);
+        for path in files {
+            let p = path.to_string_lossy();
+            if p.contains("/sky-out/") || p.contains("/.") {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if !src.contains("import ") {
+                continue;
+            }
+            let parse = syntax::parse(&src, FileId(next));
+            next += 1;
+            let Some(name) = parse
+                .tree()
+                .module_header()
+                .and_then(|h| h.name())
+                .map(|n| n.text())
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            // A stdlib file is already in the db; a project module replaces
+            // any same-named module of an earlier project (`Main`).
+            let id = if p.contains("/sky-stdlib/") {
+                db.module_by_name(&name).unwrap()
+            } else {
+                db.add_module(&name, parse)
+            };
+            let r = hir::resolve(&db, id);
+            for (m, _) in &r.type_warnings {
+                failures.push(format!("{p}: {m}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
