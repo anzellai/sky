@@ -5060,6 +5060,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // `Msg` union itself is NEVER moved (it is the `Applied<Msg>` inject target,
     // stays in its module, and is not a wire field), so it is excluded below.
     let mut moved_unions: BTreeMap<String, Vec<String>>;
+    // Each moved union's HOME module name (the module that declared it).
+    let mut moved_union_home: BTreeMap<String, String>;
     let copy_types_of = |m: ModuleId,
                          seed: &BTreeSet<String>,
                          keys: &BTreeSet<String>,
@@ -5122,13 +5124,38 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         )?;
         // A copied declaration that names a type of a module `Shared` cannot
         // import copies that module's type too (it is a wire type as well).
+        // Copied VALUES count as well as copied types: a sibling's
+        // `sessionCodec : Codec Session` names `Types.Session`, and the
+        // rewrite below names a type of a copied module bare, so `Shared`
+        // must declare it. (Before v0.32.2 only the copied types were read,
+        // and such a name resolved by the program-wide alias table, or, for a
+        // kernel type name such as `Session`, as the kernel type.)
         loop {
             let mut grew = false;
             for m in copy_mods.clone() {
-                let types = copy_types_of(m, &seed_ty, &seed_keys, &copied_values_by_mod);
+                let mut names = copy_types_of(m, &seed_ty, &seed_keys, &copied_values_by_mod);
+                names.extend(copied_values_by_mod.get(&m).cloned().unwrap_or_default());
                 let mtext = db.module_parse(m).syntax().text().to_string();
-                for (_, _, _, owner, tname) in type_occs_in(&db, m, &mtext, &decl_ranges(m, &types))
-                {
+                let ranges = decl_ranges(m, &names);
+                let mut named: Vec<(ModuleId, String)> = type_occs_in(&db, m, &mtext, &ranges)
+                    .into_iter()
+                    .map(|(_, _, _, owner, tname)| (owner, tname))
+                    .collect();
+                // A constructor a copied declaration names (`Admin`, of
+                // `type Role = Admin | Guest`) is written bare for a copied
+                // module too, so its union is copied with it.
+                for occ in &db.resolve(m).ref_occs {
+                    let (a, b) = (occ.span.range.0 as usize, occ.span.range.1 as usize);
+                    if !ranges.iter().any(|(s, e)| a >= *s && b <= *e) {
+                        continue;
+                    }
+                    if let hir::Res::Ctor(c) = &occ.res {
+                        if let Some(loc) = db.def_loc(c.type_) {
+                            named.push((loc.module, loc.name.as_str().to_string()));
+                        }
+                    }
+                }
+                for (owner, tname) in named {
                     if !project_mods.contains(&owner) || owner == entry {
                         continue;
                     }
@@ -5155,6 +5182,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         // The unions `Shared` now owns, and the modules that import `Shared`
         // because of them or because their copy strips a copied declaration.
         moved_unions = BTreeMap::new();
+        moved_union_home = BTreeMap::new();
         for m in copy_mods.iter().copied() {
             let mtypes = project_type_decls(&db.module_parse(m).tree());
             for n in copy_types_of(m, &seed_ty, &seed_keys, &copied_values_by_mod) {
@@ -5162,6 +5190,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 if decl_kind(d) == DeclKind::Union && Some(&n) != msg_union_name.as_ref() {
                     let mut words = vec![n.clone()];
                     words.extend(union_variant_names(d));
+                    moved_union_home.insert(n.clone(), db.module_name(m).to_string());
                     moved_unions.insert(n, words);
                 }
             }
@@ -5293,7 +5322,12 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 continue;
             }
             let name = loc.name.as_str().to_string();
+            // A reference span can start at the whitespace before the name
+            // (`Codec.auto Helpers.blankSession`): the rewrite keeps it.
             let mut start = a;
+            while start < b && bytes[start].is_ascii_whitespace() {
+                start += 1;
+            }
             while start > 0 && bytes[start - 1] == b'.' {
                 let mut q = start - 1;
                 while q > 0 && (bytes[q - 1].is_ascii_alphanumeric() || bytes[q - 1] == b'_') {
@@ -6000,6 +6034,35 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let frontend_src =
         enforce_client_builder_invariant(&frontend_src, &entry_taint_reason, &mut notes)?;
 
+    // The names `Shared` owns that a generated module may still name through
+    // their home module: each moved union, and each copied value (a user
+    // codec) of a module other than the entry.
+    let entry_name = db.module_name(entry).to_string();
+    let mut shared_owned: Vec<SharedOwned> = Vec::new();
+    for (u, words) in &moved_unions {
+        if let Some(home) = moved_union_home.get(u) {
+            shared_owned.push(SharedOwned {
+                home: home.clone(),
+                expose: format!("{u}(..)"),
+                words: words.clone(),
+            });
+        }
+    }
+    for (m, values) in &copied_values_by_mod {
+        let home = db.module_name(*m).to_string();
+        if home == entry_name {
+            continue;
+        }
+        for v in values {
+            if v.starts_with(|c: char| c.is_ascii_lowercase()) {
+                shared_owned.push(SharedOwned {
+                    home: home.clone(),
+                    expose: v.clone(),
+                    words: vec![v.clone()],
+                });
+            }
+        }
+    }
     let mut files: Vec<String> = Vec::new();
     let write = |rel: &str, content: &str, files: &mut Vec<String>| -> Result<(), String> {
         // Every Sky file the split writes imports exactly the reserved aliases
@@ -6015,6 +6078,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 .trim_end_matches(".sky")
                 .replace('/', ".");
             let finished = finish_type_refs(content, Some(&own));
+            let finished =
+                retarget_shared_owned(&finished, &own, &shared_owned, rel.starts_with("frontend/"));
             reserved = ensure_reserved_imports(&finished);
             generated_source_parses(rel, &reserved)?;
             reserved.as_str()
@@ -8073,8 +8138,12 @@ fn type_occs_in(
             continue;
         }
         // The occurrence span covers the type's own name; a qualifier (`S.`
-        // in `S.Point`) sits right before it.
+        // in `S.Point`) sits right before it. A span that starts at the
+        // whitespace before the name keeps that whitespace.
         let mut start = a;
+        while start < b && bytes[start].is_ascii_whitespace() {
+            start += 1;
+        }
         while start > 0 && bytes[start - 1] == b'.' {
             let mut q = start - 1;
             while q > 0 && (bytes[q - 1].is_ascii_alphanumeric() || bytes[q - 1] == b'_') {
@@ -8719,6 +8788,206 @@ fn own_moved_nominals_verbatim(
     }
     let clause = format!("import Shared exposing ({})", exposes.join(", "));
     ensure_import_present(&stripped, "Shared", &clause)
+}
+
+/// One name `Shared` now owns and its home module no longer gives every
+/// generated module: a MOVED UNION (`expose` = `Role(..)`, `words` = the type
+/// and its constructors) or a COPIED VALUE, a user codec (`expose` = `words[0]`
+/// = `sessionCodec`; the client copy of its home drops it).
+struct SharedOwned {
+    home: String,
+    expose: String,
+    words: Vec<String>,
+}
+
+/// Point a generated module's references to a name `Shared` owns
+/// ([`SharedOwned`]) at `Shared`, when the module named it through its HOME
+/// module:
+///   * `import Types exposing (Session, Role(..))` drops `Role(..)` (else
+///     `[E1011] module Types does not expose the type Role`), and
+///   * `Types.Admin` / `T.Role` / `Data.sessionCodec` (the module name, or its
+///     `as` alias) become `Shared.Admin` / `Shared.Role` /
+///     `Shared.sessionCodec` (else `[E1001] Undefined name`).
+/// String literals, characters and comments are never rewritten. The module
+/// then imports `Shared` exposing each name it names this way (merged into an
+/// existing `import Shared exposing (…)`), so a bare `Admin` that came from the
+/// dropped exposing entry still resolves. `Shared` itself is unchanged.
+fn retarget_shared_owned(
+    text: &str,
+    own_module: &str,
+    owned: &[SharedOwned],
+    client: bool,
+) -> String {
+    if owned.is_empty() || own_module == "Shared" {
+        return text.to_string();
+    }
+    // A copied value is missing only from the CLIENT copy of its home (the
+    // backend keeps the whole module), so a backend file keeps naming it
+    // there: retargeting it could add `import Shared` to a module `Shared`
+    // imports (a cycle).
+    let kept: Vec<&SharedOwned> = owned
+        .iter()
+        .filter(|o| client || o.expose.ends_with("(..)"))
+        .collect();
+    let owned: Vec<SharedOwned> = kept
+        .into_iter()
+        .map(|o| SharedOwned {
+            home: o.home.clone(),
+            expose: o.expose.clone(),
+            words: o.words.clone(),
+        })
+        .collect();
+    let owned = owned.as_slice();
+    if owned.is_empty() {
+        return text.to_string();
+    }
+    let parse = syntax::parse(text, base::FileId(0));
+    let file = parse.tree();
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    let mut quals: Vec<(String, usize)> = Vec::new();
+    let mut touched: BTreeSet<usize> = BTreeSet::new();
+    // Names rewritten to `Shared.x`: they need `import Shared`, never an
+    // exposing entry (a bare name could then be ambiguous with a home that
+    // `exposing (..)` still gives it, on the backend).
+    let mut qualified_any = false;
+    for imp in file.imports() {
+        let Some(path) = imp.name().map(|n| n.text()) else {
+            continue;
+        };
+        let here: Vec<usize> = (0..owned.len())
+            .filter(|i| owned[*i].home == path && owned[*i].home != own_module)
+            .collect();
+        if here.is_empty() {
+            continue;
+        }
+        let r = imp.syntax().text_range();
+        let (a, b) = (usize::from(r.start()), usize::from(r.end()));
+        let t = &text[a..b];
+        let names: HashSet<String> = here
+            .iter()
+            .map(|i| owned[*i].expose.trim_end_matches("(..)").to_string())
+            .collect();
+        let exposed = explicit_exposed_names(t);
+        let stripped = strip_names_from_import_exposing(t, &names);
+        if stripped != t {
+            for i in &here {
+                if exposed
+                    .iter()
+                    .any(|e| names.contains(e) && owned[*i].expose.starts_with(e.as_str()))
+                {
+                    touched.insert(*i);
+                }
+            }
+            edits.push((a, b, stripped));
+        }
+        let q = imp
+            .alias()
+            .map(|t| t.text().to_string())
+            .unwrap_or_else(|| path.clone());
+        for i in here {
+            quals.push((q.clone(), i));
+        }
+    }
+    // Text a rewrite never touches: imports, string literals, characters
+    // and comments.
+    let mut skip: Vec<(usize, usize)> = Vec::new();
+    for imp in file.imports() {
+        let r = imp.syntax().text_range();
+        skip.push((usize::from(r.start()), usize::from(r.end())));
+    }
+    for tok in parse
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+    {
+        if matches!(
+            tok.kind(),
+            SyntaxKind::String
+                | SyntaxKind::MultilineString
+                | SyntaxKind::StringChunk
+                | SyntaxKind::Char
+                | SyntaxKind::LineComment
+                | SyntaxKind::BlockComment
+        ) {
+            let r = tok.text_range();
+            skip.push((usize::from(r.start()), usize::from(r.end())));
+        }
+    }
+    // A module may import its home twice (`import Types exposing (..)` and
+    // `import Types`): one qualifier, one rewrite.
+    quals.sort();
+    quals.dedup();
+    let bytes = text.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'.';
+    for (q, i) in &quals {
+        for w in &owned[*i].words {
+            let from = format!("{q}.{w}");
+            let mut at = 0usize;
+            while let Some(rel) = text[at..].find(&from) {
+                let s = at + rel;
+                let e = s + from.len();
+                at = e;
+                if s > 0 && ident(bytes[s - 1]) {
+                    continue;
+                }
+                // `Data.blank.userId`: a `.` after a value is a field access.
+                let field_access = e < bytes.len()
+                    && bytes[e] == b'.'
+                    && w.starts_with(|c: char| c.is_ascii_lowercase());
+                if e < bytes.len() && ident(bytes[e]) && !field_access {
+                    continue;
+                }
+                if skip.iter().any(|(a, b)| s >= *a && s < *b) {
+                    continue;
+                }
+                edits.push((s, e, format!("Shared.{w}")));
+                qualified_any = true;
+            }
+        }
+    }
+    let mut out = text.to_string();
+    edits.sort_by(|x, y| y.0.cmp(&x.0).then(y.1.cmp(&x.1)));
+    edits.dedup_by(|x, y| x.0 == y.0 && x.1 == y.1);
+    for (a, b, n) in edits {
+        out.replace_range(a..b, &n);
+    }
+    if touched.is_empty() {
+        if !qualified_any {
+            return out;
+        }
+        return ensure_import_present(&out, "Shared", "import Shared");
+    }
+    let wanted: Vec<String> = touched.iter().map(|i| owned[*i].expose.clone()).collect();
+    // Merge into an existing `import Shared exposing (…)`, else add one.
+    let parse = syntax::parse(&out, base::FileId(0));
+    let file = parse.tree();
+    if let Some(imp) = file
+        .imports()
+        .find(|i| i.name().map(|n| n.text()).as_deref() == Some("Shared"))
+    {
+        let r = imp.syntax().text_range();
+        let (a, b) = (usize::from(r.start()), usize::from(r.end()));
+        let t = out[a..b].to_string();
+        let have = explicit_exposed_names(&t);
+        let missing: Vec<&String> = wanted
+            .iter()
+            .filter(|w| !have.iter().any(|h| h == w.trim_end_matches("(..)")))
+            .collect();
+        if t.contains("exposing (..)") || missing.is_empty() {
+            return out;
+        }
+        let extra: String = missing.iter().map(|m| format!(", {m}")).collect();
+        let new = match t.rfind(')') {
+            Some(close) if t.contains("exposing") => {
+                format!("{}{}{}", &t[..close], extra, &t[close..])
+            }
+            _ => format!("{t} exposing ({})", wanted.join(", ")),
+        };
+        out.replace_range(a..b, &new);
+        return out;
+    }
+    let clause = format!("import Shared exposing ({})", wanted.join(", "));
+    ensure_import_present(&out, "Shared", &clause)
 }
 
 // ---------------------------------------------------------------------------
@@ -13397,6 +13666,7 @@ fn render_module_client_subset(
 
     let mut body = String::new();
     let mut stripped_copied = false;
+    let mut forwarded: BTreeSet<String> = BTreeSet::new();
     for d in mfile.decls() {
         let name = decl_name(&d);
         let n = name.as_deref();
@@ -13411,6 +13681,18 @@ fn render_module_client_subset(
             // copy's source (a local alias shadowing an imported wire type) stays.
             if copied_names.contains(n) {
                 stripped_copied = true;
+                // A copied VALUE stays in this client copy as a forwarder to
+                // its one definition in `Shared`, so every module that names it
+                // through this module (bare through `exposing (..)`,
+                // qualified, or with a field access) still finds it, by the
+                // compiler's own scoping. Its annotation is dropped (the
+                // forwarder's type is inferred from `Shared`'s).
+                if n.starts_with(|c: char| c.is_ascii_lowercase())
+                    && decl_kind(&d) == DeclKind::Value
+                    && forwarded.insert(n.to_string())
+                {
+                    body.push_str(&format!("{n} =\n    Shared.{n}\n\n\n"));
+                }
                 continue;
             }
         }
@@ -13497,6 +13779,11 @@ fn render_module_client_subset(
     let references_moved = moved_unions
         .values()
         .any(|words| words.iter().any(|w| module_mentions_word(&out, w)));
+    // A forwarded value is declared here: it is named `Shared.x`, never
+    // exposed from `Shared` too (that would be two definitions of one name).
+    let forwarded_set: HashSet<String> = forwarded.iter().cloned().collect();
+    let shared_expose = strip_names_from_import_exposing(shared_expose, &forwarded_set);
+    let shared_expose = shared_expose.as_str();
     let out = if regen_update || inject_msg || stripped_copied || references_moved {
         ensure_import_present(&out, "Shared", shared_expose)
     } else {

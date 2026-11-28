@@ -75,6 +75,23 @@ func waitCancelled(t *testing.T, what string, cancelled <-chan struct{}) {
 // than through Task.timeout: Task.timeout would give up waiting at the
 // deadline whether or not the kernel stopped, and its own error would hide
 // the kernel's. Here only the kernel can end the call.
+// waitCancelledIfSent is waitCancelled for a call made under a short deadline
+// on a loaded host (the stress job runs it x40 under -race, GOMAXPROCS=2):
+// there the deadline can pass before the request reaches the server at all.
+// A request the server never received cannot run on, so that outcome passes
+// too. A request the server did receive must still be seen cancelled.
+func waitCancelledIfSent(t *testing.T, what string, cancelled <-chan struct{}, hits *atomic.Int32, before int32) {
+	t.Helper()
+	select {
+	case <-cancelled:
+	case <-time.After(3 * time.Second):
+		if hits.Load() == before {
+			return
+		}
+		t.Fatalf("%s: the server never saw the request cancelled", what)
+	}
+}
+
 func within(t *testing.T, what string, ms int, limit time.Duration, task any) SkyResult[any, any] {
 	t.Helper()
 	start := time.Now()
@@ -115,12 +132,13 @@ func TestHttpStream_OpenStopsAtTheDeadline(t *testing.T) {
 	cancelled := make(chan struct{}, 1)
 	var hits atomic.Int32
 	srv := stallServer(t, false, cancelled, &hits)
+	before := hits.Load()
 	r := within(t, "Http.Stream.open", 150, 2*time.Second, HttpStream_open(streamReq(srv.URL)))
 	f := deadlineFailure(t, r)
 	if v, _ := f.Attr("op"); v != "Http.Stream.open" {
 		t.Fatalf("op attribute = %q", v)
 	}
-	waitCancelled(t, "Http.Stream.open", cancelled)
+	waitCancelledIfSent(t, "Http.Stream.open", cancelled, &hits, before)
 
 	refusedUnsent(t, "Http.Stream.open", &hits, func() any { return HttpStream_open(streamReq(srv.URL)) })
 
@@ -283,12 +301,13 @@ func TestEmailSend_HttpProviderStopsAtTheDeadline(t *testing.T) {
 	t.Setenv("SKY_EMAIL_DRY_RUN", "")
 	t.Setenv("SKY_EMAIL_ENDPOINT_RESEND", srv.URL)
 	provider := adt("Resend", "re_test")
+	before := hits.Load()
 	r := within(t, "Email.send", 150, 2*time.Second, Email_send(provider, msgNoAttachment()))
 	f := deadlineFailure(t, r)
 	if v, _ := f.Attr("op"); v != "Email.send" {
 		t.Fatalf("op attribute = %q", v)
 	}
-	waitCancelled(t, "Email.send", cancelled)
+	waitCancelledIfSent(t, "Email.send", cancelled, &hits, before)
 	refusedUnsent(t, "Email.send", &hits, func() any { return Email_send(provider, msgNoAttachment()) })
 }
 
@@ -316,9 +335,10 @@ func TestAi_CallsStopAtTheDeadline(t *testing.T) {
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
+			before := hits.Load()
 			r := within(t, name, 150, 3*time.Second, call())
 			deadlineFailure(t, r)
-			waitCancelled(t, name, cancelled)
+			waitCancelledIfSent(t, name, cancelled, &hits, before)
 			refusedUnsent(t, name, &hits, call)
 		})
 	}
@@ -356,9 +376,10 @@ func TestAiStore_TransfersStopAtTheDeadline(t *testing.T) {
 	srv := stallServer(t, false, cancelled, &hits)
 	data := []byte("adapter")
 	get := func() any { return Ai_storeHttpGet(storeReq("GET", srv.URL+"/b/x"), sha(data)) }
+	before := hits.Load()
 	r := within(t, "Ai.Store.get", 150, 3*time.Second, get())
 	deadlineFailure(t, r)
-	waitCancelled(t, "Ai.Store.get", cancelled)
+	waitCancelledIfSent(t, "Ai.Store.get", cancelled, &hits, before)
 	refusedUnsent(t, "Ai.Store.get", &hits, get)
 }
 

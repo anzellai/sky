@@ -540,3 +540,38 @@ fn an_unexported_stdlib_type_is_its_qualifiers_own_declaration() {
         "`App.Route` is Std.App's Route: {shown}"
     );
 }
+
+/// `App.Request` (a kernel-implicit name `Std.App` does not export) is the one
+/// stdlib alias `Sky.Http.Server.Request`, the record `App.withRequest`
+/// passes, as in v0.32.0. v0.32.1 made it an opaque kernel type, so an app's
+/// `admit : App.Request -> Model -> ( Model, Cmd Msg )` hook failed with
+/// `record vs Request`, and reading a field of it failed too.
+#[test]
+fn a_kernel_implicit_record_under_a_stdlib_qualifier_is_its_one_alias() {
+    let main = format!(
+        "{NO_IMPORT_HEAD}import Std.App as App\nimport Sky.Http.Server as Server\n\n\
+         path : App.Request -> String\npath r =\n    r.path\n\n\
+         same : Server.Request -> String\nsame r =\n    path r\n\n\
+         main =\n    println \"ok\"\n"
+    );
+    let errs = errors_with(&[], &main);
+    assert!(errs.is_empty(), "{errs:?}");
+}
+
+/// The rule above holds only where the qualifier's module itself names the
+/// bare type: the HTTP client `Sky.Core.Http` never names `Request`, so
+/// `Http.Request` keeps its v0.32.1 meaning and reading a server field of it
+/// stays an error.
+#[test]
+fn a_kernel_implicit_name_under_a_module_that_never_names_it_is_unchanged() {
+    let main = format!(
+        "{NO_IMPORT_HEAD}import Sky.Core.Http as Http\n\n\
+         path : Http.Request -> String\npath r =\n    r.path\n\n\
+         main =\n    println \"ok\"\n"
+    );
+    let errs = errors_with(&[], &main);
+    assert!(
+        !errs.is_empty(),
+        "`Http.Request` is not the server request record"
+    );
+}

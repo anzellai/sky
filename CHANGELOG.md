@@ -11,6 +11,62 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.32.2 — a Sky.Spa split copies every type its copied codecs name (2026-11-28)
+
+### Fixed
+
+- **`App.Request` is the request record again.** In v0.32.1 a kernel type
+  name written under a stdlib module that does not export it (`App.Request`
+  under `import Std.App as App`) became an opaque kernel type, so a hook such
+  as `admit : App.Request -> Model -> ( Model, Cmd Msg )` passed to
+  `App.withRequest` failed with `type mismatch: record vs Request`, and
+  `req.query` failed too. When the qualifier's module itself names the type
+  in its own signatures (`Std.App` names `Request`), such a name is now the
+  one stdlib type alias of that name (`Sky.Http.Server.Request`; the same
+  for `Response` and `Handler`), the type `withRequest` takes. Under a module
+  that never names it (`Http.Request` under `import Sky.Core.Http as Http`)
+  nothing changes.
+
+- **A Sky.Spa app whose codecs live in a sibling module builds again.** When
+  `Shared` copied a sibling's codec (`sessionCodec : Codec Session`, in a
+  module with a server effect) whose type comes from a third module that
+  `Shared` also copies from (the module that holds `Msg`), it wrote the type
+  name bare but did not copy the type. Up to v0.32.0 the bare name resolved
+  through the program-wide alias table. In v0.32.1 a bare kernel type name
+  (`Session`, `Request`, `Store`, `Route` and the others) is the kernel type
+  in every module, so `sky build --target web:app` failed in the generated
+  backend with `type mismatch: Session vs record`, while `sky check` passed.
+  `Shared` now copies each type that a copied codec names, so no generated
+  name depends on that fallback. No change in your code is needed.
+
+- **A copied codec that names a constructor copies its union.** A codec that
+  `Shared` copies and that names a constructor (`Admin`, of
+  `type Role = Admin | Guest`) of a module `Shared` copies from got the
+  constructor but not the union, and the generated code failed with
+  `Undefined name: Admin`.
+
+- **A copied codec that names a qualified value keeps its spacing.**
+  `Codec.auto Helpers.blankSession` became `Codec.autoSpaTy_Helpers_.blankSession`
+  in the generated `Shared`, because the rewrite replaced the space before the
+  name too. It now writes `Codec.auto SpaTy_Helpers_.blankSession`.
+
+- **A union that moves into `Shared` is found there by every module.** A
+  module that imported such a union from its own module by name
+  (`import Types exposing (Session, Role(..))`) or wrote it qualified
+  (`Types.Admin`) kept those references in its generated copy, and the
+  backend failed with `[E1011] module Types does not expose the type Role` or
+  `[E1001] Undefined name: Types.Admin`. Each generated module now takes the
+  union from `Shared`. Text in a string literal or a comment is never
+  changed.
+
+- **A client module that names a copied codec through its module finds it.**
+  `Codec.toJson Data.sessionCodec …` (or a bare `sessionCodec` through
+  `import Data exposing (..)`) in a pure module, where `Data` runs a server
+  effect, failed in the generated client with `[E1001] Undefined name`,
+  because the client copy of `Data` dropped the codec. The client copy now
+  keeps `sessionCodec = Shared.sessionCodec`, so every use resolves as in your
+  source, local names that hide it included.
+
 ## v0.32.1 — the standard library uses bind lines (2026-11-28)
 
 ### Changed

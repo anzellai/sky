@@ -4030,7 +4030,68 @@ impl<'a> Resolver<'a> {
     /// declaration (`JsonEnc.Value`, `Dict.Dict`, a kernel-implicit name). It
     /// is published (`ResolveResult::kernel_type_refs`), so the type checker
     /// never expands it through a same-named alias found by its bare name.
+    /// The module the qualifier `qual` names: its import, else its
+    /// import-free kernel home (`Task` → `Sky.Core.Task`).
+    fn qual_module(&self, qual: &str) -> Option<ModuleId> {
+        match self.import_aliases.get(qual) {
+            Some(ImportSource::Dep(d)) => Some(*d),
+            Some(ImportSource::Kernel(path)) => self.db.module_by_name(path),
+            Some(ImportSource::Foreign(_)) => None,
+            None => crate::kernel::implicit_qualifier_homes(qual)
+                .iter()
+                .find_map(|h| self.db.module_by_name(h)),
+        }
+    }
+
+    /// The one stdlib type ALIAS named `name`, when exactly one stdlib module
+    /// exports an alias of that name (`Request` → `Sky.Http.Server.Request`).
+    fn unique_stdlib_alias(&mut self, name: &str) -> Option<TypeRes> {
+        let mut found: Vec<TypeRes> = Vec::new();
+        for m in self.db.module_ids() {
+            if m == self.module || !is_reserved_sky_namespace(self.db.module_name(m)) {
+                continue;
+            }
+            let ex = self.db.module_exports(m);
+            if !ex.aliases.iter().any(|a| a.name.as_str() == name) {
+                continue;
+            }
+            if let Some((con, arity)) = ex.type_(name) {
+                if !found.iter().any(|f| f.con == con) {
+                    found.push(TypeRes { con, arity });
+                }
+            }
+        }
+        match found.as_slice() {
+            [tr] => Some(*tr),
+            _ => None,
+        }
+    }
+
     fn kernel_qual_type(&mut self, qual: &str, name: &str, args: Vec<TypeId>) -> TypeId {
+        // A kernel-implicit name that exactly one stdlib module declares as a
+        // type ALIAS (`Request`, `Response`: records of `Sky.Http.Server`) is
+        // that alias, the type the bare name expands to in the stdlib's own
+        // signatures (`App.withRequest : (Request -> …)`). As an opaque kernel
+        // type, `App.Request` in an app's annotation stopped matching the
+        // record `withRequest` passes in v0.32.1 (`record vs Request`).
+        // Only where the qualifier's module itself uses the bare name in its
+        // own source (`Std.App`'s signatures name `Request`): `Http.Request`
+        // under the HTTP client module, which never names it, is unchanged.
+        let uses_it = self
+            .qual_module(qual)
+            .is_some_and(|m| self.home_kernel_types(m).contains(name));
+        if KERNEL_IMPLICIT_TYPES.contains(&name) && uses_it {
+            if let Some(tr) = self.unique_stdlib_alias(name) {
+                if self.quiet == 0 {
+                    self.result.type_refs.insert(format!("{qual}.{name}"), tr);
+                }
+                return self.body.ty(Type::Con {
+                    con: Some(tr),
+                    name: Name::new(name),
+                    args,
+                });
+            }
+        }
         if self.quiet == 0 {
             self.result
                 .kernel_type_refs
