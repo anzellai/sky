@@ -1154,7 +1154,7 @@ mod tests {
             "precondition: the tree really is left mutated"
         );
 
-        let restored = restore_orphans(&root);
+        let restored = restore_after_kill(&root, 1);
         assert_eq!(restored, vec!["f.txt".to_string()]);
         assert_eq!(
             std::fs::read_to_string(root.join("f.txt")).unwrap(),
@@ -1227,6 +1227,24 @@ mod tests {
 
     /// Model a signal kill: the kernel releases the journal lock when the
     /// process dies, and no `Drop` runs.
+    /// `restore_orphans` after [`kill`], for a test binary whose other tests
+    /// spawn processes. A `fork` copies every open descriptor, the closed
+    /// journal locks included, and the child holds that copy (and so the
+    /// `flock`) until its `exec` closes it. A restore in that window sees the
+    /// journal as live and correctly leaves it. A killed run's locks are gone
+    /// once its forked children exec, so retry for a bounded time.
+    fn restore_after_kill(root: &Path, want: usize) -> Vec<String> {
+        let mut restored = Vec::new();
+        let start = std::time::Instant::now();
+        loop {
+            restored.extend(restore_orphans(root));
+            if restored.len() >= want || start.elapsed() > Duration::from_secs(5) {
+                return restored;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn kill(mut p: Patch) {
         p.journal_lock = None;
         p.target_lock = None;
@@ -1293,7 +1311,7 @@ mod tests {
 
         kill(Patch::apply(&root, "Main.sky", "1", "2").unwrap());
         kill(Patch::apply(&root, "lib.rs", "a", "b").unwrap());
-        let mut restored = restore_orphans(&root);
+        let mut restored = restore_after_kill(&root, 2);
         restored.sort();
         assert_eq!(restored, vec!["Main.sky".to_string(), "lib.rs".to_string()]);
 
